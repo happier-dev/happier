@@ -176,7 +176,8 @@ function resolveSessionSpawnNewResultFailureBody(
         // A closed launch cause outranks the generic guidance; any other cause keeps the
         // outer code so no private detail reaches the person.
         const cause = result.code === 'spawn_failed' ? result.launchError?.code : undefined;
-        const message = presentSessionStartupFailureCause(cause);
+        const message = presentSessionStartupFailureCause(cause, undefined,
+            result.code === 'spawn_failed' ? result.launchError?.failureCause : undefined);
         const presented = presentSessionStartupFailureRecovery([cause])?.message ?? (message !== null && cause !== undefined
             ? t('errors.errorWithCode', { message, code: cause })
             : t('errors.errorWithCode', { message: t(key), code: result.code }));

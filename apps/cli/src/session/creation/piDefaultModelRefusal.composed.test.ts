@@ -1,9 +1,11 @@
 import { Console } from 'node:console';
 import { PassThrough } from 'node:stream';
+import axios from 'axios';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSummaryV1, SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { createPiAgentRuntime } from '../../../../../packages/plugins/pi/src/agent/runtime/engine.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth/purposes.js';
@@ -13,7 +15,11 @@ import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecyc
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
+import { deliverSessionTurnMutation } from '@/api/session/client/transport/mutations/deliverSessionTurnMutation';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
+
+vi.mock('axios');
 
 describe('Pi Connected Account default refusal', () => {
   it('retains model-pick guidance through native startup, durable status and launch Action projection', async () => {
@@ -39,16 +45,40 @@ describe('Pi Connected Account default refusal', () => {
     }, context).catch((error: unknown) => sanitizeNativeAgentSessionBoundaryError(error, true));
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'pi', error: failure });
     expect(issue).toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
-      sanitizedPreview: expect.stringMatching(/model selection.*retry/iu) });
+      sanitizedPreview: expect.stringMatching(/choose.*model/iu),
+      failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } });
     const mutations: unknown[] = [];
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) });
     const lifecycle = createSessionTurnLifecycle({ session: { sessionId: 'c1234567890123456789012345',
-      enqueueSessionTurnMutation: async mutation => { mutations.push(SessionTurnMutationV1Schema.parse(mutation)); },
+      enqueueSessionTurnMutation: async mutation => {
+        const delivered = await deliverSessionTurnMutation({ token: 'token', mutation,
+          // Only the authenticated Home transport is substituted. Keep public
+          // diagnostic privacy projection, strict decoding and status reading real.
+          socket: { connected: true, emit: vi.fn(), emitWithAck: async (_event: string, payload: unknown) => {
+            const published = SessionTurnMutationV1Schema.parse(payload);
+            mutations.push(published);
+            return { ok: true, receipt: { v: published.v, sessionId: published.sessionId, mutationId: published.mutationId,
+              ...('turnId' in published && published.turnId ? { turnId: published.turnId } : {}),
+              action: published.action, decision: 'applied', observedAt: published.observedAt, appliedAt: published.observedAt } };
+          } },
+        });
+        expect(delivered).toEqual({ delivered: true, path: 'socket' });
+      },
     } });
     try { await lifecycle.failTurn({ issue, allocateWhenIdle: true }); }
     finally { lifecycle.dispose(); }
     expect(mutations).toContainEqual(expect.objectContaining({ action: 'fail', issue: expect.objectContaining({
-      code: issue.code, sanitizedPreview: issue.sanitizedPreview,
+      code: issue.code, sanitizedPreview: issue.sanitizedPreview, failureCause: issue.failureCause,
     }) }));
+    const publishedFailure = mutations.map(mutation => SessionTurnMutationV1Schema.parse(mutation))
+      .find(mutation => mutation.action === 'fail');
+    if (publishedFailure?.action !== 'fail') throw new Error('Missing public failure');
+    const status = SessionStatusResultSchema.parse({ session: projectSessionSummaryV1({
+      row: createSessionRecordFixture({ id: publishedFailure.sessionId, lastRuntimeIssue: publishedFailure.issue }),
+      metadata: null, encryption: null,
+    }) });
+    expect(status.session.lastRuntimeIssue).toMatchObject({ sanitizedPreview: issue.sanitizedPreview,
+      failureCause: { failureReason: 'model_selection_required', retryable: false } });
 
     const stderr = new PassThrough();
     let output = '';
@@ -60,12 +90,13 @@ describe('Pi Connected Account default refusal', () => {
     try { expect(reportSessionRunnerFailure(failure)).toBe(1); }
     finally { consoleError.mockRestore(); file.mockRestore(); fatal.mockRestore(); stderr.end(); }
     const failureCause = readSessionRunnerFailureCause(output);
-    expect(failureCause).toMatchObject({ code: issue.code });
+    expect(failureCause).toMatchObject({ code: issue.code, failureReason: 'model_selection_required', retryable: false });
     const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
       errorCode: 'spawn_failed', errorMessage: 'Session launch failed',
       errorDetail: { kind: 'launch_error', code: 'spawn_failed', message: 'Session launch failed', failureCause },
     }));
-    expect(result).toMatchObject({ type: 'error', launchError: { code: issue.code, failureCause } });
+    expect(result).toMatchObject({ type: 'error', retryable: false,
+      launchError: { code: issue.code, message: issue.sanitizedPreview, failureCause } });
     expect(context.services.exec.clients.spawn).not.toHaveBeenCalled();
   });
 });

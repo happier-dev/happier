@@ -77,6 +77,8 @@ export function projectSessionSpawnFailure(input: Readonly<{
   const typedCauseCode = readTeamCredentialLaunchFailureCode(causeCode)
     ?? (readSessionStartupFailurePreview(causeCode) ? causeCode : undefined);
   const code = typedCauseCode ?? (detail.success ? detail.data.code : nativeCode ?? preparationCode ?? input.errorCode);
+  const modelSelectionRequired = code === 'agent_startup_model_reconciliation_failed'
+    && detail.success && detail.data.failureCause?.failureReason === 'model_selection_required';
   if (code === 'agent_cli_not_runnable') {
     const title = typeof input.agentId === 'string' ? resolveAgentDisplayTitle(input.agentId) : null;
     return { type: 'error', code: 'spawn_failed', retryable: false,
@@ -84,11 +86,12 @@ export function projectSessionSpawnFailure(input: Readonly<{
         ...(detail.success && detail.data.failureCause ? { failureCause: detail.data.failureCause } : {}) } };
   }
   const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
-  const retryable = code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
+  const retryable = modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
     || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true;
   return { type: 'error', code: 'spawn_failed', retryable,
-    launchError: detail.success ? { ...detail.data, code: typedCauseCode ?? detail.data.code } : fallback.success ? fallback.data
+    launchError: detail.success ? { ...detail.data, code: typedCauseCode ?? detail.data.code,
+      ...(modelSelectionRequired ? { message: readSessionStartupFailurePreview(code, null, detail.data.failureCause)! } : {}) } : fallback.success ? fallback.data
       : { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message: 'Session launch failed' } };
 }

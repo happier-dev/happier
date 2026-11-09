@@ -7909,6 +7909,7 @@ export function useSessionComposerController({
         setActiveStatusBadgeKey,
         sessionPresentationApplierRef,
         sessionStatusState: sessionStatus.state,
+        openModelPicker: canSelectModel ? openSessionModelPicker : undefined,
         handleResumeSession
     } };
 }

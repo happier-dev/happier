@@ -13,8 +13,10 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
     notice: SessionStartFailureNotice;
     retry: Readonly<{ run: () => void; busy: boolean }> | null;
     managePlugin?: () => void;
+    chooseModel?: () => void;
 }>) {
-    const { notice, retry } = props;
+    const { notice } = props;
+    const retry = notice.retryable ? props.retry : null;
     return (
         <ComposerAuxiliaryFrame>
             <WarningActionBanner
@@ -28,6 +30,13 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
                         actionLabel: t('settingsPlugins.managePlugin'),
                         actionAccessibilityLabel: t('settingsPlugins.managePlugin'),
                         onActionPress: props.managePlugin,
+                    }
+                    : props.chooseModel
+                    ? {
+                        actionTestID: 'session-start-failure-choose-model',
+                        actionLabel: t('newSession.selectModelTitle'),
+                        actionAccessibilityLabel: t('newSession.selectModelTitle'),
+                        onActionPress: props.chooseModel,
                     }
                     : retry
                     ? {

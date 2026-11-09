@@ -1034,7 +1034,10 @@ catalog observation time rather than reporting new membership.
 
 Pi's native registry supplies model candidates, not proof of ChatGPT account entitlement.
 A new Session or finite Run with a Connected ChatGPT account therefore requires a concrete
-model choice and returns the existing `agent_startup_model_reconciliation_failed` refusal for an automatic default. Retained
+model choice and returns the existing `agent_startup_model_reconciliation_failed` refusal for an automatic default,
+with the closed `failureCause.failureReason: model_selection_required` and no automatic retry.
+The runner diagnostic, durable Session issue and launch Action retain that reason;
+choose a model through the existing model selector before retrying. Retained
 Sessions can resume their native model, and an explicit choice still uses Pi's model-selection
 path; the provider remains authoritative for whether that account accepts the chosen model.
 
@@ -1897,6 +1900,11 @@ consent, enforced by the canonical install/update path.
 Ordinary Session creation checks the chosen Agent after Machine wake and setup,
 before Session birth and Agent prerequisite hooks. Managed create-and-start reaches
 that same owner through its independently admitted guest Session continuation.
+Daemon prerequisite hooks resolve an Agent's declared CLI system-tool id through
+the same catalog runtime and managed executable selection as final launch. A
+tool id such as `ohmypi-cli` therefore uses the installed `ohMyPi` runtime even
+when `omp` is absent from PATH; local and plugin-qualified tool ids share this
+lookup. The daemon must reload to consume this development source correction.
 A runnable installed CLI launches with Use access on its installed version.
 Its readiness inventory uses the ordinary launch resolver and executable
 prerequisites without running optional version, login-status or latest-release

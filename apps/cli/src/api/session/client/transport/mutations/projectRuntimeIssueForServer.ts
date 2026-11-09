@@ -12,7 +12,7 @@ export function projectRuntimeIssueForServer(issue: SessionRuntimeIssueV1): Sess
     const providerCode = ProviderErrorCodeV1Schema.safeParse(issue.code);
     const providerCause = providerCode.success ? providerCode : ProviderErrorCodeV1Schema.safeParse(issue.failureCause?.code);
     // Rebuild only the closed code's presentation: no native prose or binding context crosses this boundary.
-    const staticPreview = readSessionStartupFailurePreview(issue.code)
+    const staticPreview = readSessionStartupFailurePreview(issue.code, null, issue.failureCause)
         ?? (providerCause.success ? presentProviderCliRefusal(createProviderErrorV1(providerCause.data)).slice(0, 2).join(' ') : null)
         ?? SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[issue.source];
     if (!issue.agentProcessExitAfterSwitch && !issue.failureCause?.providerErrorMessage

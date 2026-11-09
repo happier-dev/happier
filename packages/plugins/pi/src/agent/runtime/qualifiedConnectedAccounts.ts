@@ -216,7 +216,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
         message: 'Choose an explicit model for the Pi ChatGPT Connected Account. Its native catalog does not establish account entitlement.',
         details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
-          phase: 'client_start', failureReason: 'unknown' } } });
+          phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
     }
     if (claudeSubscription && anthropic) {
       throw new Error('Pi cannot bind Claude Subscription and direct Anthropic credentials simultaneously');

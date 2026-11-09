@@ -2087,6 +2087,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     setActiveStatusBadgeKey,
     sessionPresentationApplierRef,
     sessionStatusState,
+    openModelPicker,
     handleResumeSession,
 }: {
     renderComposer?: SessionComposerRenderer;
@@ -2437,6 +2438,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
       const disabledPluginId = startFailureRecovery?.kind === 'plugin_disabled' ? startFailureRecovery.pluginId : null;
       const startFailureBanner = startFailureNotice
           ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry}
+              {...(startFailureRetry && openModelPicker && session.lastRuntimeIssue?.failureCause?.failureReason === 'model_selection_required'
+                  ? { chooseModel: openModelPicker } : {})}
               {...(disabledPluginId ? { managePlugin: () => {
                   const route = buildPluginDetailRoute('settings', disabledPluginId);
                   router.push({ ...route, params: { ...route.params, ...storeMachineRouteParams(

@@ -99,7 +99,13 @@ export function presentSessionStartupFailureRecovery(codes: readonly unknown[]):
  * presented until every locale has its copy. Broker reachability reuses the
  * credential owner's recovery; other broker refusals share the Team message.
  */
-function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntimeIssueV1): string | null {
+function resolveSessionStartupFailureCause(
+    code: unknown,
+    issue?: SessionRuntimeIssueV1,
+    failureCause = issue?.failureCause,
+): string | null {
+    if (code === 'agent_startup_model_reconciliation_failed'
+        && failureCause?.failureReason === 'model_selection_required') return t('newSession.selectModelTitle');
     const nativeAuth = presentSessionAgentAuthRequired(issue);
     if (nativeAuth) return nativeAuth.message;
     const agentAvailability = readSessionAgentAvailabilityFailure(code);
@@ -145,8 +151,12 @@ function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntime
         : t(`session.startFailure.cause.${preparation}`);
 }
 
-export function presentSessionStartupFailureCause(code: unknown, issue?: SessionRuntimeIssueV1): string | null {
-    const message = resolveSessionStartupFailureCause(code, issue);
+export function presentSessionStartupFailureCause(
+    code: unknown,
+    issue?: SessionRuntimeIssueV1,
+    failureCause = issue?.failureCause,
+): string | null {
+    const message = resolveSessionStartupFailureCause(code, issue, failureCause);
     const preparationCause = issue?.source === 'dependency_failure' ? issue.failureCause?.preparationCause : undefined;
     const preparationMessage = message ?? issue?.sanitizedPreview;
     const presented = preparationCause && preparationMessage
@@ -184,7 +194,7 @@ export type SessionActivationFailureRecovery = 'sign_in_again' | 'choose_account
 export type SessionActivationFailurePresentation = Readonly<{
     message: string;
     detail?: string;
-    recovery: SessionActivationFailureRecovery;
+    recovery: SessionActivationFailureRecovery | null;
 }>;
 
 /** Native continuation has settled before acceptance; retrying the same conversation cannot recover it. */
@@ -197,9 +207,9 @@ export function presentSessionContinuationFailure(
 }
 
 /**
- * The single message and next action for input blocked because its Session could not start on its
- * Agent account. The composer's status line renders it; the blocked row and the quota meter add nothing.
- * A typed refusal names its cause; an untyped one still leads to choosing an account.
+ * The single message and next action for input blocked because its Session could not start.
+ * The composer's status line renders it; the blocked row and the quota meter add nothing.
+ * Account recovery requires a credential or pool refusal; other failures retain their cause.
  */
 export function presentSessionActivationFailure(
     details: PendingActivationFailureDetailsV1 | null | undefined,
@@ -217,7 +227,7 @@ export function presentSessionActivationFailure(
     };
     return {
         message: presentSessionStartupFailureCause(reason) ?? t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'),
-        recovery: 'choose_account',
+        recovery: null,
     };
 }
 

@@ -75,15 +75,19 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
                 errorDetail: { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT, message } };
         }
         if (opened.status !== 'opened') {
-            const code = opened.status === 'runner_exited' ? opened.code : undefined;
+            const code = opened.status === 'construction_failed' ? opened.failure.code : opened.code;
+            const failureCause = opened.status === 'construction_failed' ? opened.failure.failureCause : opened.failureCause;
             const agentId = code === 'agent_cli_not_runnable' && options.backendTarget?.kind === 'backend'
                 ? options.backendTarget.backendId : undefined;
-            const message = readSessionStartupFailurePreview(code, agentId ? resolveAgentDisplayTitle(agentId) : null)
-                ?? 'Agent runner exited before native Session startup completed';
+            const message = readSessionStartupFailurePreview(code, agentId ? resolveAgentDisplayTitle(agentId) : null,
+                failureCause)
+                ?? (opened.status === 'construction_failed'
+                    ? 'Agent native Session construction failed'
+                    : 'Agent runner exited before native Session startup completed');
             const failure = { type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
                 ...(agentId ? { agentId } : {}),
                 errorDetail: { kind: 'launch_error' as const, code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message,
-                    ...(opened.status === 'runner_exited' && opened.failureCause ? { failureCause: opened.failureCause } : {}) } };
+                    ...(failureCause ? { failureCause } : {}) } };
             // The committed birth can accept input even though native open is
             // waiting on its broker. Message admission retains that input;
             // the existing Pending activation owner owns subsequent launches.

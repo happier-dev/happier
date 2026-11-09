@@ -129,7 +129,15 @@ export function readSessionPreparationFailureCode(value: unknown): SessionPrepar
 }
 
 /** The person-facing cause of a closed startup failure, or null when the code names no startup failure. */
-export function readSessionStartupFailurePreview(value: unknown, agentTitle?: string | null): string | null {
+export function readSessionStartupFailurePreview(
+  value: unknown,
+  agentTitle?: string | null,
+  failureCause?: Pick<z.infer<typeof SessionRuntimeFailureCauseV1Schema>, 'failureReason'>,
+): string | null {
+  if (value === 'agent_startup_model_reconciliation_failed'
+    && failureCause?.failureReason === 'model_selection_required') {
+    return 'Choose an explicit model before starting this session. The connected account has no verified default model.';
+  }
   // Titles come from the installed Agent catalog, never from the thrown error.
   if (value === 'agent_cli_not_runnable' && agentTitle) {
     return `Agent '${agentTitle}' cannot run as this member. Install its Happier-managed runtime.`;
@@ -331,7 +339,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
     'usage_limit', 'rate_limit', 'temporary_throttle', 'capacity', 'auth_expired',
     'account_changed', 'refresh_failed', 'permission_denied', 'plan', 'unknown',
     'authentication_required', 'workspace_routing_unauthorized', 'context_window_exceeded',
-    'auth_account_changed', 'unclassified_provider_error',
+    'auth_account_changed', 'unclassified_provider_error', 'model_selection_required',
   ]),
   providerErrorCode: z.optional(z.union([
     z.enum(['ContextWindowExceeded', 'UsageLimitExceeded', 'Unauthorized', 'Other', 'HttpConnectionFailed', 'model_not_found']),

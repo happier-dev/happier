@@ -24,6 +24,7 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
     return message === null ? null : {
         code: issue.code,
         message,
-        retryable: issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled',
+        retryable: issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled'
+            && issue.failureCause?.failureReason !== 'model_selection_required',
     };
 }

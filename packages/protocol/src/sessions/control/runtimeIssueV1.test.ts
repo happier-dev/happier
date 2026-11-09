@@ -11,6 +11,15 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('keeps a missing explicit model distinct from a rejected selected model', () => {
+    const code = 'agent_startup_model_reconciliation_failed';
+    const failureCause = { code, phase: 'client_start', failureReason: 'model_selection_required', retryable: false };
+    const issue = sanitizeSessionRuntimeIssueV1({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+      code, source: 'agent_session_error', failureCause });
+    expect(issue?.failureCause).toEqual(failureCause);
+    expect(readSessionStartupFailurePreview(code, null, issue?.failureCause)).toMatch(/choose.*model/iu);
+    expect(readSessionStartupFailurePreview(code)).toMatch(/could not be applied/iu);
+  });
   it('admits the missing Team model choice as a closed preparation reason', () => {
     const code = 'team_credential_model_selection_required';
     expect(readSessionPreparationFailureCode(code)).toBe(code);
@@ -32,6 +41,8 @@ describe('runtime authentication recovery', () => {
     const preparationCause = { code: 'ENOENT', stage: 'registry_acquisition' };
     const preparation = { phase: 'client_start', failureReason: 'unclassified_provider_error', preparationCause };
     expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: preparation })).toMatchObject({ failureCause: preparation });
+    const sourcePreparation = { ...preparation, preparationCause: { ...preparationCause, code: 'repository-not-found' } };
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: sourcePreparation })).toMatchObject({ failureCause: sourcePreparation });
     for (const invalid of [
       { ...preparationCause, stage: 'PRIVATE_PROVIDER' },
       { ...preparationCause, code: 'PRIVATE provider prose' },

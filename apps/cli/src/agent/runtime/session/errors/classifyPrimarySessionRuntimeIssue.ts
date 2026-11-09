@@ -695,7 +695,8 @@ export function classifyPrimarySessionRuntimeIssue(
       ?? startupAuthenticationFailure?.preview
       ?? (sessionPreparationFailureCode === 'agent_cli_not_runnable'
         ? readSessionStartupFailurePreview(sessionPreparationFailureCode, agentId ? resolveAgentDisplayTitle(agentId) : null) : null)
-      ?? (startupFailureCode ? nativeFailurePreview ?? AGENT_STARTUP_FAILURE_PREVIEWS[startupFailureCode] : null)
+      ?? (startupFailureCode ? nativeFailurePreview
+        ?? readSessionStartupFailurePreview(startupFailureCode, null, failureCause.success ? failureCause.data : undefined) : null)
       ?? (sessionPreparationFailureCode ? readSessionStartupFailurePreview(sessionPreparationFailureCode) : null)
       ?? nativeAuthPreview
       ?? (providerFailure ? presentProviderCliRefusal(providerFailure).slice(0, 2).join(' ') : null)

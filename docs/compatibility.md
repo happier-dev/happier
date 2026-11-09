@@ -1,5 +1,21 @@
 # Compatibility and version skew
 
+## Direct Machine RPC simplification (unreleased 0.3)
+
+Direct RPC request/response envelopes drop `commandReceipt`; route-policy rows
+drop `commandReceiptRequired` and fold `direct_medium_risk_receipted` into
+`direct_ephemeral`. The fallback enum drops `quarantined`,
+`command_receipt_required`, `command_receipt_rejected` and `grant_idle_expired`.
+Atomic one-shot grant consumption still refuses reuse with
+`direct_call_limit_exceeded`; signed grant, proof and identity validation remain.
+Grant `maxCalls`/`maxIdleMs` fields are unchanged.
+
+Protocol, Home route-policy consumers, UI and daemon source reload together under
+the unpublished 0.3 direct cut. This changes no persisted data, supported release
+format or wire epoch. The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped local changes, has no
+Machine peer-mediation RPC contract; no predecessor adapter is introduced.
+
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
 ## Explicit Saved Secret repair (unreleased 0.3)
@@ -1672,6 +1688,16 @@ The runner producer, daemon child-exit projection and strict launch-result reade
 must load matching development source. Older strict development readers may reject
 the new field; an absent cause remains valid. This changes presentation only and
 adds no released-client update floor, migration, wire epoch or retry behavior.
+
+The unreleased 0.3 private `session.open.attest` operation and persisted runner-open
+attestation admit optional `failure` with the existing launch-error code schema,
+construction phase and optional closed `failureCause`. This distinguishes rejected
+native construction from native-mode refusal and a missing acknowledgement; it
+does not create a second diagnostic channel. Forms without `failure` remain valid.
+Older strict development daemon/host readers reject the new field, so the FIN
+replay requires both roles to reload matching source. The released 0.2 tree has no
+corresponding private attestation seam; no released SDK or public wire epoch,
+migration, retry policy or client update floor changes.
 
 The same unreleased closed launch-error schema admits optional `subtype` for
 source-runtime reload diagnostics. Strict development producers and readers
@@ -7411,6 +7437,18 @@ the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 startup diagnostics add `model_selection_required` to the existing
+closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi's refusal of
+an unverified ChatGPT default keeps the existing model reconciliation code and
+phase; matching host, runner decoder, launch Action and UI retain the precise
+reason and present model selection rather than retrying unchanged input. This is
+a direct cut: matching Protocol, Pi and host/UI readers reload together because
+earlier strict development readers reject the added enum value. New readers
+still accept existing causes, including `unknown`. The inspected `../0.2`
+frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no failure-cause carrier
+in its runtime issue schema. No wire epoch, migration or compatibility adapter
+is introduced.
 
 Unreleased 0.3 custom Agent runtime declarations add optional
 `permissionModeMapping`, using the existing native permission mapping grammar.

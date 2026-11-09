@@ -45,6 +45,20 @@ async function useLanguage(language: string): Promise<void> {
 }
 
 describe('closed startup-failure recovery copy', () => {
+    it('asks for a model through both durable status and the launch Action, preserving ordinary reconciliation failures', async () => {
+        await useLanguage('en');
+        const code = 'agent_startup_model_reconciliation_failed';
+        const failure = issue({ code, source: 'agent_session_error',
+            failureCause: { code, phase: 'client_start', failureReason: 'model_selection_required', retryable: false } });
+        expect(presentSessionRuntimeIssue(failure).message).toBe(t('newSession.selectModelTitle'));
+        expect(resolveSessionStartFailureNotice({ issue: failure, sessionActive: false }))
+            .toMatchObject({ message: t('newSession.selectModelTitle'), retryable: false });
+        const launch = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+            launchError: { kind: 'launch_error' as const, code, message: 'Session launch failed', failureCause: failure.failureCause } };
+        expect(resolveSessionSpawnNewResultFailureMessage(launch)).toContain(t('newSession.selectModelTitle'));
+        expect(presentSessionRuntimeIssue({ ...failure, failureCause: { phase: 'client_start', failureReason: 'unknown' } }).message)
+            .toBe(t('session.startFailure.cause.agent_startup_model_reconciliation_failed'));
+    });
     it('shows the retained safe attachment reason through the existing preparation presentation', async () => {
         await useLanguage('en');
         const failure = issue({ code: 'preparation_pending', sanitizedPreview: 'Prompt context could not be prepared.',
@@ -298,7 +312,7 @@ describe('a Session whose Agent account refused queued input: one message and on
         expect(resolveSessionDeliveryFailure([{ ...blocked, pendingDeliveryStatus: 'server_queued' }], session, false)).toBeNull();
     });
 
-    it('leads a credential refusal to signing in again, and a pool or untyped refusal to another account', async () => {
+    it('offers account recovery only for credential or pool refusals', async () => {
         await useLanguage('en');
         expect(presentSessionActivationFailure(reconnect)).toEqual({
             message: t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required'),
@@ -308,7 +322,9 @@ describe('a Session whose Agent account refused queued input: one message and on
         expect(presentSessionActivationFailure({ ...reconnect, runtimeReason: 'no_eligible_member' })).toMatchObject({
             message: t('connectedServices.diagnostics.title.no_eligible_group_member'), recovery: 'choose_account' });
         expect(presentSessionActivationFailure(null)).toEqual({
-            message: t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'), recovery: 'choose_account' });
+            message: t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'), recovery: null });
+        expect(presentSessionActivationFailure({ reason: 'spawn-rejected', runtimeReason: 'transport_unavailable' }))
+            .toMatchObject({ recovery: null });
     });
 
     it('is said once: the Session-level answer carries the typed cause and the blocked row paints no notice', async () => {
