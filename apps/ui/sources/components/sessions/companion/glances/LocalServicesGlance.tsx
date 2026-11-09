@@ -212,11 +212,10 @@ export function LocalServicesGlance(props: LocalServicesGlanceProps) {
 }
 
 /**
- * The Session's live Local services, read once for every glance that shows them (this glance and the
- * Companion's Running section): the inventory watch and launcher read the pane uses, the one ranked
- * row model, and Open in the browser. Mounting it starts the same feeds the pane mounts, never a poll.
+ * The explicit Local services glance shares the pane's inventory watch, launcher read, ranked row
+ * model and Open in the browser. The default Running section consumes the passive count instead.
  */
-export function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serverId: string | null; onAfterDetailsOpen?: () => void }>) {
+function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serverId: string | null; onAfterDetailsOpen?: () => void }>) {
     const machineId = useSessionMachineTarget(input.sessionId, input.serverId)?.machineId ?? null;
     const machine = useMachinePresenceSummary(input.serverId, machineId);
     const feeds = useLocalServiceLiveFeeds({

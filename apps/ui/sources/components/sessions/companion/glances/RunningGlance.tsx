@@ -4,9 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveSessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import {
   WidgetFrame,
   type WidgetFrameStyle,
@@ -14,6 +14,8 @@ import {
 import { Typography } from '@/constants/Typography';
 import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMachineDaemonReadTarget';
+import { useLocalServiceInventoryRunningCount } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryRunningCount';
 import { t } from '@/text';
 
 import {
@@ -27,7 +29,6 @@ import {
   resolveRunningSectionRows,
   type RunningSectionAgentInput,
 } from './glanceModels';
-import { useSessionLocalServicesGlance } from './LocalServicesGlance';
 import { useOpenSessionCompanionPane } from './PaneLinkRow';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -39,7 +40,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   steps: { paddingStart: theme.space.s24 },
 }));
 const NO_AGENTS: readonly RunningSectionAgentInput[] = Object.freeze([]);
-const NO_SERVICES: readonly never[] = Object.freeze([]);
 
 type RunningGlanceProps = Readonly<{
   session: Session;
@@ -56,9 +56,8 @@ type RunningGlanceProps = Readonly<{
 
 /**
  * The Running section (lab crows B): the plan's step, the agents working now with their running clock
- * (Conductor's Lineage), and the services up now. Everything that is not live is one "n more" row per kind
- * that opens its pane. Each fact comes from its owner: the Session's plan, the merged agent roster and its
- * presentation owner, and the Local services feeds the pane mounts. A measuring pass starts no feed.
+ * (Conductor's Lineage), and the pushed services count. Named services and their live feeds belong to
+ * the Services pane or the explicit Local services glance; this default section acquires no daemon watch.
  */
 export function RunningGlance(props: RunningGlanceProps) {
   if (props.measurementOnly) return null;
@@ -96,29 +95,28 @@ function RunningLiveGlance(props: RunningGlanceProps) {
           }),
     [activity],
   );
-  const services = useSessionLocalServicesGlance({
+  const machineId = useSessionMachineTarget(props.sessionId, props.serverId)?.machineId ?? null;
+  const runningServiceCount = useLocalServiceInventoryRunningCount({
     sessionId: props.sessionId,
-    serverId: props.serverId,
+    serverId: resolveMachineDaemonReadServerId(props.serverId),
+    machineId,
+    enabled: false,
   });
-  const serviceRows =
-    services.state.kind === 'ready' ? services.state.rows : NO_SERVICES;
   const rows = React.useMemo(
-    () => resolveRunningSectionRows({ agents, services: serviceRows }),
-    [agents, serviceRows],
+    () => resolveRunningSectionRows({ agents }),
+    [agents],
   );
   const openSessionPane = useOpenSessionCompanionPane(
     props.sessionId,
     props.serverId,
   );
   const openPane = props.onOpenPane ?? openSessionPane;
-  const openService = services.open;
   const [planOpen, setPlanOpen] = React.useState(false);
   if (
     !plan &&
     rows.agents.length === 0 &&
     rows.moreAgents === 0 &&
-    rows.services.length === 0 &&
-    rows.moreServices === 0
+    !(runningServiceCount !== null && runningServiceCount > 0)
   )
     return null;
   const glyph = (name: IconName) => (
@@ -134,7 +132,7 @@ function RunningLiveGlance(props: RunningGlanceProps) {
       title={t('sessionCompanion.sections.running')}
       meta={formatRunningSectionCount({
         agents: rows.agents.length + rows.moreAgents,
-        services: rows.services.length + rows.moreServices,
+        services: runningServiceCount ?? 0,
       })}
       menu={props.menu}
       body={{
@@ -186,40 +184,13 @@ function RunningLiveGlance(props: RunningGlanceProps) {
                 onPress={() => openPane('agents')}
               />
             ) : null}
-            {rows.services.map((service) => {
-              const target = service.openTarget;
-              return (
-                <Item
-                  key={service.id}
-                  testID={`${props.testID}.service`}
-                  density="compact"
-                  icon={
-                    <StatusDot color={theme.colors.status.connected} size={7} />
-                  }
-                  title={service.title}
-                  titleQualifier={service.detail}
-                  {...(target
-                    ? {
-                        rightElement: (
-                          <Icon
-                            name="arrow-square-out"
-                            size={ICON_SIZE.xs}
-                            color={theme.colors.text.tertiary}
-                          />
-                        ),
-                        onPress: () => openService(target),
-                      }
-                    : { onPress: () => openPane('services') })}
-                />
-              );
-            })}
-            {rows.moreServices > 0 ? (
+            {runningServiceCount !== null && runningServiceCount > 0 ? (
               <Item
-                testID={`${props.testID}.moreServices`}
+                testID={`${props.testID}.services`}
                 density="compact"
                 icon={glyph('hard-drives')}
-                title={t('sessionCompanion.sections.more', {
-                  count: rows.moreServices,
+                title={t('sessionCompanion.sections.servicesCount', {
+                  count: runningServiceCount,
                 })}
                 onPress={() => openPane('services')}
               />

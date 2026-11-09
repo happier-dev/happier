@@ -151,32 +151,23 @@ export type RunningSectionRows = Readonly<{
     agents: readonly RunningSectionAgentInput[];
     /** Running agents past the glance's rows; one "n more" row opens Agents. */
     moreAgents: number;
-    services: readonly LocalServicesGlanceRow[];
-    /** Running services past the glance's rows; one "n more" row opens Local services. */
-    moreServices: number;
 }>;
 
 /**
- * Running: only what its owners say is running now — agents working or waiting on you (the activity
- * presentation's phase), then services the Local services owner marks running — up to the glance's rows,
- * agents first. The running items past those rows are one "n more" per kind. Finished or idle agents and
- * stopped scripts are not running: they are neither rows nor overflow, and they stay in their panes.
+ * Running agent rows follow the activity presentation's phase. Finished and idle agents stay in their
+ * pane; live or attention agents past the glance's rows get one "n more" row. Service counts are already
+ * projected by the passive inventory summary owner and need no detail-row projection here.
  */
 export function resolveRunningSectionRows(input: Readonly<{
     agents: readonly RunningSectionAgentInput[];
-    services: readonly LocalServicesGlanceRow[];
     maxRows?: number;
 }>): RunningSectionRows {
     const maxRows = input.maxRows ?? GLANCE_LIST_ROWS;
     const liveAgents = input.agents.filter(agent => agent.phase === 'live' || agent.phase === 'attention');
-    const runningServices = input.services.filter(service => service.running);
     const agents = liveAgents.slice(0, maxRows);
-    const services = runningServices.slice(0, Math.max(0, maxRows - agents.length));
     return {
         agents,
         moreAgents: liveAgents.length - agents.length,
-        services,
-        moreServices: runningServices.length - services.length,
     };
 }
 

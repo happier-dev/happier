@@ -42,6 +42,7 @@ import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/loca
 import { useLocalServiceLiveFeeds } from '@/components/sessions/localServices/useLocalServiceLiveFeeds';
 import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { resolveMachineTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
+import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -183,6 +184,34 @@ function homeServicesFixture(descriptor = readWidgetDescriptor(null, homeService
 }
 
 describe('Companion glance consumed owners', () => {
+    it('reads Running services from pushed summary without acquiring service feeds, and opens details on demand', async () => {
+        const { RunningGlance } = await import('./RunningGlance');
+        const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
+            daemonState: { localServices: { v: 1, state: 'ready', runningCount: 2 } } });
+        await publishMachineInventoryForTest(runtime.accountScope!, [machine]);
+        const onOpenPane = vi.fn();
+        const screen = await renderScreen(<runtime.Wrapper><RunningGlance session={session} sessionId={session.id}
+            serverId={runtime.serverId} frameStyle="plain" measurementOnly={false} testID="running" onOpenPane={onOpenPane} /></runtime.Wrapper>);
+        await flushHookEffects({ cycles: 8 });
+        const serviceRequests = () => boundary.rpc.mock.calls.filter(([request]) => [
+            RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
+            RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+        ].includes(request.method));
+        expect(serviceRequests()).toHaveLength(0);
+        const services = screen.findByTestId('running.services');
+        expect(services).not.toBeNull();
+        await act(async () => { services!.props.onPress(); });
+        expect(onOpenPane).toHaveBeenCalledWith('services');
+        await act(async () => {
+            await publishMachineInventoryForTest(runtime.accountScope!, [{ ...machine,
+                daemonState: { localServices: { v: 1, state: 'ready', runningCount: 0 } } }]);
+        });
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.findByTestId('running.services')).toBeNull();
+        expect(serviceRequests()).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('keeps Home Services quiet for unchanged watch replies and scan cursors, then renders only the changed feed reader', async () => {
         await publishMachineInventoryForTest(runtime.accountScope!, [
             createMachineFixture({ id: 'machine-1', activeAt: Date.now() }),
@@ -571,7 +600,7 @@ describe('Companion glance consumed owners', () => {
         boundary.rpc.mockRejectedValue(new Error('offline'));
         await act(async () => { invalidateLocalServiceLauncherStore({ machineId: 'machine-1', serverId: runtime.serverId,
             accountId: accountScope.accountId, credentialKey: resolveAuthCredentialsScopeKey(runtime.credentials),
-            sessionId: 'session-a', scope: 'workspace', workspaceRoot: null }); });
+            sessionId: 'session-a', scope: 'workspace', workspaceRoot: resolveWorkspaceScopeForSession('session-a')?.rootPath ?? null }); });
         await flushHookEffects({ cycles: 6 });
         await vi.waitFor(() => {
             expect(screen.findByTestId('services.row.inventory:web')).toBeTruthy();
