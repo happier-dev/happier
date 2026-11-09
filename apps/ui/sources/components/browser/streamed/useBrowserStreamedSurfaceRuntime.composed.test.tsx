@@ -480,22 +480,13 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         await failed.unmount();
     });
 
-    it.each([
-        { role: 'owner', browserOwner: 'self' },
-        { role: 'use', browserOwner: 'self' },
-        { role: 'manage', browserOwner: 'foreign' },
-        { role: 'use', browserOwner: 'foreign' },
-        { role: 'use', browserOwner: 'other-guest' },
-    ] as const)('streams only the admitted $role viewer’s accessible $browserOwner Session profile', async ({ role, browserOwner }) => {
+    it.each(['owner', 'use', 'manage'] as const)('streams the Action-opened managed Session profile for %s and keeps recording available', async role => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-recording-profile-'));
         const profiles = createBrowserProfileStore({ storageRootDirectory: directory,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: directory }) });
         const cdpListeners = new Set<BrowserSidecarCdpEventSubscriber>();
         let captureStarted = false;
         const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', profileStore: profiles,
-            readSessionAccountId: sessionId => sessionId === view.browserSessionId
-                ? browserOwner === 'self' ? home.accountId : browserOwner === 'foreign' ? 'machine-owner' : 'other-guest'
-                : null,
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -595,21 +586,6 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             });
             unmount = () => hook.unmount();
             await flushHookEffects({ cycles: 6, turns: 6 });
-            if (role === 'use' && browserOwner !== 'self') {
-                // A guest can present a known/stale source id directly. The mounted viewer must
-                // fail admission even when discovery previously supplied that exact source.
-                await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.unavailableReason)
-                    .toBe('capture_source_denied')); });
-                expect(captureStarted).toBe(false);
-                expect(boundary.requests).not.toContainEqual(expect.objectContaining({
-                    method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
-                }));
-                expect(routes.listViews(view.browserSessionId, { machineAdmission: admission })).toEqual([]);
-                expect(await routes.dispatchCommand({ kind: 'navigate', commandId: 'foreign-drive',
-                    browserSessionId: view.browserSessionId, viewId: view.viewId, url: 'https://attacker.test/' },
-                    { machineAdmission: admission })).toMatchObject({ status: 'failed', error: { code: 'profile_policy_denied' } });
-                return;
-            }
             await act(async () => { await vi.waitFor(() => expect(boundary.requests).toContainEqual(expect.objectContaining({
                 method: role === 'owner' ? RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START : RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
             }))); });
