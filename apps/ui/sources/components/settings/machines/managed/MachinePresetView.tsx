@@ -37,6 +37,7 @@ import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedMachineRouteScope } from './useManagedMachineRouteScope';
 import { KnownHomeGate } from '@/components/sessions/access/KnownHomeGate';
 import { ManagedMachineConfigurationView } from './ManagedMachineConfigurationView';
+import { useMachinePoolName } from '@/sync/engine/machines/useMachinePoolProjections';
 
 function parameter(value: string | string[] | undefined): string {
     return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -95,6 +96,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         || (team.kind === 'bound' && team.state.kind === 'unavailable' && isAuthoritativeScopedSnapshotRefusal(team.state.error)));
     const visiblePreset = teamDenied ? undefined : preset;
     const visibleCreation = teamDenied ? undefined : creation;
+    // A pool-backed preset is managed by whichever connected machine in its pool takes it: the page names the pool.
+    const poolName = useMachinePoolName(props.serverId, visiblePreset?.controllerPoolId ?? null);
     const credentialTargets = React.useMemo(() => visibleCreation ? managedCredentialReceiptTargets(visibleCreation.launch) : [], [visibleCreation?.launch]);
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
     const configuration = useMachinePresetConfiguration({ binding: catalog.binding, resolution: catalog.resolution, client: catalog.client, homeId: catalog.homeId,
@@ -144,9 +147,11 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     // Named apart from same-named machines in this Home, as the Machines list and the configurator chip name it.
     // A controller with no readable name is "the computer that manages it" in sentences, never "Unknown".
     const knownControllerName = getMachineDisplayName(controller, machines ?? undefined) ?? visiblePreset.controllerDisplayName;
-    const controllerName = visiblePreset.controllerPoolId ? t('machinePresets.controllerPool')
+    const pooled = visiblePreset.controllerPoolId !== undefined;
+    const controllerName = pooled ? poolName ?? t('machinePresets.controllerPoolAny')
         : knownControllerName ?? t('managedMachines.receipt.managingComputer');
-    const controllerSentenceName = controller ? getMachineSentenceName(controller, controllerName) : controllerName;
+    const controllerSentenceName = pooled ? poolName ? t('machinePresets.controllerPoolIn', { pool: poolName }) : t('machinePresets.controllerPoolInUnnamed')
+        : controller ? getMachineSentenceName(controller, controllerName) : controllerName;
     const memberCreateOn = visiblePreset.teamAcquireDelegated === true;
     const presenceLabel = (machine: NonNullable<typeof controller>) => {
         const presence = resolveMachinePickerPresence(machine, presenceNowMs, catalog.binding?.isCurrent() ? catalog.binding.scope : null);
@@ -208,7 +213,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const receipt = buildManagedConfigurationReceipt({ launch: visibleCreation.launch, reviewedFacts: configuration.facts ?? undefined,
         credentialPresentations: credentialAccounts.presentationsByKey, ...(lastSaved ? { lastSaved } : {}),
         providerTitle: presentation.title, localized: presentation.localized,
-        controllerName: visiblePreset.controllerPoolId ? controllerName : knownControllerName, homeName, declaredBilling: presentation.billing, setup: visiblePreset.setup,
+        controllerName: pooled ? controllerName : knownControllerName, homeName,
+        ...(pooled ? { pooledController: { sentenceName: controllerSentenceName } } : {}), declaredBilling: presentation.billing, setup: visiblePreset.setup,
         preset: { id: visiblePreset.id, revision: visiblePreset.revision, name: visiblePreset.name },
         presetPolicy: { ...(visiblePreset.retention ? { retention: visiblePreset.retention } : {}),
             ...(visiblePreset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: visiblePreset.wakeOnAcceptedMessage } : {}) },
@@ -245,9 +251,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
                 ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
-        controller: { description: visiblePreset.controllerPoolId ? t('machinePresets.controllerPoolHelp')
+        controller: { description: pooled ? t('machinePresets.controllerPoolHelp')
             : t('managedMachines.controller.required', { controller: controllerSentenceName }),
-            row: visiblePreset.controllerPoolId ? { title: t('machinePresets.controllerPool') } : controllerChoices.length ? {
+            row: pooled ? { title: controllerName, ...(poolName ? { subtitle: t('machinePresets.controllerPoolAny') } : {}),
+                leading: <Icon name="stack" color={theme.colors.text.secondary} /> } : controllerChoices.length ? {
                 title: t('machinePresets.controllerRow'),
                 ...(controller ? { subtitle: presenceLabel(controller) } : {}),
                 choices: controllerChoices.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine, machines ?? undefined) ?? machine.id,

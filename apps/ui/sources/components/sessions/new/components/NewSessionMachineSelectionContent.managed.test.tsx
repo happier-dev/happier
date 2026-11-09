@@ -66,6 +66,9 @@ describe('ordinary managed machine picker demand', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('pool-picker-managed-machine:srv_compute:preset:pooled:2')).not.toBeNull());
         await act(async () => screen.pressByTestId('pool-picker-managed-machine:srv_compute:preset:pooled:2'));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+        // The reviewed preset fixes its choices: the review never claims there are none beside an enabled Use.
+        const { t } = await import('@/text');
+        expect(screen.getTextContent()).not.toContain(t('managedMachines.options.empty', { provider: 'Virtual machine' }));
         await act(async () => screen.pressByTestId('managed-config.use'));
         expect(onSelectManagedMachine.mock.calls[0]?.[0]).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_compute', id: 'pooled', revision: 2 } });
         expect(onSelectManagedMachine.mock.calls[0]?.[0].receipt.controller).toBeUndefined();

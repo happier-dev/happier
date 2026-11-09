@@ -31,6 +31,11 @@ export type ManagedConfigurationReceiptInput = Readonly<{
     controllerName?: string | null; caption?: string; mark?: React.ReactNode;
     /** `account`: no computer manages it (an Account-created machine), so there is no Managed from row (58d U4). */
     managedBy?: 'computer' | 'account';
+    /**
+     * A pool-backed preset: any connected machine in the pool manages it. Its sentences name that machine
+     * ("a machine in Build servers") and no single machine's free CPU and memory can be checked beforehand.
+     */
+    pooledController?: Readonly<{ sentenceName: string }>;
     /** Who each agent signs in as on it: the Account's per-agent default sign-in, by agent title; `null` while read (58d U4). */
     agentSignIn?: readonly Readonly<{ agent: string; account: string | null }>[];
     homeName?: string; preset?: ManagedConfigurationFactsV1['preset']; presetPolicy?: MachineRetentionOverrideV1;
@@ -170,9 +175,9 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         cost: cost.kind === 'price' ? { ...cost, provider: input.providerTitle ?? null,
             prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }
             // An unnamed controller is "the computer that manages it" in the cost's sentences, never "Unknown".
-            : cost.kind === 'local' ? describeLocalCost({ computer: input.controllerName === null ? null
-                : input.controllerName ?? t('managedMachines.receipt.managingComputer'), size,
-                resources: input.created ? undefined : facts?.localResources, omitHeadroom: input.created === true })
+            : cost.kind === 'local' ? describeLocalCost({ computer: input.pooledController ? input.pooledController.sentenceName
+                : input.controllerName === null ? null : input.controllerName ?? t('managedMachines.receipt.managingComputer'), size,
+                resources: input.created ? undefined : facts?.localResources, omitHeadroom: input.created === true || !!input.pooledController })
                 // Without any billing fact no one can be named as the biller (a local VM is billed by no one).
                 : cost };
 }

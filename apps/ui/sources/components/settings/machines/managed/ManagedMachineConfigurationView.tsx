@@ -68,6 +68,7 @@ import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import { ManagedPresetControllerSection } from './ManagedPresetControllerSection';
+import { useMachinePoolName } from '@/sync/engine/machines/useMachinePoolProjections';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
@@ -597,7 +598,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const knownControllerName = liveControllerName ?? savedControllerName;
     // Sentences ("Runs on …", "How much CPU and memory … has free") never say "Unknown": an unnamed controller is the
     // computer that manages it. A delegated receipt also uses that label without reading the controller.
-    const controllerName = pooledDraft ? t('machinePresets.controllerPool') : knownControllerName ?? t('managedMachines.receipt.managingComputer');
+    // A pool-backed preset is managed by whichever connected machine in its pool takes it. Its editor names the pool;
+    // a delegated review never reads the pool list, so it says "its pool".
+    const poolName = useMachinePoolName(props.serverId, props.presetOnly && pooledDraft ? draft?.controllerPoolId || null : null);
+    const controllerName = pooledDraft ? poolName ?? t('machinePresets.controllerPoolAny') : knownControllerName ?? t('managedMachines.receipt.managingComputer');
+    const controllerSentence = !pooledDraft ? controllerName : poolName ? t('machinePresets.controllerPoolIn', { pool: poolName })
+        : t('machinePresets.controllerPoolInUnnamed');
     const activeBinding = catalog.binding;
     const setupProjection = !props.presetOnly && draft?.preset && draft.setup && activeBinding
         ? readCurrentAppShellPluginUiProjection({ scope: activeBinding.scope, declarationsOnly: true }) : null;
@@ -760,6 +766,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const receiptCaption = props.presetOnly ? t('machinePresets.receiptCaption') : undefined;
     const receipt: ManagedReceiptModel = {
         ...(receiptFacts ? buildManagedConfigurationReceipt({ caption: receiptCaption, launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: delegatedAcquire || pooledDraft ? controllerName : knownControllerName, homeName, mark: receiptMark, localized,
+            ...(pooledDraft ? { pooledController: { sentenceName: controllerSentence } } : {}),
             ...(acquireTarget === 'account' && !receiptController ? { managedBy: 'account' as const } : {}), agentSignIn,
             credentialPresentations: credentialAccounts.presentationsByKey, keepEditedBelow: Boolean(keepPolicy && defaultPolicy),
             enrollmentIdentity: props.presetOnly ? undefined : draft?.enrollmentIdentity })
@@ -767,8 +774,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             // names its kind under the provider rather than repeating the provider twice.
             : { caption: receiptCaption ?? t('managedMachines.receipt.yourNewMachine'), mark: receiptMark, name: draft?.name ?? title,
                 spec: (draft?.name ?? title) === title ? presentation.kindTitle ?? '' : title, facts: managedAgentSignInReceiptFacts(agentSignIn),
-                cost: billing?.location === 'local' && knownControllerName
-                    ? { kind: 'local' as const, computer: knownControllerName, meters: [] }
+                cost: billing?.location === 'local' && (pooledDraft || knownControllerName)
+                    ? { kind: 'local' as const, computer: pooledDraft ? controllerSentence : knownControllerName!, meters: [] }
                     : { kind: 'unpriced' as const, provider: title } }),
         onRename: !preset || props.presetOnly ? () => { void rename(); } : undefined,
         keep: keepPolicy && defaultPolicy ? { policy: keepPolicy, defaultPolicy, inherited: !draft?.override && (!props.presetOnly || !draft?.preset?.retention && draft?.preset?.wakeOnAcceptedMessage === undefined),
@@ -977,7 +984,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // Until the launch form is known, which choices it holds is unknown too: the checking line stands for both.
         : draft.optionStatus === 'loading' && !draft.options || launchPresentationPending ? <SurfaceStateCard kind="loading" size="line" title={t('managedMachines.options.loading', { provider: title })} />
         : draft.optionStatus === 'current' && !draft.options?.base && !Object.values(draft.options?.dimensions ?? {}).some(rows => rows.length)
-            ? (awaitsRequiredInput ? null : <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.options.empty', { provider: title })} />)
+            // A reviewed preset fixes its choices: an empty live catalog says nothing about it.
+            ? (awaitsRequiredInput || delegatedAcquire ? null : <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.options.empty', { provider: title })} />)
         : null;
     const kindTitle = presentation.kindTitle;
     // Copy that names a size, a place or a cost only appears where the provider offers them; a container is just what it runs.
@@ -1061,7 +1069,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             })}
         </ItemGroup> : null}
         {/* Drawn once the form is known: before that a form-sized host's one size echo would show and then be replaced. */}
-        {draft && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerName} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
+        {draft && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}
             billing={selectedCapabilities!.billing}
             incomplete={!!missingLaunchField}
             formSize={formSized ? { editor: showLaunchFields && sizeFields.length ? launchForm(sizeFields, formFields.length === 0) : undefined } : undefined}
@@ -1076,7 +1084,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         </ItemGroup> : null}
         {/* How Happier runs on the machine it creates: reviewed after the choices the page leads with, edited only through the draft. */}
         {draft && !props.presetOnly && draft.enrollmentIdentity ? <ManagedEnrollmentIdentitySection testID="managed-config"
-            identity={draft.enrollmentIdentity} computer={controllerName} disabled={busy}
+            identity={draft.enrollmentIdentity} computer={controllerSentence} disabled={busy}
             declared={draft.enrollmentIdentityDefaulted ? managedConfiguratorEnrollmentDefault(draft) : undefined}
             onChange={next => setDraft(current => current ? { ...current, enrollmentIdentity: next } : current)} /> : null}
         {/* Who can use it comes right after what it is: for a Team admin it's the next decision (lab m-presets). */}

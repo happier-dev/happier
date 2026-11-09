@@ -230,6 +230,13 @@ describe('one managed configuration receipt projection', () => {
         // A sentence never says "Runs on Unknown": an unnamed controller is the computer that manages it.
         expect(receipt.cost).toEqual({ kind: 'local', computer: t('managedMachines.receipt.managingComputer'), meters: [] });
     });
+    it('names a pool-backed controller as the pool and checks no single machine\'s headroom', () => {
+        const sentence = t('machinePresets.controllerPoolIn', { pool: 'Build servers' });
+        const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Docker', reviewedFacts: localFacts,
+            controllerName: 'Build servers', pooledController: { sentenceName: sentence } });
+        expect(receipt.facts.find(fact => fact.id === 'controller')?.value).toBe('Build servers');
+        expect(receipt.cost).toEqual({ kind: 'local', computer: sentence, meters: [] });
+    });
     it('keeps "Unknown" out of a requester\'s sentences when the controller has no name it can read (VD G2)', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lima', reviewedFacts: localFacts });
         const computer = t('managedMachines.receipt.managingComputer');

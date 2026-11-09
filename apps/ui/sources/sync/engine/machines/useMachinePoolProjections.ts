@@ -196,3 +196,16 @@ export function useMachinePoolProjections(
 
     return projections;
 }
+
+const NO_POOL_SCOPES: readonly MachinePoolProjectionScope[] = [];
+
+/**
+ * The name of the one pool a surface talks about (a pool-backed preset), from the same projection.
+ * Without a pool id it demands nothing; `null` until this Account's rows name the pool.
+ */
+export function useMachinePoolName(serverId: string, poolId: string | null | undefined): string | null {
+    const scopes = React.useMemo<readonly MachinePoolProjectionScope[]>(
+        () => poolId ? [{ serverId, machines: [] }] : NO_POOL_SCOPES, [serverId, poolId]);
+    const projection = useMachinePoolProjections(scopes)[0];
+    return projection?.pools.find((view) => view.pool.id === poolId)?.pool.name ?? null;
+}

@@ -318,14 +318,18 @@ describe('MachinePoolEditorScreen', () => {
 
     it('keeps a Team member pool read-only using the pool owner access result', async () => {
         const view = poolView(1);
-        boundaries.pools = [{ ...view, pool: { ...view.pool, audience: { kind: 'team', teamId: 'team-build' }, members: [] },
+        boundaries.pools = [{ ...view, pool: { ...view.pool, description: 'Linux hosts for container builds.', audience: { kind: 'team', teamId: 'team-build' }, members: [] },
             availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } }];
         await act(async () => publishBoundaryState());
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const { t } = await import('@/text');
         const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={view.pool.id} />);
-        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development'));
-        expect(screen.findByTestId('settings.machinePools.editor.name')?.props.editable).toBe(false);
-        expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
+        // A member reads the pool: what it is for and that its machines are private, with no form it cannot save.
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.membersPrivate')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Linux hosts for container builds.');
+        expect(screen.getTextContent()).toContain(t('machinePools.membersPrivateHelp', { pool: 'Development' }));
+        expect(screen.findByTestId('settings.machinePools.editor.name')).toBeNull();
+        expect(screen.findByTestId('settings.machinePools.editor.save')).toBeNull();
         expect(screen.findByTestId('settings.machinePools.editor.delete')).toBeNull();
         expect(screen.findByTestId('settings.machinePools.editor.addMachines')).toBeNull();
         expect(boundaries.update).not.toHaveBeenCalled();

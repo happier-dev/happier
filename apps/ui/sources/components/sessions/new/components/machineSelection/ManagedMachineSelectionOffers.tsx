@@ -98,7 +98,9 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
     return React.useMemo(() => homeId && binding?.isCurrent() ? buildManagedMachineSelectionOffers({
         homeId, presets: presets ?? [],
         oneOffTitle: t('managedMachines.picker.oneOff'), oneOffSubtitle: t('managedMachines.picker.oneOffHelp'),
-        describeController: preset => preset.controller?.machineId ? names.get(preset.controller.machineId) : undefined,
+        // A pool-backed preset says where it runs without reading the pool list the picker never demands.
+        describeController: preset => preset.controllerPoolId ? t('machinePresets.controllerPoolAny')
+            : preset.controller?.machineId ? names.get(preset.controller.machineId) : undefined,
         markFor: preset => <ManagedPresetMark serverId={serverId} accountScope={binding.scope} preset={preset} size={MANAGED_PROVISIONER_MARK_SIZE.rail} />,
         onConfigure: configure,
     }) : [], [homeId, binding, presets, serverId, names, configure]);

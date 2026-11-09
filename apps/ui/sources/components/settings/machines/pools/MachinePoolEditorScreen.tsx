@@ -283,7 +283,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         const labels = resolveMachinePoolMemberLabels(availableMachines.map(machine => ({ machineId: machine.id })), machines);
         return {
             id: 'machine-pool-members',
-            inputPlaceholder: t('modelPickerOverlay.searchPlaceholder'),
+            inputPlaceholder: t('settingsMachines.searchPlaceholder'),
             emptyStateLabel: t('machinePools.noMachines'),
             sections: [{
                 kind: 'static',
@@ -529,6 +529,18 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         loading: saving,
         onPress: () => { void save(); },
     };
+    // A Team member reads a shared pool: what it is for and who shares it, never a form it cannot save.
+    const readOnly = existing?.access?.canManage === false;
+    const savedAudience = existing?.pool.audience;
+    const savedTeamName = savedAudience?.kind === 'team'
+        ? teams.rows.find(row => row.team.id === savedAudience.teamId)?.team.name ?? t('machinePools.teamAudience') : null;
+    const pageDescription = readOnly
+        ? existing?.pool.description || (savedTeamName ? t('machinePools.sharedPurpose', { team: savedTeamName }) : t('machinePools.benefit'))
+        : t('machinePools.benefit');
+    const pageMeta = [
+        ...(homeName ? [{ key: 'home', text: homeName, icon: 'house' as const }] : []),
+        ...(savedTeamName ? [{ key: 'team', text: savedTeamName, icon: 'users' as const }] : []),
+    ];
     const cancelAction: PageHeaderPrimaryAction | null = isNew
         ? { testID: 'settings.machinePools.editor.cancel', title: t('common.cancel'), onPress: leave }
         : null;
@@ -538,12 +550,12 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 testID="settings.machinePools.editor.header"
                 alwaysShowTitle={!isNew || draft.name.trim().length > 0}
                 title={pageTitle}
-                description={t('machinePools.benefit')}
-                // A pool has no mark of its own; the Home it belongs to is its one fact.
-                meta={homeName ? [{ key: 'home', text: homeName, icon: 'house' }] : undefined}
+                description={pageDescription}
+                // A pool has no mark of its own; its facts are the Home it belongs to and the Team it is shared with.
+                meta={pageMeta.length ? pageMeta : undefined}
                 // One primary (with Cancel while new): in the page on wide layouts, in the native header
                 // on phones. The page header owns that placement.
-                primaryAction={primaryAction}
+                primaryAction={readOnly ? undefined : primaryAction}
                 cancelAction={cancelAction ?? undefined}
                 actions={(
                     <View style={styles.headerActions}>
@@ -609,6 +621,17 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}${completion}${focus}`);
                 }}
             /></ItemGroup> : null}
+            {readOnly ? <>
+                <ItemGroup title={t('machinePresets.audience')}>
+                    <ManagedFieldRow testID="settings.machinePools.editor.audience" row={{ title: savedTeamName ?? t('machinePresets.ownerPersonal'),
+                        subtitle: t('machinePresets.canUse'), leading: <Icon name="users" color={theme.colors.text.secondary} /> }} />
+                </ItemGroup>
+                {existing?.access?.canViewMembers === false ? <ItemGroup title={t('machinePools.machinesSection')}>
+                    <Item testID="settings.machinePools.editor.membersPrivate" title={t('machinePools.membersPrivate')}
+                        subtitle={t('machinePools.membersPrivateHelp', { pool: existing.pool.name })} subtitleLines={0}
+                        mode="info" showChevron={false} />
+                </ItemGroup> : null}
+            </> : <>
             <ItemGroup title={t('machinePools.basics')} description={t('machinePools.privacy')}>
                 <Item
                     title={t('machinePools.name')}
@@ -735,6 +758,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     disabled={formDisabled}
                 />}
             </ItemGroup>)}</> : null}
+            </>}
         </ItemList>
     </>;
 }

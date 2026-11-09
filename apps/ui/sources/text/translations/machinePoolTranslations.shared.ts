@@ -3,6 +3,8 @@
 export const en = {
     membersPrivate: "Machines are private",
     teamAudience: "Team",
+    sharedPurpose: ({ team }: { team: string }) => `Shared with ${team}. Members use it through the Team’s machine presets.`,
+    membersPrivateHelp: ({ pool }: { pool: string }) => `Only people who manage ${pool} see its machines and whether they’re connected.`,
     teamSharingNotice: "Team members can use this pool through shared machine presets. Its machines stay private; sharing does not grant direct access.",
     machinesSection: "Machines",
     tierPrimaryDescription: "Tried first.",

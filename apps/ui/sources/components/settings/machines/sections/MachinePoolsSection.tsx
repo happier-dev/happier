@@ -15,6 +15,9 @@ import { buildMachinePoolRowPresentations, resolveMachinePoolEnabledMemberLabels
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { machinePoolCollectionHref } from '../collection/machineCollectionModel';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const MEMBER_PREVIEW_LIMIT = 2;
 
@@ -69,6 +72,7 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
     onOpen?: (href: string) => void;
 }>) {
     const router = useRouter();
+    const { theme } = useUnistyles();
     const door = useMachinesDoor();
     const rail = props.variant === 'rail';
     const projections = useMachinePoolProjections(props.groups);
@@ -171,6 +175,12 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                         ? navigateWithFocusReturn.targetRef(rowTestId)
                         : undefined}
                     title={view.pool.name}
+                    // A pool's mark is the one its draft carries, beside every other row's mark.
+                    icon={(
+                        <HappierCollectionListMark rowRole="catalogRow">
+                            <Icon name="stack" size={20} color={theme.colors.text.secondary} />
+                        </HappierCollectionListMark>
+                    )}
                     // The rail shows the members, or what keeps the pool from use, plus
                     // the identity that tells same-named pools apart (present only for duplicates).
                     subtitle={rail
@@ -178,7 +188,8 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                         : (preview || t('machinePools.noMembers'))}
                     // The identity suffix is what tells duplicates apart, so it may wrap rather than be clipped.
                     subtitleLines={rail && identityDetail ? 0 : undefined}
-                    detail={rail ? undefined : detail}
+                    // Private machines leave nothing to count: the subtitle already says so, alone on a phone too.
+                    detail={rail || view.access?.canViewMembers === false ? undefined : detail}
                     accessibilityLabel={[
                         accessibilityName,
                         preview,
