@@ -15,6 +15,7 @@ import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } 
 import { resolveDeclaredInputLeaves } from '../../plugins/actions/inputSchemaTraversal.js';
 import { MachineRecipeReferenceV1Schema } from './machineRecipeReferenceV1.js';
 import { MachineFirewallExposureV1Schema as FirewallExposure } from './machineFirewallV1.js';
+import { AccessCredentialPurposeRefV1Schema, AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviderSelection.js';
 export { MachineFirewallTransitionIntentV1Schema, type MachineFirewallTransitionIntentV1,
     MachineFirewallTransitionBindingsV1Schema, type MachineFirewallTransitionBindingsV1,
     MachineFirewallTransitionFactsV1Schema, type MachineFirewallTransitionFactsV1,
@@ -209,6 +210,7 @@ export type MachineRecipeStepV1 = z.infer<typeof MachineRecipeStepV1Schema>;
 export const MachineRecipeInputReferenceV1Schema = z.object({ kind: z.literal('input'), path: InputPathSchema }).strict();
 type InputReference = z.infer<typeof MachineRecipeInputReferenceV1Schema>;
 const TargetFactValues = z.object({
+    'invocation.credentialFile': Path,
     'daemon.primaryGroup': Name,
     'daemon.username': Name,
     'os.packageManager': z.enum(['apt', 'dnf']),
@@ -243,7 +245,19 @@ const LiteralContent = z.object({ ...Content.options[0].shape, value: bindable(C
 const JsonMergeContent = z.object({ ...Content.options[1].shape, value: bindable(Content.options[1].shape.value) }).strict();
 const TemplateContent = z.object({ ...Content.options[2].shape, variables: TemplateReference.shape.variables }).strict();
 const SecretGrantContent = z.object({ ...Content.options[4].shape, grantRef: bindable(Content.options[4].shape.grantRef) }).strict();
-const FileContent = z.discriminatedUnion('kind', [LiteralContent, JsonMergeContent, TemplateContent, Content.options[3], SecretGrantContent]);
+const Selection = AccessProviderSelectionV1Schema.shape;
+const Credential = AccessCredentialPurposeRefV1Schema.shape.credentialRef;
+const SavedCredential = Credential.def.options[0];
+const CredentialSelection = z.object({ ...Selection,
+    credentialRefs: z.array(z.object({ ...AccessCredentialPurposeRefV1Schema.shape,
+        credentialRef: z.discriminatedUnion('kind', [z.object({ ...SavedCredential.shape,
+            ref: z.union([SavedCredential.shape.ref, MachineRecipeInputReferenceV1Schema]),
+            resourceRevision: z.union([SavedCredential.shape.resourceRevision, MachineRecipeInputReferenceV1Schema]),
+        }).strict(), Credential.def.options[1]]),
+    }).strict()),
+}).strict();
+const SelectedSecretGrantContent = z.object({ kind: z.literal('secretGrant'), credentialSelection: CredentialSelection }).strict();
+const FileContent = z.union([LiteralContent, JsonMergeContent, TemplateContent, Content.options[3], SecretGrantContent, SelectedSecretGrantContent]);
 const SshdProbe = MachineRecipeFileProbeV1Schema.options[0];
 const ProbeContext = SshdProbe.shape.contexts.element;
 const JailPolicy = Fail2banProbe.shape.jails.valueType;
@@ -372,8 +386,20 @@ function boundContent(content: z.infer<typeof FileContent> | undefined, inputs: 
     if (content?.kind === 'literal') return { kind: 'literal', value: boundValue(content.value, inputs, targetFacts) };
     if (content?.kind === 'jsonMerge') return { kind: 'jsonMerge', value: boundValue(content.value, inputs, targetFacts) };
     if (content?.kind === 'template') return { kind: 'literal', value: boundValue(content, inputs, targetFacts) };
-    if (content?.kind === 'secretGrant') return { kind: 'secretGrant', grantRef: boundValue(content.grantRef, inputs, targetFacts) };
+    if (content?.kind === 'secretGrant') {
+        if (!('grantRef' in content)) throw new TypeError('invalid_machine_recipe_inputs');
+        return { kind: 'secretGrant', grantRef: boundValue(content.grantRef, inputs, targetFacts) };
+    }
     return content;
+}
+/** Resolve only authored credential leaves; submitted values never become declarations. */
+export function resolveMachineRecipeCredentialSelectionV1(content: z.infer<typeof SelectedSecretGrantContent>, inputs: unknown) {
+    const selection = content.credentialSelection;
+    return AccessProviderSelectionV1Schema.parse({ ...selection, credentialRefs: selection.credentialRefs.map(reference => ({
+        ...reference, credentialRef: reference.credentialRef.kind === 'savedSecret' ? { ...reference.credentialRef,
+            ref: boundValue(reference.credentialRef.ref, inputs), resourceRevision: boundValue(reference.credentialRef.resourceRevision, inputs),
+        } : reference.credentialRef,
+    })) });
 }
 /** Resolve authored fields only; reviewed JSON values are never recursively interpreted. */
 export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeStepV1;
