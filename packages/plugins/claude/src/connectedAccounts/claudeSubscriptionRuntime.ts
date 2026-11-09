@@ -2,7 +2,7 @@ import { reconcileClaudeNativeAccountConfig } from '../agent/auth/services/nativ
 import { normalizeClaudeOauthProfileEntitlement, type ClaudeOauthCredentialMetadata } from '@happier-dev/protocol/providers/claude/oauth-profile';
 import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import {
-  classifyConnectedAccountTokenEndpointFailure,
+  parseConnectedAccountTokenEndpointFailure,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountMaterialization,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
@@ -111,13 +111,15 @@ type ConnectedAccountCredentialReader =
   Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 function diagnostic(code: string, message: string,
-  credentialRefreshFailureKind?: ReturnType<typeof classifyConnectedAccountTokenEndpointFailure>,
-  httpStatus?: number) {
+  credentialRefreshFailureKind?: ReturnType<typeof parseConnectedAccountTokenEndpointFailure>['kind'],
+  httpStatus?: number,
+  providerErrorCode?: ReturnType<typeof parseConnectedAccountTokenEndpointFailure>['providerErrorCode']) {
   return { code, severity: 'error' as const, message,
     ...(credentialRefreshFailureKind === undefined && httpStatus === undefined ? {} : {
       details: {
         ...(credentialRefreshFailureKind === undefined ? {} : { credentialRefreshFailureKind }),
         ...(httpStatus === undefined ? {} : { httpStatus }),
+        ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
       },
     }),
   };
@@ -268,24 +270,28 @@ async function exchangeTokens(
     };
   }
   if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+    const failure = parseConnectedAccountTokenEndpointFailure(response);
     return {
       status: 'rejected',
       diagnostic: diagnostic(
         'claude_subscription_oauth_rejected',
         'Claude rejected the OAuth request.',
-        classifyConnectedAccountTokenEndpointFailure(response),
+        failure.kind,
         response.status,
+        failure.providerErrorCode,
       ),
     };
   }
   if (response.status < 200 || response.status >= 300) {
+    const failure = parseConnectedAccountTokenEndpointFailure(response);
     return {
       status: 'unavailable',
       diagnostic: diagnostic(
         'claude_subscription_oauth_unavailable',
         `Claude's sign-in service returned HTTP ${response.status}. Try again.`,
-        undefined,
+        failure.kind,
         response.status,
+        failure.providerErrorCode,
       ),
     };
   }
@@ -578,10 +584,13 @@ export function createClaudeSubscriptionConnectedAccountRuntime(
     }, context, options);
     if (exchanged.status === 'rejected') {
       return {
-        status: 'reconnectRequired',
+        status: exchanged.diagnostic.details?.credentialRefreshFailureKind === 'invalid_grant'
+          || exchanged.diagnostic.code === 'claude_subscription_oauth_identity_mismatch'
+          ? 'reconnectRequired' : 'outcomeUnknown',
         diagnostic: exchanged.diagnostic,
       };
     }
+    if (exchanged.status === 'unavailable') return { status: 'outcomeUnknown', diagnostic: exchanged.diagnostic };
     if (exchanged.status !== 'success') return exchanged;
     await writeTokens(context.stagedCredentials, exchanged.tokens, options);
     return connectedResult(exchanged.tokens);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -20,28 +21,17 @@ function credentialStore(values = new Map<string, string>()) {
   };
 }
 
-function activateConnectedAccountRuntime(): PluginConnectedAccountRuntime {
-  const registrations: Array<Readonly<{ id: string; runtime: PluginConnectedAccountRuntime }>> = [];
-  activate({
-    actions: { register() {} },
-    agents: {
-      register() {},
-      registerExternalSessions() {},
-      registerExternalSessionTakeover() {},
-      registerExternalSessionHooks() {},
-      registerExternalSessionObservation() {},
-    },
-    hooks: { register() {} },
-    mcp: { registerDiscoverySource() {} },
-    connectedAccounts: {
-      register(id: string, runtime: PluginConnectedAccountRuntime) {
-        registrations.push({ id, runtime });
-      },
-    },
-  } as Parameters<typeof activate>[0]);
-  const registration = registrations.find(({ id }) => id === 'claude-subscription');
+const testkits: PluginTestkit[] = [];
+afterEach(async () => {
+  await Promise.all(testkits.splice(0).map(testkit => testkit.dispose()));
+});
+
+async function activateConnectedAccountRuntime(): Promise<PluginConnectedAccountRuntime> {
+  const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  testkits.push(testkit);
+  const registration = testkit.registration('connectedAccountDescriptors', 'claude-subscription');
   if (!registration) throw new Error('Claude Subscription Connected Account runtime was not registered');
-  return registration.runtime;
+  return registration;
 }
 
 function readContext(
@@ -78,7 +68,7 @@ describe('Claude Subscription Connected Account', () => {
     ['pro', 'personal'], ['max', 'personal'], ['team', 'workspace'],
     ['enterprise', 'workspace'], [undefined, 'unknown'], ['future-plan', 'unknown'],
   ])('classifies the materialized subscription, not the Agent (%s)', async (plan, expectedScope) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const values = new Map([['accessToken', 'synthetic-access']]);
     if (plan) values.set('subscriptionType', plan);
     const context = readContext('oauth', values);
@@ -98,7 +88,7 @@ describe('Claude Subscription Connected Account', () => {
       oauthAccount: { accountUuid: 'previous-account', emailAddress: 'previous@example.test', organizationUuid: 'previous-org' },
       modelAccessCache: { stale: true }, additionalModelOptionsCache: { stale: true }, cachedExtraUsageDisabledReason: 'stale',
     };
-    const result = await activateConnectedAccountRuntime().materialize(
+    const result = await (await activateConnectedAccountRuntime()).materialize(
       { kind: 'files', fileIds: ['.credentials.json', '.claude.json'] }, context,
       { existingFiles: { '.claude.json': new TextEncoder().encode(JSON.stringify(retainedConfig)) } },
     );
@@ -111,7 +101,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('refuses malformed retained config instead of returning files that discard private state', async () => {
-    await expect(activateConnectedAccountRuntime().materialize(
+    await expect((await activateConnectedAccountRuntime()).materialize(
       { kind: 'files', fileIds: ['.credentials.json', '.claude.json'] },
       readContext('oauth', new Map([['accessToken', 'replacement-access']])),
       { existingFiles: { '.claude.json': new TextEncoder().encode('{malformed') } },
@@ -124,8 +114,9 @@ describe('Claude Subscription Connected Account', () => {
       ['scopes', JSON.stringify(['user:inference'])], ['subscriptionType', 'pro'], ['rateLimitTier', 'default'],
     ]);
     const context = readContext(mode, values);
+    const runtime = await activateConnectedAccountRuntime();
     vi.useFakeTimers();
-    const materialization = activateConnectedAccountRuntime().materialize({ kind: 'files', fileIds: ['.credentials.json'] }, {
+    const materialization = runtime.materialize({ kind: 'files', fileIds: ['.credentials.json'] }, {
       ...context,
       // The remote credential boundary has equal independent round-trip latency.
       credentials: { async get(key, options) {
@@ -150,7 +141,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('refuses missing or cancelled OAuth credentials without returning a native file', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const request = { kind: 'files' as const, fileIds: ['.credentials.json'] };
     const context = readContext('oauth', new Map());
     await expect(runtime.materialize(request, context, { signal: context.signal }))
@@ -175,7 +166,7 @@ describe('Claude Subscription Connected Account', () => {
     { status: 429, headers: { 'retry-after': 'Sun, 17 May 2026 12:00:45 GMT' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: Date.parse('2026-05-17T12:00:45Z') },
     { status: 429, headers: { 'anthropic-ratelimit-tokens-reset': '2026-05-17T12:00:45Z' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: Date.parse('2026-05-17T12:00:45Z') },
   ])('preserves typed quota failure $status and its retry facts', async ({ status, headers, code, retryAfterMs, resetAtMs }) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-05-17T12:00:00Z'));
     try {
       await expect(runtime.quota?.({
@@ -196,7 +187,7 @@ describe('Claude Subscription Connected Account', () => {
     { scenario: 'retried 503', statuses: [500, 503], status: 503 },
     { scenario: 'retried 429', statuses: [503, 429], status: 429 },
   ])('preserves the provider delay for $scenario without another immediate read', async ({ statuses, status }) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     let requests = 0;
     const request = vi.fn(async () => {
       const index = requests++;
@@ -220,8 +211,32 @@ describe('Claude Subscription Connected Account', () => {
     expect(request).toHaveBeenCalledTimes(statuses.length);
   });
 
+  it.each([
+    [401, 'temporarily_unavailable', 'outcomeUnknown', 'provider_401'],
+    [403, 'policy_refusal', 'outcomeUnknown', 'provider_403'],
+    [400, 'invalid_grant', 'reconnectRequired', 'invalid_grant'],
+    [400, 'refresh_token_invalidated', 'reconnectRequired', 'invalid_grant'],
+    [503, 'temporarily_unavailable', 'outcomeUnknown', 'unknown'],
+  ] as const)('uses terminal grant evidence rather than HTTP %s to request reconnect', async (status, error, expected, kind) => {
+    const runtime = await activateConnectedAccountRuntime();
+    const staged = credentialStore();
+    const context = readContext('oauth', new Map([['accessToken', 'old-access'], ['refreshToken', 'old-refresh']]));
+    const result = await runtime.refresh({ ...context,
+      operation: { operationId: 'refresh-failure', configurationRevision: 'configuration-1' },
+      stagedCredentials: staged.store,
+      services: { ...context.services, http: { async request(request) {
+        return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error, error_description: 'private vendor detail' })) };
+      } } },
+    });
+    expect(result).toMatchObject({ status: expected, diagnostic: { details: { credentialRefreshFailureKind: kind, httpStatus: status } } });
+    if (kind === 'invalid_grant') expect(result).toMatchObject({ diagnostic: { details: { providerErrorCode: error } } });
+    expect(JSON.stringify(result)).not.toContain('private vendor detail');
+    expect(staged.values.size).toBe(0);
+    expect(await context.credentials.get('refreshToken')).toBe('old-refresh');
+  });
+
   it.each(['oauth', 'native-import'] as const)('replaces attested context through a successful %s credential refresh', async (authenticationModeId) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const staged = credentialStore();
     const context = readContext(authenticationModeId, new Map([
       ['accessToken', 'current-access'], ['refreshToken', 'current-refresh'],
@@ -247,7 +262,7 @@ describe('Claude Subscription Connected Account', () => {
     expect(staged.values.get('providerAccountId')).toBe('provider-user');
   });
   it('clears prior organization in staged and public metadata when a rotated grant has no context attestation', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const staged = credentialStore();
     const context = readContext('oauth', new Map([
       ['accessToken', 'old-access'], ['refreshToken', 'old-refresh'],
@@ -268,7 +283,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('does not replace an established user with a different user attested by a refresh response', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const staged = credentialStore();
     const context = readContext('oauth', new Map([
       ['accessToken', 'old-access'], ['refreshToken', 'old-refresh'],
@@ -291,7 +306,7 @@ describe('Claude Subscription Connected Account', () => {
 
   it.each(['missing', 'known', 'unavailable', 'mismatch'] as const)(
     'attests legacy unexpired context without rotating tokens (%s)', async scenario => {
-      const runtime = activateConnectedAccountRuntime();
+      const runtime = await activateConnectedAccountRuntime();
       const staged = credentialStore();
       const original = new Map([
         ['accessToken', 'current-access'], ['refreshToken', 'current-refresh'],
@@ -333,9 +348,9 @@ describe('Claude Subscription Connected Account', () => {
   );
 
   it.each([
-    [429, 'unavailable'], [503, 'unavailable'], [401, 'reconnectRequired'],
+    [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [401, 'outcomeUnknown'],
   ] as const)('preserves stored credentials without staging when refresh returns %s (%s)', async (status, outcome) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const original = new Map([['accessToken', 'current-access'], ['refreshToken', 'current-refresh']]);
     const credentials = credentialStore(new Map(original));
     const staged = credentialStore();
@@ -371,15 +386,15 @@ describe('Claude Subscription Connected Account', () => {
       vi.unstubAllEnvs();
       await rm(configDir, { recursive: true, force: true });
     });
-    function mode() {
-      const native = activateConnectedAccountRuntime().authentication.modes['native-import'];
+    async function mode() {
+      const native = (await activateConnectedAccountRuntime()).authentication.modes['native-import'];
       if (!native || native.kind !== 'manual') throw new Error('Claude native-import mode is unavailable');
       return native;
     }
     function context(attempted: ReturnType<typeof credentialStore>) {
       return { attempt: { kind: 'connect', attemptId: 'claude-native' },
         signal: new AbortController().signal, services: { http: { request: vi.fn(() => { throw new Error('Unexpected OAuth request'); }) } },
-        attemptCredentials: attempted.store } as Parameters<ReturnType<typeof mode>['complete']>[1];
+        attemptCredentials: attempted.store } as Parameters<Awaited<ReturnType<typeof mode>>['complete']>[1];
     }
     it('stages the real configured native grant and metadata without refresh, identity inference or native writes', async () => {
       const credentialPath = join(configDir, '.credentials.json');
@@ -389,7 +404,7 @@ describe('Claude Subscription Connected Account', () => {
       await writeFile(join(configDir, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'stale-account', emailAddress: 'stale@example.test' } }));
       const attempted = credentialStore();
       const callContext = context(attempted);
-      const result = await mode().complete({ fields: { source: 'native' } }, callContext);
+      const result = await (await mode()).complete({ fields: { source: 'native' } }, callContext);
       expect(result).toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes });
       expect(result).toHaveProperty('providerIdentity', { accountId: null, email: null, organizationId: null });
       expect(attempted.values.get('accessToken')).toBe('native-access');
@@ -402,14 +417,14 @@ describe('Claude Subscription Connected Account', () => {
     });
     it('reports a missing native login without staging credentials', async () => {
       const attempted = credentialStore();
-      await expect(mode().complete({ fields: { source: 'native' } }, context(attempted))).resolves.toMatchObject({
+      await expect((await mode()).complete({ fields: { source: 'native' } }, context(attempted))).resolves.toMatchObject({
         status: 'unavailable', diagnostic: { code: 'claude_subscription_native_credentials_unavailable' },
       });
       expect(attempted.values.size).toBe(0);
     });
     it('rejects undeclared sources before staging credentials', async () => {
       const attempted = credentialStore();
-      await expect(mode().complete({ fields: { source: 'other' } }, context(attempted))).resolves.toMatchObject({
+      await expect((await mode()).complete({ fields: { source: 'other' } }, context(attempted))).resolves.toMatchObject({
         status: 'rejected', diagnostic: { code: 'claude_subscription_native_source_unsupported' },
       });
       expect(attempted.values.size).toBe(0);
@@ -421,7 +436,7 @@ describe('Claude Subscription Connected Account', () => {
         accessToken: 'native-access', refreshToken: 'native-refresh', expiresAt: Date.now() + 3_600_000, scopes, ...overrides,
       } }));
       const attempted = credentialStore();
-      await expect(mode().complete({ fields: { source: 'native' } }, context(attempted))).resolves.toMatchObject({
+      await expect((await mode()).complete({ fields: { source: 'native' } }, context(attempted))).resolves.toMatchObject({
         status: 'rejected', diagnostic: { code: 'claude_subscription_native_reauthorization_required' },
       });
       expect(attempted.values.size).toBe(0);
@@ -429,7 +444,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('uses the existing OAuth lifecycle and access-only materialization for imported credentials', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const context = readContext('native-import', new Map([
       ['accessToken', 'native-access'], ['refreshToken', 'native-refresh'],
       ['expiresAtMs', String(Date.now() + 3_600_000)],
@@ -444,7 +459,7 @@ describe('Claude Subscription Connected Account', () => {
     expect(payload.claudeAiOauth).not.toHaveProperty('refreshToken');
   });
 
-  it('registers the authentication modes declared by the descriptor', () => {
+  it('registers the authentication modes declared by the descriptor', async () => {
     const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
       ({ id }) => id === 'claude-subscription',
     );
@@ -458,15 +473,15 @@ describe('Claude Subscription Connected Account', () => {
       }),
       expect.objectContaining({ id: 'native-import', kind: 'manual', outcomeReconciliation: 'none' }),
     ]);
-    expect(Object.keys(activateConnectedAccountRuntime().authentication.modes).sort()).toEqual(
+    expect(Object.keys((await activateConnectedAccountRuntime()).authentication.modes).sort()).toEqual(
       descriptor?.authentication.modes.map(({ id }) => id).sort(),
     );
-    expect(activateConnectedAccountRuntime().authentication.modes.oauth)
+    expect((await activateConnectedAccountRuntime()).authentication.modes.oauth)
       .not.toHaveProperty('reconcile');
   });
 
   it('stages a setup token without fabricating first-connect provider identity', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const mode = runtime.authentication.modes['setup-token'];
     if (!mode || mode.kind !== 'manual') {
       throw new Error('Claude setup-token mode is unavailable');
@@ -498,7 +513,7 @@ describe('Claude Subscription Connected Account', () => {
     { response: 'malformed', status: 'unavailable', code: 'claude_subscription_oauth_response_invalid' },
     { response: 'profileMismatch', status: 'rejected', code: 'claude_subscription_profile_identity_mismatch' },
   ] as const)('classifies an OAuth completion from its actual response ($response)', async scenario => {
-    const mode = activateConnectedAccountRuntime().authentication.modes.oauth;
+    const mode = (await activateConnectedAccountRuntime()).authentication.modes.oauth;
     if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('OAuth mode unavailable');
     const attempted = credentialStore();
     const context = {
@@ -527,7 +542,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it.each(['connect', 'reconnect'] as const)('exchanges Claude PKCE OAuth and stages the nested immutable account identity (%s)', async kind => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const mode = runtime.authentication.modes.oauth;
     if (!mode || mode.kind !== 'oauthAuthorizationCode') {
       throw new Error('Claude Subscription OAuth mode is unavailable');
@@ -614,7 +629,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('materializes OAuth as an access-only native credential snapshot', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const credentials = credentialStore(new Map([
       ['accessToken', 'claude-access'],
       ['refreshToken', 'host-owned-refresh'],
@@ -705,7 +720,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it.each(['oauth', 'native-import'] as const)('materializes %s access-only environment without reading the host refresh token', async (mode) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const context = readContext(mode, new Map([
       ['accessToken', 'oauth-access'],
       ['refreshToken', 'host-owned-refresh'],
@@ -721,7 +736,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('materializes setup tokens as native credentials and as the explicitly requested token environment', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const files = await runtime.materialize(
       { kind: 'files', fileIds: ['.credentials.json'] },
       readContext('setup-token', new Map([['setupToken', 'setup-token']])),
@@ -763,7 +778,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it.each(['oauth', 'native-import'] as const)('loads %s account quota through the activated runtime and its declared fixed provider origin', async (authenticationModeId) => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const request = vi.fn(async () => ({
       status: 200,
       finalUrl: 'https://api.anthropic.com/api/oauth/usage',
@@ -862,7 +877,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('does not claim exact quota support for setup-token credentials', async () => {
-    const runtime = activateConnectedAccountRuntime();
+    const runtime = await activateConnectedAccountRuntime();
     const request = vi.fn(async () => ({
       status: 200,
       finalUrl: 'https://api.anthropic.com/api/oauth/usage',
