@@ -1,15 +1,17 @@
-import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
+import type { MachineAgentUpdateFact } from '@/agents/machineAgents/useMachineAgents';
 import { buildMachineUpdateFactsRequest } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableDepDataLike } from '@/capabilities/installablesRegistry';
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import type { MachineCliUpdateFact } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import { buildAgentCliUpdateItem, buildInstallableUpdateItem, buildProbeFailedItem } from './items/buildMachineUpdateItems';
 import type { UpdateItem } from './items/updateItem';
 import { readCapabilityResultData } from './machineCapabilitySnapshots';
 import { observeMachineUpdateRun, type useMachineUpdateRuns } from './machineUpdateRuns';
-import { buildRemoteMachineUpdateFacts, type RemoteMachineUpdateFacts } from './remoteCliUpdateItems';
+import { buildRemoteMachineUpdateFacts, buildRemoteMachineUpdateItem, type RemoteMachineUpdateFacts } from './remoteCliUpdateItems';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 
 export type UpdatesGroup = Readonly<{
@@ -34,7 +36,7 @@ export function readUpdatableInstallables(): readonly InstallableEntry[] {
 function buildMachineRows(params: Readonly<{
     machineId: string;
     online: boolean | null;
-    agents: MachineAgentsSnapshot['agents'];
+    agents: readonly MachineAgentUpdateFact[];
     snapshot: MachineCapabilitiesSnapshot | null;
     runs: ReturnType<typeof useMachineUpdateRuns>;
     installables: readonly InstallableEntry[];
@@ -83,22 +85,22 @@ function buildMachineRows(params: Readonly<{
     return rows;
 }
 
-/**
- * Every machine's update rows, in the fixed order This computer → other machines by name, from
- * facts that are already on this device: machine metadata (K5), the canonical Agent inventory,
- * and cached helper installables. It never fetches — the always-mounted summary and the open surface both call
- * it, so the pill and the list count the same rows.
- */
-export function buildMachineUpdateGroups(params: Readonly<{
+type MachineUpdateGroupInputs = Readonly<{
     accountScope: ServerAccountScope | null;
-    machines: readonly Machine[];
     thisMachineId: string | null;
     thisComputerItem: UpdateItem | null;
     runs: ReturnType<typeof useMachineUpdateRuns>;
-    machineAgents: ReadonlyMap<string, MachineAgentsSnapshot>;
+    machineAgents: ReadonlyMap<string, readonly MachineAgentUpdateFact[]>;
     snapshots: ReadonlyMap<string, MachineCapabilitiesSnapshot | null>;
     installables?: readonly InstallableEntry[];
-}>): Readonly<{
+}> & (Readonly<{ machines: readonly Machine[]; machineFacts?: never }>
+    | Readonly<{ machineFacts: readonly MachineCliUpdateFact[]; machines?: never }>);
+
+/**
+ * Both Updates readers use the same item policy and already-observed facts. Only
+ * the open surface requests display names, sorting and last-seen presentation.
+ */
+export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Readonly<{
     groups: UpdatesGroup[];
     remotes: RemoteMachineUpdateFacts[];
     uncheckedMachineCount: number;
@@ -109,39 +111,52 @@ export function buildMachineUpdateGroups(params: Readonly<{
     const groups: UpdatesGroup[] = [];
     const machineId = params.thisMachineId;
     if (machineId || params.thisComputerItem) {
-        const own = params.machines.find((machine) => machine.id === machineId);
+        const own = params.machines?.find((machine) => machine.id === machineId);
         groups.push({
             id: 'thisComputer',
             kind: 'thisComputer',
             // Without a name this group is titled "This computer", so absence stays absent.
-            machineName: readMachineName(own),
+            machineName: params.machines ? readMachineName(own) : null,
             machineId,
             online: true,
             lastSeenAt: null,
             items: [
                 ...(params.thisComputerItem ? [params.thisComputerItem] : []),
                 ...(machineId
-                    ? buildMachineRows({ machineId, online: true, agents: params.machineAgents.get(machineId)?.agents ?? [], snapshot: params.snapshots.get(machineId) ?? null, runs: params.runs, installables })
+                    ? buildMachineRows({ machineId, online: true, agents: params.machineAgents.get(machineId) ?? [], snapshot: params.snapshots.get(machineId) ?? null, runs: params.runs, installables })
                     : []),
             ],
         });
     }
-    const remotes = buildRemoteMachineUpdateFacts(params.machines, machineId, params.runs, params.snapshots, params.accountScope);
-    for (const remote of remotes) {
+    // The closed summary has no name, sorting or last-seen demand. It consumes
+    // only the Machine owner's selected update facts through the same item policy.
+    const remotes = params.machines
+        ? buildRemoteMachineUpdateFacts(params.machines, machineId, params.runs, params.snapshots, params.accountScope) : [];
+    const remoteRows = params.machineFacts
+        ? params.machineFacts.filter(machine => machine.id !== machineId && machine.metadataPresent).map(machine => ({
+            id: machine.id, name: null, online: machine.online, lastSeenAt: null,
+            ...buildRemoteMachineUpdateItem(machine, params.runs, params.snapshots.get(machine.id) ?? null),
+        }))
+        : remotes.map(remote => {
+            const activeAt = readMachineActivity(remote.machine).activeAt;
+            return { id: remote.machine.id, name: remote.name, online: remote.online,
+                lastSeenAt: typeof activeAt === 'number' && activeAt > 0 ? activeAt : null, cliItem: remote.cliItem };
+        });
+    for (const remote of remoteRows) {
         groups.push({
-            id: `machine:${remote.machine.id}`,
+            id: `machine:${remote.id}`,
             kind: 'machine',
             machineName: remote.name,
-            machineId: remote.machine.id,
+            machineId: remote.id,
             online: remote.online,
-            lastSeenAt: remote.machine.activeAt > 0 ? remote.machine.activeAt : null,
+            lastSeenAt: remote.lastSeenAt,
             items: [
                 remote.cliItem,
                 ...buildMachineRows({
-                    machineId: remote.machine.id,
+                    machineId: remote.id,
                     online: remote.online,
-                    agents: params.machineAgents.get(remote.machine.id)?.agents ?? [],
-                    snapshot: params.snapshots.get(remote.machine.id) ?? null,
+                    agents: params.machineAgents.get(remote.id) ?? [],
+                    snapshot: params.snapshots.get(remote.id) ?? null,
                     runs: params.runs,
                     installables,
                 }),

@@ -4,6 +4,7 @@ import { t } from '@/text';
 import { resolveFleetMachineAvailability } from '@/sync/domains/machines/administration/fleetUnion';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import type { MachineCliUpdateFact } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { buildRemoteCliUpdateItem } from './items/buildMachineUpdateItems';
 import type { UpdateItem } from './items/updateItem';
@@ -18,6 +19,27 @@ export type RemoteMachineUpdateFacts = Readonly<{
     cliItem: UpdateItem;
     lastUpdateSignature: string;
 }>;
+
+/** Shared CLI classification; names and full Machine rows belong to presented detail only. */
+export function buildRemoteMachineUpdateItem(
+    machine: MachineCliUpdateFact,
+    runs: ReturnType<typeof useMachineUpdateRuns>,
+    snapshot: MachineCapabilitiesSnapshot | null,
+): Readonly<{ cliItem: UpdateItem; lastUpdateSignature: string }> {
+    const facts = machine.cliUpdate;
+    const lastUpdateSignature = signatureOfLastUpdate(facts?.lastUpdate ?? null);
+    const cliItem = buildRemoteCliUpdateItem({
+        machineId: machine.id,
+        title: t('updates.happierCliTitle'),
+        online: machine.online,
+        platform: machine.platform,
+        happyCliVersion: machine.happyCliVersion,
+        facts,
+        remoteUpdateAdvertised: facts?.canUpdateRemotely === true ? readRemoteCliUpdateAdvertised(snapshot) : false,
+        task: observeMachineUpdateRun(runs, `${machine.id}:happier-cli`, { lastUpdateSignature }),
+    });
+    return { cliItem, lastUpdateSignature };
+}
 
 /**
  * Every other machine's Happier CLI row, from machine metadata alone (K5 `cliUpdate`, else the
@@ -38,24 +60,12 @@ export function buildRemoteMachineUpdateFacts(
     const names = resolveMachineDisplayNames(machines);
     for (const machine of machines) {
         if (machine.id === thisMachineId || !machine.metadata) continue;
-        const facts = machine.metadata.cliUpdate ?? null;
         const availability = resolveFleetMachineAvailability(accountScope, machine);
         const online = availability === 'unknown' ? null : availability === 'online';
-        const lastUpdateSignature = signatureOfLastUpdate(facts?.lastUpdate ?? null);
-        const cliItem = buildRemoteCliUpdateItem({
-            machineId: machine.id,
-            title: t('updates.happierCliTitle'),
-            online,
-            platform: machine.metadata.platform ?? null,
-            happyCliVersion: machine.metadata.happyCliVersion || null,
-            facts,
-            // K5: the machine's own fact, and the daemon's kinds once a detect has been cached
-            // (`null` = not read yet; a daemon with K5 facts lists the kind exactly when it can).
-            remoteUpdateAdvertised: facts?.canUpdateRemotely === true
-                ? readRemoteCliUpdateAdvertised(snapshots.get(machine.id) ?? null)
-                : false,
-            task: observeMachineUpdateRun(runs, `${machine.id}:happier-cli`, { lastUpdateSignature }),
-        });
+        const { cliItem, lastUpdateSignature } = buildRemoteMachineUpdateItem({ id: machine.id, online,
+            metadataPresent: true, platform: machine.metadata.platform ?? null,
+            happyCliVersion: machine.metadata.happyCliVersion || null, cliUpdate: machine.metadata.cliUpdate ?? null,
+        }, runs, snapshots.get(machine.id) ?? null);
         result.push({ machine, name: names.get(machine.id) ?? machine.id, online, cliItem, lastUpdateSignature });
     }
     return result.sort((a, b) => a.name.localeCompare(b.name));

@@ -1,4 +1,5 @@
-import type { SettingArtifacts, SettingDefinitionMap } from '@happier-dev/protocol';
+import type { SettingArtifacts} from '@happier-dev/protocol/settings/registry/buildSettingArtifacts';
+import type { SettingDefinitionMap } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 /**
  * The subset of catalog artifacts that analytics needs. It intentionally excludes schema shape

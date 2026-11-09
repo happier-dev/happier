@@ -1,4 +1,4 @@
-import type { SettingDefinitionMap } from '@happier-dev/protocol';
+import type { SettingDefinitionMap } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 import type { AnalyticsSettingArtifacts } from './analyticsSettingArtifacts';
 import type { SettingsAnalyticsSnapshot } from './types';

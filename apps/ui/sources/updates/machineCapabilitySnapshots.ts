@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { captureMachineContributionRegistryProjectionScope } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
-import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { areSnapshotProjectionsEquivalent, retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { MACHINE_UPDATE_FACTS_CACHE_SALT } from './machineUpdateFacts';
 
 import {
     getMachineCapabilitiesSnapshot,
@@ -11,46 +10,70 @@ import {
 } from '@/hooks/server/useMachineCapabilitiesCache';
 
 /**
+ * A detect result without the instants it was checked at: the result's own, the cache's
+ * `latestVersionCheckedAt` freshness stamp, and a helper's latest-version check.
+ */
+function withoutCheckTimes(result: unknown): unknown {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+    const { checkedAt: _checkedAt, data, ...rest } = result as Record<string, unknown>;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data === undefined ? rest : { ...rest, data };
+    const { latestVersionCheckedAt: _latestVersionCheckedAt, latestVersionCheck, ...facts } = data as Record<string, unknown>;
+    if (!latestVersionCheck || typeof latestVersionCheck !== 'object' || Array.isArray(latestVersionCheck)) {
+        return { ...rest, data: latestVersionCheck === undefined ? facts : { ...facts, latestVersionCheck } };
+    }
+    const { checkedAt: _checkCheckedAt, ...checkFacts } = latestVersionCheck as Record<string, unknown>;
+    return { ...rest, data: { ...facts, latestVersionCheck: checkFacts } };
+}
+
+function areSnapshotFactsEqual(previous: MachineCapabilitiesSnapshot, next: MachineCapabilitiesSnapshot): boolean {
+    const project = (snapshot: MachineCapabilitiesSnapshot) => ({ ...snapshot.response,
+        results: Object.fromEntries(Object.entries(snapshot.response.results).map(([id, result]) => [id, withoutCheckTimes(result)])) });
+    return areSnapshotProjectionsEquivalent(project(previous), project(next));
+}
+
+/**
  * Observes the capability cache of several machines of one server at once, without fetching. The
  * server scope is explicit so a server switch re-subscribes to that server's entries.
+ * `ignoreCheckTimes` is for a reader that shows no check time (the always-mounted Updates summary):
+ * a re-detect that only moved those instants is not news to it.
  */
 export function useMachinesCapabilitySnapshots(
     serverId: string,
     machineIds: readonly string[],
     accountId?: string | null,
+    options?: Readonly<{ ignoreCheckTimes?: boolean }>,
 ): ReadonlyMap<string, MachineCapabilitiesSnapshot | null> {
+    const ignoreCheckTimes = options?.ignoreCheckTimes === true;
     const key = [...new Set(machineIds)].join('\u0000');
     const active = useActiveServerSnapshot(!serverId);
     const effectiveServerId = serverId || active.serverId;
-    const profilesGeneration = useServerProfilesGeneration();
-    const scopes = React.useMemo(() => {
-        const resolveScopeId = captureServerProfileScopeResolver();
-        return (key ? key.split('\u0000') : []).map(machineId => ({ machineId,
-            ...captureMachineContributionRegistryProjectionScope({ serverId: effectiveServerId, machineId }, resolveScopeId) }));
-    }, [effectiveServerId, key, profilesGeneration]);
+    const machineIdsToRead = React.useMemo(() => key ? key.split('\u0000') : [], [key]);
     const lastRef = React.useRef<ReadonlyMap<string, MachineCapabilitiesSnapshot | null>>(new Map());
-    const scopeKey = JSON.stringify([serverId, accountId ?? null]);
+    const scopeKey = JSON.stringify([effectiveServerId, accountId ?? null]);
     const lastScopeRef = React.useRef(scopeKey);
-    const subscribeRevisions = React.useCallback((listener: () => void) => {
-        const disposers = scopes.map(scope => scope.subscribe(listener));
-        return () => disposers.forEach(dispose => dispose());
-    }, [scopes]);
-    const readRevisions = React.useCallback(() => JSON.stringify(scopes.map(scope => scope.readRevision())), [scopes]);
-    const revisions = React.useSyncExternalStore(subscribeRevisions, readRevisions, readRevisions);
+    // The cache's own objects last compared, so an unchanged read never walks its facts again.
+    const comparedRef = React.useRef(new Map<string, MachineCapabilitiesSnapshot>());
     const subscribe = React.useCallback((listener: () => void) => {
-        const unsubscribes = scopes.map(scope => subscribeMachineCapabilitiesCacheState(scope.machineId, serverId,
-            scope.readRevision() || null, listener, accountId));
+        const unsubscribes = machineIdsToRead.map(machineId => subscribeMachineCapabilitiesCacheState(machineId, effectiveServerId,
+            MACHINE_UPDATE_FACTS_CACHE_SALT, listener, accountId));
         return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-    }, [accountId, revisions, scopes, serverId]);
+    }, [accountId, effectiveServerId, machineIdsToRead]);
     const getSnapshot = React.useCallback(() => {
         const previous = lastRef.current;
-        let changed = previous.size !== scopes.length;
+        let changed = previous.size !== machineIdsToRead.length;
         const next = new Map<string, MachineCapabilitiesSnapshot | null>();
-        for (const scope of scopes) {
-            const id = scope.machineId;
-            const snapshot = getMachineCapabilitiesSnapshot(id, serverId,
-                scope.readRevision() || null, accountId)
-                ?? (lastScopeRef.current === scopeKey ? previous.get(id) ?? null : null);
+        for (const id of machineIdsToRead) {
+            const read = getMachineCapabilitiesSnapshot(id, effectiveServerId,
+                MACHINE_UPDATE_FACTS_CACHE_SALT, accountId);
+            const retained = lastScopeRef.current === scopeKey ? previous.get(id) ?? null : null;
+            // A fresh detect that answers with the same facts is not news to the Updates summary.
+            let snapshot = read === null ? retained : read;
+            if (read !== null && retained !== null && read !== retained && comparedRef.current.get(id) !== read) {
+                snapshot = ignoreCheckTimes ? (areSnapshotFactsEqual(retained, read) ? retained : read) : retainIfEqual(retained, read);
+                comparedRef.current.set(id, read);
+            } else if (read !== null && retained !== null && comparedRef.current.get(id) === read) {
+                snapshot = retained;
+            }
             next.set(id, snapshot);
             if (previous.get(id) !== snapshot) changed = true;
         }
@@ -58,7 +81,7 @@ export function useMachinesCapabilitySnapshots(
         lastScopeRef.current = scopeKey;
         lastRef.current = next;
         return next;
-    }, [accountId, revisions, scopeKey, scopes, serverId]);
+    }, [accountId, effectiveServerId, ignoreCheckTimes, machineIdsToRead, scopeKey]);
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 

@@ -93,6 +93,17 @@ describe('desktop deep-link delivery', () => {
         dispose();
     });
 
+    it('leaves capture intents to the native operation while routing the rest of a mixed batch', async () => {
+        native.invoke.mockResolvedValue(['happier://capture']);
+        const navigate = vi.fn();
+        const dispose = installDesktopDeepLinks(navigate);
+        await flush();
+        native.receive?.(['happier-preview://capture', 'happier-dev:///capture',
+            'happier://capture?target=/private', 'happier://session/kept']);
+        expect(navigate.mock.calls.map(([href]) => href)).toEqual(['/session/kept']);
+        dispose();
+    });
+
     it('preserves strict V4 Home identity and token-only pairing through the existing codec', async () => {
         const home = {
             v: 1 as const,

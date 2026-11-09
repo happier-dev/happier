@@ -187,7 +187,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
             thisMachineId: 'laptop',
             thisComputerItem: null,
             runs: NO_RUNS,
-            machineAgents: new Map([['laptop', { status: 'ready', lastCheckedAt: 8_000, agents: [projectMachineAgent({
+            machineAgents: new Map([['laptop', [projectMachineAgent({
                 agentId: 'claude', title: 'Claude Code', checking: false, stale: false, connectedServices: [], job: null,
                 facts: {
                     agentId: 'claude', title: 'Claude Code',
@@ -197,7 +197,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
                     install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
                     dependencies: [],
                 },
-            })] }]]),
+            })]]]),
             snapshots: new Map([['laptop', snapshot]]),
         });
         expect(groups.map((group) => group.kind)).toEqual(['thisComputer']);
@@ -224,7 +224,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         };
         const { groups } = buildMachineUpdateGroups({ accountScope: { serverId: "home-a", accountId: "updates-account" },
             machines: [machine('laptop')], thisMachineId: 'laptop', thisComputerItem: null, runs: NO_RUNS,
-            machineAgents: new Map([['laptop', { status: 'error', lastCheckedAt: null, agents: [projectMachineAgent({ agentId: 'claude', title: 'Claude Code', facts: null, checking: false, stale: true, connectedServices: [], job: null })] }]]),
+            machineAgents: new Map([['laptop', [projectMachineAgent({ agentId: 'claude', title: 'Claude Code', facts: null, checking: false, stale: true, connectedServices: [], job: null })]]]),
             snapshots: new Map([['laptop', snapshot]]),
         });
         const claude = groups.flatMap((group) => group.items).find((item) => item.id === 'laptop:agent:claude');

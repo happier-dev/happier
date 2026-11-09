@@ -11,7 +11,7 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(smallBasis.properties.local_setting__sidebarWidthPx).toBe(largeBasis.properties.local_setting__sidebarWidthPx);
         expect(typeof smallBasis.properties.local_setting__sidebarWidthPx).toBe('string');
     });
-    it('tracks local theme preference, pane size buckets, acknowledged CLI counts, and ui font scale bucket', () => {
+    it('tracks preferences while keeping retained device history out of analytics', () => {
         const snapshot = buildLocalSettingsSnapshot(localSettingsParse({
             ...localSettingsDefaults,
             themePreference: 'dark',
@@ -65,7 +65,6 @@ describe('buildLocalSettingsSnapshot', () => {
             rightPaneWidthPx: 360,
             detailsPaneWidthPx: 420,
             bottomPaneHeightPx: 180,
-            sessionsListStorageFilter: 'direct',
             acknowledgedCliVersions: {
                 'machine-a': '1.2.3',
                 'machine-b': '2.0.0',
@@ -121,8 +120,8 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__rightPaneWidthPx).toBe('medium');
         expect(snapshot.properties.local_setting__detailsPaneWidthPx).toBe('medium');
         expect(snapshot.properties.local_setting__bottomPaneHeightPx).toBe('small');
-        expect(snapshot.properties.local_setting__sessionsListStorageFilter).toBe('direct');
-        expect(snapshot.properties.local_setting__acknowledgedCliVersions).toBe(2);
+        expect(snapshot.properties).not.toHaveProperty('local_setting__sessionsListStorageFilter');
+        expect(snapshot.properties.local_setting__acknowledgedCliVersions).toBeUndefined();
         expect(snapshot.properties.local_derived__uiFontScaleBucket).toBe('large');
     });
 });

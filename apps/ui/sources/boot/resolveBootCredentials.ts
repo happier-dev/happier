@@ -197,7 +197,10 @@ export async function resolveBootCredentials(platformOs: string, target?: Readon
             // modal owner with which to confirm and prove a new address before saving.
             return webServerOverride || destinationServerId ? null : await readRetainedBootCredentials();
         }
-        if (!await canAdoptBootServerCredentials(bootServerUrl, savedBootServer.id)) {
+        // A remembered address selects a Home; it is not a credential scope.
+        // Keep TokenStorage's identity/URL guard pinned to the saved authority.
+        const credentialServerUrl = savedBootServer.canonicalServerUrl ?? savedBootServer.serverUrl;
+        if (!await canAdoptBootServerCredentials(credentialServerUrl, savedBootServer.id)) {
             return webServerOverride || destinationServerId ? null : await readRetainedBootCredentials();
         }
         if (webServerOverride) {
@@ -206,14 +209,14 @@ export async function resolveBootCredentials(platformOs: string, target?: Readon
             });
         }
         await setActiveServer({ serverId: savedBootServer.id, scope: routineSelectionScope });
-        const credentials = await TokenStorage.getCredentialsForServerUrl(bootServerUrl, {
+        const credentials = await TokenStorage.getCredentialsForServerUrl(credentialServerUrl, {
             serverId: savedBootServer.id,
         });
         if (credentials) {
             return await resolveBootCredentialAdoption(
                 credentials,
                 {
-                    serverUrl: bootServerUrl,
+                    serverUrl: credentialServerUrl,
                     serverId: savedBootServer.id,
                     ...(target ? { accountId: target.accountId } : {}),
                 },
@@ -222,7 +225,7 @@ export async function resolveBootCredentials(platformOs: string, target?: Readon
         // A secondary restores only its saved Account. Native context cannot import a new bearer.
         if (target) return null;
         return await resolveAndPersistStackDesktopBootCredentials({
-            serverUrl: bootServerUrl,
+            serverUrl: credentialServerUrl,
             serverId: savedBootServer.id,
         });
     }

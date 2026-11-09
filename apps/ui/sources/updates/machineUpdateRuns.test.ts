@@ -13,8 +13,8 @@ const rpc = vi.hoisted(() => ({
     pollResults: [] as unknown[],
     invoke: vi.fn(),
     detect: vi.fn(async (..._args: unknown[]) => ({ supported: true, response: { protocolVersion: 1, results: {} } })),
-    jobs: new Map<string, import('@happier-dev/protocol').AgentInstallJob[]>(),
-    jobOutcome: { kind: 'succeeded', version: '2.1.283' } as import('@happier-dev/protocol').AgentInstallJobOutcome,
+    jobs: new Map<string, import('@happier-dev/protocol/daemon/agent-install-jobs').AgentInstallJob[]>(),
+    jobOutcome: { kind: 'succeeded', version: '2.1.283' } as import('@happier-dev/protocol/daemon/agent-install-jobs').AgentInstallJobOutcome,
     machineRpc: vi.fn(),
 }));
 

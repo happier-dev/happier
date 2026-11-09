@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 

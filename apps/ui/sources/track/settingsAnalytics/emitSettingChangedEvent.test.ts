@@ -2,7 +2,7 @@ import { LlmTaskRunnerConfigV1Schema } from '@happier-dev/protocol/llm/tasks/llm
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 const mocks = vi.hoisted(() => ({
     tracking: {
@@ -18,7 +18,7 @@ vi.mock('@/track', () => ({
 }));
 
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { localSettingsDefaults, localSettingsParse } from '@/sync/domains/settings/localSettings';
 import {
     readLocalConversationVoiceSettings,
     voiceSettingsParse,
@@ -330,17 +330,17 @@ describe('emitLocalSettingChangedEvents', () => {
         mocks.tracking.flush.mockResolvedValue(undefined);
     });
 
-    it('captures bucketed pane size and acknowledged CLI count changes through canonical local analytics serializers', () => {
+    it('captures bucketed preferences without publishing retained device history', () => {
         emitLocalSettingChangedEvents({
             previousSettings: { ...localSettingsDefaults, sidebarWidthPx: 420 },
-            nextSettings: {
+            nextSettings: localSettingsParse({
                 ...localSettingsDefaults,
                 sidebarWidthPx: 220,
                 acknowledgedCliVersions: {
                     'machine-a': '1.2.3',
                     'machine-b': '2.0.0',
                 },
-            },
+            }),
             source: 'ui',
         });
 
@@ -357,15 +357,10 @@ describe('emitLocalSettingChangedEvents', () => {
             }),
         );
 
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+        expect(mocks.tracking.capture).not.toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
                 setting_key: 'acknowledgedCliVersions',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 0,
-                next_value: 2,
             }),
         );
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);

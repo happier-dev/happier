@@ -36,6 +36,7 @@ export type DesktopTrayLabels = Readonly<{
     stopConfirmAction: string;
     cancel: string;
     actionFailedTitle: string;
+    quitWaitForSystemTasks: string;
     loginItemFailed: string;
 }>;
 
@@ -91,6 +92,7 @@ export function buildDesktopTrayLabels(t: typeof translate): DesktopTrayLabels {
         stopConfirmAction: t('settingsDesktop.tray.stopConfirmAction'),
         cancel: t('common.cancel'),
         actionFailedTitle: t('settingsDesktop.tray.actionFailedTitle'),
+        quitWaitForSystemTasks: t('settingsDesktop.tray.quitWaitForSystemTasks'),
         loginItemFailed: t('settingsDesktop.tray.loginItemFailed'),
     };
 }

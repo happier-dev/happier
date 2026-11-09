@@ -1,10 +1,9 @@
 import * as React from 'react';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
-import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { selectMachineAgentUpdateFacts, useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useMachineCliUpdateFacts } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { buildUpdatesSummary, isSameUpdatesSummary, type UpdatesSummary } from './items/buildUpdatesSummary';
 import { useMachinesCapabilitySnapshots } from './machineCapabilitySnapshots';
@@ -12,6 +11,8 @@ import { useMachineUpdateRuns, useUnseenUpdateCompletions } from './machineUpdat
 import { buildMachineUpdateGroups, readUpdatableInstallables } from './buildMachineUpdateGroups';
 import { useAppUpdateStatus } from './useAppUpdateStatus';
 import { useThisComputerCliUpdate } from './useThisComputerCliUpdate';
+
+const SUMMARY_SNAPSHOT_READING = { ignoreCheckTimes: true } as const;
 
 /**
  * The stable summary every always-mounted entry reads (sidebar pill, collapsed rail, phone header,
@@ -23,25 +24,24 @@ import { useThisComputerCliUpdate } from './useThisComputerCliUpdate';
 export function useUpdatesSummary(): UpdatesSummary {
     const app = useAppUpdateStatus();
     const thisComputer = useThisComputerCliUpdate();
-    const machines = useAllMachines();
     // The server these machines belong to: its runs and its cached detects, never another server's.
     const serverId = useActiveServerSnapshot().serverId;
     const activeScope = useActiveServerAccountScope();
     const updateScope = activeScope?.serverId === serverId ? activeScope : null;
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const presenceNowMs = useMachinePresenceNowMs(machines);
+    const { machineIds, facts: machineFacts } = useMachineCliUpdateFacts(serverId);
     const runs = useMachineUpdateRuns(serverId);
     const completions = useUnseenUpdateCompletions(updateScope);
     // Observes (never fetches) the cached detects: K6 agent facts and helper latest versions that
     // the installables background owner keeps fresh, and each daemon's `tool.systemTasks` kinds.
-    const machineIds = React.useMemo(() => machines.map((machine) => machine.id), [machines]);
-    const machineAgents = useMachineAgentsByMachine({ serverId, machineIds, load: false });
-    const snapshots = useMachinesCapabilitySnapshots(serverId, machineIds, updateScope?.accountId);
+    const machineAgents = useMachineAgentsByMachine({ serverId, machineIds, load: false,
+        alwaysOnlineMachineId: thisComputer.machineId }, selectMachineAgentUpdateFacts);
+    // The summary shows no check time, so a re-detect that only moved one does not re-render the shell.
+    const snapshots = useMachinesCapabilitySnapshots(serverId, machineIds, updateScope?.accountId, SUMMARY_SNAPSHOT_READING);
     const installables = React.useMemo(readUpdatableInstallables, []);
     const summary = React.useMemo(() => {
         const { groups, uncheckedMachineCount } = buildMachineUpdateGroups({
             accountScope: updateScope,
-            machines,
+            machineFacts,
             thisMachineId: thisComputer.machineId,
             thisComputerItem: thisComputer.item,
             runs,
@@ -50,12 +50,13 @@ export function useUpdatesSummary(): UpdatesSummary {
             installables,
         });
         return buildUpdatesSummary([app.model.item, ...groups.flatMap((group) => group.items)], completions, { uncheckedMachineCount });
-    }, [app.model.item, completions, installables, machineAgents, machines, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs]);
-    // Same values → same object, for every field (`isSameUpdatesSummary`), so entries re-render
-    // only when something they show changed.
-    const stableRef = React.useRef(summary);
-    if (!isSameUpdatesSummary(stableRef.current, summary)) stableRef.current = summary;
-    return stableRef.current;
+    }, [app.model.item, completions, installables, machineAgents, machineFacts, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope]);
+    // Rows change far more often than what the entries show (a newer release of a tool that is
+    // already behind, a re-detect with a new check time): same values → same object, for every
+    // field, so the always-mounted entries re-render only when something they show changed.
+    const published = React.useRef(summary);
+    if (!isSameUpdatesSummary(published.current, summary)) published.current = summary;
+    return published.current;
 }
 
 const NOTHING_TO_SHOW: UpdatesSummary = {

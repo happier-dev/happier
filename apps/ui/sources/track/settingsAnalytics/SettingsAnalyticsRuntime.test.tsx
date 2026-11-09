@@ -81,7 +81,6 @@ describe('SettingsAnalyticsRuntime', () => {
             themePreference: 'dark',
             uiItemDensity: 'cozy',
             uiFontScale: 1.24,
-            sessionsListStorageFilter: 'all',
         };
         analyticsRuntimeState.mainSelectionSnapshot = {
             status: 'ready',

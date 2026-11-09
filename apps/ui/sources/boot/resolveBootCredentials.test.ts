@@ -6,6 +6,7 @@ import { ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, TokenStorage, type AuthCre
 import { setServerUrl, getServerUrl } from '@/sync/domains/server/serverConfig';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
+    adoptHomeProfile,
     getActiveServerId,
     getActiveServerUrl,
     getDeviceDefaultServerId,
@@ -208,6 +209,23 @@ describe('resolveBootCredentials', () => {
         expect(getServerUrl()).toBe('http://localhost:24731');
         expect(getDeviceDefaultServerId()).toBe(deviceDefaultBefore);
         await expectStoredCredentials('https://other.example.test', retained);
+    });
+
+    it('restores canonical identity credentials when a remembered alias selects the Home at cold boot', async () => {
+        const canonicalServerUrl = 'https://canonical.example.test';
+        const enteredUrl = 'https://alias.example.test';
+        const serverIdentityId = 'srv_boot_alias';
+        const credentials = { token: 'alias-home-token' };
+        const profile = await adoptHomeProfile({
+            descriptor: { serverUrl: canonicalServerUrl, canonicalServerUrl, homeServerIdentityId: serverIdentityId },
+            source: 'manual',
+            addressSelection: { serverIdentityId, canonicalServerUrl, enteredUrl, useCanonical: false },
+        });
+        await TokenStorage.setCredentialsForServerUrl(canonicalServerUrl, { serverId: serverIdentityId }, credentials);
+        stubWebRuntime(`https://app.example.test/?server=${encodeURIComponent(enteredUrl)}`);
+        expect(await resolveBootCredentials('web')).toEqual(credentials);
+        expect(getActiveServerSnapshot()).toMatchObject({ serverId: serverIdentityId, serverUrl: canonicalServerUrl });
+        expect(listServerProfiles().find(candidate => candidate.id === profile.id)?.serverUrl).toBe(canonicalServerUrl);
     });
 
     it('leaves an unknown web Home address pending without restoring the retained Home credentials', async () => {

@@ -1,4 +1,4 @@
-import type { SettingDefinition } from '@happier-dev/protocol';
+import type { SettingDefinition } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 import type { SettingsAnalyticsPropertyValue } from './types';
 

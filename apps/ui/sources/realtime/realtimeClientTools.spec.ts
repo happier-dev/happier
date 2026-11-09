@@ -275,7 +275,7 @@ describe('realtimeClientTools action projection', () => {
 
   it('projects a read-only-only tool map for provider SDKs without observable mutation delivery', async () => {
     const { createRealtimeReadOnlyClientTools } = await import('./realtimeClientTools');
-    const { getActionSpec, listVoiceToolActionSpecs } = await import('@happier-dev/protocol');
+    const { getActionSpec, listVoiceToolActionSpecs} = await import('@happier-dev/protocol/actions/actionSpecs');
     const realtimeReadOnlyClientTools = createRealtimeReadOnlyClientTools();
 
     expect(Object.keys(realtimeReadOnlyClientTools).length).toBeGreaterThan(0);

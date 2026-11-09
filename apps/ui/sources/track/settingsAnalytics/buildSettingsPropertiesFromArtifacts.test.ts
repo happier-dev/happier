@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { describe, expect, it } from 'vitest';
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { buildSettingArtifacts} from '@happier-dev/protocol/settings/registry/buildSettingArtifacts';
+import { defineSettingDefinitions } from '@happier-dev/protocol/settings/registry/settingDefinition';
 
 import { buildSettingsPropertiesFromArtifacts } from './buildSettingsPropertiesFromArtifacts';
 import { serializeTrackedSettingEntries } from './serializeTrackedSettingEntries';

@@ -1,7 +1,7 @@
 import { config } from '@/config';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import PostHog from 'posthog-react-native';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { loadSettings } from '@/sync/domains/state/persistence';
 import { settingsParse } from '@/sync/domains/settings/settings';

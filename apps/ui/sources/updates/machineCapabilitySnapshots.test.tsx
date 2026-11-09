@@ -7,6 +7,7 @@ import * as serverProfiles from '@/sync/domains/server/serverProfiles';
 // Install the physical transport boundary before importing the real cache owner.
 const network = await installSessionOpsNetworkBoundary();
 const { useMachinesCapabilitySnapshots } = await import('./machineCapabilitySnapshots');
+const { MACHINE_UPDATE_FACTS_CACHE_SALT } = await import('./machineUpdateFacts');
 beforeEach(() => network.resetRequests());
 
 afterEach(() => standardCleanup());
@@ -28,15 +29,15 @@ describe('useMachinesCapabilitySnapshots', () => {
             expect(capture).not.toHaveBeenCalled();
         } finally { resolve.mockRestore(); capture.mockRestore(); await hook.unmount(); }
     });
-    it('follows readiness invalidation without losing the last answer and never retains another Account snapshot', async () => {
+    it('retains update facts across registry invalidation, follows fresh answers and never retains another Account snapshot', async () => {
         const home = await network.addHome('https://snapshot-readiness.test', 'snapshot-account');
         const { prefetchMachineCapabilities } = await import('@/hooks/server/useMachineCapabilitiesCache');
-        const { publishMachineContributionRegistryProjectionInvalidation, getMachineContributionRegistryProjectionRevision } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
         const target = { machineId: 'snapshot-machine', serverId: home.id };
         const accountLifetime = { scope: { serverId: home.id, accountId: home.accountId },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const prefetch = () => prefetchMachineCapabilities({ ...target, accountLifetime,
-            cacheKeySalt: getMachineContributionRegistryProjectionRevision(target) || null,
+            cacheKeySalt: MACHINE_UPDATE_FACTS_CACHE_SALT,
             request: { requests: [{ id: 'cli.codex' }] } });
         network.respond('capabilities.detect', { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: { version: '1' } } } });
         await prefetch();
@@ -45,7 +46,7 @@ describe('useMachinesCapabilitySnapshots', () => {
         });
         const first = hook.getCurrent().get(target.machineId);
         expect(first?.response.results['cli.codex']).toMatchObject({ data: { version: '1' } });
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation(target));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation(target, 'authority'));
         expect(hook.getCurrent().get(target.machineId)).toBe(first);
         network.respond('capabilities.detect', { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 2, data: { version: '2' } } } });
         await act(async () => prefetch());
@@ -53,6 +54,62 @@ describe('useMachinesCapabilitySnapshots', () => {
         await hook.rerender({ accountId: 'another-account' });
         expect(hook.getCurrent().get(target.machineId)).toBeNull();
         await hook.unmount();
+    });
+
+    it('keeps the published Map and entry when a fresh detect answers with equal content', async () => {
+        const home = await network.addHome('https://snapshot-equal.test', 'snapshot-equal-account');
+        const { prefetchMachineCapabilities } = await import('@/hooks/server/useMachineCapabilitiesCache');
+        const target = { machineId: 'snapshot-equal-machine', serverId: home.id };
+        const accountLifetime = { scope: { serverId: home.id, accountId: home.accountId },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const prefetch = () => prefetchMachineCapabilities({ ...target, accountLifetime,
+            cacheKeySalt: MACHINE_UPDATE_FACTS_CACHE_SALT, request: { requests: [{ id: 'cli.codex' }] } });
+        const answer = () => network.respond('capabilities.detect', { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: { version: '1' } } } });
+        answer();
+        await prefetch();
+        const hook = await renderHook(() => useMachinesCapabilitySnapshots(home.id, [target.machineId], home.accountId));
+        const first = hook.getCurrent();
+        answer();
+        await act(async () => prefetch());
+        expect(hook.getCurrent()).toBe(first);
+        await hook.unmount();
+    });
+
+    it('keeps the summary reader still when a re-detect changes only its check times', async () => {
+        const home = await network.addHome('https://snapshot-clock.test', 'snapshot-clock-account');
+        const { prefetchMachineCapabilities } = await import('@/hooks/server/useMachineCapabilitiesCache');
+        const target = { machineId: 'snapshot-clock-machine', serverId: home.id };
+        const accountLifetime = { scope: { serverId: home.id, accountId: home.accountId },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const prefetch = () => prefetchMachineCapabilities({ ...target, accountLifetime,
+            cacheKeySalt: MACHINE_UPDATE_FACTS_CACHE_SALT, request: { requests: [{ id: 'cli.codex' }, { id: 'dep.helper' }] } });
+        const answer = (checkedAt: number, version = '1') => network.respond('capabilities.detect', { protocolVersion: 1, results: {
+            'cli.codex': { ok: true, checkedAt, data: { version, latestVersion: '2' } },
+            'dep.helper': { ok: true, checkedAt, data: { installed: true, installedVersion: '1',
+                latestVersionCheck: { ok: true, latestVersion: '1', checkedAt } } },
+        } });
+        answer(1);
+        await prefetch();
+        let summaryRenders = 0;
+        const summary = await renderHook(() => {
+            summaryRenders += 1;
+            return useMachinesCapabilitySnapshots(home.id, [target.machineId], home.accountId, { ignoreCheckTimes: true });
+        });
+        const detail = await renderHook(() => useMachinesCapabilitySnapshots(home.id, [target.machineId], home.accountId));
+        const first = summary.getCurrent();
+        try {
+            summaryRenders = 0;
+            for (let checkedAt = 2; checkedAt <= 6; checkedAt++) {
+                answer(checkedAt);
+                await act(async () => prefetch());
+            }
+            expect({ summaryRenders, same: summary.getCurrent() === first }).toEqual({ summaryRenders: 0, same: true });
+            // The Updates surface shows when each Machine was checked, so its reader follows the check time.
+            expect(detail.getCurrent().get(target.machineId)?.response.results['cli.codex']).toMatchObject({ checkedAt: 6 });
+            answer(7, '2');
+            await act(async () => prefetch());
+            expect(summary.getCurrent().get(target.machineId)?.response.results['cli.codex']).toMatchObject({ data: { version: '2' } });
+        } finally { await summary.unmount(); await detail.unmount(); }
     });
 
     it('keeps unchanged snapshots stable when the requested IDs contain duplicates', async () => {

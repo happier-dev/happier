@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ensureMachineUpdateFactsBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { subscribeMachineUpdateFactsInputs } from './machineUpdateFacts';
 
 /** Each Machine keeps its reader while unrelated fleet members arrive or leave. */
 export function useMachineUpdateFactsBackground(input: Readonly<{
@@ -31,15 +32,15 @@ export function useMachineUpdateFactsBackground(input: Readonly<{
         for (const id of ids) {
             if (readers.current.has(id)) continue;
             const accountLifetime = captureActiveServerAccountScopeLifetime();
-            let controller = new AbortController();
+            const controller = new AbortController();
             const start = () => {
-                controller.abort();
-                controller = new AbortController();
                 void ensureMachineUpdateFactsBackground({ serverId: input.serverId, machineIds: [id], signal: controller.signal,
                     ...(accountLifetime ? { accountLifetime } : {}) });
             };
             const unsubscribe = subscribeMachineContributionRegistryProjectionInvalidation({ serverId: input.serverId, machineId: id }, start);
-            readers.current.set(id, { dispose: () => { unsubscribe(); controller.abort(); } });
+            const unsubscribeInputs = subscribeMachineUpdateFactsInputs({ serverId: input.serverId, machineId: id,
+                accountId: accountLifetime?.scope.accountId }, start);
+            readers.current.set(id, { dispose: () => { unsubscribe(); unsubscribeInputs(); controller.abort(); } });
             start();
         }
     }, [input.accountId, enabled, idsKey, input.serverId]);
