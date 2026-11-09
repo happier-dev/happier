@@ -8,6 +8,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const sockets = vi.hoisted(() => ({ connect: vi.fn() }));
@@ -422,10 +423,13 @@ it.each(['service', 'action'] as const)('returns a typed startup refusal for a w
   } else {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
       mode: 'plain', ctx: null, machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport } });
-    const outcome = await deps.sessionSendMessage!({ sessionId, message: 'Keep this prompt for recovery', localId,
-      wait: true, timeoutSeconds: 1, context: { surface: 'ui', authority: 'present_user' },
-      requestedAction: { v: 1, kind: 'enqueue' } });
-    expect(SessionMessageSendResultV1Schema.parse(outcome)).toEqual(expectedFailure);
+    const outcome = await createActionExecutor(deps)('session.message.send', {
+      sessionId, message: 'Keep this prompt for recovery', localId, wait: true, timeoutSeconds: 1,
+      requestedAction: { v: 1, kind: 'enqueue' },
+    }, { surface: 'ui', authority: 'present_user' });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error(outcome.error);
+    expect(SessionMessageSendResultV1Schema.parse(outcome.result)).toEqual(expectedFailure);
   }
   expect(blocked).toBe(true);
   expect(retainedInput).toMatchObject({ localId, content: { t: 'plain', v: {
