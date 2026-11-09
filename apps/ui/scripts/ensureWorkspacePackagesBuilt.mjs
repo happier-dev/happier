@@ -144,10 +144,10 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
     const cli = JSON.parse(await readFile(resolve(repoRoot, 'apps/cli/package.json'), 'utf8'));
     // Discovery shares Expo's esbuild service; retain only one graph in flight.
     const groups = [await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
-      compiler: true, packages, includeDirectories: true })];
+      compiler: true, inventory: true, packages, includeDirectories: true })];
     for (const name of (cli.bundledDependencies ?? []).filter(name => name.startsWith('@happier-dev/plugins-'))) {
       groups.push(await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
-        pluginDirectory: name.slice('@happier-dev/plugins-'.length), packages, includeDirectories: true }));
+        pluginDirectory: name.slice('@happier-dev/plugins-'.length), inventory: true, packages, includeDirectories: true }));
     }
     const sourceInputs = readSourceUiAssetsRecord(resolveSourceUiAssetsRecordPath(inventoryPath))?.inputPaths ?? [];
     return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json',

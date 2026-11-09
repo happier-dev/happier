@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -6,14 +7,19 @@ import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
-import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
+import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 
 test('plugin UI inputs follow consumed workspace files instead of dependency package membership', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-graph-inputs-' });
   for (const [directory, manifest, sources] of [
     ['packages/plugins/fixture', { name: '@happier-dev/plugins-fixture',
-      dependencies: { '@fixture/shared': '*' }, exports: { './happier-plugin-ui/panel': './src/panel.ts' } },
-    { 'src/panel.ts': 'export { value } from "@fixture/shared/ui";', 'src/daemon.ts': 'export const backend = true;' }],
+      dependencies: { '@fixture/shared': '*' }, exports: { './manifest': './src/manifest.ts', './happier-plugin-ui/panel': './src/panel.ts' } },
+    { 'src/panel.ts': 'import "./sideEffect.js"; export { value } from "@fixture/shared/ui"; export { host } from "@happier-dev/plugin-sdk";',
+      'src/sideEffect.ts': 'globalThis.fixtureSideEffect = true;',
+      'src/manifest.ts': 'export { host as PLUGIN_MANIFEST } from "@happier-dev/plugin-sdk";',
+      'src/daemon.ts': 'export const backend = true;' }],
+    ['packages/plugin-sdk', { name: '@happier-dev/plugin-sdk', exports: { '.': './src/index.ts' } },
+    { 'src/index.ts': 'export const host = "provided by the app";' }],
     ['packages/shared', { name: '@fixture/shared', exports: {
       './ui': { 'happier-source': './src/ui.ts' } } },
     { 'src/ui.ts': 'export const value = true;', 'src/machines/managed/provisioners.ts': 'export const unrelated = true;' }],
@@ -29,8 +35,15 @@ test('plugin UI inputs follow consumed workspace files instead of dependency pac
   const files = await readSourcePluginUiBuildInputs(options);
   assert.ok(files.includes('packages/shared/src/ui.ts'), 'a real shared UI input remains observable');
   assert.ok(files.includes('packages/shared/package.json'), 'consumed export resolution remains an input');
+  assert.ok(files.includes('packages/plugins/fixture/src/panel.ts'), 'code-free reexport ancestors choose executable dependency targets');
+  assert.ok(files.includes('packages/plugins/fixture/src/sideEffect.ts'), 'side-effect-only modules remain executable artifact inputs');
+  assert.equal(files.includes('packages/plugin-sdk/src/index.ts'), false,
+    'host-provided modules and evaluated manifest source are not compiled artifact inputs');
   assert.equal(files.includes('packages/shared/src/machines/managed/provisioners.ts'), false,
     'an unrelated file in a consumed package must not invalidate plugin UI');
+  const inventory = await readSourcePluginUiBuildInputs({ ...options, inventory: true });
+  assert.ok(inventory.includes('packages/plugins/fixture/src/manifest.ts'), 'inventory observation retains authored manifests');
+  assert.ok(inventory.includes('packages/plugin-sdk/src/index.ts'), 'inventory observation retains evaluated manifest dependencies');
   const initial = await readBuildInputIdentity({ sourceDir: fixture.root, files });
   await writeFile(fixture.path('packages/plugins/fixture/src/daemon.ts'), 'export const backend = false;');
   const afterBackendEdit = await readSourcePluginUiBuildInputs(options);
@@ -39,6 +52,62 @@ test('plugin UI inputs follow consumed workspace files instead of dependency pac
   await writeFile(fixture.path('packages/shared/src/machines/managed/provisioners.ts'), 'export const unrelated = false;');
   assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
   await writeFile(fixture.path('packages/shared/src/ui.ts'), 'export const value = false;');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
+});
+
+test('plugin UI compiler identity follows the artifact compiler without inventory-only dependencies', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-compiler-graph-' });
+  const paths = {
+    'packages/plugin-sdk/package.json': JSON.stringify({ name: '@happier-dev/plugin-sdk', sideEffects: ['./src/ui/build/policy.ts'] }),
+    'apps/ui/package.json': JSON.stringify({ name: '@fixture/ui' }),
+    'packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts.ts': 'export { compile } from "./barrel.js";',
+    'packages/plugin-sdk/src/ui/build/barrel.ts': 'export { compile } from "./compiler.js"; export { unused } from "./unused.js"; export { policy } from "./policy.js"; export { optional } from "@fixture/potential-effects"; export { eliminated } from "@fixture/eliminated";',
+    'packages/plugin-sdk/src/ui/build/unused.ts': 'export const unused = true;',
+    'packages/plugin-sdk/src/ui/build/policy.ts': 'export const policy = true;',
+    'packages/plugin-sdk/src/ui/build/compiler.ts': 'export const compile = true;',
+    'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs': 'export { unrelated } from "./inventory-only.mjs";',
+    'apps/ui/scripts/inventory-only.mjs': 'export const unrelated = true;',
+    'apps/ui/scripts/sourcePluginUiGraph.mjs': 'export const graphPolicy = true;',
+    'packages/potential-effects/package.json': JSON.stringify({ name: '@fixture/potential-effects', exports: { '.': './src/index.ts' } }),
+    'packages/potential-effects/src/index.ts': 'export const optional = true;',
+    'packages/eliminated/package.json': JSON.stringify({ name: '@fixture/eliminated', sideEffects: false, exports: { '.': './src/index.ts' } }),
+    'packages/eliminated/src/index.ts': 'globalThis.fixtureIgnoredSideEffect = true; export const eliminated = true;',
+  };
+  for (const [path, source] of Object.entries(paths)) {
+    await mkdir(dirname(fixture.path(path)), { recursive: true });
+    await writeFile(fixture.path(path), source);
+  }
+  const files = await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true });
+  assert.ok(files.includes('packages/plugin-sdk/src/ui/build/compiler.ts'));
+  assert.ok(files.includes('packages/plugin-sdk/src/ui/build/barrel.ts'), 'reexport ancestors remain resolver inputs');
+  assert.equal(files.includes('packages/plugin-sdk/src/ui/build/unused.ts'), false, 'eliminated-only subtrees are not executable compiler inputs');
+  assert.ok(files.includes('packages/potential-effects/src/index.ts'), 'unannotated modules remain inputs because edits can activate top-level effects');
+  assert.ok(files.includes('packages/plugin-sdk/src/ui/build/policy.ts'), 'the resolver retains modules named by a sideEffects array');
+  assert.equal(files.includes('packages/eliminated/src/index.ts'), false, 'positive resolver annotations permit unused workspace source to be excluded');
+  assert.ok(files.includes('packages/eliminated/package.json'), 'eliminated workspace annotations still control executable membership');
+  assert.equal(files.includes('apps/ui/scripts/inventory-only.mjs'), false,
+    'declaration inventory changes do not rebuild compiler-identical artifact bytes');
+  const retainedInputs = await readSourcePluginUiBuildInputRecord({ repoDir: fixture.root, files });
+  assert.deepEqual(await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true, retainedInputs }), files,
+    'fresh and retained compiler membership have identical manifest closure');
+  const inventory = await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true, inventory: true });
+  assert.ok(inventory.includes('apps/ui/scripts/inventory-only.mjs'), 'inventory observation retains declaration validation dependencies');
+  const initial = await readBuildInputIdentity({ sourceDir: fixture.root, files });
+  await writeFile(fixture.path('packages/potential-effects/src/index.ts'), 'globalThis.fixtureNewSideEffect = true; export const optional = true;');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial,
+    'adding a top-level effect to a previously pure unannotated module invalidates reuse');
+  await writeFile(fixture.path('packages/potential-effects/src/index.ts'), paths['packages/potential-effects/src/index.ts']);
+  await writeFile(fixture.path('packages/eliminated/package.json'), JSON.stringify({ name: '@fixture/eliminated', exports: { '.': './src/index.ts' } }));
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial,
+    'removing a sideEffects annotation invalidates retained membership');
+  await writeFile(fixture.path('packages/eliminated/package.json'), paths['packages/eliminated/package.json']);
+  await writeFile(fixture.path('apps/ui/scripts/inventory-only.mjs'), 'export const unrelated = false;');
+  assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
+  await writeFile(fixture.path('apps/ui/scripts/sourcePluginUiGraph.mjs'), 'export const graphPolicy = false;');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial,
+    'the canonical graph policy invalidates retained membership without importing inventory validation');
+  await writeFile(fixture.path('apps/ui/scripts/sourcePluginUiGraph.mjs'), paths['apps/ui/scripts/sourcePluginUiGraph.mjs']);
+  await writeFile(fixture.path('packages/plugin-sdk/src/ui/build/compiler.ts'), 'export const compile = false;');
   assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
 });
 

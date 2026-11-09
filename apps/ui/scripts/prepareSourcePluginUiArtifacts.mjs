@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -12,7 +13,7 @@ import { readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord } fro
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../../stack/scripts/utils/fs/json.mjs';
-import { resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
+import { dependencyInputsIdentity, resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
 
 /** Reuse the universal UI artifact compiler and inventory owner without publishing
  * package dist or compiler projections. Callers publish a consumer-owned inventory
@@ -39,7 +40,12 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     packages: compilerPackages, packageInputs: compilerPackageInputs });
   const compilerIdentity = await readBuildInputIdentity({ sourceDir: compilerRepo, files: compilerFiles });
   const esbuildVersion = createRequire(join(compilerRepo, 'packages/plugin-sdk/package.json'))('esbuild/package.json').version;
-  const dependencyInputs = await readJsonIfExists(resolveDependencyRefreshMarkerPath(compilerRepo));
+  const dependencyMarker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(compilerRepo));
+  // Markers written before the semantic projection carry no `inputs`; their whole-record
+  // digest keeps the earlier reuse semantics until the next refresh rewrites the marker.
+  const dependencyIdentity = !dependencyMarker ? null : Array.isArray(dependencyMarker.inputs)
+    ? dependencyInputsIdentity(dependencyMarker.identity, dependencyMarker.inputs)
+    : createHash('sha256').update(JSON.stringify(dependencyMarker)).digest('hex');
   const packages = await readWorkspacePackages(repoRoot);
   const buildOptions = await sourcePluginUiBuildOptions({ repoRoot, packages, resolveSourceImport,
     sourceImportConditions: conditions });
@@ -71,11 +77,15 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
       }
       candidates = [...new Set([artifactOutputDir, retainedRoots.get(manifest.id),
         producerRoots.get(manifest.id), join(projectRoot, 'dist/happier-plugin-ui')].filter(Boolean))];
-      const retainedInputs = candidates.map(root => retainedRecords.get(root)?.sourceInputs).find(Boolean);
+      // The compiler record includes the graph/resolver policy. Rediscover
+      // per-plugin membership when that policy changes rather than carrying
+      // an older, broader graph into every later source preparation.
+      const retainedInputs = candidates.map(root => retainedRecords.get(root))
+        .find(record => record?.compilerInputs?.identity === compilerInputs.identity)?.sourceInputs;
       const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages, packageInputs,
         resolveSourceImport: buildOptions.resolveSourceImport, retainedInputs, inputOptions: conditions });
       const sourceInputs = await readSourcePluginUiBuildInputRecord({ repoDir: repoRoot, files, packages, packageInputs, inputOptions: conditions });
-      const options = [manifest, compilerIdentity, esbuildVersion, dependencyInputs, conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
+      const options = [manifest, compilerIdentity, esbuildVersion, dependencyIdentity, conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
       const inputFingerprint = await readBuildInputIdentity({ sourceDir: repoRoot, files, options });
       for (const root of candidates) {
         const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));

@@ -28,7 +28,8 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, bytes);
   };
-  const plugins = ['alpha', 'beta'].map(directory => ({ directory, manifest: {
+  // Match the 87-plugin inventory in the loaded source preparation measurement.
+  const plugins = ['alpha', 'beta', ...Array.from({ length: 85 }, (_, index) => `plugin${index}`)].map(directory => ({ directory, manifest: {
     schemaVersion: 2, id: `happier.${directory}`, version: '0.0.0', displayName: directory,
     runtime: { apiVersion: 1 }, contributes: { ui: {
       renderers: [{ id: 'panel', kind: 'reactNative', artifact: 'panel' }],
@@ -36,11 +37,16 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
     } },
   } }));
   await write(join(sourceRoot, 'apps/ui/package.json'), JSON.stringify({ name: '@fixture/ui' }));
+  await write(join(sourceRoot, 'packages/plugin-sdk/package.json'), JSON.stringify({
+    name: '@happier-dev/plugin-sdk', exports: { '.': './src/index.ts' },
+  }));
+  await write(join(sourceRoot, 'packages/plugin-sdk/src/index.ts'), 'export const host = "host-v1";');
   for (const { directory } of plugins) {
     const root = join(sourceRoot, 'packages/plugins', directory);
     await write(join(root, 'package.json'), JSON.stringify({ name: `@happier-dev/plugins-${directory}`,
-      version: '0.0.0', exports: { './happier-plugin-ui/panel': { 'happier-source': './src/ui.ts' } } }));
-    await write(join(root, 'src/ui.ts'), 'export { renderSurface } from "./panel";');
+      version: '0.0.0', exports: { './manifest': './src/manifest.ts', './happier-plugin-ui/panel': { 'happier-source': './src/ui.ts' } } }));
+    await write(join(root, 'src/manifest.ts'), 'export { host as PLUGIN_MANIFEST } from "@happier-dev/plugin-sdk";');
+    await write(join(root, 'src/ui.ts'), 'export { renderSurface } from "./panel"; export { host } from "@happier-dev/plugin-sdk";');
     await write(join(root, 'src/panel/index.ts'), 'export function renderSurface() { return "original-panel"; }');
   }
   // Count the genuine external compiler service while preserving both its
@@ -57,7 +63,7 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   t.after(() => boundary.restore());
   const originalWriteFile = fs.promises.writeFile;
   t.mock.method(fs.promises, 'writeFile', (path, ...args) => {
-    if (String(path).startsWith(fixture.root) && /[\\/]preparation[\\/](alpha|beta)\.json$/.test(String(path))) counts.artifacts += 1;
+    if (String(path).startsWith(fixture.root) && /[\\/]preparation[\\/](alpha|beta|plugin\d+)\.json$/.test(String(path))) counts.artifacts += 1;
     return originalWriteFile(path, ...args);
   });
   syncBuiltinESMExports();
@@ -84,20 +90,47 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   };
   const first = await prepare('first');
   assert.ok(counts.graphs > 0);
-  assert.equal(counts.artifacts, 2);
+  assert.equal(counts.artifacts, plugins.length);
   counts.graphs = counts.artifacts = 0;
   const second = await prepare('second', first.outputPath);
   t.diagnostic(`unchanged capture graphs=${counts.graphs} artifacts=${counts.artifacts}`);
   assert.deepEqual(counts, { graphs: 0, artifacts: 0 }, 'unchanged authored inputs need no compiler work');
+  await write(join(sourceRoot, 'packages/plugin-sdk/src/index.ts'), 'export const host = "host-v2";');
+  counts.graphs = counts.artifacts = 0;
+  const hostChanged = await prepare('host-only', second.outputPath);
+  t.diagnostic(`host-only change plugins=${plugins.length} graphs=${counts.graphs} artifacts=${counts.artifacts}`);
+  assert.deepEqual(counts, { graphs: 0, artifacts: 0 }, 'host-only changes compile zero unchanged plugin artifacts');
+  // The remaining cases distinguish the two named graphs; inventory-scale
+  // unchanged-input behavior was exercised above without multiplying each repair.
+  plugins.splice(2);
+  plugins[0].manifest.displayName = 'changed declaration';
+  counts.graphs = counts.artifacts = 0;
+  const manifestChanged = await prepare('manifest-value', hostChanged.outputPath);
+  assert.equal(counts.artifacts, 1, 'the evaluated manifest value remains an artifact compiler input');
   const original = await readFile(join(second.artifactRoots.alpha, 'react-native/panel/entry.cjs.bundle'), 'utf8');
   const { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } = await import('../../../packages/cli-common/packageBuildOutputTargets.mjs');
-  for (const root of Object.values(second.artifactRoots)) {
+  const { SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } = await import('../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs');
+  // Retained records can come from the former graph policy that included host
+  // sources. A policy repair must replace that membership before reuse.
+  for (const root of Object.values(manifestChanged.artifactRoots)) {
+    const path = join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD);
+    const record = JSON.parse(await readFile(path, 'utf8'));
+    const sourceInputs = await readSourcePluginUiBuildInputRecord({ repoDir: sourceRoot,
+      files: [...record.sourceInputs.files, 'packages/plugin-sdk/src/index.ts'], inputOptions: SOURCE_PLUGIN_UI_IMPORT_CONDITIONS });
+    await writeFile(path, JSON.stringify({ ...record, sourceInputs,
+      compilerInputs: { ...record.compilerInputs, identity: 'previous-graph-policy' } }));
+  }
+  counts.graphs = counts.artifacts = 0;
+  const migrated = await prepare('graph-policy', manifestChanged.outputPath);
+  assert.ok(counts.graphs > 0, 'changed compiler policy rediscovers retained graph membership');
+  assert.equal(counts.artifacts, 0, 'discarding broader old metadata must not recompile identical artifacts');
+  for (const root of Object.values(migrated.artifactRoots)) {
     const path = join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD);
     const { compilerInputs, sourceInputs, ...legacy } = JSON.parse(await readFile(path, 'utf8'));
     await writeFile(path, JSON.stringify(legacy));
   }
   counts.graphs = counts.artifacts = 0;
-  const legacy = await prepare('legacy', second.outputPath);
+  const legacy = await prepare('legacy', migrated.outputPath);
   assert.ok(counts.graphs > 0, 'legacy records rediscover input graphs without optional retained metadata');
   assert.equal(counts.artifacts, 0, 'legacy records retain valid artifacts');
 
@@ -128,7 +161,7 @@ test('unchanged captured plugin UI inputs run zero graph or artifact compilers',
   counts.graphs = counts.artifacts = 0;
   const differentConditions = await prepare('conditions', repaired.outputPath, ['browser']);
   assert.ok(counts.graphs > 0, 'changed resolver conditions must rediscover the graph');
-  assert.equal(counts.artifacts, 2, 'resolver conditions are compiler inputs for both plugins');
+  assert.equal(counts.artifacts, plugins.length, 'resolver conditions are compiler inputs for every plugin');
   counts.graphs = counts.artifacts = 0;
   await prepare('same-conditions', differentConditions.outputPath, ['browser']);
   assert.deepEqual(counts, { graphs: 0, artifacts: 0 }, 'unchanged resolver conditions retain zero compiler work');

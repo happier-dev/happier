@@ -1,10 +1,10 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { packageNameOfSpecifier, SOURCE_CONDITION, workspaceSourceCompilerPaths } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
-import { appendBoundedTail, redactFailureDiagnostic, runCapture } from '../utils/proc/proc.mjs';
+import { appendBoundedTail, redactFailureDiagnostic } from '../utils/proc/proc.mjs';
 import { WorkspacePackageBuildError } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
@@ -25,7 +25,7 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
   const workDir = await mkdtemp(join(runtimeDir, '.author-emission-'));
   try {
     const { withDistProjectCompilerArgs } = await import('../../../../scripts/workspaces/buildTypeScriptPackageDist.mjs');
-    const { resolveTypeScriptCliInvocation, matchesNativeTypeScriptInputVersion } = await import('../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
+    const { default: ts } = await import('typescript');
     // Run the existing package classification, closure and physical copier
     // directly from source, not from a workspace dist prerequisite.
     const ownerPath = join(workDir, 'workspaces.mjs');
@@ -47,15 +47,17 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
       }
     };
     // Reuse only the selected immutable bundle's package outputs. Workspace
-    // currentness owns captured inputs and dependency declarations; no second
+    // currentness owns captured inputs and declared dependencies; no second
     // cache or installation-wide invalidation policy is needed here.
     const additionalInputPaths = [
       ...Object.keys(ownerBuild.metafile.inputs).map(path => resolve(path)),
       join(repoDir, 'packages/cli-common/sourceRuntimeEntries.mjs'),
       join(repoDir, 'apps/stack/scripts/build/source_author_packages.mjs'),
+      fileURLToPath(import.meta.resolve('esbuild/package.json')),
+      fileURLToPath(import.meta.resolve('typescript/package.json')),
     ].filter(path => existsSync(path));
     const inputIdentities = {};
-    let compilers = 0;
+    let javascriptEmissions = 0;
     // Host bundle membership is current even when the compiled public closure
     // is unchanged. These manifests are inventory, not compiler output.
     for (const bundle of bundles.filter(bundle => !closure.has(bundle.packageName))) {
@@ -88,52 +90,93 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
         const compilerDir = join(workDir, ...bundle.packageName.split('/'));
         await mkdir(compilerDir, {recursive:true});
         const outputDir = join(compilerDir, 'emitted');
-        const buildInfoPath = join(compilerDir, 'build.tsbuildinfo');
-        const args = await withDistProjectCompilerArgs(['--outDir',outputDir,'--tsBuildInfoFile',buildInfoPath,
-          '--incremental','--noCheck'], {projectPath:join(bundle.srcDir,'tsconfig.json'),workDir:compilerDir,
-          compilerOptions:{rootDir:repoDir,customConditions:[SOURCE_CONDITION],paths:sourcePaths,declaration:true,
-            noEmit:false,emitDeclarationOnly:false}});
-        const invocation = resolveTypeScriptCliInvocation({args,workspaceDir:repoDir,admissionClass:'source-bundle',env});
+        const args = await withDistProjectCompilerArgs([], {projectPath:join(bundle.srcDir,'tsconfig.json'),
+          workDir:compilerDir,compilerOptions:{customConditions:[SOURCE_CONDITION],paths:sourcePaths}});
+        const projectPath = args[args.indexOf('--project') + 1];
+        const parsed = ts.getParsedCommandLineOfConfigFile(projectPath, {}, {
+          ...ts.sys, onUnRecoverableConfigFileDiagnostic(diagnostic) {
+            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+          },
+        });
+        if (parsed.errors.length) throw new Error(ts.formatDiagnostics(parsed.errors, {
+          getCanonicalFileName:path=>path,getCurrentDirectory:()=>repoDir,getNewLine:()=> '\n',
+        }));
+        const sourceDir = join(bundle.srcDir, 'src');
+        const inputFiles = parsed.fileNames.filter(path => path.startsWith(sourceDir + sep));
+        const inputs = new Map();
+        for (const path of inputFiles) inputs.set(path, await readSourceInput(path));
         const compilerStarted = performance.now();
-        await runCapture(invocation.command, [...invocation.argsPrefix,...args], {cwd:repoDir,ownedProcessGroup:true,env,signal});
-        compilers++;
-        console.error(`[source-author] phase=compiler package=${bundle.packageName} elapsedMs=${Math.round(performance.now()-compilerStarted)}`);
-        const info = JSON.parse(await readFile(buildInfoPath, 'utf8'));
-        for (const [index, file] of info.fileNames.entries()) {
-          // Native TypeScript records its built-in libraries as bare logical
-          // names, not paths relative to this caller-owned compiler directory.
-          if (/^lib(?:\.[^/\\]+)?\.d\.ts$/.test(file)) continue;
-          const path = realpathSync(resolve(compilerDir, file));
-          // These are this build's dependency-first outputs, already traced to
-          // consumed source bytes above. Checkout/installed dist stays forbidden.
-          if (path.startsWith(realpathSync(authorRoot) + sep)) continue;
-          const key = relative(realpathSync(repoDir), path).replaceAll('\\', '/');
-          if (!/^(?:packages|apps)\//.test(key)) continue;
-          if (isFirstPartyBuiltInput(key, workspacePackages)) {
-            throw new Error(`Source author closure consumed first-party built code: ${key}`);
-          }
-          const contents = await readSourceInput(path);
-          const version = typeof info.fileInfos[index] === 'string' ? info.fileInfos[index] : info.fileInfos[index].version;
-          // The compiler's consumed input version is the authority. An editor
-          // undo during emission cannot cache the graph under restored bytes.
-          if (!await matchesNativeTypeScriptInputVersion(contents, version)) sourceInputDigests[relative(repoDir,path).split(sep).join('/')] = null;
+        const emission = await build({entryPoints:inputFiles.filter(path => !/\.d\.[cm]?ts$/.test(path)),
+          outbase:sourceDir,outdir:outputDir,bundle:false,platform:'node',format:'esm',
+          ...(parsed.options.sourceMap ? {sourcemap:'external'} : {}),
+          tsconfig:projectPath,logLevel:'silent',metafile:true,plugins:[{
+            name:'captured-author-inputs',setup(builder) {
+              builder.onLoad({filter:/\.[cm]?[jt]sx?$/},async ({path}) => {
+                const contents = inputs.get(path) ?? await readSourceInput(path);
+                return {contents:contents.toString(),loader:/\.tsx$/.test(path)?'tsx':/\.[cm]?ts$/.test(path)?'ts':'js'};
+              });
+            },
+          }]});
+        for (const path of Object.keys(emission.metafile.inputs)) {
+          const key = relative(repoDir, resolve(path)).replaceAll('\\', '/');
+          if (isFirstPartyBuiltInput(key, workspacePackages)) throw new Error(`Source author closure consumed first-party built code: ${key}`);
         }
+        for (const output of Object.values(emission.metafile.outputs)) {
+          if (!output.entryPoint) continue;
+          for (const imported of output.imports) {
+            if (!imported.path.startsWith('.') || !imported.path.endsWith('.json')) continue;
+            const path = resolve(dirname(resolve(output.entryPoint)), imported.path);
+            const contents = await readSourceInput(path);
+            inputs.set(path, contents);
+            const target = join(outputDir, relative(sourceDir,path));
+            await mkdir(dirname(target), {recursive:true});
+            await writeFile(target, contents);
+          }
+        }
+        console.error(`[source-author] phase=javascript package=${bundle.packageName} elapsedMs=${Math.round(performance.now()-compilerStarted)}`);
+        javascriptEmissions++;
         owner.bundleWorkspacePackageWithRuntimeDependencies({...bundle,destDir,
           resolveFromPackageJsonPath: join(sourceRepoDir, relative(repoDir, bundle.srcDir), 'package.json'),
-          dereferenceRootDir: sourceRepoDir,
-          distDir:join(outputDir, relative(repoDir,bundle.srcDir),'src')});
-      }
-      // The closure is dependency-first. Later packages consume declarations
-      // from this build's physical package, rather than re-inferring and
-      // re-emitting every dependency's source graph. Never use checkout dist.
-      for (const [specifier, targets] of Object.entries(sourcePaths)) {
-        if (packageNameOfSpecifier(specifier) !== bundle.packageName) continue;
-        sourcePaths[specifier] = targets.map(source => {
-          if (!/\.(?:tsx?|mts|cts)$/.test(source)) return source;
-          const declaration = relative(join(bundle.srcDir, 'src'), source)
-            .replace(/\.(?:ts|tsx)$/, '.d.ts').replace(/\.mts$/, '.d.mts').replace(/\.cts$/, '.d.cts');
-          return join(destDir, 'dist', declaration);
+          dereferenceRootDir: sourceRepoDir,distDir:outputDir});
+        await rm(join(destDir,'src'),{recursive:true,force:true});
+        // The author materializer owns declaration work. Retain its production
+        // inputs within the existing physical package, so authoring later uses
+        // this capture instead of reopening the moving repository.
+        const declarationSource = join(destDir, 'dist/.happier-source');
+        await mkdir(declarationSource,{recursive:true});
+        await writeFile(join(declarationSource,'package.json'),JSON.stringify(workspacePackages.get(bundle.packageName).manifest));
+        for (const [path, contents] of inputs) {
+          const target = join(declarationSource, 'src', relative(sourceDir,path));
+          await mkdir(dirname(target), {recursive:true});
+          await writeFile(target, contents);
+        }
+        const config = ts.convertToTSConfig(parsed, projectPath, {
+          getCurrentDirectory:()=>repoDir,useCaseSensitiveFileNames:true,
         });
+        const ownPaths = {};
+        for (const [specifier, targets] of Object.entries(parsed.options.paths ?? {})) {
+          const ownTargets = targets.map(path=>resolve(parsed.options.baseUrl ?? parsed.options.pathsBasePath ?? compilerDir,path))
+            .filter(path=>path.startsWith(sourceDir+sep));
+          if (ownTargets.length) ownPaths[specifier] = ownTargets.map(path => '../../src/'+relative(sourceDir,path).split(sep).join('/'));
+        }
+        // Ambient declaration inputs must travel with the capture as well;
+        // later author operations cannot reopen the moving checkout's @types.
+        for (const name of ts.getAutomaticTypeDirectiveNames(parsed.options, ts.sys)) {
+          const resolved = ts.resolveTypeReferenceDirective(name, projectPath, parsed.options, ts.sys)
+            .resolvedTypeReferenceDirective;
+          if (!resolved?.packageId) continue;
+          owner.bundleInstalledPackageWithRuntimeDependencies({packageName:resolved.packageId.name,
+            resolveFromPackageJsonPath:join(sourceRepoDir,relative(repoDir,bundle.srcDir),'package.json'),
+            destNodeModulesDir:join(declarationSource,'node_modules'),dereferenceRootDir:sourceRepoDir});
+        }
+        const compilerOptions = {...config.compilerOptions,rootDir:'../../src',outDir:'..',
+          declaration:true,declarationMap:false,emitDeclarationOnly:true,noEmit:false,noCheck:true,
+          incremental:false,composite:false,paths:ownPaths,customConditions:[],
+          typeRoots:['./node_modules/@types']};
+        delete compilerOptions.baseUrl;
+        delete compilerOptions.tsBuildInfoFile;
+        await writeFile(join(declarationSource,'tsconfig.json'),JSON.stringify({compilerOptions,
+          files:[...inputs.keys()].map(path=>'../../src/'+relative(sourceDir,path).split(sep).join('/'))}));
       }
       await visit(destDir);
       const cpu = process.cpuUsage(packageCpu);
@@ -152,10 +195,8 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
           + (excerpt.length < diagnostic.length ? '\n[later diagnostics omitted]' : '')));
       }
     }
-    // Compiler-consumed versions still win over the captured-byte hint. A
-    // graph emitted across a source change cannot certify later author reuse.
     const settled = Object.values(sourceInputDigests).every(digest => digest !== null);
-    console.error(`[source-author] phase=closure status=${compilers ? 'emitted' : 'reused'} elapsedMs=${Math.round(performance.now()-started)} compilers=${compilers} files=${codeFiles.length}`);
+    console.error(`[source-author] phase=closure status=${javascriptEmissions ? 'emitted' : 'reused'} elapsedMs=${Math.round(performance.now()-started)} compilers=0 javascriptEmissions=${javascriptEmissions} files=${codeFiles.length}`);
     return { codeFiles, inputIdentities: settled ? inputIdentities : undefined };
   } finally {
     await rm(workDir, {recursive:true,force:true});

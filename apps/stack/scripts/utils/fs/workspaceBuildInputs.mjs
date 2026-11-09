@@ -27,22 +27,36 @@ export function resolveSourcePluginUiBuildInputPaths(repoDir) {
 
 /** Plugin UI can bundle declared build dependencies as well as runtime ones.
  * Host applications are not plugin source inputs; their test dependencies must
- * not make a CLI-only edit rebuild every UI artifact. */
+ * not make a CLI-only edit rebuild every UI artifact. Inventory observation
+ * also follows evaluated manifests and declaration validation; those inputs
+ * refresh the inventory without invalidating executable artifact bytes. */
 export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, compiler = false, packages, includeDirectories = false,
-  packageInputs = new Map(), resolveSourceImport, retainedInputs, inputOptions = [] }) {
+  packageInputs = new Map(), resolveSourceImport, retainedInputs, inputOptions = [], inventory = false }) {
   packages ??= await readWorkspacePackages(repoDir);
-  const graphKey = `plugin-ui-graph:${compiler ? 'compiler' : pluginDirectory}`;
+  const graphKey = `plugin-ui-graph:${compiler ? 'compiler' : pluginDirectory}:${inventory}`;
   let graph = packageInputs.get(graphKey);
   if (!graph) {
     const unchanged = retainedInputs?.files && retainedInputs.identity === (await readSourcePluginUiBuildInputRecord({
       repoDir, files: retainedInputs.files, packages, packageInputs, inputOptions,
     })).identity;
-    graph = unchanged ? retainedInputs.files : readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport });
+    graph = unchanged ? retainedInputs.files : readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport, inventory });
     packageInputs.set(graphKey, graph);
   }
   const files = new Set((await graph).filter(path => !isWorkspaceBuildInputIgnoredPath(path)
     && !path.split('/').some(part => part === 'dist' || part === 'package-dist')
     && !isGeneratedPluginArtifactPath(path)));
+  if (compiler) for (const path of [
+    'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs',
+    'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs',
+    'apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs',
+    'apps/stack/scripts/build/build_source_web_ui.mjs',
+    'apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs',
+    'packages/cli-common/registerSourceRuntime.mjs',
+    'packages/cli-common/sourceRuntimeEntries.mjs',
+    'scripts/workspaces/sourcePluginUiBuildOptions.mjs',
+    'scripts/workspaces/buildInputConvergence.mjs',
+    'apps/ui/scripts/sourcePluginUiGraph.mjs',
+  ]) files.add(path);
   const packageRoots = new Set([...packages.values()].map(({ root }) => relative(repoDir, root).split(sep).join('/')));
   for (const path of [...files]) {
     let parent = posix.dirname(path);
@@ -72,18 +86,6 @@ export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, 
   for (const path of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
     if (existsSync(join(repoDir, path))) files.add(path);
   }
-  if (compiler) for (const path of [
-    'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs',
-    'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs',
-    'apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs',
-    'apps/stack/scripts/build/build_source_web_ui.mjs',
-    'apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs',
-    'packages/cli-common/registerSourceRuntime.mjs',
-    'packages/cli-common/sourceRuntimeEntries.mjs',
-    'scripts/workspaces/sourcePluginUiBuildOptions.mjs',
-    'scripts/workspaces/buildInputConvergence.mjs',
-    'apps/ui/scripts/sourcePluginUiGraph.mjs',
-  ]) files.add(path);
   return [...files].sort();
 }
 

@@ -22,6 +22,11 @@ function firstNonEmpty(...values) {
 const sharedS3EnvKeys = ['S3_HOST', 'S3_PORT', 'S3_USE_SSL', 'S3_BUCKET', 'S3_PRIVATE_BUCKET',
   'S3_PUBLIC_URL', 'S3_REGION', 'S3_ACCESS_KEY', 'S3_SECRET_KEY'];
 
+export function resolveServerFilesBackend({ env = {}, serverComponentName = env.HAPPIER_STACK_SERVER_COMPONENT } = {}) {
+  return readServerConfig(env, SERVER_CONFIG.HAPPIER_FILES_BACKEND)
+    ?? (serverComponentName === 'happier-server' ? 's3' : 'local');
+}
+
 export function applySharedDatabaseSourceEnv({ env }) {
   if (String(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) {
     // Read the existing authority privately provisioned on the selected server
@@ -32,8 +37,7 @@ export function applySharedDatabaseSourceEnv({ env }) {
     try { source = parseEnvToObject(readFileSync(sourceEnvPath, 'utf8')); }
     catch { throw new Error('[shared-db] source stack env is unavailable on this server host'); }
     const { provider, databaseUrl: explicitUrl } = resolveSharedDatabaseSource({ env: source });
-    const filesBackend = readServerConfig(source, SERVER_CONFIG.HAPPIER_FILES_BACKEND)
-      ?? (source.HAPPIER_STACK_SERVER_COMPONENT === 'happier-server' ? 's3' : 'local');
+    const filesBackend = resolveServerFilesBackend({ env: source });
     const socketAdapter = readServerConfig(source, SERVER_CONFIG.HAPPIER_SOCKET_ADAPTER);
     const redisUrl = readServerConfig(source, SERVER_CONFIG.REDIS_URL);
     const sourceDataDir = getServerLightDataDirFromEnvOrDefault({ stackBaseDir: dirname(sourceEnvPath), env: source });

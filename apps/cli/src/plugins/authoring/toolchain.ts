@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { runPluginAuthorPhase } from './phaseLog';
 import { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
+import { emitSourceAuthorDeclarations } from './sourceDeclarations';
 export { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
 
 import {
@@ -232,6 +233,7 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
   projectRoot: string;
   bundles: ReadonlyArray<PrepublicationWorkspaceBundle>;
   packageNames: readonly string[];
+  sourceRuntimeRoot?: string;
 }>): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const materializationRoot = createHappierTempDir({ purpose: 'plugin-author-packages' });
   let installRoot: string | undefined;
@@ -241,6 +243,20 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
       bundles,
       rootPackageNames: params.packageNames,
     });
+    if (params.sourceRuntimeRoot) {
+      const runtimeCommand = await ensureManagedJavaScriptRuntimeCommand(process.env);
+      if (!runtimeCommand) throw new Error('The Happier-managed JavaScript runtime is unavailable');
+      const compilerPath = resolveNativeTypeScriptBin(params.sourceRuntimeRoot);
+      await emitSourceAuthorDeclarations(materializedPackageNames.map(packageName =>
+        join(materializationRoot, 'node_modules', ...packageName.split('/'))), async projectPath => {
+        const result = await spawn({ command: runtimeCommand,
+          args: [compilerPath, '-p', projectPath],
+          cwd: materializationRoot, env: process.env });
+        if (result.exitCode !== 0 || result.signal !== null) {
+          throw new Error(`Source Plugin SDK declaration compilation failed (exit ${result.exitCode}, signal ${result.signal})\n${result.stderr || result.stdout}`);
+        }
+      });
+    }
     // pnpm includes the file override's pathname in its virtual-store identity.
     // Hash the complete physical closure (including package identity/version),
     // never the random staging path, so unchanged preparations reuse that entry.
@@ -352,11 +368,13 @@ async function materializePackagedCliBundledPrepublicationPackages(params: Reado
   runtimePackageJson: RuntimePackageJson;
   packageNames: readonly string[];
   projectRoot: string;
+  sourceRuntime: boolean;
 }>): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   return await materializePrepublicationAuthorWorkspacePackages({
     projectRoot: params.projectRoot,
     bundles: resolvePackagedCliBundledWorkspaceBundles(params),
     packageNames: params.packageNames,
+    ...(params.sourceRuntime ? { sourceRuntimeRoot: params.runtimeRoot } : {}),
   });
 }
 
@@ -379,6 +397,7 @@ async function materializeBundledPrepublicationPackages(
     runtimePackageJson,
     packageNames,
     projectRoot,
+    sourceRuntime: runtimeAuthority.provenance === 'source-module' || runtimeAuthority.provenance === 'source-snapshot',
   });
 }
 
