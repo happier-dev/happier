@@ -62,7 +62,10 @@ export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpen
   if (!capabilityPath) return { env: {} };
   if (request.providerBinding) throw new PluginError({ code: 'plugin_kilo_subscription_provider_conflict', message: 'Select either a Connected ChatGPT account or a Provider connection for Kilo.' });
   if (!request.configuration?.model.value?.trim() || request.configuration.model.selectionSource !== 'explicit') {
-    throw new PluginError({ code: 'model_selection_required', message: 'Choose an explicit model for the Kilo ChatGPT Connected Account.' });
+    throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+      message: 'Choose an explicit model for the Kilo ChatGPT Connected Account.',
+      details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+        phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   }
   const resolveModel = (modelId: string) => {
     if (!modelId.startsWith('openai/')) throw new PluginError({ code: 'plugin_kilo_subscription_model_unsupported', message: 'Select an OpenAI model supported by the Kilo ChatGPT subscription catalog.' });

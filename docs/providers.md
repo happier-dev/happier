@@ -1067,9 +1067,10 @@ model choices and ACP model-option choices while retaining the active model and
 explicit native model controls.
 CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
 Without an explicit model, preparation refuses before native startup; choose a
-model and retry the launch. CodeBuddy and Droid retain `model_selection_required`
-as the typed startup failure reason through Session status and launch recovery. Kilo uses its existing OpenAI
-model namespace policy for both initial and later model choices.
+model and retry the launch. CodeBuddy, Droid and Kilo retain `model_selection_required`
+as the typed startup failure reason through Session status and launch recovery.
+Kilo uses its existing OpenAI model namespace policy for both initial and later
+model choices.
 
 OpenCode's native model inventory likewise does not establish ChatGPT account
 entitlement. In 0.3 development, its native route decoder and shared catalog

@@ -3,10 +3,13 @@ import { PassThrough } from 'node:stream';
 import axios from 'axios';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeFactory, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { projectSessionSummaryV1, SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 
+import { createKiloAgentRuntime } from '../../../../../packages/plugins/kilo/src/agent/runtime/factory.js';
+import { KILO_CODEX_PURPOSE } from '../../../../../packages/plugins/kilo/src/agent/runtime/connectedAccounts.js';
 import { createPiAgentRuntime } from '../../../../../packages/plugins/pi/src/agent/runtime/engine.js';
 import { createCodeBuddyAgentRuntime } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/factory.js';
 import { CODEBUDDY_CODEX_PURPOSE } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/connectedAccounts.js';
@@ -26,12 +29,12 @@ import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 vi.mock('axios');
 
 describe('Connected Account default refusal', () => {
-  it.each(['pi', 'codebuddy', 'droid'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
+  it.each(['pi', 'codebuddy', 'droid', 'kilo'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
     const factories: Readonly<Record<typeof agentId, AgentRuntimeFactory>> = {
-      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime,
+      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime,
     };
     const purpose = { pi: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE }[agentId];
+      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE }[agentId];
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     // The Connected Account and OS adapters are genuine host boundaries. Keep the
     // Agent preparation, refusal, host classifiers and persistence writer real.
@@ -54,6 +57,10 @@ describe('Connected Account default refusal', () => {
     if (!runtime.sessions) throw new Error('Missing Agent Session runtime');
     const failure = await runtime.sessions.open({
       kind: 'create', sessionId: `${agentId}-default-refusal`, cwd: '/workspace',
+      // Kilo consumes the capability already admitted by the host at launch.
+      ...(agentId === 'kilo' ? { launchEnvironment: {
+        values: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/private/request-auth-capability.json' }, unset: [],
+      } } : {}),
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
     }, context).catch((error: unknown) => sanitizeNativeAgentSessionBoundaryError(error, true));

@@ -27,7 +27,8 @@ describe('registered Kilo subscription startup', () => {
         watch: () => { throw new Error('Preflight must not subscribe'); },
       };
       const signal = new AbortController().signal;
-      await expect(prepare({ environment: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/private/capability.json' }, connectedAccounts, signal })).rejects.toMatchObject({ code: 'model_selection_required' });
+      await expect(prepare({ environment: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/private/capability.json' }, connectedAccounts, signal })).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+        details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
       const environment = { KILO_AUTH_CONTENT: 'native-auth' };
       const native = await prepare({ environment, connectedAccounts, signal });
       expect(native.environment).toEqual(environment);
@@ -48,7 +49,8 @@ describe('registered Kilo subscription startup', () => {
       await expect(runtime.sessions.open({ kind: 'create', sessionId: 'fixture', cwd: root,
         launchEnvironment: { values: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(root, 'capability.json') }, unset: [] },
         configuration: { model: { ...model, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {} },
-      }, { protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext)).rejects.toMatchObject({ code: 'model_selection_required' });
+      }, { protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+        details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
       expect(open).not.toHaveBeenCalled();
     } finally { await activation.dispose(); await rm(root, { recursive: true, force: true }); }
   });
