@@ -54,6 +54,12 @@ describe('source failure presentation', () => {
     await expect(one.getByText('1 other source needs attention')).resolves.toBeDefined();
   });
 
+  it('steps aside while Manage sources is open, where each source already says its own state', async () => {
+    const fixture = await mount(<TriageOutsideSourcesNotice attention={{ count: 4, target: 'manageSources' }} managing onReview={() => {}} />);
+    await expect(fixture.queryByText('4 other sources need attention')).resolves.toBeUndefined();
+    await expect(fixture.queryByRole('button', { name: 'Review' })).resolves.toBeUndefined();
+  });
+
   it('gives each connection its own reason, fix and on-demand cause for its Manage sources row', () => {
     const [native, stored] = FAILURE.sources.map((source) => readTriageSourceFailureRowV1(source));
     expect(native).toMatchObject({ fix: 'connection', details: 'Native GitHub — plugin_activation_failed · retryable=false' });

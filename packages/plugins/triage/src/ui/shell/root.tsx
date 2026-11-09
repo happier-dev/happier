@@ -2512,7 +2512,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // sources, the one source-health surface (UI refinements 2026-11-08; typed by the view-health projection).
   const outsideSourcesAttention = listWindow?.outsideSourcesAttention ?? null;
   const outsideSourcesNotice = outsideSourcesAttention === null ? null : (
-    <TriageOutsideSourcesNotice attention={outsideSourcesAttention} onReview={() => setEditingSources(true)} />
+    <TriageOutsideSourcesNotice attention={outsideSourcesAttention} managing={editingSources} onReview={() => setEditingSources(true)} />
   );
   const listFailureStatus = listWindow?.failure == null || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}

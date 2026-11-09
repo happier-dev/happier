@@ -96,7 +96,7 @@ const BOUNDED: TriageListEmptyStateV1 = Object.freeze({
 const NO_MATCH: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noMatch',
     title: 'Nothing matches these filters',
-    description: 'Every configured source answered, and nothing in this list matches what you selected.',
+    description: 'The sources in this view answered, and nothing matches what you selected.',
     next: Object.freeze(['clearFilters'] as const),
 });
 
@@ -110,7 +110,7 @@ const NO_MATCH_YET: TriageListEmptyStateV1 = Object.freeze({
 const NO_SEARCH_MATCH: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noSearchMatch',
     title: 'Nothing matches your search',
-    description: 'Every configured source answered, and nothing in this list matches what you typed.',
+    description: 'The sources in this view answered, and nothing matches what you typed.',
     next: Object.freeze(['clearSearch'] as const),
 });
 

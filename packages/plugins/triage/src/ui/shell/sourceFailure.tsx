@@ -44,9 +44,12 @@ export function TriageListFailureStatus(props: Readonly<{
  */
 export function TriageOutsideSourcesNotice(props: Readonly<{
   attention: TriageOutsideSourcesAttentionV1;
+  /** Manage sources is open: each source says its own state there, so this line steps aside. */
+  managing?: boolean;
   onReview: (target: TriageOutsideSourcesAttentionV1['target']) => void;
-}>): React.ReactElement {
+}>): React.ReactElement | null {
   const text = usePluginTranslation();
+  if (props.managing === true) return null;
   const { count, target } = props.attention;
   const label = count === 1
     ? text('plugins.triage.surface.sources.outsideAttention.one', '1 other source needs attention')
