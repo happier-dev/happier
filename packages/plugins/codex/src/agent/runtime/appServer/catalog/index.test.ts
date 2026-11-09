@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     listCodexAppServerSkills,
     listCodexVendorPlugins,
+    readCodexSessionCatalog,
     type CodexAppServerCatalogClient,
 } from './index';
 
@@ -24,6 +25,14 @@ function createCatalogClient(response: unknown): Readonly<{
 }
 
 describe('Codex app-server catalog mapping', () => {
+    it('does not treat a model catalog request as a skills request', async () => {
+        const { client, requests } = createCatalogClient({ data: [] });
+
+        await expect(readCodexSessionCatalog({ kind: 'models' }, { client, cwd: '/repo' }))
+            .resolves.toMatchObject({ status: 'unsupported' });
+        expect(requests).toEqual([]);
+    });
+
     it('maps marketplace plugin responses into canonical vendor plugin catalog items', async () => {
         const { client, requests } = createCatalogClient({
             marketplaces: [

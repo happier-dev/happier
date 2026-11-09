@@ -8,7 +8,8 @@ import type {
   WorkStatePublisher,
 } from '../services/sessions.js';
 import type { JsonValue } from '../identity.js';
-import type { AgentRuntimeContext, AgentSessionHostServices, AgentSessionRuntimeContext, AgentTranscriptIdentityCodec, TerminalHostKind } from './context.js';
+import type { AgentNativeLaunchQualifier } from '../exec.js';
+import type { AgentRuntimeContext, AgentSessionHostServices, AgentSessionModel, AgentSessionRuntimeContext, AgentTranscriptIdentityCodec, TerminalHostKind } from './context.js';
 import type {
   AgentSessionConnectedAccountSelection,
   AgentSessionConfigurationSnapshot,
@@ -33,6 +34,8 @@ export type AgentSessionControlContext = Omit<AgentSessionRuntimeContext, 'sessi
     providerSessionId?: string;
     /** Target Session's admitted native scope; never the requesting Session's environment. */
     launchEnvironment?: AgentSessionOpenRequest['launchEnvironment'];
+    /** Target Session's native launch identity; a control's native process runs as that Session's runtime does. */
+    nativeLaunch?: AgentNativeLaunchQualifier;
     connectedAccounts: readonly AgentSessionConnectedAccountSelection[];
   }>;
 }>;
@@ -134,10 +137,18 @@ export type AgentSessionVendorPluginCatalogItem = Readonly<{
 }>;
 
 export type AgentSessionCatalogRequest =
+  | Readonly<{ kind: 'models' }>
   | Readonly<{ kind: 'vendorPlugins'; cursor?: string; limit?: number }>
   | Readonly<{ kind: 'skills'; cursor?: string; limit?: number }>;
 
 export type AgentSessionCatalogResult =
+  | Readonly<{
+      status: 'ok';
+      kind: 'models';
+      items: readonly AgentSessionModel[];
+      currentModelId?: string | null;
+      defaultModelId?: string;
+    }>
   | Readonly<{
       status: 'ok';
       kind: 'vendorPlugins';

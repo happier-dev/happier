@@ -23,6 +23,9 @@ export async function readCodexSessionCatalog(
     request: Parameters<AgentSessionCatalogControl['list']>[0],
     params: Readonly<{ client: CodexAppServerCatalogClient; cwd: string }>,
 ): ReturnType<AgentSessionCatalogControl['list']> {
+    if (request.kind === 'models') {
+        return { status: 'unsupported', diagnostic: { code: 'codex_model_catalog_unsupported', severity: 'error', message: 'codex_model_catalog_unsupported' } };
+    }
     if (request.kind === 'vendorPlugins') {
         const result = await listCodexVendorPlugins(params);
         if (!result.supported) return { status: 'unsupported', diagnostic: { code: 'codex_vendor_catalog_unsupported', severity: 'error', message: 'codex_vendor_catalog_unsupported' } };
