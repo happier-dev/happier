@@ -12,6 +12,7 @@ import { useVoiceExecutionMachineSelection } from '@/voice/credentials/useExecut
 import { useVoiceConversationsReadinessModel } from '@/voice/settings/panels/VoiceProviderSection';
 import { useVoiceSettingsReadinessInputs } from '@/voice/settings/useVoiceSettingsReadinessInputs';
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
+import { useVoiceProviderDeclarationDemand } from '@/voice/registry/useVoiceProviderDeclarationDemand';
 
 /**
  * Voice conversations → Service on a phone: the gallery's services as a list, each with its
@@ -19,6 +20,7 @@ import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutabl
  * back to the page.
  */
 export function VoiceServiceListScreen() {
+  useVoiceProviderDeclarationDemand();
   const { theme } = useUnistyles();
   const router = useRouter();
   const [voice, setVoice] = useVoiceSettingsMutable();

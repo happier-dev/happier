@@ -56,11 +56,14 @@ import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderR
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { VoiceServiceListScreen } from '@/voice/settings/screens/VoiceServiceListScreen';
 
 const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null,
     mountedProjection: null as PluginProjectionV2 | null, peerMountedProjection: null as PluginProjectionV2 | null,
     peerMountedReads: 0, bytes: new Uint8Array(), entryPath: '', artifactDigest: '',
-    successorBytes: new Uint8Array(), successorDigest: '' }));
+    successorBytes: new Uint8Array(), successorDigest: '', projectionReads: 0, artifactReads: 0 }));
 // Only the real network transport is replaced. Account, storage, projection,
 // Artifact leases, CommonJS evaluation, registration and reconciliation stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -85,14 +88,21 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
                 }
                 return { protocolVersion: 1, projection: daemon.mountedProjection };
             }
+            daemon.projectionReads += 1;
             return { protocolVersion: 1, projection: machineId === 'machine-peer' ? daemon.peerProjection : daemon.projection };
         }
-        if (artifacts.handles(method)) return artifacts.request({ method, payload, machineId });
+        if (artifacts.handles(method)) {
+            daemon.artifactReads += 1;
+            return artifacts.request({ method, payload, machineId });
+        }
         if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true, inputSchema: {} };
         throw new Error(`Unexpected executable fixture RPC: ${method}`);
     });
 });
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    pathname: () => '/settings/voice/service',
+}).module);
 installDisconnectedServerSocketBoundary();
 
 const initialStorage = storage.getState();
@@ -457,7 +467,9 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     return { ...fixture, registration };
 }
 
-it('discovers the selected Voice descriptor on a fresh Home before executable demand', async () => {
+it.each(['selected', 'presented-local-picker'] as const)('discovers Voice descriptors on a fresh Home before executable demand (%s)', async (selection) => {
+    daemon.projectionReads = 0;
+    daemon.artifactReads = 0;
     const selectedPluginId = 'acme.fresh-voice';
     const contribution = PluginContributesV2Schema.parse({ voiceProviders: [{ id: 'conversation', title: 'Fresh Voice',
         kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web', 'ios', 'android'],
@@ -478,7 +490,7 @@ it('discovers the selected Voice descriptor on a fresh Home before executable de
         } } } },
     });
     const settings = { ...initialStorage.settings,
-        ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId,
+        ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId: selection === 'selected' ? providerId : 'local_conversation',
             executionMachine: { mode: 'fixed', machineId: 'machine-live' } }) }, initialStorage.settings),
     };
     const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(),
@@ -508,11 +520,38 @@ it('discovers the selected Voice descriptor on a fresh Home before executable de
     expect(registry.get(providerId)).toBeNull();
     let demand: ReadonlySet<string> = new Set();
     function Probe() { demand = useVoiceProviderRuntimeDemand(); return null; }
-    // No CatalogDemand, Voice Runtime, Settings page or Start supplies acquisition.
-    await renderScreen(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
+    let pickerOpen = false;
+    let pickerPresented = false;
+    const render = () => <InjectedAuthProvider credentials={null}>
+        <AppShellPluginUiProjectionProvider>
+            <Probe />
+            {pickerOpen ? <PluginSurfaceFocusEligibilityProvider active={pickerPresented} presentationActive={pickerPresented}>
+                <VoiceServiceListScreen />
+            </PluginSurfaceFocusEligibilityProvider> : null}
+        </AppShellPluginUiProjectionProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(render());
+    if (selection === 'presented-local-picker') {
+        await flushHookEffects();
+        expect(daemon.projectionReads).toBe(0);
+        expect(registry.get(providerId)).toBeNull();
+        pickerOpen = true;
+        await screen.update(render());
+        await flushHookEffects();
+        expect(daemon.projectionReads).toBe(0);
+        expect(registry.get(providerId)).toBeNull();
+        pickerPresented = true;
+        await screen.update(render());
+    }
     await vi.waitFor(() => expect(registry.get(providerId)).toMatchObject({ providerId,
         kind: 'voice.conversation-provider.v1', declaration: { title: 'Fresh Voice' } }));
+    if (selection === 'presented-local-picker') {
+        const service = screen.findByTestId(`settings.voice.provider.${encodeURIComponent(providerId)}.default`);
+        expect(service).not.toBeNull();
+        expect(service?.props.disabled).toBe(false);
+    }
     expect([...demand]).toEqual([]);
+    expect(daemon.artifactReads).toBe(0);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
     expect(getVoiceSessionLifecycleController()).toBeNull();
 });

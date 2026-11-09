@@ -36,6 +36,7 @@ import type {
   VoiceProviderLocalAvailability,
 } from '@/voice/settings/voiceProviderLocalAvailability';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useVoiceProviderDeclarationDemand } from '@/voice/registry/useVoiceProviderDeclarationDemand';
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { applyVoiceDictationEngineChoice } from '@/voice/registry/providerSelection';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
@@ -285,6 +286,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
 }
 
 export function DictationSettingsSection(props: Parameters<typeof useVoiceDictationReadinessModel>[0]) {
+  useVoiceProviderDeclarationDemand();
   const searchPrerequisite = useVoiceSettingsSearchPrerequisite();
   const declarations = useVoiceContributedSettingsDeclarations('voiceDictation');
   const {

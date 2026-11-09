@@ -76,6 +76,7 @@ import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useVoiceProviderDeclarationDemand } from '@/voice/registry/useVoiceProviderDeclarationDemand';
 import {
   parseLocalVoiceSttSettings,
   parseLocalVoiceTtsSettings,
@@ -1101,6 +1102,7 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
    */
   renderServiceSettings?: (accountLead: React.ReactNode) => React.ReactNode;
 }>) {
+  useVoiceProviderDeclarationDemand();
   const searchPrerequisite = useVoiceSettingsSearchPrerequisite();
   const declarations = useVoiceContributedSettingsDeclarations('voiceConversations');
   const router = useRouter();
