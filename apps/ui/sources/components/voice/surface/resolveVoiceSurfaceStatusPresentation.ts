@@ -22,7 +22,7 @@ export type VoiceSurfaceStatusPresentation = Readonly<{
     | 'voiceAssistant.speaking'
     | 'voiceAssistant.microphonePermissionRequired'
     | 'voiceAssistant.interrupted'
-    | 'common.failed'
+    | 'common.error'
     | 'voiceAssistant.connectionError';
 }>;
 
@@ -60,7 +60,7 @@ export function resolveVoiceSurfaceStatusPresentation(
       return {
         tone: 'error',
         labelKey: failureReason === 'voice_connection_failed' || failureReason === 'voice_connection_timeout'
-          ? 'voiceAssistant.connectionError' : 'common.failed',
+          ? 'voiceAssistant.connectionError' : 'common.error',
       };
   }
   const exhaustive: never = state;
