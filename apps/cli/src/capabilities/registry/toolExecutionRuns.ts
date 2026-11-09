@@ -33,9 +33,24 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
   return false;
 }
 
+const executionRunProtocol = Object.freeze({
+  version: 2,
+  features: Object.freeze({
+    detachedScope: true,
+    startAndWait: true,
+    exactInputResults: true,
+    runScopedAgentBindings: true,
+    secretReferenceOverlay: true,
+  }),
+});
+
 export const executionRunsCapability: Capability = {
   effects: { detect: ['private_read'] },
-  descriptor: { id: 'tool.executionRuns', kind: 'tool', title: 'Execution runs' },
+  get descriptor() {
+    return { id: 'tool.executionRuns' as const, kind: 'tool' as const, title: 'Execution runs',
+      protocol: { ...executionRunProtocol,
+        available: resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled' } };
+  },
   detect: async ({ context, request }) => {
     const gate = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });
     if (gate.state !== 'enabled') {
@@ -141,14 +156,8 @@ export const executionRunsCapability: Capability = {
       // V2 is a capability-local contract. Callers must observe these exact
       // facts from their selected daemon before they send detached scope or
       // start-and-wait fields; the outer capabilities protocol remains V1.
-      protocolVersion: 2,
-      features: {
-        detachedScope: true,
-        startAndWait: true,
-        exactInputResults: true,
-        runScopedAgentBindings: true,
-        secretReferenceOverlay: true,
-      },
+      protocolVersion: executionRunProtocol.version,
+      features: executionRunProtocol.features,
       intents,
       ...(voiceAgentEnabled
         ? {}

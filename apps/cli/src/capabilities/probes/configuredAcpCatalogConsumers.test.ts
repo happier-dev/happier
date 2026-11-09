@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import type { SpawnOptions } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { accountSettingsParse, FeaturesResponseSchema, formatSharedSavedSecretRefV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -16,9 +16,12 @@ import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCache
 import { probeAgentModelsBestEffort } from './agentModelsProbe';
 import { probeAgentModesBestEffort } from './agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from './agentConfigOptionsProbe';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 
 const { spawnProcess } = vi.hoisted(() => ({
-  spawnProcess: vi.fn<(command: string, args: readonly string[], options: SpawnOptions) => never>(() => {
+  spawnProcess: vi.fn<(command: string, args: readonly string[], options: SpawnOptions) => ChildProcess>(() => {
     throw new Error('probe-process-boundary');
   }),
 }));
@@ -52,6 +55,67 @@ beforeEach(() => {
 afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('configured ACP consumers use complete current catalog authority', () => {
+  it('retains a native scope refusal when the configured backend never reported models', async () => {
+    await withTempDir('configured-acp-unobserved-models-', async (dir) => {
+      const script = writeAcpTestAgentScript({ dir, fileName: 'unobserved-agent.mjs', source: `
+        const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\\n');
+        let buffer = '';
+        process.stdin.on('data', chunk => {
+          buffer += chunk; const lines = buffer.split('\\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const request = JSON.parse(line);
+            if (request.method === 'initialize') send({ id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+            else if (request.method === 'session/new') send({ id: request.id, result: { sessionId: 'configured-probe',
+              configOptions: [{ id: 'scope', name: 'Scope', type: 'select', currentValue: 'initial',
+                options: [{ value: 'initial', name: 'Initial' }, { value: 'next', name: 'Next' }] }] } });
+            else if (request.method === 'session/set_config_option') send({ id: request.id,
+              error: { code: -32600, message: 'Native scope selection refused' } });
+            else if (request.id !== undefined) send({ id: request.id, result: {} });
+          }
+        });
+      ` });
+      const configuredRecord = AcpCatalogRecordV1Schema.parse({ ...record, definitions: record.definitions.map((definition) => ({
+        ...definition, launch: { kind: 'command', command: process.execPath, args: [script] },
+      })) });
+      const settings = publish({ status: 'ready', revision: 4, record: configuredRecord });
+      spawnProcess.mockImplementationOnce((command, args, options) => spawn(command, [...args], options));
+      const result = await probeAgentModelsBestEffort({ agentId: 'customAcp', backendTarget, cwd: dir, credentials,
+        accountSettings: settings, configOptionOverrides: { scope: 'next' } });
+      expect(result).toMatchObject({ source: 'unavailable', availableModels: [], refreshError: true,
+        refreshErrorMessage: 'Native scope selection refused' });
+    });
+  });
+
+  it('probes the complete configured ACP config catalog through the existing backend owner', async () => {
+    await withTempDir('configured-acp-config-catalog-', async (dir) => {
+      const configOptions = createFxConfigOptionsFixture();
+      const script = writeAcpTestAgentScript({ dir, fileName: 'config-agent.mjs', source: `
+        const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
+        let buffer = '';
+        process.stdin.on('data', chunk => {
+          buffer += chunk; const lines = buffer.split('\\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const request = JSON.parse(line);
+            if (request.method === 'initialize') send(request.id, { protocolVersion: 1, agentCapabilities: {} });
+            else if (request.method === 'session/new') send(request.id, { sessionId: 'configured-probe', configOptions: ${JSON.stringify(configOptions)} });
+            else if (request.id !== undefined) send(request.id, {});
+          }
+        });
+      ` });
+      const configuredRecord = AcpCatalogRecordV1Schema.parse({ ...record, definitions: record.definitions.map((definition) => ({
+        ...definition, launch: { kind: 'command', command: process.execPath, args: [script] },
+      })) });
+      const settings = publish({ status: 'ready', revision: 4, record: configuredRecord });
+      spawnProcess.mockImplementationOnce((command, args, options) => spawn(command, [...args], options));
+      const result = await probeAgentConfigOptionsBestEffort({
+        agentId: 'customAcp', backendTarget, cwd: dir, credentials, accountSettings: settings,
+      });
+      expect(result).toMatchObject({ source: 'dynamic', modelConfigOptionId: 'model', configOptions });
+    });
+  });
+
   it('probes and hashes a row-backed backend after the Settings root is removed', async () => {
     const settings = publish({ status: 'ready', revision: 4, record });
     const backend = await createConfiguredAcpProbeBackend({ agentId: 'customAcp', backendTarget,
@@ -172,7 +236,7 @@ describe('configured ACP consumers use complete current catalog authority', () =
     spawnProcess.mockClear();
     await expect(probeAgentModesBestEffort(params)).resolves.toMatchObject({ source: 'static', availableModes: [] });
     expect(spawnProcess.mock.calls.at(-1)).toMatchObject([process.execPath, ['--version'], { env: { REGION: 'row-region' } }]);
-    await expect(probeAgentConfigOptionsBestEffort(params)).resolves.toMatchObject({ source: 'static', configOptions: [] });
+    await expect(probeAgentConfigOptionsBestEffort(params)).resolves.toMatchObject({ source: 'unavailable', configOptions: [] });
   });
 
 });

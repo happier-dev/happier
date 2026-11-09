@@ -41,7 +41,7 @@ describe('createProtocolSystemTasksRunnerAdapter', () => {
     })).resolves.toEqual({ taskId: 'relay-task-1' });
 
     await adapter.poll({ taskId: 'relay-task-1', cursor: 0 });
-    await adapter.respond({ taskId: 'relay-task-1', answer: { approved: true } });
+    await adapter.respond({ taskId: 'relay-task-1', expectedPromptKind: 'auth.approveRemoteProvisioning', answer: { approved: true } });
 
     expect(calls).toEqual([
       {
@@ -65,6 +65,7 @@ describe('createProtocolSystemTasksRunnerAdapter', () => {
         method: 'respond',
         params: {
           taskId: 'relay-task-1',
+          expectedPromptKind: 'auth.approveRemoteProvisioning',
           answer: { approved: true },
         },
       },

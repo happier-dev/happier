@@ -1,4 +1,3 @@
-import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentConfigOptionsProbeObservation } from '@happier-dev/protocol/capabilities';
@@ -17,11 +16,13 @@ import {
   type ProbedCatalogOptionValue,
 } from './probedCatalogOption';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
-import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOwnedPreflightControlsProbePolicy';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
 import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
+import { probeAcpSessionControlsFromBackend } from './probeAcpCatalogs';
+import { AcpCatalogUnavailableError } from '@/agent/acp/catalog/configured/resolveBackend';
 
 export type ProbedAgentConfigOptionValue = ProbedCatalogOptionValue;
 
@@ -56,7 +57,9 @@ function shouldFailClosedForMissingCli(params: {
   return resolveAgentCliLaunchSpec(params.agentId) === null;
 }
 
-function normalizeDynamicConfigOptions(configOptionsRaw: unknown): ProbedAgentConfigOption[] | null {
+function normalizeDynamicConfigOptions(raw: unknown): Pick<ProbedAgentConfigOptionsResult, 'configOptions' | 'modelConfigOptionId' | 'refreshError' | 'refreshErrorMessage' | 'source'> | null {
+  const record = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  const configOptionsRaw = record ? record.configOptions : raw;
   if (!Array.isArray(configOptionsRaw)) return null;
 
   const parsed: ProbedAgentConfigOption[] = [];
@@ -68,7 +71,11 @@ function normalizeDynamicConfigOptions(configOptionsRaw: unknown): ProbedAgentCo
   // If the probe returned entries but none were parseable, treat the payload as invalid so callers
   // can apply a short failure TTL instead of caching a silent fallback for a full day.
   if (parsed.length === 0 && configOptionsRaw.length > 0) return null;
-  return parsed;
+  return { configOptions: parsed, source: record?.source === 'static' ? 'static' : 'dynamic',
+    ...(record?.refreshError === true ? { refreshError: true } : {}),
+    ...(typeof record?.refreshErrorMessage === 'string' ? { refreshErrorMessage: record.refreshErrorMessage } : {}),
+    ...(typeof record?.modelConfigOptionId === 'string' && record.modelConfigOptionId.trim()
+      ? { modelConfigOptionId: record.modelConfigOptionId } : {}) };
 }
 
 export async function probeAgentConfigOptionsBestEffort(params: {
@@ -94,6 +101,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   materializedEnv?: Readonly<Record<string, string>>;
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
+  configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
 }): Promise<ProbedAgentConfigOptionsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
@@ -117,6 +125,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     variant: probeVariant,
     connectedServiceSelection: params.connectedServiceSelectionCacheKey,
     profile: params.profileCacheKey,
+    configOptionOverrides: params.configOptionOverrides,
   });
 
   const cached = agentConfigOptionsProbeCache.get(cacheKey);
@@ -128,6 +137,30 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     if (cached2?.kind === 'success' && agentConfigOptionsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
+    const configured = await probeConfiguredAcpBackend({
+      agentId: params.agentId, backendTarget: params.backendTarget, cwd,
+      accountSettings: params.accountSettings, credentials: params.credentials,
+      acpCatalogSnapshot: params.acpCatalogSnapshot, savedSecretOperationContext: params.savedSecretOperationContext,
+      machineAdmission: params.machineAdmission, secretSources: params.secretSources,
+      processEnv: params.env, signal: params.signal, cleanupScope: params.cleanupScope,
+      onBackend: async (backend) => {
+        return normalizeDynamicConfigOptions(await probeAcpSessionControlsFromBackend({ backend,
+          timeoutMs: params.timeoutMs ?? 15_000, signal: params.signal, configOptionOverrides: params.configOptionOverrides }));
+      },
+    }).catch((error: unknown) => {
+      if (error instanceof AcpCatalogUnavailableError) throw error;
+      return { kind: 'present' as const, result: null };
+    });
+    if (configured.kind === 'present') {
+      if (configured.result) {
+        const result: ProbedAgentConfigOptionsResult = { ...fallback, ...configured.result, source: 'dynamic' };
+        agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2,
+          ttlMs: result.refreshError ? PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS : PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
+        return result;
+      }
+      agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
+      return buildUnavailable(params.agentId);
+    }
     const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
     // A declared preflight hook resolves and checks its own executable; its
     // transport may differ from the Agent's interactive CLI.
@@ -139,7 +172,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     if (preflightAdapter?.probeConfigOptionsRaw) {
       const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 15_000;
 
-      const probePreflightConfigOptionsOnce = async (): Promise<ProbedAgentConfigOption[] | null> => {
+      const probePreflightConfigOptionsOnce = async () => {
         const configOptionsRaw = await withPreflightSessionControlsProbeEnvironment({
           agentId: params.agentId,
           processEnv: params.env ?? process.env,
@@ -156,6 +189,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
           timeoutMs,
           accountSettings: params.accountSettings ?? null,
           pluginSettings: params.pluginSettings,
+          configOptionOverrides: params.configOptionOverrides,
           env,
         })).catch(() => null);
         return normalizeDynamicConfigOptions(configOptionsRaw);
@@ -166,13 +200,10 @@ export async function probeAgentConfigOptionsBestEffort(params: {
         probeOnce: probePreflightConfigOptionsOnce,
       });
 
-      const decision = resolveProviderOwnedPreflightControlsProbeDecision({
-        probeResult,
-        emptySuccess: 'success',
-      });
-      if (decision.kind === 'success') {
-        const result: ProbedAgentConfigOptionsResult = { ...fallback, configOptions: decision.value, source: 'dynamic' };
-        agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
+      if (probeResult.kind === 'success') {
+        const result: ProbedAgentConfigOptionsResult = { ...fallback, ...probeResult.value };
+        agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2,
+          ttlMs: result.refreshError ? PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS : PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
         return result;
       }
 

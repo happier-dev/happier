@@ -1,6 +1,7 @@
 import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import { getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { getCliFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveCliLocalFeaturePolicyEnabled } from './featureLocalPolicy';
@@ -12,6 +13,7 @@ export function resolveCliGlobalOnlyFeatureDecision(params: {
   const memo = new Map<FeatureId, FeatureDecision>();
 
   const resolve = (featureId: FeatureId): FeatureDecision => {
+    featureId = getCanonicalFeatureId(featureId);
     const cached = memo.get(featureId);
     if (cached) return cached;
 

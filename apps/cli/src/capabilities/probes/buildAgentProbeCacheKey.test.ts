@@ -19,4 +19,13 @@ describe('buildAgentProbeCacheKey', () => {
       profile: 'work',
     })).toBe('agent:codex:target:none:cwd:/workspace:v:appServer:profile:work:connected:none');
   });
+
+  it('separates requested configuration scopes while sharing equal unordered overrides', () => {
+    const context = { agentId: 'codex', cwd: '/workspace' };
+    const scoped = buildAgentProbeCacheKey({ ...context, configOptionOverrides: { provider: 'gateway', region: '' } });
+    expect(scoped).not.toBe(buildAgentProbeCacheKey(context));
+    expect(scoped).not.toBe(buildAgentProbeCacheKey({ ...context, configOptionOverrides: { provider: 'codex', region: '' } }));
+    expect(scoped).toBe(buildAgentProbeCacheKey({ ...context, configOptionOverrides: { region: '', provider: 'gateway' } }));
+    expect(buildAgentProbeCacheKey({ ...context, configOptionOverrides: {} })).toBe(buildAgentProbeCacheKey(context));
+  });
 });

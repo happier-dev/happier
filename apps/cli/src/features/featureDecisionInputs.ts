@@ -1,4 +1,4 @@
-import { featureRequiresServerSnapshot } from '@happier-dev/protocol/features/catalog';
+import { featureRequiresServerSnapshot, getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { FeatureId } from '@happier-dev/protocol';
 
@@ -23,11 +23,12 @@ export function createCliFeatureDecisionInputs(params: {
   env: ProcessEnvInput;
   serverSnapshot?: CliServerFeaturesSnapshot;
 }): CliFeatureDecisionInputs {
+  const featureId = getCanonicalFeatureId(params.featureId);
   return {
-    featureId: params.featureId,
+    featureId,
     env: params.env,
-    buildPolicy: getCliFeatureBuildPolicyDecision(params.featureId, params.env),
-    localPolicyEnabled: resolveCliLocalFeaturePolicyEnabled(params.featureId, params.env),
+    buildPolicy: getCliFeatureBuildPolicyDecision(featureId, params.env),
+    localPolicyEnabled: resolveCliLocalFeaturePolicyEnabled(featureId, params.env),
     serverSnapshot: params.serverSnapshot,
   };
 }

@@ -40,7 +40,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
   const execOptions = {
     timeout: timeoutMs,
     signal: params.signal,
-    terminateOnAbort: params.signal ? terminateProcessTree : undefined,
+    terminateOnAbort: terminateProcessTree,
     env: execEnv,
     windowsHide: true,
   };

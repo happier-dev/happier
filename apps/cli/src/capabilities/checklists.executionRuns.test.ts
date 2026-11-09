@@ -11,7 +11,7 @@ import { checklists, createCapabilityChecklists } from './checklists';
 
 describe('capabilities checklists', () => {
   afterEach(() => {
-    vi.doUnmock('@/plugins/projection/registry/createResolvedContributionRegistry');
+    vi.doUnmock('@/plugins/projection/registry/builtIn/snapshot');
     vi.resetModules();
   });
 
@@ -69,7 +69,7 @@ describe('capabilities checklists', () => {
     // the rest of the process.
     const agents: Array<{ id: string }> = [{ id: 'claude' }];
     vi.resetModules();
-    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+    vi.doMock('@/plugins/projection/registry/builtIn/snapshot', () => ({
       getResolvedContributionRegistry: () => ({ agents, agentDefinitionsById: new Map() }),
     }));
 
@@ -88,7 +88,7 @@ describe('capabilities checklists', () => {
   it('does not read the merged Agent registry during module initialization', async () => {
     let initialized = false;
 
-    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+    vi.doMock('@/plugins/projection/registry/builtIn/snapshot', () => ({
       getResolvedContributionRegistry: () => {
         if (!initialized) {
           throw new ReferenceError('Cannot read registry before initialization');

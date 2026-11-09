@@ -16,8 +16,54 @@ import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getLiveSystemTasksRunnerAdapter } from './liveSystemTasksRunner';
+import { createSystemTasksCapability } from '../registry/toolSystemTasks';
+import { createCapabilitiesService } from '../service';
 
 describe('getLiveSystemTasksRunnerAdapter', () => {
+  it('binds an establishment response to the current prompt through the live capability owner', async () => {
+    const adapter = getLiveSystemTasksRunnerAdapter();
+    const delivered: unknown[] = [];
+    const task = await adapter.startAdmitted({ async run(ctx) {
+      delivered.push(await ctx.prompt({ kind: 'administrator.establish', message: 'Establish reviewed administrator',
+        data: { promptId: 'live-administrator', administratorUsername: 'operator' } }));
+      return { established: true };
+    } });
+    const service = createCapabilitiesService({ capabilities: [createSystemTasksCapability(adapter)],
+      checklists: { 'new-session': [], 'machine-details': [] }, buildContext: async () => ({ cliSnapshot: null }) });
+    const respond = (expectedPromptId?: string) => service.invoke({ id: 'tool.systemTasks', method: 'respond',
+      params: { ...task, expectedPromptKind: 'administrator.establish', expectedPromptId, answer: { password: 'live-private-password' } } });
+    try {
+      expect(await respond()).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+      expect(await respond('stale-administrator')).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+      expect(delivered).toEqual([]);
+      expect(await respond('live-administrator')).toMatchObject({ ok: true });
+      expect(delivered).toEqual([{ password: 'live-private-password' }]);
+      expect(await respond('live-administrator')).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+      expect(await adapter.wait(task)).toMatchObject({ ok: true, data: { established: true } });
+      expect(JSON.stringify(await adapter.poll({ ...task, cursor: 0 }))).not.toContain('live-private-password');
+    } finally { await adapter.cancel(task); }
+  });
+  it('rejects an earlier prompt decision after the real task advances to sign-in', async () => {
+    const adapter = getLiveSystemTasksRunnerAdapter();
+    const task = await adapter.startAdmitted({ async run(ctx) {
+      await ctx.prompt({ kind: 'ssh.trustHost', message: 'Trust guest', data: {} });
+      const answer = await ctx.prompt({ kind: 'auth.approveRemoteProvisioning', message: 'Sign in to guest', data: {} });
+      return { approved: answer !== null && typeof answer === 'object' && 'approved' in answer && answer.approved === true };
+    } });
+    const service = createCapabilitiesService({ capabilities: [createSystemTasksCapability(adapter)],
+      checklists: { 'new-session': [], 'machine-details': [] },
+      buildContext: async () => ({ cliSnapshot: null }) });
+    try {
+      expect(await service.invoke({ id: 'tool.systemTasks', method: 'respond',
+        params: { ...task, expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } } })).toMatchObject({ ok: true });
+      expect(await service.invoke({ id: 'tool.systemTasks', method: 'respond',
+        params: { ...task, expectedPromptKind: 'ssh.trustHost', answer: { approved: true } } }))
+        .toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+      expect(await adapter.poll({ ...task, cursor: 0 })).toMatchObject({ pendingPrompt: { kind: 'auth.approveRemoteProvisioning' }, result: null });
+      await adapter.respond({ ...task, expectedPromptKind: 'auth.approveRemoteProvisioning', answer: { approved: false } });
+      expect(await adapter.wait(task)).toMatchObject({ ok: true, data: { approved: false } });
+    } finally { await adapter.cancel(task); }
+  });
   it('registers the single remote.ssh.manageHost.v1 coordinator', async () => {
     vi.resetModules();
     const run = vi.fn(async () => ({ action: 'personalHome.create', registered: true }));

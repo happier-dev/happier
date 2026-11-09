@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 
 import { SSH_TUNNEL_SYSTEM_TASK_KINDS } from '@happier-dev/protocol/ssh/tunnels';
 import type { SystemTaskJsonValue } from '@happier-dev/protocol';
@@ -64,20 +63,9 @@ import { readCliUpdateFactsForThisCli } from '@/cli/runtime/update/cliUpdateFact
 import { projectPath } from '@/projectPath';
 import { configuration } from '@/configuration';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
-import { commandExistsInPath } from '@/daemon/service/commandExistsInPath';
+import { runDaemonServiceCommands } from '@/daemon/service/apply';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 import { planDaemonServiceLifecycle, type DaemonServiceLifecycleAction } from '@/daemon/service/plan';
-
-function runCommandsBestEffort(commands: ReadonlyArray<Readonly<{ cmd: string; args: readonly string[] }>>): void {
-  for (const command of commands) {
-    if (!commandExistsInPath({ cmd: command.cmd, envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) continue;
-    try {
-      spawnSync(command.cmd, [...command.args], { stdio: 'ignore', env: process.env });
-    } catch {
-      // ignore
-    }
-  }
-}
 
 async function readLiveDaemonServiceStatusSnapshot(_params: DaemonServiceTaskParams): Promise<DaemonServiceStatusSnapshot> {
   const status = await readDaemonStatusSnapshot();
@@ -107,7 +95,7 @@ async function runLiveDaemonServiceLifecycleAction(_params: DaemonServiceTaskPar
     happierHomeDir: runtime.happierHomeDir,
     uid: runtime.uid ?? undefined,
   });
-  runCommandsBestEffort(plan.commands);
+  runDaemonServiceCommands(plan.commands, { failureMode: 'strict' });
 }
 
 function requireLocalRelayRuntimeParams(params: RelayRuntimeTaskParams): RelayRuntimeTaskParams {

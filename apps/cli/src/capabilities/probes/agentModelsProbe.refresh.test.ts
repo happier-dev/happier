@@ -6,6 +6,31 @@ import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabil
 
 afterEach(resetAgentModelsProbeCacheForTests);
 
+it('reads current-only source observations without probing and still accepts an explicit changed observation', async () => {
+  let probes = 0;
+  let modelId = 'first';
+  const catalogEntry = {
+    id: 'example.current-only/agent', cliSubcommand: 'example.current-only/agent', vendorResumeSupport: 'unsupported',
+    getPreflightSessionControlsProbeAdapter: async () => ({ probeModelsRaw: async () => {
+      probes++;
+      return [{ id: modelId, name: modelId }];
+    } }),
+  } satisfies AgentCatalogEntry;
+  const input = { agentId: catalogEntry.id, catalogEntry, cwd: process.cwd() };
+  const cold = await probeAgentModelsBestEffort({ ...input, currentOnly: true });
+  expect(cold.source).toBe('unavailable');
+  expect(probes).toBe(0);
+  const first = await probeAgentModelsBestEffort(input);
+  expect(first.availableModels.some(model => model.id === 'first')).toBe(true);
+  expect(await probeAgentModelsBestEffort({ ...input, currentOnly: true })).toEqual(first);
+  expect(probes).toBe(1);
+  modelId = 'changed';
+  const changed = await probeAgentModelsBestEffort({ ...input, bypassCache: true });
+  expect(changed.availableModels.some(model => model.id === 'changed')).toBe(true);
+  expect(await probeAgentModelsBestEffort({ ...input, currentOnly: true })).toEqual(changed);
+  expect(probes).toBe(2);
+});
+
 it.each([
   ['dynamic', 'dynamic'],
   ['dynamic', 'static'],

@@ -7,6 +7,30 @@ const snapshot = (clis: DetectCliSnapshot['clis']): DetectCliSnapshot => ({
 });
 
 describe('Machine Agent install-fact publication', () => {
+  it('never treats a failed full census as exhaustive, while complete removal observations remain authoritative', () => {
+    const publish = createMachineAgentInventoryPublication();
+    const admitted = { checkedAt: 1, installedAgentIds: ['acme.native/agent', 'codex'] };
+    let published = admitted;
+    let membershipChanges = 0;
+    for (let arrival = 0; arrival < 128; arrival++) {
+      const next = publish({ checkedAt: arrival + 2, snapshot: snapshot({ codex: {
+        available: false, detectionError: { code: 'cli-detection-failed', message: 'Runtime unavailable' },
+      } }) }, published)!;
+      if (next !== published) membershipChanges++;
+      published = next;
+    }
+    expect(membershipChanges).toBe(0);
+    expect(published).toBe(admitted);
+    // A successfully read catalog can confirm plugin removal; a successful CLI
+    // negative still confirms a real uninstall rather than retaining it forever.
+    const removedPlugin = publish({ checkedAt: 200,
+      snapshot: snapshot({ codex: { available: true, installed: true } }) }, published);
+    expect(removedPlugin).toEqual({ checkedAt: 200, installedAgentIds: ['codex'] });
+    expect(publish({ checkedAt: 201,
+      snapshot: snapshot({ codex: { available: false, installed: false } }) }, removedPlugin))
+      .toEqual({ checkedAt: 201, installedAgentIds: [] });
+  });
+
   it('retains the published observation when a later probe confirms the same installed Agents', () => {
     const current = { checkedAt: 10, installedAgentIds: ['codex'] };
     expect(projectMachineAgentInventoryFromCliSnapshot({ current, checkedAt: 20,

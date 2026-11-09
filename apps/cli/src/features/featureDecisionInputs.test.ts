@@ -35,6 +35,7 @@ describe('featureDecisionInputs', () => {
     });
 
     expect(inputs.buildPolicy).toBe('deny');
+    expect(inputs.featureId).toBe('workflows');
     expect(inputs.localPolicyEnabled).toBe(false);
     expect(inputs.serverSnapshot).toBeUndefined();
     expect(inputs.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED).toBe('0');

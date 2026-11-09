@@ -33,6 +33,21 @@ describe('resolveCliFeatureDecision', () => {
     expect(resolveCliFeatureDecision({ ...params, settings: { featureToggles: { automations: true } },
       serverSnapshot: { status: 'unsupported', reason: 'endpoint_missing' } }).state).not.toBe('enabled');
   });
+  it('returns the canonical Workflow decision for the released Automations alias', () => {
+    const params = {
+      env: { HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+      serverSnapshot: { status: 'ready' as const, features: buildFeaturesResponse() },
+    };
+    expect(resolveCliFeatureDecision({ ...params, featureId: 'automations' })).toMatchObject({
+      featureId: 'workflows', state: 'disabled', blockedBy: 'local_policy',
+    });
+    expect(resolveCliFeatureDecision({
+      featureId: 'automations', env: {},
+      serverSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { automations: { enabled: true } }, capabilities: {},
+      }) },
+    })).toMatchObject({ featureId: 'workflows', state: 'disabled', blockedBy: 'server' });
+  });
   it('enables bugReports when server and local policy enable the feature', () => {
     const snapshot: CliServerFeaturesSnapshot = {
       status: 'ready',

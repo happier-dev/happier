@@ -1,4 +1,3 @@
-import { probeAcpSessionControls } from './probeAcpCatalogs';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { existsSync, readFileSync } from 'node:fs';
@@ -21,17 +20,21 @@ import { CURSOR_PLUGIN } from '@happier-dev/plugins-cursor';
 import { OH_MY_PI_PLUGIN } from '@happier-dev/plugins-ohmypi';
 import { GEMINI_PLUGIN } from '@happier-dev/plugins-gemini';
 import { CODEX_PREFLIGHT_SESSION_CONTROLS } from '../../../../../packages/plugins/codex/src/agent/lifecycle/preflight/sessionControls';
+import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from '../../../../../packages/plugins/opencode/src/agent/preflight/models';
 
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { projectManifestAgentAcpCatalogPreflight } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-import { probeAcpCatalogs } from './probeAcpCatalogs';
+import { probeAcpCatalogs, probeAcpSessionControls, probeAcpSessionControlsFromBackend } from './probeAcpCatalogs';
 import { probeAgentModelsBestEffort } from './agentModelsProbe';
+import { probeModelsFromAcpBackend } from './agentModelsProbe';
+import { AcpBackend } from '@/agent/acp/AcpBackend';
 import { probeAgentModesBestEffort } from './agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from './agentConfigOptionsProbe';
 
@@ -60,7 +63,7 @@ it.each(['controlsWithoutCatalog', 'emptyControls'] as const)('reads the Codex A
   });
 });
 
-function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'absent' | 'auth' | 'authMissing' | 'exit' | 'ohmypi' | 'cursor' | 'antigravity' | 'authRequired' | 'cursorModels' | 'controlsWithoutCatalog' | 'emptyControls' | 'configControls') {
+function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'absent' | 'auth' | 'authMissing' | 'exit' | 'ohmypi' | 'cursor' | 'antigravity' | 'authRequired' | 'cursorModels' | 'controlsWithoutCatalog' | 'emptyControls' | 'configControls' | 'declaredConfigControls' | 'fxControls' | 'fxScopeSwitch' | 'fxScopeAuthError' | 'fxCustomScopeSwitch' | 'scopeWithdraw' | 'scopeWithdrawThenError' | 'scopeLegacy' | 'scopeUnobserved' | 'scopeUnobservedError') {
   const evidencePath = join(dir, 'requests.jsonl');
   const script = writeAcpTestAgentScript({ dir, fileName: 'catalog-agent.mjs', source: `
     import { appendFileSync } from 'node:fs';
@@ -98,7 +101,22 @@ function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'abs
             publish('native-session', scenario === 'empty' ? [] : ${JSON.stringify(commands)});
             publish('different-session', [{ name: 'wrong', description: 'Wrong session' }]);
           }
-          send({ id: request.id, result: { sessionId: 'native-session', ...(scenario === 'controlsWithoutCatalog' ? {
+          send({ id: request.id, result: { sessionId: 'native-session', ...(scenario.startsWith('scope') ? {
+            ...(scenario === 'scopeLegacy' ? { models: { currentModelId: 'legacy-native', availableModels: [{ modelId: 'legacy-native', name: 'Legacy native model' }] } } : {}),
+            configOptions: scenario === 'scopeWithdraw' || scenario === 'scopeWithdrawThenError'
+              ? ${JSON.stringify(createFxConfigOptionsFixture())}
+              : ${JSON.stringify(createFxConfigOptionsFixture().filter((option) => option.id === 'provider'))},
+          } : scenario === 'fxCustomScopeSwitch' ? {
+            configOptions: ${JSON.stringify(createFxConfigOptionsFixture().map((option) => option.id === 'model'
+              ? { ...option, id: 'engine-choice', name: 'Engine' } : option).sort((left, right) => left.id === 'engine-choice' ? -1 : right.id === 'engine-choice' ? 1 : 0))},
+          } : ['fxControls', 'fxScopeSwitch', 'fxScopeAuthError'].includes(scenario) ? {
+            configOptions: ${JSON.stringify(createFxConfigOptionsFixture())},
+          } : scenario === 'declaredConfigControls' ? {
+            configOptions: ${JSON.stringify(createFxConfigOptionsFixture().map((option) => option.id === 'model' ? {
+              ...option, id: 'engine-choice', name: 'Engine', currentValue: ` ${option.currentValue} `,
+              options: [{ group: 'native', name: 'Native', options: option.options.map((choice) => ({ ...choice, value: ` ${choice.value} `, name: ` ${choice.name} ` })) }],
+            } : option))},
+          } : scenario === 'controlsWithoutCatalog' ? {
             models: { currentModelId: 'selected-model', availableModels: [{ modelId: 'selected-model', name: 'Selected native model' }] },
             modes: { currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan', description: 'Native planning mode' }] },
           } : scenario === 'emptyControls' ? { models: { availableModels: [] }, modes: { availableModes: [] } } : scenario === 'configControls' ? {
@@ -111,6 +129,30 @@ function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'abs
           if (scenario === 'after') setTimeout(() => { publish('different-session', []); publish('native-session', ${JSON.stringify(commands)}); }, 100);
           if (scenario === 'exit') setTimeout(() => process.exit(7), 25);
         }
+        else if (request.method === 'session/set_config_option' && scenario.startsWith('scope')) {
+          // Synthetic neighboring ACP contracts: explicit withdrawal, independent
+          // legacy models and a later refused standalone setter after withdrawal.
+          if (scenario === 'scopeUnobservedError') send({ id: request.id, error: { code: -32600, message: 'Native scope selection refused' } });
+          else if (request.params.configId === 'region') send({ id: request.id, error: { code: -32600, message: 'Native region selection refused' } });
+          else send({ id: request.id, result: { configOptions: scenario === 'scopeWithdrawThenError'
+            ? [{ id: 'region', name: 'Region', type: 'select', currentValue: 'initial', options: [{ value: 'next', name: 'Next' }] }]
+            : scenario === 'scopeLegacy'
+              ? [{ id: 'provider', name: 'Provider', type: 'select', currentValue: 'gateway', options: [{ value: 'gateway', name: 'Gateway' }] }]
+              : [] } });
+        }
+        else if (request.method === 'session/set_config_option' && ['fxScopeSwitch', 'fxScopeAuthError', 'fxCustomScopeSwitch'].includes(scenario)) {
+          // Initial options and auth errors are captured FX 0.0.14 (2026-10-27).
+          // Successful alternate scope is synthetic: the live capture had no Gateway credential.
+          if (scenario === 'fxScopeAuthError') {
+            send({ id: request.id, error: { code: -32600, message: 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.' } });
+          } else {
+            send({ id: request.id, result: { configOptions: [
+              { id: 'provider', name: 'Provider', category: 'model', type: 'select', currentValue: 'gateway', options: [{ value: 'gateway', name: 'Vercel AI Gateway' }] },
+              { id: scenario === 'fxCustomScopeSwitch' ? 'engine-choice' : 'model', name: scenario === 'fxCustomScopeSwitch' ? 'Engine' : 'Model', category: 'model', type: 'select', currentValue: 'gateway/native-model', options: [{ value: 'gateway/native-model', name: 'Gateway model' }] },
+              { id: 'effort', name: 'Reasoning Effort', category: 'thought_level', type: 'select', currentValue: 'auto', options: [{ value: 'auto', name: 'default' }] },
+            ] } });
+          }
+        }
         else if (request.id !== undefined) send({ id: request.id, result: {} });
       }
     });
@@ -118,7 +160,7 @@ function writeFixture(dir: string, scenario: 'before' | 'after' | 'empty' | 'abs
   return { script, evidencePath };
 }
 
-async function runProbe(dir: string, scenario: Parameters<typeof writeFixture>[1]) {
+async function runProbe(dir: string, scenario: Parameters<typeof writeFixture>[1], configOptionOverrides?: Readonly<Record<string, string>>) {
   const fixture = writeFixture(dir, scenario);
   const controller = new AbortController();
   // The fixture owns this cancellation budget, as the preflight host does in production.
@@ -133,6 +175,8 @@ async function runProbe(dir: string, scenario: Parameters<typeof writeFixture>[1
     framing: 'jsonLines', maxFrameBytes: 65_536, requestTimeoutMs: 10_000,
   }, { signal: controller.signal });
   try {
+    if (configOptionOverrides) return await probeAcpSessionControls({ client: handle.client, cwd: dir,
+      signal: controller.signal, modelConfigOptionId: 'model', configOptionOverrides });
     return await probeAcpCatalogs({
       client: handle.client, cwd: dir, signal: controller.signal,
       ...((scenario === 'auth' || scenario === 'authMissing') ? { authenticationMethodId: 'fixture-native' } : {}),
@@ -321,9 +365,9 @@ describe('Antigravity declared ready native ACP catalog', () => {
         expect(await adapter?.probeModesRaw?.({ cwd: dir, timeoutMs: 10_000 })).toEqual([
           { id: 'plan', name: 'Plan', description: 'Configuration planning mode' },
         ]);
-        expect(await adapter?.probeConfigOptionsRaw?.({ cwd: dir, timeoutMs: 10_000 })).toMatchObject([
+        expect(await adapter?.probeConfigOptionsRaw?.({ cwd: dir, timeoutMs: 10_000 })).toMatchObject({ modelConfigOptionId: 'model', configOptions: [
           { id: 'model', currentValue: 'config-model' }, { id: 'mode', currentValue: 'plan' },
-        ]);
+        ] });
         const configDiscovery = await probeAgentConfigOptionsBestEffort({
           agentId: 'antigravity', catalogEntry, cwd: dir, timeoutMs: 10_000,
         });
@@ -367,6 +411,228 @@ async function commitNativePluginFixture(params: Readonly<{ happyHomeDir: string
 }
 
 describe('admitted declarative ACP catalog producer', () => {
+  it.each(['generic', 'codex', 'opencode'] as const)('keeps a rejected scope with no observed model catalog unavailable (%s)', async (agentId) => {
+    await withTempDir('draft-acp-unknown-error-', async (dir) => {
+      const fixture = writeFixture(dir, 'scopeUnobservedError');
+      const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+      const executable = writeExecutableShimSync({ dir, fileName: process.platform === 'win32' ? 'scope-acp.cmd' : 'scope-acp',
+        contents: process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${fixture.script}" %*\r\n`
+          : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture.script)} "$@"\n` });
+      const managedExecutable = { kind: 'managedDependency', id: 'codex-acp' } as const;
+      const genericPreflight = { catalogs: { kind: 'acp', command: { executable: managedExecutable, args: [] } },
+        jsonRpcCommands: [{ executable: managedExecutable, args: [] }] } as const;
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId, modelConfigOptionId: 'model',
+        preflightSessionControls: agentId === 'codex' ? CODEX_PREFLIGHT_SESSION_CONTROLS
+          : agentId === 'opencode' ? OPENCODE_PREFLIGHT_SESSION_CONTROLS : genericPreflight,
+        systemTools: agentId === 'opencode' ? ['opencode-cli', 'opencode-cli-stable', 'opencode-cli-v2']
+          .map((id) => ({ id, title: id, executableNames: [executable] })) : [],
+        managedExecutableRefs: [managedExecutable],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const result = await probeAgentModelsBestEffort({ agentId,
+        catalogEntry: { id: agentId, cliSubcommand: agentId, vendorResumeSupport: 'unsupported', ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp', opencodeBackendMode: 'acp' },
+        configOptionOverrides: { provider: 'gateway' } });
+      expect(result).toMatchObject({ source: 'unavailable', availableModels: [], refreshError: true,
+        refreshErrorMessage: 'Native scope selection refused' });
+    });
+  });
+
+  it.each((['raw', 'backend'] as const).flatMap((surface) =>
+    (['scopeWithdraw', 'scopeWithdrawThenError', 'scopeLegacy', 'scopeUnobserved'] as const).map((scenario) => ({ surface, scenario })),
+  ))('preserves observed model ownership across accepted config snapshots ($surface, $scenario)', async ({ surface, scenario }) => {
+      await withTempDir('draft-acp-model-ownership-', async (dir) => {
+        const overrides = { provider: 'gateway', region: 'next' };
+        const fixture = writeFixture(dir, scenario);
+        const backend = surface === 'backend' ? new AcpBackend({ agentName: 'fixture', cwd: dir,
+          command: process.execPath, args: [fixture.script], modelConfigOptionId: 'model' }) : null;
+        try {
+          const controls = backend
+            ? await probeAcpSessionControlsFromBackend({ backend, timeoutMs: 10_000, configOptionOverrides: overrides })
+            : await runProbe(dir, scenario, overrides);
+          if (!('models' in controls)) throw new Error('Expected session controls');
+          expect(controls.models, scenario).toEqual(scenario === 'scopeUnobserved' ? null
+            : scenario === 'scopeLegacy' ? [{ id: 'legacy-native', name: 'Legacy native model' }] : []);
+          if (scenario === 'scopeWithdrawThenError') {
+            expect(controls).toMatchObject({ refreshError: true, refreshErrorMessage: 'Native region selection refused',
+              configOptions: [{ id: 'region', currentValue: 'initial' }] });
+          } else {
+            expect(controls.refreshError, scenario).not.toBe(true);
+          }
+          if (scenario === 'scopeWithdraw' || scenario === 'scopeUnobserved') expect(controls.configOptions).toEqual([]);
+        } finally { await backend?.dispose(); }
+      });
+  });
+
+  it('publishes an authoritative empty catalog after a successful draft scope withdrawal', async () => {
+    await withTempDir('draft-acp-withdraw-models-', async (dir) => {
+      const fixture = writeFixture(dir, 'scopeWithdraw');
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'codex', preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS, modelConfigOptionId: 'model', systemTools: [],
+        managedExecutableRefs: [{ kind: 'managedDependency', id: 'codex-acp' }],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const result = await probeAgentModelsBestEffort({ agentId: 'codex',
+        catalogEntry: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported', ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp' }, configOptionOverrides: { provider: 'gateway' } });
+      expect(result).toMatchObject({ source: 'dynamic', availableModels: [] });
+      expect(result.refreshError).not.toBe(true);
+    });
+  });
+
+  it('retains a newer accepted withdrawal when a later setter fails during a cached scope refresh', async () => {
+    await withTempDir('draft-acp-cached-withdrawal-', async (dir) => {
+      const fixture = writeFixture(dir, 'fxScopeSwitch');
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'codex', preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS, modelConfigOptionId: 'model', systemTools: [],
+        managedExecutableRefs: [{ kind: 'managedDependency', id: 'codex-acp' }],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const params = { agentId: 'codex',
+        catalogEntry: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported' as const, ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp' },
+        configOptionOverrides: { provider: 'gateway', region: 'next' }, bypassCache: true };
+      const initial = await probeAgentModelsBestEffort(params);
+      expect(initial.availableModels.map((model) => model.id)).toEqual(['default', 'gateway/native-model']);
+      writeFixture(dir, 'scopeWithdrawThenError');
+      const refreshed = await probeAgentModelsBestEffort(params);
+      expect(refreshed).toMatchObject({ source: 'dynamic', availableModels: [], refreshError: true,
+        refreshErrorMessage: 'Native region selection refused' });
+    });
+  });
+
+  it('does not send a native setter for an already accepted standalone selection', async () => {
+    await withTempDir('draft-acp-unchanged-scope-', async (dir) => {
+      const fixture = writeFixture(dir, 'fxControls');
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'codex', preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS, systemTools: [],
+        managedExecutableRefs: [{ kind: 'managedDependency', id: 'codex-acp' }],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const result = await probeAgentConfigOptionsBestEffort({ agentId: 'codex',
+        catalogEntry: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported', ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp' }, configOptionOverrides: { provider: 'codex' } });
+      expect(result).toMatchObject({ source: 'dynamic', configOptions: createFxConfigOptionsFixture() });
+      expect(readFileSync(fixture.evidencePath, 'utf8')).not.toContain('session/set_config_option');
+    });
+  });
+
+  it('uses the configured backend declared selector identity before applying reordered standalone fields', async () => {
+    await withTempDir('configured-draft-declared-selector-', async (dir) => {
+      const fixture = writeFixture(dir, 'fxCustomScopeSwitch');
+      const backend = new AcpBackend({ agentName: 'fixture', cwd: dir, command: process.execPath,
+        args: [fixture.script], modelConfigOptionId: 'engine-choice' });
+      try {
+        const controls = await probeAcpSessionControlsFromBackend({ backend, timeoutMs: 10_000,
+          configOptionOverrides: { 'engine-choice': 'gpt-6-astra', effort: 'ultra', provider: 'gateway' } });
+        expect(controls).toMatchObject({ modelConfigOptionId: 'engine-choice',
+          models: [{ id: 'gateway/native-model', name: 'Gateway model' }] });
+        const setters = readFileSync(fixture.evidencePath, 'utf8').trim().split('\n')
+          .map((line) => JSON.parse(line) as { method: string; params: unknown })
+          .filter((request) => request.method === 'session/set_config_option');
+        expect(setters.map((request) => request.params)).toEqual([
+          { sessionId: 'native-session', configId: 'provider', value: 'gateway' },
+        ]);
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it('retains the OpenCode native-server static configuration observation', async () => {
+    const projected = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'opencode', preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,
+      systemTools: ['opencode-cli', 'opencode-cli-stable', 'opencode-cli-v2'].map((id) => ({ id, title: id, executableNames: [process.execPath] })),
+      retirementSignal: new AbortController().signal, isCurrent: () => true,
+    });
+    const result = await probeAgentConfigOptionsBestEffort({ agentId: 'opencode',
+      catalogEntry: { id: 'opencode', cliSubcommand: 'opencode', vendorResumeSupport: 'unsupported', ...projected },
+      cwd: '/native-server-config-observation', accountSettings: { opencodeBackendMode: 'server' } });
+    expect(result).toEqual({ agentId: 'opencode', source: 'static', configOptions: [] });
+  });
+
+  it('refreshes a configured ACP backend probe through its existing native setter', async () => {
+    await withTempDir('configured-draft-acp-scope-', async (dir) => {
+      const fixture = writeFixture(dir, 'fxScopeSwitch');
+      const backend = new AcpBackend({ agentName: 'fixture', cwd: dir, command: process.execPath, args: [fixture.script] });
+      try {
+        const models = await probeModelsFromAcpBackend({ backend, timeoutMs: 10_000,
+          configOptionOverrides: { provider: 'gateway', effort: 'ultra' } });
+        expect(models?.map((model) => model.id)).toEqual(['default', 'gateway/native-model']);
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it.each(['fxScopeSwitch', 'fxScopeAuthError'] as const)('refreshes the draft dependent catalog and preserves accepted state on failure (%s)', async (scenario) => {
+    await withTempDir('draft-acp-scope-', async (dir) => {
+      const fixture = writeFixture(dir, scenario);
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'codex', preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS, systemTools: [],
+        managedExecutableRefs: [{ kind: 'managedDependency', id: 'codex-acp' }],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const params = {
+        agentId: 'codex', catalogEntry: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported' as const, ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp' },
+        // Stale model-scoped input must never precede or follow the standalone scope swap.
+        configOptionOverrides: { effort: 'ultra', model: 'gpt-6.1-sol', provider: 'gateway' },
+      };
+      const config = await probeAgentConfigOptionsBestEffort(params);
+      const models = await probeAgentModelsBestEffort({ ...params, bypassCache: true });
+      if (scenario === 'fxScopeAuthError') {
+        const refreshErrorMessage = 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.';
+        expect(config).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage, configOptions: createFxConfigOptionsFixture() });
+        expect(models).toMatchObject({ source: 'dynamic', refreshError: true, refreshErrorMessage });
+        expect(models.availableModels.some((model) => model.id === 'gpt-6.1-sol')).toBe(true);
+      } else {
+        expect(config).toMatchObject({ source: 'dynamic', configOptions: [
+          { id: 'provider', currentValue: 'gateway' }, { id: 'model', currentValue: 'gateway/native-model' },
+          { id: 'effort', options: [{ value: 'auto', name: 'default' }] },
+        ] });
+        expect(models.availableModels.map((model) => model.id)).toEqual(['default', 'gateway/native-model']);
+        expect(config.configOptions.some((option) => option.id === 'fast')).toBe(false);
+      }
+      const requests = readFileSync(fixture.evidencePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { method: string; params: unknown });
+      expect(requests.filter((request) => request.method === 'session/set_config_option').map((request) => request.params)).toEqual([
+        { sessionId: 'native-session', configId: 'provider', value: 'gateway' },
+        { sessionId: 'native-session', configId: 'provider', value: 'gateway' },
+      ]);
+      expect(requests.filter((request) => request.method === 'session/close')).toHaveLength(2);
+      expect(requests.some((request) => request.method === 'session/prompt')).toBe(false);
+    });
+  });
+
+  it.each(['codex', 'opencode'] as const)('carries the full %s ACP catalog and canonical selector through its plugin preflight', async (agentId) => {
+    await withTempDir('switchable-acp-config-catalog-', async (dir) => {
+      const fixture = writeFixture(dir, 'fxControls');
+      const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+      const executable = writeExecutableShimSync({
+        dir, fileName: process.platform === 'win32' ? 'selected-acp.cmd' : 'selected-acp',
+        contents: process.platform === 'win32'
+          ? `@echo off\r\n"${process.execPath}" "${fixture.script}" %*\r\n`
+          : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture.script)} "$@"\n`,
+      });
+      const tools = ['opencode-cli', 'opencode-cli-stable', 'opencode-cli-v2'].map((id) => ({
+        id, title: id, executableNames: [executable],
+      }));
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId, preflightSessionControls: agentId === 'codex' ? CODEX_PREFLIGHT_SESSION_CONTROLS : OPENCODE_PREFLIGHT_SESSION_CONTROLS,
+        systemTools: agentId === 'codex' ? [] : tools,
+        managedExecutableRefs: [{ kind: 'managedDependency', id: 'codex-acp' }],
+        resolveReadyManagedExecutable: async () => ({ command: process.execPath, args: [fixture.script], release() {} }),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const result = await probeAgentConfigOptionsBestEffort({
+        agentId, catalogEntry: { id: agentId, cliSubcommand: agentId, vendorResumeSupport: 'unsupported', ...projected },
+        cwd: dir, timeoutMs: 10_000, accountSettings: { codexBackendMode: 'acp', opencodeBackendMode: 'acp' },
+      });
+      expect(result).toMatchObject({ source: 'dynamic', modelConfigOptionId: 'model', configOptions: createFxConfigOptionsFixture() });
+    });
+  });
+
   it('projects the native manifest into an invoked OS ACP probe without plugin runtime registration', async () => {
     await withTempDir('declarative-native-catalog-', async (dir) => {
       const pluginId = 'acme.declarative-catalog';
@@ -385,7 +651,7 @@ describe('admitted declarative ACP catalog producer', () => {
         hostAccess: { required: [{ id: 'process', capability: 'process', reason: 'Run native ACP fixture', scope: { executables: [{ kind: 'systemTool', id: 'native-acp' }] } }], optional: [] },
         contributes: {
           agents: [{ id: 'native', title: 'Native fixture', primary: 'sessions',
-            runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'native-acp' }, preferredPath: executable, args: [] } },
+            runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'native-acp' }, preferredPath: executable, args: [] }, definition: { modelConfigOptionId: 'engine-choice' } },
             capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
           }],
           systemTools: [{ id: 'native-acp', title: 'Native ACP fixture', executableNames: ['missing-native-acp'] }],
@@ -414,6 +680,24 @@ describe('admitted declarative ACP catalog producer', () => {
         await expect(adapter?.probeCatalogsRaw?.({ cwd: dir, timeoutMs: 10_000 })).resolves.toEqual({ commands, skills: null });
         expect(readFileSync(fixture.evidencePath, 'utf8')).toContain('"method":"session/new"');
         expect(readFileSync(fixture.evidencePath, 'utf8')).not.toContain('"method":"session/prompt"');
+        writeFixture(dir, 'declaredConfigControls');
+        const models = await adapter?.probeModelsRaw?.({ cwd: dir, timeoutMs: 10_000 });
+        expect(models).toMatchObject([
+          { id: 'default' },
+          { id: ' gpt-6.1-sol ', name: ' gpt-6.1-sol ', modelOptions: [{ id: 'effort', category: 'thought_level' }, { id: 'fast', category: 'model' }] },
+          { id: ' gpt-6-astra ' }, { id: ' gpt-6.1-terra ' }, { id: ' gpt-6-sol ' },
+          { id: ' gpt-6-luna ' }, { id: ' gpt-5.6-sol ' }, { id: ' gpt-5.6-terra ' }, { id: ' gpt-5.6-luna ' },
+        ]);
+        const configOptions = await adapter?.probeConfigOptionsRaw?.({ cwd: dir, timeoutMs: 10_000 });
+        const observedModels = await probeAgentModelsBestEffort({
+          agentId: agent.id, catalogEntry: catalog, cwd: dir, timeoutMs: 10_000,
+        });
+        expect(observedModels.availableModels[1]).toMatchObject({ id: ' gpt-6.1-sol ', name: ' gpt-6.1-sol ' });
+        expect(configOptions).toMatchObject({ modelConfigOptionId: 'engine-choice', configOptions: [
+          { id: 'provider', category: 'model', currentValue: 'codex' },
+          { id: 'engine-choice', groups: [{ id: 'native', name: 'Native' }], currentValue: ' gpt-6.1-sol ' },
+          { id: 'mode' }, { id: 'effort' }, { id: 'fast' },
+        ] });
       } finally { await registry.dispose(); }
     });
   });

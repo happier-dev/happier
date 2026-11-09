@@ -6,6 +6,7 @@ import {
   type AgentCliInstallSource,
   type AgentCliLatestVersionFacts,
   type AgentCliResolutionSource,
+  type AgentCliUpdateFacts,
   type AgentCliRuntimeDescriptor,
   type AgentInstallProgressCallback,
 } from '@happier-dev/cli-common/agents';
@@ -37,6 +38,7 @@ export type AgentCliUpdatesDeps = Readonly<{
   fetchLatestVersion?: (
     runtimeSpec: AgentCliRuntimeDescriptor,
     installSource: AgentCliInstallSource,
+    npmPackageName?: string,
   ) => Promise<AgentCliLatestVersionFacts>;
   latestVersionTtlMs?: number;
   signal?: AbortSignal;
@@ -95,8 +97,8 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     }
   };
   const fetchLatestVersion = deps.fetchLatestVersion
-    ?? ((runtimeSpec: AgentCliRuntimeDescriptor, installSource: AgentCliInstallSource) =>
-      fetchAgentCliLatestVersion({ runtimeSpec, installSource, env, signal: deps.signal,
+    ?? ((runtimeSpec: AgentCliRuntimeDescriptor, installSource: AgentCliInstallSource, npmPackageName?: string) =>
+      fetchAgentCliLatestVersion({ runtimeSpec, installSource, npmPackageName, env, signal: deps.signal,
         deps: { fetchGitHubLatestRelease: (params) => fetchGitHubLatestRelease({ ...params,
           cacheTtlMs: deps.latestVersionTtlMs ?? configuration.installablesRuntimeAutoUpdateCheckIntervalMs }) },
       }));
@@ -105,16 +107,16 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     errorTtlMs: 0,
   });
 
-  // Keyed by install source: a managed install follows the managed installer's release-age
-  // rule, any other install the registry's own "latest".
+  // Managed installs follow the release-age rule; external installs retain their
+  // proven package, including when a user switches between legacy and current packages.
   const readLatestVersion = async (
     runtimeSpec: AgentCliRuntimeDescriptor,
-    installSource: AgentCliInstallSource,
+    install: AgentCliUpdateFacts,
     bypassCache: boolean,
   ): Promise<AgentCliLatestVersionFacts | null> => {
     const load = async (): Promise<AgentCliLatestVersionFacts | null> => {
       try {
-        return await fetchLatestVersion(runtimeSpec, installSource);
+        return await fetchLatestVersion(runtimeSpec, install.installSource, install.npmPackageName);
       } catch (error) {
         deps.signal?.throwIfAborted();
         logger.debug(`[capabilities] latest version lookup failed for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -123,8 +125,8 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     };
     // GitHub reads (including refreshes) use the same owner as dependencies and
     // installers. This cache is only for npm's source-specific release-age facts.
-    if (resolveAgentCliLatestVersionSource(runtimeSpec)?.kind === 'github_release') return load();
-    const key = installSource === 'managed' ? 'managed' : 'registry';
+    if (resolveAgentCliLatestVersionSource(runtimeSpec, install)?.kind === 'github_release') return load();
+    const key = JSON.stringify([install.installSource === 'managed' ? 'managed' : 'registry', install.npmPackageName ?? null]);
     const cached = latestVersionCache.get(key);
     if (!bypassCache && cached?.kind === 'success' && latestVersionCache.isFresh(cached)) return cached.value;
     return await latestVersionCache.runDedupe(key, async () => {
@@ -154,7 +156,7 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
       updateSupported: facts.updateSupported,
       updateCommand: facts.updateCommand,
       ...(params.includeLatestVersion === true
-        ? { latestVersion: (await readLatestVersion(runtimeSpec, facts.installSource, params.bypassCache === true))?.latestVersion ?? null }
+        ? { latestVersion: (await readLatestVersion(runtimeSpec, facts, params.bypassCache === true))?.latestVersion ?? null }
         : {}),
     };
   };
@@ -200,10 +202,11 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     // The install changed what is on disk: no cached snapshot may answer the next detect.
     invalidateCliSnapshots();
     const after = await detectFresh();
-    const afterInstallSource = after && platform
-      ? classifyAgentCliInstall({ runtimeSpec, command: after.command, source: after.source, platform, env }).installSource
+    const afterInstall = after && platform
+      ? classifyAgentCliInstall({ runtimeSpec, command: after.command, source: after.source, platform, env })
       : null;
-    const latest = afterInstallSource ? await readLatestVersion(runtimeSpec, afterInstallSource, true) : null;
+    const afterInstallSource = afterInstall?.installSource ?? null;
+    const latest = afterInstall ? await readLatestVersion(runtimeSpec, afterInstall, true) : null;
     if (after?.version && after.version === before.version) {
       const held = latest?.heldVersion ?? null;
       if (held && held.version !== after.version) {

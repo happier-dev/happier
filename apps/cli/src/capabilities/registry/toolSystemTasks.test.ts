@@ -31,6 +31,57 @@ async function waitForResult(
 }
 
 describe('systemTasksCapability', () => {
+  it('delivers an establishment secret only once to its exact pending prompt without retaining the response', async () => {
+    const delivered: unknown[] = [];
+    const runner = createSystemTasksRunner({ kinds: {} });
+    await runner.startAdmitted({ taskId: 'establish-task', kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, {
+      async run(context) {
+        for (const promptId of ['administrator-1', 'administrator-2']) {
+          delivered.push(await context.prompt({ kind: 'administrator.establish', message: 'Establish reviewed administrator',
+            data: { promptId, administratorUsername: 'operator' } }));
+        }
+        return { established: true };
+      },
+    });
+    const capability = createSystemTasksCapability(createProtocolSystemTasksRunnerAdapter(runner));
+    const answer = (promptId: unknown, password = 'private-establishment-password') => capability.invoke?.({ method: 'respond',
+      params: { taskId: 'establish-task', expectedPromptKind: 'administrator.establish', expectedPromptId: promptId, answer: { password } } });
+    expect(await answer(undefined)).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+    expect(await answer('old-administrator')).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+    expect(await answer(3)).toMatchObject({ ok: false, error: { code: 'invalid_params' } });
+    expect(delivered).toEqual([]);
+    expect(await answer('administrator-1')).toMatchObject({ ok: true });
+    expect(delivered).toEqual([{ password: 'private-establishment-password' }]);
+    // Same kind, later prompt: the previous response must not answer it.
+    expect(await answer('administrator-1')).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+    expect(delivered).toHaveLength(1);
+    const pending = await capability.invoke?.({ method: 'poll', params: { taskId: 'establish-task', cursor: 0 } });
+    expect(JSON.stringify(pending)).not.toContain('private-establishment-password');
+    expect(await answer('administrator-2', 'fresh-password')).toMatchObject({ ok: true });
+    expect(delivered).toEqual([{ password: 'private-establishment-password' }, { password: 'fresh-password' }]);
+    expect(await answer('administrator-2')).toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+    const coldSnapshot = JSON.parse(JSON.stringify(await capability.invoke?.({ method: 'poll', params: { taskId: 'establish-task', cursor: 0 } })));
+    expect(coldSnapshot).toMatchObject({ ok: true, result: { pendingPrompt: null, result: { ok: true, data: { established: true } } } });
+    expect(JSON.stringify(coldSnapshot)).not.toMatch(/private-establishment-password|fresh-password/);
+  });
+  it('refuses an establishment response after the task is cancelled', async () => {
+    let delivered = false;
+    const runner = createSystemTasksRunner({ kinds: {} });
+    await runner.startAdmitted({ taskId: 'cancelled-establishment', kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, {
+      async run(context) {
+        await context.prompt({ kind: 'administrator.establish', message: 'Establish reviewed administrator',
+          data: { promptId: 'administrator-1', administratorUsername: 'operator' } });
+        delivered = true;
+        return { established: true };
+      },
+    });
+    const capability = createSystemTasksCapability(createProtocolSystemTasksRunnerAdapter(runner));
+    await runner.cancel({ taskId: 'cancelled-establishment' });
+    expect(await capability.invoke?.({ method: 'respond', params: { taskId: 'cancelled-establishment',
+      expectedPromptKind: 'administrator.establish', expectedPromptId: 'administrator-1', answer: { password: 'never-delivered' } } }))
+      .toMatchObject({ ok: false, error: { code: 'no_prompt' } });
+    expect(delivered).toBe(false);
+  });
   it('waits for the same admitted task to settle and preserves terminal failure', async () => {
     let failRestart!: () => void;
     const restart = new Promise<void>((resolve) => { failRestart = resolve; });

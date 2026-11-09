@@ -4,6 +4,8 @@ import { createCapabilitiesService, type Capability } from './service';
 import { CapabilityError } from './errors';
 import type { CapabilitiesDetectContextBuilder } from './service';
 import type { CapabilityDetectRequest, ChecklistId } from './types';
+import { executionRunsCapability } from './registry/toolExecutionRuns';
+import { createEnvKeyScope } from '../testkit/env/envScope';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -106,6 +108,30 @@ describe('createCapabilitiesService', () => {
     // Shared discovery and the entire finite checklist consume one execution,
     // not a second admission after discovery has already disclosed data.
     expect({ effects, discoveries, admissions }).toEqual({ effects: 3, discoveries: 1, admissions: 4 });
+  });
+
+  it('describes Run protocol support without native or Account discovery and reflects the existing gate', () => {
+    const env = createEnvKeyScope(['HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED']);
+    const service = createCapabilitiesService({
+      capabilities: [executionRunsCapability],
+      checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+      // Discovery is a separate effectful operation, never a describe prerequisite.
+      buildContext: async () => { throw new Error('Native discovery must not run for describe'); },
+    });
+    try {
+      env.patch({ HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '1' });
+      expect(service.describe().capabilities).toContainEqual(expect.objectContaining({
+        id: 'tool.executionRuns',
+        protocol: { version: 2, available: true, features: {
+          detachedScope: true, startAndWait: true, exactInputResults: true,
+          runScopedAgentBindings: true, secretReferenceOverlay: true,
+        } },
+      }));
+      env.patch({ HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '0' });
+      expect(service.describe().capabilities).toContainEqual(expect.objectContaining({
+        id: 'tool.executionRuns', protocol: expect.objectContaining({ version: 2, available: false }),
+      }));
+    } finally { env.restore(); }
   });
 
   it('rejects an undeclared capability method before invoking its implementation', async () => {

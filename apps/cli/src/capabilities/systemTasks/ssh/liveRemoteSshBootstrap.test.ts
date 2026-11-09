@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createCliPayloadFixture } from '../../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
+import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
+import { runManagedMachineEnrollment } from '@/machines/managed/enrollment';
 
 type OpenSshFileTransferParams = Parameters<
   typeof import('@happier-dev/cli-common/ssh').transferOpenSshFile
@@ -14,23 +19,26 @@ const {
   readFileSync,
   writeFileSync,
   chmodSync,
+  renameSync,
+  unlinkSync,
   approveTerminalAuthRequest,
   reloadConfiguration,
-  lastInstallRemoteFirstPartyDeps,
   lastOpenSshParams,
   openSshParamsCalls,
   transferOpenSshFile,
   localEnrollmentExecutor,
   enrollmentResponse,
+  realTrustDirectories,
 } = vi.hoisted(() => ({
   spawnSync: vi.fn(),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
   chmodSync: vi.fn(),
+  renameSync: vi.fn(),
+  unlinkSync: vi.fn(),
   approveTerminalAuthRequest: vi.fn(async () => undefined),
   reloadConfiguration: vi.fn(),
-  lastInstallRemoteFirstPartyDeps: { current: null as null | unknown },
   lastOpenSshParams: { current: null as null | Record<string, unknown> },
   openSshParamsCalls: [] as Array<Record<string, unknown>>,
   transferOpenSshFile: vi.fn<(params: OpenSshFileTransferParams) => Promise<void>>(async () => undefined),
@@ -38,6 +46,7 @@ const {
     runHappierText: (args: readonly string[], opts?: Readonly<{ onStdoutChunk?: (text: string) => void }>) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
   } },
   enrollmentResponse: { current: null as null | { status: number; stdout: string; stderr: string } },
+  realTrustDirectories: new Set<string>(),
 }));
 
 const { isLoopbackPortAvailable, findAvailableLoopbackPort } = vi.hoisted(() => ({
@@ -59,13 +68,16 @@ vi.mock('node:child_process', async (importOriginal) => {
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   // Only the simulated SSH trust store is external here; payload/temp files stay real.
-  const isTrustPath = (path: unknown) => String(path).includes('known_hosts') || String(path).startsWith('/mock-home');
+  const isTrustPath = (path: unknown) => ![...realTrustDirectories].some(root => String(path).startsWith(root))
+    && (String(path).includes('known_hosts') || String(path).startsWith('/mock-home'));
   return {
     ...actual,
     mkdirSync: (...args: Parameters<typeof actual.mkdirSync>) => isTrustPath(args[0]) ? mkdirSync(...args) : actual.mkdirSync(...args),
     readFileSync: (...args: Parameters<typeof actual.readFileSync>) => isTrustPath(args[0]) ? readFileSync(...args) : actual.readFileSync(...args),
     writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => isTrustPath(args[0]) ? writeFileSync(...args) : actual.writeFileSync(...args),
     chmodSync: (...args: Parameters<typeof actual.chmodSync>) => isTrustPath(args[0]) ? chmodSync(...args) : actual.chmodSync(...args),
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => isTrustPath(args[0]) ? renameSync(...args) : actual.renameSync(...args),
+    unlinkSync: (...args: Parameters<typeof actual.unlinkSync>) => isTrustPath(args[0]) ? unlinkSync(...args) : actual.unlinkSync(...args),
   };
 });
 
@@ -164,37 +176,14 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
   return {
     ...actual,
     createLocalHappierJsonExecutor: () => localEnrollmentExecutor.current ?? actual.createLocalHappierJsonExecutor(),
-    installRemoteFirstPartyComponent: async (
-      ...args: Parameters<typeof actual.installRemoteFirstPartyComponent>
-    ) => {
-      const [params, deps] = args;
-      lastInstallRemoteFirstPartyDeps.current = deps;
-      return await actual.installRemoteFirstPartyComponent(params, {
-        ...deps,
-        preparePayload: deps.preparePayload ?? (async ({ componentId, channel }) => {
-          const payloadRoot = await mkdtemp(join(tmpdir(), 'happier-ssh-bootstrap-payload-'));
-          await mkdir(join(payloadRoot, 'bin'), { recursive: true });
-          await writeFile(join(payloadRoot, 'bin', 'happier'), '#!/usr/bin/env bash\nexit 0\n', 'utf8');
-          return {
-            componentId,
-            channel,
-            versionId: 'test-version',
-            payloadRoot,
-            source: 'unit-test',
-            cleanup: async () => {
-              await rm(payloadRoot, { recursive: true, force: true });
-            },
-          };
-        }),
-      });
-    },
   };
 });
 
 import { createLiveRemoteEnrollmentExecutor, createLiveRemoteSshBootstrapTaskKind, createLiveRemoteSshManageHostTaskKind } from './liveRemoteSshBootstrap';
 import { createServer } from 'node:http';
 import { encodeHomeQrInviteV2Payload, type HomeQrInviteV2 } from '@happier-dev/protocol';
-import { parseSshKnownHostLine, runRemoteHomeEnrollmentRecipe } from '@happier-dev/cli-common/systemTasks';
+import { createSystemTasksRunner, parseSshKnownHostLine, runRemoteHomeEnrollmentFlow } from '@happier-dev/cli-common/systemTasks';
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 
 function jsonResult(data: Record<string, unknown>) {
   return {
@@ -218,6 +207,147 @@ let remoteEnrollmentCompleted = false;
 	const UNBRACKETED_PORT_KEYSCAN_OUTPUT = '127.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 describe('createLiveRemoteSshBootstrapTaskKind', () => {
+  let payloadFixture: Awaited<ReturnType<typeof createCliPayloadFixture>>;
+  beforeAll(async () => { payloadFixture = await createCliPayloadFixture(); });
+  afterAll(async () => { await payloadFixture?.cleanup(); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('merges overlapping task trust approvals into the current real known_hosts file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-ssh-trust-test-'));
+    realTrustDirectories.add(root);
+    const knownHostsPath = join(root, 'known_hosts');
+    const unrelatedKey = TRUSTED_HOST_KEY.replace('example.test', 'retained.test');
+    await writeFile(knownHostsPath, `${unrelatedKey}\r\n`, 'utf8');
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => command === 'ssh-keyscan'
+      ? { status: 0, stdout: `${TRUSTED_HOST_KEY.replace('example.test', args.at(-1)!)}\n`, stderr: '' }
+      : { status: 1, stdout: '', stderr: 'Installation stops at the OS boundary' });
+    const runner = createSystemTasksRunner({ kinds: { bootstrap: createLiveRemoteSshBootstrapTaskKind() } });
+    const ids = ['overlap-a', 'overlap-b'];
+    try {
+      await Promise.all(ids.map((taskId, index) => runner.start({ taskId, kind: 'bootstrap', params: {
+        ssh: { target: `dev@host-${index}.test`, auth: 'agent', knownHostsPath },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none',
+      } })));
+      for (const taskId of ids) await vi.waitFor(async () => {
+        expect((await runner.poll({ taskId, cursor: 0 })).pendingPrompt?.kind).toBe('ssh.trustHost');
+      });
+      for (const taskId of ids) {
+        await runner.respond({ taskId, answer: { trusted: true } });
+        expect(SystemTaskResultSchema.parse(await runner.wait({ taskId }))).toMatchObject({
+          ok: false, error: { code: 'ssh_command_failed' },
+        });
+      }
+      const persisted = await readFile(knownHostsPath, 'utf8');
+      expect(persisted).toContain(unrelatedKey);
+      expect(persisted).toContain(TRUSTED_HOST_KEY.replace('example.test', 'host-0.test'));
+      expect(persisted).toContain(TRUSTED_HOST_KEY.replace('example.test', 'host-1.test'));
+    } finally {
+      await Promise.all(ids.map(taskId => runner.cancel({ taskId })));
+      await Promise.all(ids.map(taskId => runner.wait({ taskId })));
+      realTrustDirectories.delete(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps explicit replacement consent and merges unrelated entries added while the prompt was open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-ssh-trust-test-'));
+    realTrustDirectories.add(root);
+    const knownHostsPath = join(root, 'known_hosts');
+    const original = MISMATCHED_TRUSTED_HOST_KEY.replace('example.test', 'example.test,127.0.0.1');
+    await writeFile(knownHostsPath, `${original}\r\n`, 'utf8');
+    const unrelated = TRUSTED_HOST_KEY.replace('example.test', 'other.test');
+    const scanner = spawnSync.getMockImplementation()!;
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => command === 'ssh-keyscan'
+      ? scanner(command, args)
+      : { status: 1, stdout: '', stderr: 'Installation stops at the OS boundary' });
+    const runner = createSystemTasksRunner({ kinds: { bootstrap: createLiveRemoteSshBootstrapTaskKind() } });
+    const taskId = 'replace-current-trust';
+    try {
+      await runner.start({ taskId, kind: 'bootstrap', params: {
+        ssh: { target: 'dev@example.test', auth: 'agent', knownHostsPath },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none',
+      } });
+      await vi.waitFor(async () => {
+        expect((await runner.poll({ taskId, cursor: 0 })).pendingPrompt?.kind).toBe('ssh.replaceHostKey');
+      });
+      await writeFile(knownHostsPath, `${original}\r\n${unrelated}\r\n`, 'utf8');
+      await runner.respond({ taskId, answer: { trusted: true } });
+      expect(SystemTaskResultSchema.parse(await runner.wait({ taskId }))).toMatchObject({
+        ok: false, error: { code: 'ssh_command_failed' },
+      });
+      const persisted = await readFile(knownHostsPath, 'utf8');
+      expect(persisted).toContain(TRUSTED_HOST_KEY.replace('example.test', 'example.test,127.0.0.1'));
+      expect(persisted).toContain(unrelated);
+      expect(persisted).not.toContain(MISMATCHED_TRUSTED_HOST_KEY.split(' ').at(-1));
+    } finally {
+      await runner.cancel({ taskId });
+      await runner.wait({ taskId });
+      realTrustDirectories.delete(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['new host', 'replacement', 'replacement with an appended conflicting key'] as const)('refuses a stale %s approval after saved trust changes', async initial => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-ssh-trust-test-'));
+    realTrustDirectories.add(root);
+    const knownHostsPath = join(root, 'known_hosts');
+    const changedKey = TRUSTED_HOST_KEY.replace(/BBBBB/gu, 'DDDDD');
+    if (initial !== 'new host') await writeFile(knownHostsPath, `${MISMATCHED_TRUSTED_HOST_KEY}\n`, 'utf8');
+    const runner = createSystemTasksRunner({ kinds: { bootstrap: createLiveRemoteSshBootstrapTaskKind() } });
+    const taskId = 'stale-trust';
+    try {
+      await runner.start({ taskId, kind: 'bootstrap', params: {
+        ssh: { target: 'dev@example.test', auth: 'agent', knownHostsPath },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none',
+      } });
+      await vi.waitFor(async () => {
+        expect((await runner.poll({ taskId, cursor: 0 })).pendingPrompt?.kind)
+          .toBe(initial === 'new host' ? 'ssh.trustHost' : 'ssh.replaceHostKey');
+      });
+      const currentText = `${initial === 'replacement with an appended conflicting key' ? `${MISMATCHED_TRUSTED_HOST_KEY}\n` : ''}${changedKey}\n`;
+      await writeFile(knownHostsPath, currentText, 'utf8');
+      await runner.respond({ taskId, answer: { trusted: true } });
+      expect(SystemTaskResultSchema.parse(await runner.wait({ taskId }))).toMatchObject({
+        ok: false, error: { code: 'trusted_host_key_mismatch' },
+      });
+      expect(await readFile(knownHostsPath, 'utf8')).toBe(currentText);
+      expect(transferOpenSshFile).not.toHaveBeenCalled();
+    } finally {
+      await runner.cancel({ taskId });
+      await runner.wait({ taskId });
+      realTrustDirectories.delete(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('runs dedicated SSH enrollment against the same public managed payload as the non-root daemon rather than inheriting the SSH login', async () => {
+    const params = { ssh: { target: 'bootstrap@example.test', auth: 'agent' as const }, auth: { mode: 'agent' as const },
+      knownHostsMode: 'system' as const, channel: 'preview' as const,
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
+        role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const } };
+    await createLiveRemoteEnrollmentExecutor(params).runHappierText(['auth', 'status', '--json']);
+    const command = String(lastOpenSshParams.current?.remoteCommand);
+    expect(command).toContain('runuser -u happier');
+    expect(command).toContain('/opt/happier/cli-preview/current/happier');
+    expect(command).toContain('env -i');
+    expect(command).not.toContain('$HOME/.happier/cli');
+  });
+
+  it.each(['unreachable', 'empty', 'missing-tool'] as const)('settles a %s host-key scan with a typed failure before installation', async failure => {
+    spawnSync.mockImplementation((command: string) => {
+      if (command !== 'ssh-keyscan') throw new Error('No guest command may run without host trust');
+      return { status: failure === 'empty' ? 0 : 1, stdout: '', stderr: 'private native diagnostic',
+        ...(failure === 'missing-tool' ? { error: new Error('private tool path') } : {}) };
+    });
+    const prompt = vi.fn(async () => ({ trusted: true }));
+    await expect(createLiveRemoteSshBootstrapTaskKind().run({
+      params: { ssh: { target: 'dev@example.test', auth: 'agent' },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none' }, emit: () => undefined, prompt,
+    })).rejects.toMatchObject({ code: 'native_ssh_host_key_unavailable' });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(transferOpenSshFile).not.toHaveBeenCalled();
+  });
+
   it('does not treat provider host-key evidence as permission to replace saved trust', async () => {
     readFileSync.mockReturnValue(`${MISMATCHED_TRUSTED_HOST_KEY}\n`);
     const prompt = vi.fn(async (request: Readonly<{ kind: string }>) => {
@@ -254,10 +384,11 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Payload acquisition is an environment/filesystem boundary; keep the installer real.
+    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payloadFixture.payloadRoot);
     const createdAtMs = Date.now();
     REMOTE_REQUEST_PAIRING.createdAtMs = createdAtMs;
     REMOTE_REQUEST_PAIRING.expiresAtMs = createdAtMs + 60_000;
-    lastInstallRemoteFirstPartyDeps.current = null;
     lastOpenSshParams.current = null;
     openSshParamsCalls.length = 0;
     transferOpenSshFile.mockImplementation(async () => undefined);
@@ -267,7 +398,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     isLoopbackPortAvailable.mockResolvedValue(true);
     findAvailableLoopbackPort.mockImplementation(async (requestedPort: number) => requestedPort + 1);
     readFileSync.mockImplementation(() => {
-      throw new Error('missing known_hosts');
+      throw Object.assign(new Error('missing known_hosts'), { code: 'ENOENT' });
     });
     writeFileSync.mockReturnValue(undefined);
     mkdirSync.mockReturnValue(undefined);
@@ -389,16 +520,80 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     });
   });
 
+  it.each([
+    { platform: 'darwin', command: 'start', status: 1, stdout: JSON.stringify({ ok: false, error: 'service_start_timeout', serviceStep: 'bootstrap', serviceStepStatus: 'deadline_elapsed', message: 'private-launchd-output' }), stderr: '', guestCliCode: 'service_start_timeout', serviceStep: 'bootstrap' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: JSON.stringify({ ok: false, error: 'service_ownership_failed', serviceStep: 'wait', serviceStepStatus: 'failed', reason: 'launchd_exited', message: 'private-launchd-output' }), guestCliCode: 'service_ownership_failed', serviceStep: 'wait' },
+    { platform: 'linux', command: 'start', status: 1, stdout: JSON.stringify({ ok: false, error: 'not_installed', message: 'private-service-path' }), stderr: '', guestCliCode: 'not_installed' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: JSON.stringify({ ok: false, error: 'private-secret', serviceStep: 'bootstrap', serviceStepStatus: 'failed' }), stderr: '' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: JSON.stringify({ ok: false, error: { code: 'service_start_timeout' }, serviceStep: 'bootstrap', serviceStepStatus: 'failed' }), stderr: '' },
+    { platform: 'darwin', command: 'install', status: 1, stdout: '', stderr: 'private-launchd-output' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: 'Bootstrap failed: 5: Input/output error\nprivate-launchd-output', reason: 'launchctl_io_error' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: 'Bootstrap failed: 125: Domain does not support specified action\nprivate-launchd-output', reason: 'launchctl_domain_unsupported' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: 'Could not find service "private-label" in domain for user gui: 501', reason: 'launchctl_service_missing' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: 'Bootstrap failed: 6: Device not configured' },
+    { platform: 'darwin', command: 'start', status: 1, stdout: '', stderr: 'private-prefix Bootstrap failed: 5: Input/output error' },
+    { platform: 'darwin', command: 'start', status: 3, stdout: '{"private":"guest-secret"}', stderr: '' },
+    { platform: 'linux', command: 'install', status: 255, stdout: 'private-command-output', stderr: 'private-ssh-output' },
+    { platform: 'darwin', command: 'install', status: 0, stdout: '', stderr: '', errorCode: 'ssh_invalid_response' },
+    { platform: 'linux', command: 'start', status: 1, stdout: '', stderr: '', throws: true },
+  ])('retains the closed post-registration $platform service $command failure in the task result', async scenario => {
+    const previousImplementation = spawnSync.getMockImplementation()!;
+    let failedCommands = 0;
+    const guestCommands: string[] = [];
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      const remoteCommand = String(args.at(-1) ?? '');
+      if (command === 'ssh') {
+        guestCommands.push(remoteCommand);
+        if (remoteCommand.includes('"arch"')) return jsonResult({ platform: scenario.platform, arch: 'arm64' });
+        if (remoteCommand.includes(`service ${scenario.command} `)) {
+          expect(remoteEnrollmentCompleted).toBe(true);
+          failedCommands += 1;
+          if ('throws' in scenario) throw new Error('private process launch error');
+          return scenario;
+        }
+      }
+      return previousImplementation(command, args);
+    });
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const runner = createSystemTasksRunner({ kinds: { bootstrap: { run: ctx => kind.run({ ...ctx,
+      prompt: async request => {
+        expect(request.kind).toBe('auth.approveRemoteProvisioning');
+        return { approved: true };
+      },
+    }) } } });
+    const task = await runner.start({ taskId: 'post-registration', kind: 'bootstrap', params: {
+      ssh: { target: 'person@example.test', auth: 'agent', trustedHostKey: TRUSTED_HOST_KEY },
+      relay: { relayUrl: 'https://relay.example.test' }, knownHostsMode: 'system', serviceMode: 'user',
+      enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+    } });
+    const result = SystemTaskResultSchema.parse(await runner.wait(task));
+    expect(result).toMatchObject({ ok: false, error: { code: 'errorCode' in scenario ? scenario.errorCode : 'ssh_command_failed' } });
+    if (result.ok) throw new Error('Expected service failure');
+    expect(result.error.message).toContain(`phase daemon.service.${scenario.command}`);
+    expect(result.error.message).toContain(`exitStatus ${'throws' in scenario ? 'unknown' : scenario.status}`);
+    expect(result.error.message).toContain(`stdoutPresent ${'throws' in scenario ? 'unknown' : Boolean(scenario.stdout)}`);
+    expect(result.error.message).toContain(`stderrPresent ${'throws' in scenario ? 'unknown' : Boolean(scenario.stderr)}`);
+    if ('reason' in scenario) expect(result.error.message).toContain(`reason ${scenario.reason}`);
+    else expect(result.error.message).not.toContain('; reason ');
+    if ('guestCliCode' in scenario) {
+      expect(result.error.message).toContain(`guestCliCode ${scenario.guestCliCode}`);
+      if ('serviceStep' in scenario) expect(result.error.message).toContain(`serviceStep ${scenario.serviceStep}`);
+    } else expect(result.error.message).not.toContain('guestCliCode');
+    expect(JSON.stringify(result)).not.toMatch(/private-|guest-secret|person@example/);
+    expect(failedCommands).toBe(1); // Terminal command failures must not re-poll or retry the effect.
+    expect(guestCommands.join('\n')).not.toMatch(/useradd|runuser|sudoers|bootstrap-effects/);
+  });
+
   it('returns the released unsupported enrollment command as update-required through the live SSH executor and recipe', async () => {
     enrollmentResponse.current = JSON.parse(await readFile(new URL(
-      '../../../../../../packages/cli-common/src/systemTasks/recipes/fixtures/authEnrollRemote.cli-v0.2.16.json', import.meta.url,
+      '../../../../../../packages/cli-common/src/systemTasks/flows/fixtures/authEnrollRemote.cli-v0.2.16.json', import.meta.url,
     ), 'utf8'));
     const approvePairingRequest = vi.fn(async () => {});
-    const error = await runRemoteHomeEnrollmentRecipe({
+    const error = await runRemoteHomeEnrollmentFlow({
       executor: createLiveRemoteEnrollmentExecutor({ ssh: { target: 'example.test', auth: 'agent' },
         auth: { mode: 'agent' }, knownHostsMode: 'system' }),
       homeTargetInput: { kind: 'https_url', url: 'https://home.example.test' },
-      approvePairingRequest, timeoutMs: 5_000,
+      approvePairingRequest,
     }).catch((error: unknown) => error);
     expect(error).toMatchObject({ code: 'remote_cli_update_required' });
     expect(approvePairingRequest).not.toHaveBeenCalled();
@@ -758,13 +953,25 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     }
   });
 
-  it('does not pass preparePayload: undefined to installRemoteFirstPartyComponent when no local payload override is set', async () => {
-    const previous = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
-    delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+  it('uses default release acquisition without a local payload and reports a missing guest archive before upload or pairing', async () => {
+    const releaseRequests: string[] = [];
+    const server = createServer((request, response) => {
+      releaseRequests.push(request.url ?? '');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ assets: [
+        'checksums-happier-v1.2.3.txt', 'checksums-happier-v1.2.3.txt.minisig',
+      ].map(name => ({ name, browser_download_url: `http://127.0.0.1/${name}` })) }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing loopback release address');
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', `http://127.0.0.1:${address.port}`);
       const kind = createLiveRemoteSshBootstrapTaskKind();
 
-      await kind.run({
+      await expect(kind.run({
         params: {
           ssh: {
             target: 'lima-happier-wsrepl-qa-local',
@@ -784,17 +991,13 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           if (prompt.kind === 'auth.approveRemoteProvisioning') return { approved: true };
           return {};
         },
-      });
-
-      expect(lastInstallRemoteFirstPartyDeps.current).toBeTruthy();
-      const deps = lastInstallRemoteFirstPartyDeps.current as Record<string, unknown>;
-      expect(Object.prototype.hasOwnProperty.call(deps, 'preparePayload')).toBe(false);
+      })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+      expect(releaseRequests).toEqual([expect.stringContaining('/releases/tags/')]);
+      expect(transferOpenSshFile).not.toHaveBeenCalled();
+      expect(remoteEnrollmentCompleted).toBe(false);
+      expect(approveTerminalAuthRequest).not.toHaveBeenCalled();
     } finally {
-      if (previous === undefined) {
-        delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
-      } else {
-        process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = previous;
-      }
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
   });
 
@@ -918,7 +1121,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
 	    })).rejects.toThrow(/host trust was declined/i);
 	  });
 
-  it('installs the remote CLI from the verified payload path instead of curl-bash', async () => {
+  it('installs the selected remote payload through CLI promotion instead of curl-bash', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
     const controller = new AbortController();
 
@@ -949,7 +1152,10 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .filter(([command]) => command === 'ssh')
       .map(([, args]) => String((args as readonly string[]).at(-1) ?? ''));
 
-    expect(sshRemoteCommands.some((command) => command.includes('ln -sfn'))).toBe(true);
+    // CLI promotion belongs to its installed self command, not a second
+    // transport-owned symlink installer. Keep the requested payload identity.
+    expect(sshRemoteCommands).toContainEqual(expect.stringContaining('self __install-payload --component happier-cli'));
+    expect(sshRemoteCommands).toContainEqual(expect.stringMatching(/--version local-preview-\d+ --channel preview/u));
     expect(sshRemoteCommands.join('\n')).not.toContain('curl -fsSL https://happier.dev/install');
     expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
       publicKey: REMOTE_PUBLIC_KEY,
@@ -1051,6 +1257,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           auth: 'agent',
           knownHostsPath: '/tmp/custom-known_hosts',
           trustedHostKey: TRUSTED_HOST_KEY,
+          hostKeyEvidence: { hostKey: TRUSTED_HOST_KEY, fingerprint: computeSshHostKeyFingerprint(TRUSTED_HOST_KEY.split(' ')[2]!) },
         },
         relay: {
           relayUrl: 'https://relay.example.test',
@@ -1078,10 +1285,12 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .map(([, args]) => args as readonly string[]);
 
     expect(transportArgs.every((args) => args.includes('UserKnownHostsFile=/tmp/custom-known_hosts'))).toBe(true);
-    expect(writeFileSync).toHaveBeenCalledWith('/tmp/custom-known_hosts', `${TRUSTED_HOST_KEY}\n`, {
+    expect(writeFileSync).toHaveBeenCalledWith(expect.stringMatching(/^\/tmp\/custom-known_hosts\..+\.tmp$/u), `${TRUSTED_HOST_KEY}\n`, {
       encoding: 'utf8',
       mode: 0o600,
+      flag: 'wx',
     });
+    expect(renameSync).toHaveBeenCalledWith(expect.any(String), '/tmp/custom-known_hosts');
   });
 
   it('honors explicit ssh.port when resolving trusted host keys (even if the ssh config file does not match the target)', async () => {
@@ -1150,37 +1359,54 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     expect(keyscanArgs[0]).toContain('2222');
   });
 
-  it('fails closed when an explicit trusted host key mismatches the fresh keyscan result', async () => {
-    readFileSync.mockReturnValue(`${TRUSTED_HOST_KEY}\n`);
-    const kind = createLiveRemoteSshBootstrapTaskKind();
+  it.each([false, true])('authenticates the retained generated key through the shared recipe before SSH or pairing (matches=%s)', async matches => {
+    readFileSync.mockReturnValue('');
+    const previousSpawn = spawnSync.getMockImplementation()!;
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => command === 'ssh'
+      ? { status: 1, stdout: '', stderr: 'Fixture authenticated SSH unavailable' } : previousSpawn(command, args));
+    const resource = { contributionRef: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' }, schemaVersion: 1,
+      value: { serverId: 41, owned: { volumeIds: [7], primaryIpIds: [9] } } };
+    const correlation = { homeId: 'srv_live_remote_bootstrap', managedId: 'managed-41', requestId: 'request-1',
+      expectedIntentRevision: 1, resource };
+    const credentialRef = { kind: 'shared_resource' as const, resourceId: 'retained-bootstrap-key' };
+    const row = ManagedMachineV1Schema.parse({ id: correlation.managedId, homeId: correlation.homeId, custodianAccountId: 'owner',
+      launch: { provider: resource.contributionRef, schemaVersion: 1, name: 'Guest', choices: {} },
+      allocation: 'bound', creationState: 'active', resource, desired: 'start', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, bootstrapCredentialRef: credentialRef,
+      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
+    const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId,
+      canonicalServerUrl: 'https://relay.example.test', revision: 1,
+      endpoints: [{ kind: 'https', url: 'https://relay.example.test' }] }, authority: 'trusted_enrollment' });
+    const dispose = vi.fn(async () => {});
+    // Both fresh scan and supplied evidence agree on the substituted key. Only
+    // the retained bundle's generated pin must decide trust through the real adapter.
+    const enrollment = runManagedMachineEnrollment({ correlation, target, channel: 'preview',
+      guestHostPublicKey: (matches ? TRUSTED_HOST_KEY : MISMATCHED_TRUSTED_HOST_KEY).split(' ').slice(1).join(' '),
+      carrier: { kind: 'ssh', address: 'example.test', user: 'happier-bootstrap', port: 22, credentialRef,
+        hostKeySource: 'retained-credential',
+        hostKeyEvidence: { hostKey: TRUSTED_HOST_KEY, fingerprint: computeSshHostKeyFingerprint(TRUSTED_HOST_KEY.split(' ')[2]!) } },
+      onPrompt: prompt => { if (prompt) throw new Error(`Unexpected prompt: ${prompt.kind}`); },
+    }, {
+      readCurrentManagedRow: async () => row,
+      materializeBootstrapCredential: async () => ({ path: '/tmp/retained-bootstrap-key', dispose }),
+    });
 
-    await expect(kind.run({
-      params: {
-        ssh: {
-          target: 'dev@example.test',
-          auth: 'agent',
-          knownHostsPath: '/tmp/custom-known_hosts',
-          trustedHostKey: MISMATCHED_TRUSTED_HOST_KEY,
-        },
-        relay: {
-          relayUrl: 'https://relay.example.test',
-        },
-        channel: 'preview',
-        serviceMode: 'none',
-      },
-      emit: () => undefined,
-      prompt: async (request) => {
-        throw new Error(`Unexpected prompt: ${request.kind}`);
-      },
-    })).rejects.toThrow(/trusted host key/i);
-
-    expect(spawnSync.mock.calls.filter(([command]) => command === 'ssh')).toHaveLength(0);
+    if (matches) {
+      // Correct custody crosses the trust boundary without a first-connect
+      // prompt; the deliberate OS refusal stops before installation/pairing.
+      await expect(enrollment).rejects.toBeInstanceOf(Error);
+      expect(spawnSync.mock.calls.filter(([command]) => command === 'ssh').length).toBeGreaterThan(0);
+    } else {
+      await expect(enrollment).rejects.toMatchObject({ code: 'trusted_host_key_mismatch' });
+      expect(spawnSync.mock.calls.filter(([command]) => command === 'ssh')).toHaveLength(0);
+      expect(writeFileSync).not.toHaveBeenCalled();
+    }
     expect(spawnSync.mock.calls.filter(([command]) => command === 'scp')).toHaveLength(0);
-    expect(writeFileSync).not.toHaveBeenCalled();
     expect(approveTerminalAuthRequest).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('surfaces stdout when an SSH command fails without stderr', async () => {
+  it('returns a closed failure when an SSH command fails without stderr', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
 
     spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
@@ -1215,7 +1441,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           stderr: 'bash: happier: command not found\n',
         };
       }
-      if (remoteCommand.includes('ln -sfn') || remoteCommand.includes('cp -R')) {
+      if (remoteCommand.includes('__install-payload')) {
         return {
           status: 255,
           stdout: 'remote installer failed\n',
@@ -1245,7 +1471,49 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           throw new Error('Unexpected prompt');
         },
       }),
-    ).rejects.toThrow(/remote installer failed/i);
+    ).rejects.toMatchObject({ code: 'ssh_command_failed', message: expect.stringMatching(/^The SSH command failed\. \(phase ssh\.command; exitStatus 255;/u) });
+  });
+
+  it.each([
+    ['WARNING: Your password has expired. Password change required but no TTY available.', 'ssh_password_expired'],
+    ['You are required to change your password immediately (administrator enforced).', 'ssh_password_expired'],
+    ['WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!', 'ssh_host_key_changed'],
+    ['Host key verification failed.', 'ssh_host_key_unverified'],
+    ['unrecognized native content', 'ssh_command_failed'],
+  ])('keeps SSH diagnostics closed at installCli (%s)', async (diagnostic, code) => {
+    spawnSync.mockImplementation((command: string) => command === 'ssh-keyscan'
+      ? { status: 0, stdout: `${TRUSTED_HOST_KEY}\n`, stderr: '' }
+      : { status: 255, stdout: '', stderr: `${diagnostic}\nprivate-reflected-content /private/home` });
+    const failure = await createLiveRemoteSshBootstrapTaskKind().run({
+      params: { ssh: { target: 'root@example.test', auth: 'agent', trustedHostKey: TRUSTED_HOST_KEY },
+        relay: { relayUrl: 'https://relay.example.test' }, channel: 'preview', knownHostsMode: 'system', serviceMode: 'none' },
+      emit: () => undefined, prompt: async () => { throw new Error('Unexpected prompt'); },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ name: 'SystemTaskExecutionError', code });
+    expect(String(failure)).not.toContain('private');
+    expect(String(failure)).not.toContain(diagnostic);
+    expect(openSshParamsCalls).toHaveLength(1); // Non-retryable login failures settle once.
+  });
+
+  it('closes an SCP failure through the same SSH diagnostic owner', async () => {
+    transferOpenSshFile.mockRejectedValueOnce(new Error('REMOTE HOST IDENTIFICATION HAS CHANGED! private-reflected-content'));
+    let authorityReads = 0;
+    const failure = await createLiveRemoteSshBootstrapTaskKind({
+      assertManagedEnrollmentCurrent: async () => { authorityReads++; },
+    }).run({
+      params: { ssh: { target: 'happier@example.test', auth: 'agent', trustedHostKey: TRUSTED_HOST_KEY },
+        managedEnrollment: { homeId: 'srv_live_remote_bootstrap', managedId: 'managed', requestId: 'create', expectedIntentRevision: 0,
+          controller: { machineId: 'controller', installationId: 'installation' }, resource: {
+            contributionRef: { pluginId: 'test.machine', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest' },
+          } },
+        relay: { relayUrl: 'https://relay.example.test' }, channel: 'preview', knownHostsMode: 'system', serviceMode: 'none' },
+      emit: () => undefined, prompt: async () => { throw new Error('Unexpected prompt'); },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ name: 'SystemTaskExecutionError', code: 'ssh_host_key_changed' });
+    expect(String(failure)).not.toContain('private');
+    // Payload delivery failed before pairing admission. Guest commands and
+    // copies must not ask Home whether the admitted installation is current.
+    expect(authorityReads).toBe(0);
   });
 
   it.each([
@@ -1724,8 +1992,8 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       expect(message).not.toContain('/Users/leeroy/.ssh/id_ed25519');
       expect(message).not.toContain('/mock-home/ssh/known_hosts');
       expect(message).not.toContain('supersecret');
-      expect(message).toContain('id_ed25519');
-      expect(message).toContain('known_hosts');
+      expect(error).toMatchObject({ code: 'ssh_command_failed' });
+      expect(message).toBe('The SSH command failed.');
     }
   });
 });

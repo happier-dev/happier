@@ -101,6 +101,31 @@ describe('model probe structured output evidence', () => {
       .rejects.toMatchObject({ code: 'model_catalog_unavailable', details: { modelId: 'gpt-6-luna' } });
   });
 
+  it('returns the published context window after refresh failure without promoting unknown structured output', async () => {
+    const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
+    if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
+    let available = true;
+    const model = { id: 'voice-model', name: 'Voice model', contextWindowTokens: 32_768,
+      capabilities: { structuredOutput: 'unknown' as const } };
+    const catalogEntry: AgentCatalogEntry = { ...entry, getPreflightSessionControlsProbeAdapter: async () => ({
+      // Native process observation only; the real probe publishes last-good evidence.
+      probeModelsRaw: async () => available ? [model] : null,
+    }) };
+    const native = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' },
+      modelId: model.id, cwd: '/voice-published-window', catalogEntry };
+    const readNativeOfferedModel = (request: Parameters<typeof readNativeExecutionRunOfferedModel>[0]) =>
+      readNativeExecutionRunOfferedModel({ ...request, catalogEntry });
+    await expect(readNativeExecutionRunOfferedModel(native)).resolves.toMatchObject(model);
+    await expect(assertExecutionRunStructuredOutputModelAllowed({ ...native, readNativeOfferedModel }))
+      .rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
+    available = false;
+    const lastGood = await probeAgentModelsBestEffort({ agentId: 'codex', ...native, bypassCache: true });
+    expect(lastGood).toMatchObject({ refreshError: true, availableModels: expect.arrayContaining([expect.objectContaining(model)]) });
+    await expect(readNativeExecutionRunOfferedModel(native)).resolves.toMatchObject(model);
+    await expect(assertExecutionRunStructuredOutputModelAllowed({ ...native, readNativeOfferedModel }))
+      .rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
+  });
+
   it.each(['unknown', 'unsupported'] as const)('preserves explicit native default %s evidence', async structuredOutput => {
     const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
     if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');

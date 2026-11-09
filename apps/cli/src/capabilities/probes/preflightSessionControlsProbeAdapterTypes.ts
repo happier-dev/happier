@@ -2,6 +2,7 @@ import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScope';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { ProbedCatalogOptionValue } from '@happier-dev/protocol/capabilities';
 
 export type PreflightSessionControlsProbeFailureCacheStrategy = 'cooldown' | 'retry';
 export type PreflightSessionControlsProbeKind = 'models' | 'modes' | 'configOptions' | 'passiveRealtimeSetup' | 'catalogs';
@@ -16,6 +17,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
+  configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   /** The containing preflight operation owns this deadline; direct callers retain the local budget. */

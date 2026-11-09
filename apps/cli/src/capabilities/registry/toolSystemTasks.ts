@@ -1,13 +1,15 @@
 import { SSH_TUNNEL_SYSTEM_TASK_KIND_IDS, SSH_TUNNEL_SYSTEM_TASK_KINDS } from '@happier-dev/protocol/ssh/tunnels';
 import { SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskJsonValue } from '@happier-dev/protocol';
-import { PERSONAL_HOME_SYSTEM_TASK_KIND_IDS } from '@happier-dev/cli-common/systemTasks';
+import { PERSONAL_HOME_SYSTEM_TASK_KIND_IDS, SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 
 import { type Capability } from '../service';
 import { DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND } from '../systemTasks/ssh/discoverConfiguredSshHosts/task';
 import { getLiveSystemTasksRunnerAdapter } from '../systemTasks/liveSystemTasksRunner';
 import { CLI_UPDATE_SYSTEM_TASK_KIND } from '../systemTasks/kinds/cliUpdateRemote';
 import { readCliUpdateFactsForThisCli } from '@/cli/runtime/update/cliUpdateFacts';
+import { ManagedInstallationResponseV1Schema, readManagedInstallationPurposeV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 export const SYSTEM_TASK_KIND_IDS = [
   DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
@@ -138,7 +140,7 @@ export function createSystemTasksCapability(
         },
       ],
     }),
-    invoke: async ({ method, params }) => {
+    invoke: async ({ method, params, managedInstallationAuthorization, machineSystemTaskResponse }) => {
       if (method === 'start') {
         const parsed = SystemTaskSpecSchema.safeParse((params ?? {}).spec);
         if (!parsed.success) {
@@ -170,10 +172,32 @@ export function createSystemTasksCapability(
       }
 
       if (method === 'respond') {
-        await runner.respond(params ?? {});
+        let response: SystemTaskJsonValue | undefined;
+        try {
+          let input = params ?? {};
+          if (managedInstallationAuthorization) {
+            const parsed = ManagedInstallationResponseV1Schema.safeParse(input);
+            if (!parsed.success || !sameStrictJsonValue(readManagedInstallationPurposeV1(parsed.data), managedInstallationAuthorization.purpose)) {
+              return { ok: false, error: { code: 'permission_denied', message: 'Managed installation purpose is unavailable' } };
+            }
+            input = { taskId: parsed.data.taskId, expectedPromptKind: parsed.data.expectedPromptKind,
+              ...(parsed.data.expectedPromptId ? { expectedPromptId: parsed.data.expectedPromptId } : {}),
+              ...(parsed.data.delivery ? { delivery: { request: parsed.data.delivery, authorization: managedInstallationAuthorization } }
+                : { answer: parsed.data.answer, responseAuthorization: managedInstallationAuthorization }) };
+          } else {
+            if (input.delivery !== undefined) return { ok: false, error: { code: 'permission_denied', message: 'Managed installation purpose is unavailable' } };
+            const { responseAuthorization: _untrustedAuthorization, ...ordinary } = input;
+            input = { ...ordinary, ...(machineSystemTaskResponse ? { responseAuthorization: machineSystemTaskResponse } : {}) };
+          }
+          response = await runner.respond(input);
+        }
+        catch (error) {
+          if (error instanceof SystemTaskExecutionError) return { ok: false, error: { code: error.code, message: error.message } };
+          throw error;
+        }
         return {
           ok: true,
-          result: { ok: true },
+          result: response ?? { ok: true },
         };
       }
 

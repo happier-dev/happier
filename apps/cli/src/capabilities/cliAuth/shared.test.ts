@@ -9,7 +9,9 @@ import {
   writeExecutableShim,
   writePnpmNodeBridge,
 } from '@/testkit/fs/executableShim';
-import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createTempDir, removeTempDir, withTempDir } from '@/testkit/fs/tempDir';
+import { createDaemonizingProcessFixture } from '@/testkit/process/daemonizingProcess';
+import { waitForProcessExit } from '@/testkit/process/spawn';
 
 import { runCliCommandBestEffort } from './shared';
 
@@ -31,6 +33,22 @@ describe('runCliCommandBestEffort', () => {
     envScope = createEnvKeyScope(envKeys);
     await Promise.all(tempDirs.splice(0).map((dir) => removeTempDir(dir).catch(() => undefined)));
   });
+
+  it('reaps descendants on its own deadline even without a caller abort signal', async ({ task }) => {
+    await withTempDir('happier-auth-deadline-custody-', async dir => {
+      const fixture = createDaemonizingProcessFixture(dir);
+      const probe = runCliCommandBestEffort({ resolvedPath: process.execPath, args: fixture.args, timeoutMs: 5_000 });
+      try {
+        const pid = await fixture.ready({ launch: probe, timeoutMs: task.timeout });
+        await expect(probe).resolves.toMatchObject({ ok: false });
+        expect(await waitForProcessExit(pid, { timeoutMs: 2_000 })).toBe(true);
+      } finally {
+        await fixture.release();
+        await fixture.cleanup();
+        await Promise.allSettled([probe]);
+      }
+    });
+  }, 60_000);
 
   it('uses the supplied child environment for JavaScript runtime selection and credential unsets', async () => {
     const dir = await createTempDir('happier-cli-auth-child-env-');

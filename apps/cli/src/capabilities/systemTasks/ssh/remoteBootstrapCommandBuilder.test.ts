@@ -5,6 +5,18 @@ import {
 } from './remoteBootstrapCommandBuilder';
 
 describe('buildRemoteBootstrapCommand', () => {
+  it('addresses the dedicated user manager and public managed payload without inheriting root', () => {
+    const command = buildRemoteBootstrapCommand({ label: 'daemon.service.install', serverUrl: 'https://relay.example.test',
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized' },
+    });
+    expect(command).toContain('runuser -u happier --');
+    expect(command).toContain('XDG_RUNTIME_DIR=');
+    expect(command).toContain('DBUS_SESSION_BUS_ADDRESS=');
+    expect(command).toContain('HAPPIER_FIRST_PARTY_INSTALL_HOME=');
+    expect(command).toContain('/opt/happier/cli/current/happier');
+    expect(command).toContain('service install --mode=user');
+    expect(command).not.toContain('--mode=system');
+  });
   it('targets the channel-specific managed CLI binary instead of the mutable bin shim', () => {
     expect(buildRemoteBootstrapCommand({
       label: 'auth.status',

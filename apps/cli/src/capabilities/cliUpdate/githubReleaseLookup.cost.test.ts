@@ -10,13 +10,14 @@ import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 describe('GitHub release lookup demand and cost', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  it.each(['latest', 'tag'] as const)('preserves a typed credential redirect refusal for a %s lookup', async kind => {
+  it.each(['latest', 'tag'] as const)('settles a credential redirect loop for a %s lookup', async kind => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 307,
       headers: { location: 'https://other.example.test/?token=hidden' } }));
     const request = { githubRepo: `fixture/redirect-${kind}`, githubToken: 'fixture', fetchImpl };
     await expect(kind === 'latest' ? fetchGitHubLatestRelease(request) : fetchGitHubReleaseByTag({ ...request, tag: 'stable' }))
       .rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // One lookup exhausts Fetch's existing 20-hop budget without a lookup retry.
+    expect(fetchImpl).toHaveBeenCalledTimes(21);
   });
 
   it('daemon capability admission and a settled idle hour make no release requests; three view opens share one', async () => {
@@ -26,6 +27,7 @@ describe('GitHub release lookup demand and cost', () => {
     const runtimeSpec: AgentCliRuntimeDescriptor = {
       id: 'claude', title: 'Fixture CLI', binaryName: 'claude',
       sourcePreferenceDefault: 'system-first', acceptsJavaScriptFileOverride: false,
+      manualInstallKind: 'none', manualInstallRecipes: null,
       managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/view-demand', binaryName: 'claude' },
     };
     // The executable-version probe is an OS boundary. Capability composition,
@@ -79,6 +81,7 @@ describe('GitHub release lookup demand and cost', () => {
     const runtimeSpec: AgentCliRuntimeDescriptor = {
       id: 'codex', title: 'Fixture CLI', binaryName: 'codex',
       sourcePreferenceDefault: 'system-first', acceptsJavaScriptFileOverride: false,
+      manualInstallKind: 'none', manualInstallRecipes: null,
       managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/detect-reset', binaryName: 'codex' },
     };
     const executable: Capability = {

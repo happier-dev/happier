@@ -2,7 +2,7 @@ import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createFeatureDecision } from '@happier-dev/protocol/features/decision';
 import { resolveUiFeatureToggleEnabled } from '@happier-dev/protocol/actions/settings/featurePreferenceMutations';
-import { isFeatureServerRepresented } from '@happier-dev/protocol/features/catalog';
+import { getCanonicalFeatureId, isFeatureServerRepresented } from '@happier-dev/protocol/features/catalog';
 import { isServerFeatureOperationReady } from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
@@ -25,6 +25,7 @@ function resolveCliFeatureDecisionFromInputs(
   const memo = new Map<FeatureId, FeatureDecision>();
 
   const resolve = (featureId: FeatureId): FeatureDecision => {
+    featureId = getCanonicalFeatureId(featureId);
     const cached = memo.get(featureId);
     if (cached) return cached;
 

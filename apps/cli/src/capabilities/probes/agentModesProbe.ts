@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentProbeMode, AgentSessionModesProbeObservation } from '@happier-dev/protocol/capabilities';
@@ -15,6 +16,7 @@ import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScope';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
+import { startAcpProbeSession } from './startAcpProbeSession';
 import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOwnedPreflightControlsProbePolicy';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
@@ -37,23 +39,23 @@ const agentModesProbeCache = new AsyncTtlCache<ProbedAgentModesResult>({
   successTtlMs: PROBE_MODES_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_MODES_FAILURE_TTL_MS,
 });
-const ProbeNonEmptyStringSchema = z.string().check(z.trim(), z.minLength(1));
-const ProbeDescriptionSchema = z.string();
-const ProbeModeInputSchema = z.object({
+const ProbeNonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+const ProbeDescriptionSchema = lazyZodSchema(() => z.string());
+const ProbeModeInputSchema = lazyZodSchema(() => z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: z.optional(ProbeDescriptionSchema),
-});
-const ProbeModeConfigCandidateSchema = z.object({
+}));
+const ProbeModeConfigCandidateSchema = lazyZodSchema(() => z.object({
   id: z.optional(z.string()),
   name: z.optional(z.string()),
   options: z.optional(z.array(z.unknown())),
-});
-const ProbeModeChoiceInputSchema = z.object({
+}));
+const ProbeModeChoiceInputSchema = lazyZodSchema(() => z.object({
   value: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: z.optional(ProbeDescriptionSchema),
-});
+}));
 
 function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModesResult {
   return { agentId, availableModes: [], source: 'static' };
@@ -155,14 +157,7 @@ export async function probeModesFromAcpBackend(params: {
 }): Promise<ReadonlyArray<ProbedAgentMode> | null> {
   const backend = params.backend;
 
-  const timeoutMs = Math.max(250, params.timeoutMs);
-  let timerId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timerId = setTimeout(() => reject(new Error(`ACP startSession timeout after ${timeoutMs}ms`)), timeoutMs);
-  });
-  await Promise.race([backend.startSession(), timeoutPromise]).finally(() => {
-    if (timerId !== null) clearTimeout(timerId);
-  });
+  await startAcpProbeSession(params);
 
   return normalizeAcpModesSnapshot(
     backend.getSessionModeState?.()?.availableModes,

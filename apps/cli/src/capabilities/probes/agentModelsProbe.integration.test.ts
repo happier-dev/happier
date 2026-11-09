@@ -5,6 +5,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend } from './agentModelsProbe';
+import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import {
   createProbeTempDir,
@@ -48,6 +49,30 @@ type ProbeBackendLike = Pick<AcpProbeBackend, 'dispose' | 'startSession'> & {
 };
 
 describe('probeModelsFromAcpBackend', () => {
+  it('projects the captured FX configuration through the real backend and model probe', async () => {
+    const fixture = await createProbeTempDir('happier-acp-model-probe-fx-config');
+    const agentPath = await writeFakeAcpAgentScript({
+      dir: fixture.dir,
+      sdkEntry: resolveAcpSdkEntryFromCwd(process.cwd()),
+      sessionPayloadSource: JSON.stringify({ sessionId: 'fx-config-probe', configOptions: createFxConfigOptionsFixture() }),
+    });
+    const backend = new AcpBackend({
+      ...createProbeBackendOptions({ cwd: fixture.dir, agentPath }), modelConfigOptionId: 'model',
+    });
+    try {
+      const models = await probeModelsFromAcpBackend({ backend, timeoutMs: 10_000 });
+      expect(models?.find((model) => model.id === 'gpt-6.1-sol')?.modelOptions).toMatchObject([
+        { id: 'effort', category: 'thought_level', currentValue: 'auto' },
+        { id: 'fast', category: 'model', currentValue: 'false' },
+      ]);
+      expect(models?.some((model) => model.id === 'codex')).toBe(false);
+      expect(models?.find((model) => model.id === 'gpt-6-astra')?.modelOptions).toBeUndefined();
+    } finally {
+      await backend.dispose();
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
   it('extracts available models from ACP session/new and normalizes Default', async () => {
     const fixture = await createProbeTempDir('happier-acp-model-probe');
     const sdkEntry = resolveAcpSdkEntryFromCwd(process.cwd());
@@ -58,9 +83,9 @@ describe('probeModelsFromAcpBackend', () => {
       sessionPayloadSource: `{
       sessionId: randomUUID(),
       models: {
-        currentModelId: "model-a",
+        currentModelId: " model-a ",
         availableModels: [
-          { id: "model-a", name: "Model A" },
+          { id: " model-a ", name: " Model A " },
           { id: "model-b", name: "Model B" },
         ],
       },
@@ -76,8 +101,8 @@ describe('probeModelsFromAcpBackend', () => {
     try {
       const models = await probeModelsFromAcpBackend({ backend, timeoutMs: 10_000 });
       expect(models).not.toBeNull();
-      expect(models?.[0]).toEqual({ id: 'default', name: 'Default' });
-      expect(models?.some((m) => m.id === 'model-a' && m.name === 'Model A')).toBe(true);
+      expect(models?.[0]).toEqual({ id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } });
+      expect(models?.some((m) => m.id === ' model-a ' && m.name === ' Model A ')).toBe(true);
       expect(models?.some((m) => m.id === 'model-b' && m.name === 'Model B')).toBe(true);
     } finally {
       await backend.dispose().catch(() => {});
@@ -156,7 +181,7 @@ describe('probeModelsFromAcpBackend', () => {
     try {
       const models = await probeModelsFromAcpBackend({ backend, timeoutMs: 10_000 });
       expect(models).not.toBeNull();
-      expect(models?.[0]).toEqual({ id: 'default', name: 'Default' });
+      expect(models?.[0]).toEqual({ id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } });
       expect(models?.some((m) => m.id === 'model-a' && m.name === 'Model A')).toBe(true);
       expect(models?.some((m) => m.id === 'model-b' && m.name === 'Model B')).toBe(true);
     } finally {
@@ -214,7 +239,7 @@ describe('probeModelsFromAcpBackend', () => {
         timeoutMs: 250,
       });
       expect(models).toEqual([
-        { id: 'default', name: 'Default' },
+        { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
         { id: 'model-a', name: 'Model A' },
       ]);
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -242,7 +267,7 @@ describe('probeModelsFromAcpBackend', () => {
         timeoutMs: 250,
       });
       expect(models).toEqual([
-        { id: 'default', name: 'Default' },
+        { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
         { id: 'model-a', name: 'Model A' },
       ]);
       expect(clearTimeoutSpy).toHaveBeenCalled();

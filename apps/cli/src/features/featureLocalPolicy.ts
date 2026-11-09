@@ -1,11 +1,15 @@
 import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { FeatureId } from '@happier-dev/protocol';
+import { getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 
 type FeatureLocalPolicyResolver = (env: ProcessEnvInput) => boolean;
 
 const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPolicyResolver>>> = {
-  automations: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED, true),
+  workflows: (env) => parseBooleanEnv(
+    env.HAPPIER_FEATURE_WORKFLOWS__ENABLED?.trim() || env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED,
+    true,
+  ),
   bugReports: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BUG_REPORTS__ENABLED, true),
   'execution.runs': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED, true),
   voice: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_VOICE__ENABLED, true),
@@ -30,7 +34,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
 };
 
 export function resolveCliLocalFeaturePolicyEnabled(featureId: FeatureId, env: ProcessEnvInput): boolean {
-  const resolver = LOCAL_POLICY_BY_FEATURE[featureId];
+  const resolver = LOCAL_POLICY_BY_FEATURE[getCanonicalFeatureId(featureId)];
   if (!resolver) return true;
   return resolver(env);
 }

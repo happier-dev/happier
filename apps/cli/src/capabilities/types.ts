@@ -1,6 +1,8 @@
 import type { ChecklistId } from './checklistIds';
+import type { CapabilityDescriptor } from '@happier-dev/protocol/capabilities';
 
 export type { ChecklistId } from './checklistIds';
+export type { CapabilityDescriptor } from '@happier-dev/protocol/capabilities';
 
 // Capability IDs are namespaced strings returned by the daemon.
 // Keep this flexible so new capabilities (including new `cli.<agent>` ids) do not require constant churn.
@@ -18,13 +20,6 @@ export type CapabilityKind = 'cli' | 'tool' | 'dep';
 export type CapabilityDetectRequest = {
     id: CapabilityId;
     params?: Record<string, unknown>;
-};
-
-export type CapabilityDescriptor = {
-    id: CapabilityId;
-    kind: CapabilityKind;
-    title?: string;
-    methods?: Record<string, { title?: string }>;
 };
 
 export type CapabilitiesDescribeResponse = {
@@ -55,6 +50,4 @@ export type CapabilitiesInvokeRequest = {
     params?: Record<string, unknown>;
 };
 
-export type CapabilitiesInvokeResponse =
-    | { ok: true; result: unknown }
-    | { ok: false; error: { message: string; code?: string }; logPath?: string };
+export type { CapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities';
