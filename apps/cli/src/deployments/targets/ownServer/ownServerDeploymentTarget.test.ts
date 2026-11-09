@@ -223,7 +223,11 @@ describe('own-server target at the Action host boundary', () => {
             .rejects.toThrow('Unexpected native acquisition');
         expect(effects().runtimeAcquisitions).toBe(1);
     });
-    for (const scenario of ['private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_backup', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const) it(
+    for (const { scenario, sourceKind } of [
+        ...(['private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt'] as const)
+            .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'public_backup', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+    ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
         // Native pushes and their HTTP work share the composed scenario's
@@ -234,6 +238,7 @@ describe('own-server target at the Action host boundary', () => {
         const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
         const startFirst = scenario.startsWith('candidate_start_first');
+        const storedPrivatePublication = sourceKind === 'stored';
         const migrationBackup = scenario.startsWith('candidate_backup_configured') || scenario.startsWith('public_backup');
         const reverseStartFirst = scenario.startsWith('candidate_start_first_restore');
         const retainedHealth = scenario.startsWith('retained_health');
@@ -261,11 +266,18 @@ describe('own-server target at the Action host boundary', () => {
             await writeFile(join(repository, '.happier', 'project.json'), JSON.stringify({ version: 1,
                 environmentVariables: [{ name: 'UNBOUND_PROJECT_SECRET', kind: 'secret' }] }));
         }
-        git('init', '--quiet'); git('config', 'user.name', 'Deployment Health Fixture');
-        git('config', 'user.email', 'health@example.test'); git('add', 'compose.yaml');
-        if (scenario === 'required_project_secret') git('add', '.happier/project.json');
-        git('commit', '--quiet', '-m', 'A');
+        if (!storedPrivatePublication) {
+            git('init', '--quiet'); git('config', 'user.name', 'Deployment Health Fixture');
+            git('config', 'user.email', 'health@example.test'); git('add', 'compose.yaml');
+            if (scenario === 'required_project_secret') git('add', '.happier/project.json');
+            git('commit', '--quiet', '-m', 'A');
+        }
         const environment = createDeploymentEnvironmentDetailV1();
+        if (storedPrivatePublication) {
+            const document = await readFile(join(repository, 'compose.yaml'), 'utf8');
+            environment.content.definition = { kind: 'stored', document, contentRevision: 1,
+                composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] };
+        }
         if (scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt') environment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
             serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
                 exposure: 'privateNetwork', privateNetwork: 'shop-net' }] };
@@ -291,13 +303,17 @@ describe('own-server target at the Action host boundary', () => {
         receipt.deployment.state = 'queued';
         receipt.content.machineResults = [];
         receipt.content.images = [image];
-        if (receipt.content.sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
-        receipt.content.sourceIntent.sha = git('rev-parse', 'HEAD');
+        if (storedPrivatePublication) {
+            if (environment.content.definition.kind !== 'stored') throw new Error('Stored fixture required');
+            receipt.content.sourceIntent = environment.content.definition;
+        } else {
+            if (receipt.content.sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
+            receipt.content.sourceIntent.sha = git('rev-parse', 'HEAD');
+        }
         const serving = structuredClone(receipt);
         serving.deployment.id = 'serving-release';
         serving.deployment.state = 'succeeded';
-        if (serving.content.sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
-        serving.content.sourceIntent.sha = 'b'.repeat(40);
+        if (serving.content.sourceIntent.kind === 'repository') serving.content.sourceIntent.sha = 'b'.repeat(40);
         const accountId = environment.environment.createdByAccountId;
         const sourceContext = { authority: 'present_user' as const,
             machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId: 'machine-a',
@@ -482,7 +498,7 @@ describe('own-server target at the Action host boundary', () => {
         const previousHome = configuration.happyHomeDir;
         const previousSettingsFile = configuration.settingsFile;
         const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
-            controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git',
+            controller: pluginReloadController, runtimeOptions: { pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
                 ...(migrationBackup ? ['happier.backup.destinations'] : [])] } });
         // Each scenario is a different installed daemon lifetime. Reusing its
         // Home would collide with the preceding committed immutable release.
@@ -1317,6 +1333,14 @@ describe('own-server target at the Action host boundary', () => {
                 const waivedAgentContext = { ...agentContext, actionsSettings: setScopedActionApprovalPreference({
                     settings: defaultSettings, actionId: 'deployments.backups.restore',
                     scope: { kind: 'environment', environmentId: environment.environment.id }, surface: 'agent', mode: 'waived' }) };
+                const discardedPreparation = await executor.execute('deployments.backups.restore', restoreInput,
+                    { ...actionContext, actionRequestId: 'discarded-prepare' });
+                expect(discardedPreparation, JSON.stringify(discardedPreparation)).toMatchObject({ ok: true, result: { kind: 'prepared',
+                    evidence: { native: { prepared: { repository: capture.repository } } } } });
+                phase('standalone-discarded-prepared');
+                if (!discardedPreparation.ok) throw new Error('Expected public restore preparation for stale input');
+                const discarded = DeploymentBackupRestoreResultV1Schema.parse(discardedPreparation.result);
+                if (discarded.kind !== 'prepared') throw new Error('Expected discarded restore preparation evidence');
                 const before = await docker.readInvocations();
                 const beforeTransitions = transitionWrites;
                 const pointer = environment.targetLinks[0].targetLink.activeDeploymentId;
@@ -1325,8 +1349,9 @@ describe('own-server target at the Action host boundary', () => {
                     { ...agentContext, actionRequestId: 'import-prepare-ask' }))
                     .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
                 expect(approvalRequests).toBe(1);
-                expect(await executor.execute('deployments.backups.restore', restoreInput,
-                    { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-prepare-ui-ask' }))
+                const requiredUiPreparation = await executor.execute('deployments.backups.restore', restoreInput,
+                    { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-prepare-ui-ask' });
+                expect(requiredUiPreparation, JSON.stringify(requiredUiPreparation))
                     .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
                 expect(approvalRequests).toBe(2);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforePrepare);
@@ -1335,13 +1360,6 @@ describe('own-server target at the Action host boundary', () => {
                     mode: 'confirm', prepareOperationId: 'missing-prepare' }, { ...actionContext, actionRequestId: 'missing-confirm' });
                 expect(missingConfirmation).toMatchObject({ ok: false, errorCode: 'restore_prepare_required' });
                 expect(await docker.readInvocations()).toHaveLength(before.length);
-                const discardedPreparation = await executor.execute('deployments.backups.restore', restoreInput,
-                    { ...actionContext, actionRequestId: 'discarded-prepare' });
-                expect(discardedPreparation).toMatchObject({ ok: true, result: { kind: 'prepared' } });
-                phase('standalone-discarded-prepared');
-                if (!discardedPreparation.ok) throw new Error('Expected public restore preparation for stale input');
-                const discarded = DeploymentBackupRestoreResultV1Schema.parse(discardedPreparation.result);
-                if (discarded.kind !== 'prepared') throw new Error('Expected discarded restore preparation evidence');
                 const beforeStale = await readFile(boundary.eventsFile, 'utf8');
                 expect(await executor.execute('deployments.backups.restore', { ...restoreInput, mode: 'confirm',
                     prepareOperationId: discarded.operationId, restoreBackupId: 'f'.repeat(64) },
