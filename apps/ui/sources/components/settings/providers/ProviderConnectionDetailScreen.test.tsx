@@ -965,6 +965,31 @@ describe('ProviderConnectionDetailScreen', () => {
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(operationRestriction.summary));
     });
 
+    it('shows passive unavailable families without enabling their Connect or reading model inventory', async () => {
+        await account.publishMachines(account.serverId, machines.map(machine => ({ ...machine, activeAt: Date.now() })));
+        await account.selectMachine(account.serverId, 'machine-a');
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry =>
+            entry.contributionKey === 'happier.provider.cliproxyapi/cliproxyapi');
+        const managedRuntime = declaration?.definition.managedRuntime;
+        const purpose = managedRuntime?.connectedAccounts?.[0];
+        if (!declaration || !managedRuntime || !purpose) throw new Error('Expected the admitted gateway declaration');
+        const unavailableReason = 'The declared runtime prerequisite is unavailable.';
+        installBundledProviderDeclarationsRpcBoundary(providerHarness, { [declaration.contributionKey]: {
+            managedRuntime: { ...managedRuntime, unavailableConnectedAccounts: [{
+                purpose: 'passive-upstream', service: purpose.service, title: 'Passive family', unavailableReason,
+            }] },
+        } }, { contributionKeys: [declaration.contributionKey] });
+        state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
+        installManagedDetailCatalog();
+        const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(unavailableReason));
+        const button = screen.findByTestId('provider-gateway-slot:passive-upstream:connect');
+        expect(button.props.disabled).toBe(true);
+        expect(screen.findByTestId(`provider-gateway-slot:${purpose.purpose}:connect`).props.disabled).not.toBe(true);
+        expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODELS)).toHaveLength(0);
+    });
+
     it('offers source refresh for an unobserved Models page and settles observed empty without an error', async () => {
         installBundledProviderDeclarationsRpcBoundary(providerHarness);
         state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });

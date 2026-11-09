@@ -8,6 +8,7 @@ import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, type ProviderActionInputByIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 import { readProviderGatewayContributionPurposesV1,
+    readProviderGatewayFamilyAvailabilityV1, type ProviderGatewayFamilyAvailabilityV1,
     type ProviderGatewayContributionV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 export { listProviderGatewayContributionsV1, chooseProviderGatewayContributionV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 import { readAccountAgentProviderDeclarations, readAccountProviderDeclarations,
@@ -88,6 +89,15 @@ export function readProviderGatewayContributionPurposes(contributionKey: string,
     return readProviderGatewayContributionPurposesV1(contributionKey, declarations);
 }
 
+export type ProviderGatewayFamilyDeclaration =
+    | NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'][number]
+    | ProviderGatewayFamilyAvailabilityV1;
+
+/** Read passive family presentation from the same admitted declaration source. */
+export function readProviderGatewayFamilyAvailability(contributionKey: string, context: ProviderDeclarationContext) {
+    return readProviderGatewayFamilyAvailabilityV1(contributionKey, readAccountProviderDeclarations(context));
+}
+
 /** Already localized family facts; declaration and availability owners decide their meaning. */
 export type ProviderGatewayFamilyFacts = Readonly<{
     restriction?: Readonly<{ summary: string; sentence: string }>;
@@ -99,20 +109,23 @@ export type ProviderGatewayFamilyFacts = Readonly<{
 /** Localize the provider's declared facts without inferring operation support. */
 export function presentProviderGatewayFamilyFacts(input: Readonly<{
     contributionKey: string;
-    purposes: NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'];
+    purposes: readonly ProviderGatewayFamilyDeclaration[];
     localize: PluginLocalizedTextResolver;
     catalogSnapshot?: Extract<DaemonProviderModelsResponseV1, { status: 'success' }> | null;
 }>): Readonly<Record<string, ProviderGatewayFamilyFacts>> {
     const identity = parseQualifiedPluginContributionKey(input.contributionKey);
     if (!identity) return {};
     return Object.fromEntries(input.purposes.flatMap(purpose => {
+        const unavailable = 'status' in purpose && purpose.status === 'unavailable';
+        const restriction = 'operationRestriction' in purpose ? purpose.operationRestriction : undefined;
         const source = input.catalogSnapshot?.sourceCatalogs?.find(source => source.purpose === purpose.purpose);
         const facts: ProviderGatewayFamilyFacts = {
-            ...(purpose.operationRestriction ? { restriction: {
-                summary: input.localize(identity.pluginId, purpose.operationRestriction.summary),
-                sentence: input.localize(identity.pluginId, purpose.operationRestriction.sentence),
+            ...(restriction ? { restriction: {
+                summary: input.localize(identity.pluginId, restriction.summary),
+                sentence: input.localize(identity.pluginId, restriction.sentence),
             } } : {}),
-            ...(input.catalogSnapshot !== undefined ? { catalog: {
+            ...(unavailable ? { unavailableReason: input.localize(identity.pluginId, purpose.unavailableReason) } : {}),
+            ...(!unavailable && input.catalogSnapshot !== undefined ? { catalog: {
                 models: source && (source.catalogObserved || source.models.length > 0)
                     ? source.models.map(model => model.descriptor ?? { id: model.id, name: model.name ?? model.id })
                     : null,

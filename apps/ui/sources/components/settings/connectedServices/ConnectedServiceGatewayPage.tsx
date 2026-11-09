@@ -64,10 +64,10 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
         onDiscard={props.onDiscard ?? (() => router.replace(slot
             ? buildConnectedAccountSettingsRoute(slot.target.service, { kind: 'group', groupId: slot.target.groupId }) ?? '/(app)/settings/connected-services'
             : '/(app)/settings/connected-services'))}
-        renderManagedDeployment={({ scope, deployment, declarations, modelRoles, machines, onChange, disabled }) => <ProviderGatewaySections
+        renderManagedDeployment={({ scope, deployment, families, modelRoles, machines, onChange, disabled }) => <ProviderGatewaySections
             localizedTextPluginId={contributionIdentity.pluginId}
-            declarations={declarations} slots={deployment.purposeBindingDefaults}
-            familyFacts={presentProviderGatewayFamilyFacts({ contributionKey, purposes: declarations, localize })}
+            declarations={families} slots={deployment.purposeBindingDefaults}
+            familyFacts={presentProviderGatewayFamilyFacts({ contributionKey, purposes: families, localize })}
             onChangeSlot={(slotPurpose, target) => {
                 const slots = { ...deployment.purposeBindingDefaults };
                 if (target) slots[slotPurpose] = target; else delete slots[slotPurpose];

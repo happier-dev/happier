@@ -1,4 +1,4 @@
-import type { ProviderGatewayFamilyFacts } from '@/providers/connection/gatewayConfiguration';
+import type { ProviderGatewayFamilyDeclaration, ProviderGatewayFamilyFacts } from '@/providers/connection/gatewayConfiguration';
 import * as React from 'react';
 import { RowArrivalReveal, SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { PROVIDER_GATEWAY_SETTINGS } from '../providersSettings';
@@ -42,9 +42,7 @@ import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connec
 import { useProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
 
-type PurposeDeclaration = NonNullable<
-  DaemonProviderConnectionViewV1['managedLocalOption']
->['connectedAccountPurposes'][number];
+type PurposeDeclaration = ProviderGatewayFamilyDeclaration;
 type HelperRole = keyof ProviderRoleModelsV1;
 type PlacementMode = ProviderGatewayPlacementV1['kind'];
 
@@ -525,7 +523,14 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
   const mark = <GatewayFamilyMark service={declaration.service} />;
   // Same name on the chooser row and its popover: the service, not the purpose title.
   const serviceDeclaration = React.useMemo(
-    () => ({ ...declaration, title: undefined }),
+    () => {
+      if ('status' in declaration) {
+        if (declaration.status === 'unavailable') return null;
+        const { status: _status, ...purpose } = declaration;
+        return { ...purpose, title: undefined };
+      }
+      return { ...declaration, title: undefined };
+    },
     [declaration],
   );
   const testID = `provider-gateway-slot:${declaration.purpose}`;
@@ -538,7 +543,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
     [onChange, purpose],
   );
 
-  if (!hasAccount && props.value === null) {
+  if (!serviceDeclaration || (!hasAccount && props.value === null)) {
     return (
       <Item
         testID={testID}
@@ -555,6 +560,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
           <RoundButton
             testID={`${testID}:connect`}
             size="small"
+            disabled={props.disabled || serviceDeclaration === null}
             display="secondary"
             title={t('settingsProvidersCollection.gateway.connect')}
             accessibilityLabel={t(

@@ -12,7 +12,7 @@ import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/m
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
 import { chooseProviderGatewayContributionV1, readProviderGatewayContributionPurposesV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
-import { createProviderGateway, readProviderGatewayModelRoles, type ProviderGatewayDraftConfiguration } from '@/providers/connection/gatewayConfiguration';
+import { createProviderGateway, readProviderGatewayModelRoles, readProviderGatewayFamilyAvailability, type ProviderGatewayDraftConfiguration } from '@/providers/connection/gatewayConfiguration';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
@@ -167,6 +167,7 @@ export type ProviderConnectionAuthoringScreenProps = Readonly<{
         scope: AccountSettingsScope | null;
         deployment: ProviderManagedGatewayDraft;
         declarations: NonNullable<ReturnType<typeof readProviderGatewayContributionPurposesV1>>;
+        families: NonNullable<ReturnType<typeof readProviderGatewayFamilyAvailability>>;
         modelRoles: ReturnType<typeof readProviderGatewayModelRoles>;
         machines: readonly ProviderSettingsMachineRowV1[];
         onChange: (deployment: ProviderManagedGatewayDraft) => void;
@@ -271,6 +272,9 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     // `available` deliberately excludes configured contributions. An untouched interrupted row
     // still has an admitted declaration and must reach the existing atomic repair/Create owner.
     const managedReady = managedChoice?.status === 'selected' && Boolean(query.data) && !query.loading && !query.error;
+    const managedFamilies = React.useMemo(() => managed && requestedContributionKey
+        ? readProviderGatewayFamilyAvailability(requestedContributionKey, query.declarationContext) ?? []
+        : [], [managed, query.declarationContext, requestedContributionKey]);
     const managedPurposes = React.useMemo(() => managed && requestedContributionKey
         ? readProviderGatewayContributionPurposesV1(requestedContributionKey, readAccountProviderDeclarations(query.declarationContext)) ?? []
         : [], [managed, query.declarationContext, requestedContributionKey]);
@@ -819,7 +823,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 gatewayDraft={managedDeployment ? {
                     ready: managedReady,
                     fields: props.renderManagedDeployment?.({ scope: addressedScope, deployment: managedDeployment,
-                        declarations: managedPurposes, modelRoles: managedModelRoles, machines: providerTarget.machineRows,
+                        declarations: managedPurposes, families: managedFamilies, modelRoles: managedModelRoles, machines: providerTarget.machineRows,
                         disabled: saveInProgress || !managedReady, onChange: next => {
                             if (accountStillCurrent()) setManagedDeployment(next);
                         } }),
