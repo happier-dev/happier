@@ -7,10 +7,52 @@ import { buildRoleCatalog } from '@/sync/domains/roles/roleCatalog';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readActionApprovalReview } from './actionApprovalReview';
+import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board/item';
 
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it.each(['en', 'fr'] as const)('discloses retained HTML copy network access and exact origins in %s', async language => {
+        await preloadTranslations(language);
+        setPreferredLanguageFromSettings(language);
+        const html = { v: 1, entrypoint: 'index.html', files: {
+            'index.html': { mime: 'text/html', contentBase64: 'PGI+aGk8L2I+' },
+        } };
+        const origins = ['https://api.example.com', 'https://cdn.example.com'];
+        const sourceKinds = ['hostedHtml', 'widget'] as const;
+        for (const kind of sourceKinds) {
+            for (const network of ['origins', 'open', 'none'] as const) {
+                const requestedCapabilities = network === 'origins' ? { networkOrigins: origins } : { network };
+                const item = SessionSurfaceItemV1Schema.parse({ v: 1, title: 'Forecast', frame: 'frameless',
+                    height: { mode: 'auto', fallback: 'regular' }, source: kind === 'hostedHtml'
+                        ? { kind, source: html, requestedCapabilities }
+                        : { kind, instance: { v: 1, id: 'copied', bindings: {}, networkOverride: requestedCapabilities,
+                            definition: { kind: 'inline', definition: { v: 1, id: 'copied', name: 'Forecast',
+                                sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+                                inputs: { fields: [] }, inputSchema: { type: 'object', properties: {} },
+                                provenance: { source: { kind: 'authored' } },
+                                body: { kind: 'html', source: html, requestedCapabilities: { networkOrigins: origins } },
+                            } } } } });
+                const actionArgs = { sessionId: 'destination', itemId: 'copied', expectedItemRevision: null,
+                    destination: 'board', placement: { tabId: 'overview', tabTitle: 'Overview' }, item,
+                    copySource: { serverId: 'home', sessionId: 'source', itemId: 'visual', expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' } };
+                const presentation = presentActionApproval({ actionId: 'session.board.item.upsert', kind: 'confirmation', actionArgs });
+                if (network === 'origins') {
+                    for (const origin of origins) expect(presentation.summary).toContain(origin);
+                    expect(presentation.summary).toMatch(language === 'en' ? /keeps.*network/i : /conserve.*réseau/i);
+                } else if (network === 'open') {
+                    expect(presentation.summary).toMatch(language === 'en' ? /network.*any website/i : /réseau.*tout site/i);
+                } else {
+                    expect(presentation.summary).not.toMatch(/network|réseau/i);
+                    for (const origin of origins) expect(presentation.summary).not.toContain(origin);
+                }
+                expect(presentActionApproval({ actionId: 'session.board.item.upsert', kind: 'confirmation', actionArgs,
+                    authoredSummary: buildApprovalPreviewSummary(getActionSpec('session.board.item.upsert'), actionArgs) }))
+                    .toEqual(presentation);
+                expect(presentation.destructive).toBeUndefined();
+            }
+        }
+    });
     it('names the person’s native confirmation by its Action while retaining the agent approval label', () => {
         const input = { actionId: 'session.spawn_new', subject: 'NLDW6-3-11-20' };
         expect(presentActionApproval({ ...input, kind: 'confirmation' }).confirmLabel).toBe('Create session');

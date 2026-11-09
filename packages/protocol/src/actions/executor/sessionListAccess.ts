@@ -14,6 +14,7 @@ import { resolveActionWorkflowSessionScopeV1 } from './workflowSessionScope.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { SessionInputSourceSessionV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { DiscussionDetailsResultV1Schema, DiscussionReadResultV1Schema } from '../../discussions/actions.js';
+import { isSessionBoardActionIdV1 } from '../../sessions/board/actionIds.js';
 
 /** An addressed source read consumes current Discussion disclosure admission, never its anchor alone. */
 async function admitsAddressedDiscussionSourceRead(
@@ -185,6 +186,10 @@ export async function resolveActionCurrentSessionScopeFailure(
   // Compact's contextual safety admission owns own-versus-other approval.
   // A current-Session default is selection, not a restriction on this control.
   if (actionId === 'session.compact' && context.surface === 'agent') return null;
+  // Copy names an explicit destination rather than the contextual current Session.
+  // Its Action reads the exact source and writes the destination through the
+  // server's existing readTranscript/editSessionRecords authority.
+  if (isSessionBoardActionIdV1(actionId) && inputRecord.copySource !== undefined) return null;
   if (!defaultSessionId) {
     return refuse('default_session_unavailable');
   }

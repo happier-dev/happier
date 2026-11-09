@@ -1276,12 +1276,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
           sessionId: origin.caller.sessionId,
           message,
-          authoredInput: { sessionId: origin.caller.sessionId, message, localId, idempotencyKey: localId,
+          authoredInput: { sessionId: origin.caller.sessionId, message, localId,
             requestedAction, reply: 'none' },
           // Ordinary host input carries no question/reply correlation or human
           // permission intent. The existing Pending identity joins retries even
           // after this result has materialized into the parent transcript.
-          localId, idempotencyKey: localId, requestedAction,
+          localId, requestedAction,
           actionCaller: { kind: 'host' }, callerSurface: 'mcp', reply: 'none',
           serverId: context.serverId ?? origin.serverId,
           ...(context.signal ? { signal: context.signal } : {}),
@@ -3315,14 +3315,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               // Review projections omit live-only operands. Keep execution on
               // the admitted invocation, just as blocking approvals do.
               const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
-              // Re-enter current authority and domain admission with the existing
-              // exact-Action confirmation fact, never an approval bypass.
-              return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : executionInput,
-                { ...confirmedContext, ...(ctx.actionRequestId ? {
+              const executionContext = { ...confirmedContext, ...(ctx.actionRequestId ? {
                   presentUserApproval: recordPresentUserApprovalV1({ actionId, input: executionInput,
                     requestId: ctx.actionRequestId, requestSurface: ctx.surface,
                     ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
-                } : {}) }, true, legacyMetadataLabel);
+                } : {}) };
+              // A visual copy is already materialized by this invocation. Retain
+              // that admission across native review, as prepared dispatch does;
+              // submitting its host-owned item as fresh caller input is invalid.
+              const reviewedVisual = visualAdmission ? {
+                actionId, input: executionInput, context: executionContext, semanticInput, visualAdmission,
+                ...(contextualSafety ? { safety: contextualSafety } : {}),
+                ...(approvalScope ? { approvalScope } : {}),
+                ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
+              } satisfies PreparedCoreAdmission : undefined;
+              return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : executionInput,
+                executionContext, true, legacyMetadataLabel, reviewedVisual);
             });
           }
         }

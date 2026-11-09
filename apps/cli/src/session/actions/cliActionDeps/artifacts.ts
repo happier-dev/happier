@@ -2,22 +2,25 @@ import type { CliMachineActionCall } from './machineTransport';
 import type { CliActionDepsParams } from './types';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { createArtifactAccessActionsV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
+import { createWidgetSurfaceArtifactPortV1, readWidgetSurfaceArtifactV1, WIDGET_SURFACE_ARTIFACT_KIND_V1, WidgetAreaMutationErrorV1 } from '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1';
+import type { CliWidgetActionDeps } from './widgets';
 import type { ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { assertAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
-import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { prepareAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { createCliArtifactActions } from '../artifactActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 export function createCliArtifactsActionDeps(
   params: Pick<CliActionDepsParams, 'machineActionDirectTargetTransport' | 'onPublicLinkIssued' | 'consumeArtifactSignedInLinkSecret' | 'onArtifactSignedInLinkOpened' | 'serverHttpBaseUrl' | 'serverId'>,
-  { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore }: Readonly<{
+  { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, readWidgetTitles, widgetAccountScope, isWidgetScopeCurrent }: Readonly<{
     artifactCallerContext: (context: ActionExecutorContext) => ActionExecutorContext;
     callMachineAction: CliMachineActionCall;
     homeAccountId: string | null;
     readRawRoleSettings: ((options?: Readonly<{ requireCurrentNetwork: boolean }>) => Promise<Readonly<Record<string, unknown>>>) | undefined;
+    mutateRawAccountSettings: Parameters<typeof prepareAccountRoleArtifactDeletionV1>[0]['mutateRawAccountSettings'];
     requireLocalPromptActionMachine: (machineId: string) => Promise<Readonly<{
     ok: true;
   }> | Readonly<{
@@ -30,6 +33,9 @@ export function createCliArtifactsActionDeps(
     roleAccountLifetimeToken: ReturnType<typeof getActiveAccountSettingsSnapshotLifetimeToken>;
     roleAccountScopeKey: ReturnType<typeof resolveAccountSettingsScopeKeyForToken>;
     roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
+    readWidgetTitles: CliWidgetActionDeps['readWidgetTitles'];
+    widgetAccountScope: NonNullable<ActionExecutorDeps['widgetAccountScope']>;
+    isWidgetScopeCurrent: CliWidgetActionDeps['isWidgetScopeCurrent'];
   }>,
 ): Pick<ActionExecutorDeps, 'artifactAction' | 'artifactAccessAction'> {
   return {
@@ -44,25 +50,35 @@ export function createCliArtifactsActionDeps(
           if (!headers) throw Object.assign(new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
           return { ...headers };
         },
-        beforeDelete: async ({ artifactId, signal }) => {
+        beforeDelete: async ({ artifactId, expectedRevision, signal }) => {
           signal?.throwIfAborted();
           const assertCurrent = () => {
             if (!isActiveAccountSettingsSnapshotLifetimeCurrent({ scopeKey: roleAccountScopeKey, lifetimeToken: roleAccountLifetimeToken })) {
               throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
             }
           };
-          assertCurrent();
           if (!homeAccountId || !readRawRoleSettings) {
             throw Object.assign(new Error('account_settings_content_unavailable'), { code: 'account_settings_content_unavailable' });
           }
           const rawSettings = await readRawRoleSettings({ requireCurrentNetwork: true });
           signal?.throwIfAborted();
-          assertCurrent();
-          await assertAccountRoleArtifactDeletionV1({ artifactId, accountId: homeAccountId, rawSettings,
-            readTargetArtifactKind: async () => {
-              const artifact = await roleArtifactStore.read(artifactId, { signal, includeSharedAudience: false });
-              signal?.throwIfAborted();
+          let targetRead: ReturnType<typeof roleArtifactStore.read> | undefined;
+          const readTarget = () => targetRead ??= roleArtifactStore.read(artifactId, { signal, includeSharedAudience: false });
+          await prepareAccountRoleArtifactDeletionV1({ artifactId, expectedRevision, signal, accountId: homeAccountId, rawSettings,
+            // The Role snapshot lifetime governs predecessor Settings cleanup;
+            // ordinary Artifact reads/deletion use the captured Artifact credentials.
+            mutateRawAccountSettings: mutateRawAccountSettings ? async (mutate, signal) => {
               assertCurrent();
+              await mutateRawAccountSettings(mutate, signal);
+            } : undefined,
+            readTargetArtifactRevision: async () => {
+              const artifact = await readTarget();
+              signal?.throwIfAborted();
+              return artifact?.revision;
+            },
+            readTargetArtifactKind: async () => {
+              const artifact = await readTarget();
+              signal?.throwIfAborted();
               return typeof artifact?.header.kind === 'string' ? artifact.header.kind : undefined;
             } });
         }, resolvePublishCaller: async (context, workspace) => {
@@ -103,6 +119,31 @@ export function createCliArtifactsActionDeps(
       const artifactAccessAction = createArtifactAccessActionsV1({
         read: (artifactId, readOptions) => roleArtifactStore.read(artifactId, { ...readOptions,
           ...(authorizationHeaders ? { authorizationHeaders, includeSharedAudience: false } : {}) }),
+        prepareSharing: async (resource, signal) => {
+          if (resource.header.kind !== WIDGET_SURFACE_ARTIFACT_KIND_V1) return;
+          if (typeof resource.body !== 'string') throw new WidgetAreaMutationErrorV1('invalid_widget_area_record');
+          const layout = readWidgetSurfaceArtifactV1({ artifactId: resource.artifactId, header: resource.header, body: resource.body });
+          if (!layout) throw new WidgetAreaMutationErrorV1('invalid_widget_area_record');
+          const scope = widgetAccountScope();
+          if (!scope || !(scope.isSameServerId?.(layout.surface.serverId) ?? scope.serverId === layout.surface.serverId)) {
+            throw new WidgetAreaMutationErrorV1('widget_area_owner_mismatch');
+          }
+          const isCurrent = () => {
+            const current = widgetAccountScope();
+            return current?.serverId === scope.serverId && current.accountId === scope.accountId
+              && isWidgetScopeCurrent();
+          };
+          const transport = createAcknowledgedAccountArtifactTransport({
+            read: (id, readOptions) => roleArtifactStore.read(id, { ...readOptions, ...options,
+              prepareRecipients: false, includeSharedAudience: false }),
+            create: input => roleArtifactStore.create({ ...input, ...options }),
+            update: input => roleArtifactStore.update({ ...input, ...options }),
+          });
+          await createWidgetSurfaceArtifactPortV1(transport, {
+            surface: { ...layout.surface, artifactId: resource.artifactId }, isCurrent,
+            readTitles: (instances, signal) => readWidgetTitles(instances, signal, authorizationHeaders),
+          }).prepareSharing(signal);
+        },
         transport: {
           list: (input, signal) => roleArtifactStore.accessGrants.list(input, signal, options),
           set: (input, signal) => roleArtifactStore.accessGrants.set(input, signal, options),

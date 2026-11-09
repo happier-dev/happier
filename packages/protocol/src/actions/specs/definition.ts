@@ -19,7 +19,15 @@ import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { ActionApprovalSchema, ActionApprovalPolicySchema, resolveActionApprovalFlow } from '../actionApprovalMetadata.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionContextualDefaultsSchema } from '../contextualDefaults.js';
+import { SessionSurfaceItemV1Schema, type SessionSurfaceItemDestinationV1 } from '../../sessions/board/item.js';
+import { readSessionVisualCapabilitiesV1 } from '../../sessions/board/visualPolicy.js';
+import type { UiSurfaceNetworkPolicyV1 } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 
+export type SessionVisualCopyApprovalSummaryInput = Readonly<{
+  source: string;
+  destination: SessionSurfaceItemDestinationV1;
+  network: UiSurfaceNetworkPolicyV1 | null;
+}>;
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
@@ -31,6 +39,8 @@ export type ApprovalPresentationContext = Readonly<{
   formatDataBytes?: (bytes: number, options: Readonly<{ kind: 'memory' | 'storage' }>) => string;
   /** Available RAM from the resource-summary owner, scoped to the reviewed Machine. */
   machineMemory?: Readonly<{ machineId: string; availableBytes: number | null; totalBytes: number | null }>;
+  /** Localized presentation of the copy's already materialized source policy. */
+  formatSessionVisualCopySummary?: (input: SessionVisualCopyApprovalSummaryInput) => string;
 }>;
 
 export const ZodSchemaLike = lazyZodSchema(() => z.custom<z.ZodMiniType>((value) => {
@@ -117,14 +127,22 @@ export const ActionPluginCallerPolicySchema = lazyZodSchema(() => z.discriminate
 export type ActionPluginCallerPolicy = z.infer<typeof ActionPluginCallerPolicySchema>;
 
 /** What a person approving a Session visual will see appear, and where. */
-export function describeSessionVisualApprovalSummary(input: unknown): string | null {
+export function describeSessionVisualApprovalSummary(input: unknown, context?: ApprovalPresentationContext): string | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const value = input as Record<string, unknown>;
   const item = value.item && typeof value.item === 'object' ? value.item as Record<string, unknown> : null;
   const title = typeof item?.title === 'string' && item.title.trim() ? `“${item.title.trim()}”` : 'a visual';
   const where = value.destination === 'board' ? 'on the Board'
     : value.destination === 'both' ? 'in the conversation and on the Board' : 'in the conversation';
-  if (value.copySource !== undefined && value.copySource !== null) return `Copy a visual into this Session, ${where}.`;
+  if (value.copySource !== undefined && value.copySource !== null) {
+    const parsedItem = SessionSurfaceItemV1Schema.safeParse(value.item);
+    const network = parsedItem.success ? readSessionVisualCapabilitiesV1(parsedItem.data) : null;
+    const disclosure = network?.network === 'origins' ? ` The copy keeps network access to ${network.networkOrigins.join(', ')}.`
+      : network?.network === 'open' ? ' The copy keeps network access to any website.' : '';
+    const source = `Copy a visual into this Session, ${where}.${disclosure}`;
+    return context?.formatSessionVisualCopySummary?.({ source, network,
+      destination: value.destination === 'board' || value.destination === 'both' ? value.destination : 'transcript' }) ?? source;
+  }
   return `${typeof value.expectedItemRevision === 'string' ? 'Update' : 'Show'} ${title} ${where}.`;
 }
 

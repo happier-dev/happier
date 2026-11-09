@@ -140,11 +140,17 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const english = getPreferredLanguage() === 'en';
     const titleSource = roleIdentity || !english ? resolveActionTitle(spec.id, spec) : spec.title;
     const widgetPresentation = readWidgetApprovalPresentationV1(input.preview);
+    let canonicalCopySummary: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
+        formatSessionVisualCopySummary: summary => {
+            canonicalCopySummary = summary.source;
+            return t('actionPresentation.sessionVisualCopySummary', summary);
+        },
     });
     const authoredSummary = input.authoredSummary?.trim();
-    const distinctAuthoredSummary = authoredSummary && authoredSummary !== summarySource ? authoredSummary : null;
+    const distinctAuthoredSummary = authoredSummary && authoredSummary !== summarySource && authoredSummary !== canonicalCopySummary
+        ? authoredSummary : null;
     const summary = distinctAuthoredSummary ? distinctAuthoredSummary
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`

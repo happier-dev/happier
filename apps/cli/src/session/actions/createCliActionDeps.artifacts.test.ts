@@ -455,6 +455,43 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       .toMatchObject({ ok: false });
     expect(rows).toHaveLength(1);
   });
+  it('deletes owned HTML without a Role settings lifetime while retaining Role deletion policy', async () => {
+    const accountId = 'ordinary-artifact-delete-owner';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const rawSettings = { executionRunsGuidanceEntries: [{ id: 'retained-role', description: 'Retained guidance' }] };
+    const [retainedRole] = readLegacyRolesV1(rawSettings, accountId);
+    if (!retainedRole) throw new Error('Expected retained Role identity');
+    const roleArtifactId = retainedRole.artifactId;
+    const deleted: string[] = [];
+    http.get.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: rawSettings } } };
+      const id = path.split('/').at(-1);
+      if (id === artifactId || id === roleArtifactId) return { status: 200, data: { id,
+        header: encodePlainArtifactStoredContent({ kind: id === artifactId ? 'html' : 'role.v1', title: 'Owned artifact' }),
+        body: encodePlainArtifactStoredContent({ body: '<html><body>Owned content</body></html>' }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: accountId, access: 'owner',
+        publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+      return { status: 404, data: { error: 'not_found' } };
+    });
+    http.delete.mockImplementation(async (url: string) => {
+      deleted.push(new URL(url).pathname);
+      return { status: 200, data: { success: true } };
+    });
+    const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'ordinary-artifact-delete',
+      serverHttpBaseUrl: 'https://ordinary-artifact-delete.test' }));
+    const context = { surface: 'cli', authority: 'present_user', bypassApprovals: true,
+      presentUserConfirmation: { actionId: 'artifact.delete' } } as const;
+    const expectedRevision = { headerVersion: 1, bodyVersion: 1 };
+    expect(await executor.execute('artifact.delete', { artifactId, expectedRevision }, context))
+      .toEqual({ ok: true, result: { artifactId, deleted: true } });
+    expect(await executor.execute('artifact.delete', { artifactId: roleArtifactId, expectedRevision }, context))
+      .toMatchObject({ ok: false, errorCode: 'scope-retired' });
+    expect(deleted).toEqual([`/v1/artifacts/${artifactId}/revision/1/1`]);
+  });
   it('deletes an owned template release through the CLI Action and ordinary Artifact transport', async () => {
     const accountId = 'template-owner';
     const baseUrl = 'https://template-delete.test';

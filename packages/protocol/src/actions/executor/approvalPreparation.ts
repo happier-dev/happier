@@ -61,14 +61,14 @@ export function buildApprovalSummary(spec: ActionSpec, input?: unknown, preview?
 }
 
 function sentenceTerminated(value: string): string {
-  return /[.!?\u2026]$/u.test(value) ? value : `${value}.`;
+  return /[.!?\u2026。！？]$/u.test(value) ? value : `${value}.`;
 }
 
 /** One canonical summary source for every approval and present-user confirmation; domain presenters refine exact effects. */
 export function buildApprovalPreviewSummary(spec: ActionSpec, input: unknown, context?: ApprovalPresentationContext): string {
   let domainSummary: string | null = null;
   try {
-    domainSummary = spec.approvalPresentation?.summary(input, context)?.trim() || null;
+    domainSummary = spec.approvalPresentation?.summary?.(input, context)?.trim() || null;
   } catch {
     // Presentation cannot become a second effect-admission failure.
   }

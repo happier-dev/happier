@@ -1,4 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
+import { t } from '@/text';
 import { SESSION_BOARD_OVERVIEW_VIEW_ID } from '@/sync/domains/session/board';
 import {
   copySessionBoardItemIntoSession,
@@ -32,7 +33,7 @@ export async function copySessionVisualToSession(
       itemId: (input.createItemId ?? randomUUID)(),
       expectedItemRevision: null,
       destination: 'board',
-      placement: { tabId: SESSION_BOARD_OVERVIEW_VIEW_ID },
+      placement: { tabId: SESSION_BOARD_OVERVIEW_VIEW_ID, tabTitle: t('sessionBoard.views.overview') },
       copySource: {
         serverId: input.serverId,
         sessionId: input.source.sessionId,

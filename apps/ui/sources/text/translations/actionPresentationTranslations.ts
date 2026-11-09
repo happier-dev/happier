@@ -1,3 +1,5 @@
+import type { SessionVisualCopyApprovalSummaryInput } from '@happier-dev/protocol/actions/specs/definition';
+
 // English titles are copied verbatim from the first-party Action specs.
 const englishOptionLabels = {
     now: 'Now', afterIdle: 'After idle', start: 'Start', stop: 'Stop', suspend: 'Suspend', resume: 'Resume', delete: 'Delete',
@@ -1195,15 +1197,22 @@ export type ActionTitleTranslation = Readonly<Record<keyof typeof en.titles, str
 
 type RoleIdentity = Readonly<{ name: string; kind: string }>;
 type ActionCopyInput = Readonly<{ actionId: string; source: string; subject?: string | null; role?: RoleIdentity }>;
+type SessionVisualCopyTranslation = Readonly<{
+    destinations: Readonly<Record<SessionVisualCopyApprovalSummaryInput['destination'], string>>;
+    origins: (origins: string) => string;
+    open: string;
+}>;
 type ActionCopy = Readonly<{
     options: Readonly<Record<keyof typeof englishOptionLabels, string>>;
     title: (input: ActionCopyInput) => string;
     summary: (input: ActionCopyInput) => string;
+    sessionVisualCopySummary: (input: SessionVisualCopyApprovalSummaryInput) => string;
 }>;
 
 function copy(publicLink: Readonly<{ title?: string; named: (name: string) => string; summary?: string }>,
     roles: Readonly<{ change: (role: RoleIdentity) => string; reset: (role: RoleIdentity) => string }>,
-    options: ActionCopy['options'] = englishOptionLabels): ActionCopy {
+    options: ActionCopy['options'] = englishOptionLabels,
+    sessionVisualCopy?: SessionVisualCopyTranslation): ActionCopy {
     return {
         options,
         title: ({ actionId, source, subject }) => actionId === 'artifact.public_link.create'
@@ -1212,20 +1221,70 @@ function copy(publicLink: Readonly<{ title?: string; named: (name: string) => st
         summary: ({ actionId, source, role }) => role && actionId === 'roles.override.set' ? roles.change(role)
             : role && actionId === 'roles.override.reset' ? roles.reset(role)
             : actionId === 'artifact.public_link.create' ? publicLink.summary ?? source : source,
+        sessionVisualCopySummary: input => {
+            if (!sessionVisualCopy) return input.source;
+            const disclosure = input.network?.network === 'origins' ? sessionVisualCopy.origins(input.network.networkOrigins.join(', '))
+                : input.network?.network === 'open' ? sessionVisualCopy.open : '';
+            return [sessionVisualCopy.destinations[input.destination], disclosure].filter(Boolean).join(' ');
+        },
     };
 }
 
 export const actionPresentationTranslations = {
     en,
-    ca: copy({ title: 'Crea un enllaç públic al document', named: name => `Vols crear un enllaç públic per a «${name}»?`, summary: 'Qualsevol persona que tingui aquest enllaç podrà llegir el document.' }, { change: ({ name, kind }) => `Canvia «${name}» (${kind}) per a tota la teva feina.`, reset: ({ name, kind }) => `Elimina els teus canvis a «${name}» (${kind}) i fes servir la configuració original.` }, { now: 'Ara', afterIdle: 'Després d’estar inactiva', start: 'Inicia', stop: 'Atura', suspend: 'Suspèn', resume: 'Represa', delete: 'Elimina', external: 'Servidor existent', managedLocal: 'Passarel·la gestionada per Happier' }),
-    de: copy({ title: 'Öffentlichen Dokumentlink erstellen', named: name => `Öffentlichen Link für „${name}“ erstellen?`, summary: 'Jeder mit diesem Link kann das Dokument lesen.' }, { change: ({ name, kind }) => `„${name}“ (${kind}) für deine gesamte Arbeit ändern.`, reset: ({ name, kind }) => `Deine Änderungen an „${name}“ (${kind}) entfernen und die ursprünglichen Einstellungen verwenden.` }, { now: 'Jetzt', afterIdle: 'Nach Inaktivität', start: 'Starten', stop: 'Stoppen', suspend: 'Anhalten', resume: 'Fortsetzen', delete: 'Löschen', external: 'Vorhandener Server', managedLocal: 'Von Happier verwaltetes Gateway' }),
-    es: copy({ title: 'Crear enlace público al documento', named: name => `¿Crear un enlace público para «${name}»?`, summary: 'Cualquier persona que tenga este enlace podrá leer el documento.' }, { change: ({ name, kind }) => `Cambiar «${name}» (${kind}) para todo tu trabajo.`, reset: ({ name, kind }) => `Eliminar tus cambios en «${name}» (${kind}) y usar su configuración original.` }, { now: 'Ahora', afterIdle: 'Tras la inactividad', start: 'Iniciar', stop: 'Detener', suspend: 'Suspender', resume: 'Reanudar', delete: 'Eliminar', external: 'Servidor existente', managedLocal: 'Pasarela gestionada por Happier' }),
-    fr: copy({ title: 'Créer un lien public vers le document', named: name => `Créer un lien public pour « ${name} » ?`, summary: 'Toute personne disposant de ce lien pourra lire le document.' }, { change: ({ name, kind }) => `Modifier « ${name} » (${kind}) pour tout votre travail.`, reset: ({ name, kind }) => `Supprimer vos modifications de « ${name} » (${kind}) et utiliser ses réglages d’origine.` }, { now: 'Maintenant', afterIdle: 'Après inactivité', start: 'Démarrer', stop: 'Arrêter', suspend: 'Suspendre', resume: 'Reprendre', delete: 'Supprimer', external: 'Serveur existant', managedLocal: 'Passerelle gérée par Happier' }),
-    it: copy({ title: 'Crea un link pubblico al documento', named: name => `Creare un link pubblico per «${name}»?`, summary: 'Chiunque abbia questo link potrà leggere il documento.' }, { change: ({ name, kind }) => `Modifica «${name}» (${kind}) per tutto il tuo lavoro.`, reset: ({ name, kind }) => `Rimuovi le tue modifiche a «${name}» (${kind}) e usa le impostazioni originali.` }, { now: 'Ora', afterIdle: 'Dopo l’inattività', start: 'Avvia', stop: 'Arresta', suspend: 'Sospendi', resume: 'Riprendi', delete: 'Elimina', external: 'Server esistente', managedLocal: 'Gateway gestito da Happier' }),
-    ja: copy({ title: 'ドキュメントの公開リンクを作成', named: name => `「${name}」の公開リンクを作成しますか？`, summary: 'このリンクを知っている人は誰でもドキュメントを読めます。' }, { change: ({ name, kind }) => `「${name}」（${kind}）をすべての作業で変更します。`, reset: ({ name, kind }) => `「${name}」（${kind}）への変更を削除し、元の設定を使用します。` }, { now: '今すぐ', afterIdle: 'アイドル後', start: '開始', stop: '停止', suspend: '一時停止', resume: '再開', delete: '削除', external: '既存のサーバー', managedLocal: 'Happier が管理するゲートウェイ' }),
-    pl: copy({ title: 'Utwórz publiczny link do dokumentu', named: name => `Utworzyć publiczny link do „${name}”?`, summary: 'Każdy, kto ma ten link, będzie mógł przeczytać dokument.' }, { change: ({ name, kind }) => `Zmień „${name}” (${kind}) dla całej swojej pracy.`, reset: ({ name, kind }) => `Usuń swoje zmiany w „${name}” (${kind}) i użyj oryginalnych ustawień.` }, { now: 'Teraz', afterIdle: 'Po bezczynności', start: 'Uruchom', stop: 'Zatrzymaj', suspend: 'Wstrzymaj', resume: 'Wznów', delete: 'Usuń', external: 'Istniejący serwer', managedLocal: 'Brama zarządzana przez Happier' }),
-    pt: copy({ title: 'Criar link público para o documento', named: name => `Criar um link público para «${name}»?`, summary: 'Qualquer pessoa com este link poderá ler o documento.' }, { change: ({ name, kind }) => `Alterar «${name}» (${kind}) para todo o seu trabalho.`, reset: ({ name, kind }) => `Remover as suas alterações a «${name}» (${kind}) e usar as definições originais.` }, { now: 'Agora', afterIdle: 'Após inatividade', start: 'Iniciar', stop: 'Parar', suspend: 'Suspender', resume: 'Retomar', delete: 'Eliminar', external: 'Servidor existente', managedLocal: 'Gateway gerido pelo Happier' }),
-    ru: copy({ title: 'Создать общедоступную ссылку на документ', named: name => `Создать общедоступную ссылку на «${name}»?`, summary: 'Любой, у кого есть эта ссылка, сможет прочитать документ.' }, { change: ({ name, kind }) => `Изменить «${name}» (${kind}) для всей вашей работы.`, reset: ({ name, kind }) => `Удалить ваши изменения в «${name}» (${kind}) и использовать исходные настройки.` }, { now: 'Сейчас', afterIdle: 'После простоя', start: 'Запустить', stop: 'Остановить', suspend: 'Приостановить', resume: 'Возобновить', delete: 'Удалить', external: 'Существующий сервер', managedLocal: 'Шлюз под управлением Happier' }),
-    zhHans: copy({ title: '创建文档公开链接', named: name => `为“${name}”创建公开链接？`, summary: '任何拥有此链接的人都可以阅读该文档。' }, { change: ({ name, kind }) => `为所有工作更改“${name}”（${kind}）。`, reset: ({ name, kind }) => `移除对“${name}”（${kind}）的更改并使用原始设置。` }, { now: '立即', afterIdle: '空闲后', start: '启动', stop: '停止', suspend: '挂起', resume: '恢复', delete: '删除', external: '现有服务器', managedLocal: '由 Happier 管理的网关' }),
-    zhHant: copy({ title: '建立文件公開連結', named: name => `為「${name}」建立公開連結？`, summary: '任何擁有此連結的人都可以閱讀該文件。' }, { change: ({ name, kind }) => `為所有工作變更「${name}」（${kind}）。`, reset: ({ name, kind }) => `移除對「${name}」（${kind}）的變更並使用原始設定。` }, { now: '立即', afterIdle: '閒置後', start: '啟動', stop: '停止', suspend: '暫停', resume: '恢復', delete: '刪除', external: '現有伺服器', managedLocal: '由 Happier 管理的閘道' }),
+    ca: copy({ title: 'Crea un enllaç públic al document', named: name => `Vols crear un enllaç públic per a «${name}»?`, summary: 'Qualsevol persona que tingui aquest enllaç podrà llegir el document.' }, { change: ({ name, kind }) => `Canvia «${name}» (${kind}) per a tota la teva feina.`, reset: ({ name, kind }) => `Elimina els teus canvis a «${name}» (${kind}) i fes servir la configuració original.` }, { now: 'Ara', afterIdle: 'Després d’estar inactiva', start: 'Inicia', stop: 'Atura', suspend: 'Suspèn', resume: 'Represa', delete: 'Elimina', external: 'Servidor existent', managedLocal: 'Passarel·la gestionada per Happier' }, {
+        destinations: { transcript: "Copia un element visual en aquesta sessió, a la conversa.", board: "Copia un element visual en aquesta sessió, al tauler.", both: "Copia un element visual en aquesta sessió, a la conversa i al tauler." },
+        origins: origins => `La còpia conserva l’accés a la xarxa a ${origins}.`,
+        open: "La còpia conserva l’accés a la xarxa a qualsevol lloc web.",
+    }),
+    de: copy({ title: 'Öffentlichen Dokumentlink erstellen', named: name => `Öffentlichen Link für „${name}“ erstellen?`, summary: 'Jeder mit diesem Link kann das Dokument lesen.' }, { change: ({ name, kind }) => `„${name}“ (${kind}) für deine gesamte Arbeit ändern.`, reset: ({ name, kind }) => `Deine Änderungen an „${name}“ (${kind}) entfernen und die ursprünglichen Einstellungen verwenden.` }, { now: 'Jetzt', afterIdle: 'Nach Inaktivität', start: 'Starten', stop: 'Stoppen', suspend: 'Anhalten', resume: 'Fortsetzen', delete: 'Löschen', external: 'Vorhandener Server', managedLocal: 'Von Happier verwaltetes Gateway' }, {
+        destinations: { transcript: "Eine Visualisierung in diese Sitzung kopieren, in die Unterhaltung.", board: "Eine Visualisierung in diese Sitzung kopieren, auf das Board.", both: "Eine Visualisierung in diese Sitzung kopieren, in die Unterhaltung und auf das Board." },
+        origins: origins => `Die Kopie behält den Netzwerkzugriff auf ${origins}.`,
+        open: "Die Kopie behält den Netzwerkzugriff auf beliebige Websites.",
+    }),
+    es: copy({ title: 'Crear enlace público al documento', named: name => `¿Crear un enlace público para «${name}»?`, summary: 'Cualquier persona que tenga este enlace podrá leer el documento.' }, { change: ({ name, kind }) => `Cambiar «${name}» (${kind}) para todo tu trabajo.`, reset: ({ name, kind }) => `Eliminar tus cambios en «${name}» (${kind}) y usar su configuración original.` }, { now: 'Ahora', afterIdle: 'Tras la inactividad', start: 'Iniciar', stop: 'Detener', suspend: 'Suspender', resume: 'Reanudar', delete: 'Eliminar', external: 'Servidor existente', managedLocal: 'Pasarela gestionada por Happier' }, {
+        destinations: { transcript: "Copiar un elemento visual en esta sesión, en la conversación.", board: "Copiar un elemento visual en esta sesión, en el tablero.", both: "Copiar un elemento visual en esta sesión, en la conversación y en el tablero." },
+        origins: origins => `La copia conserva el acceso de red a ${origins}.`,
+        open: "La copia conserva el acceso de red a cualquier sitio web.",
+    }),
+    fr: copy({ title: 'Créer un lien public vers le document', named: name => `Créer un lien public pour « ${name} » ?`, summary: 'Toute personne disposant de ce lien pourra lire le document.' }, { change: ({ name, kind }) => `Modifier « ${name} » (${kind}) pour tout votre travail.`, reset: ({ name, kind }) => `Supprimer vos modifications de « ${name} » (${kind}) et utiliser ses réglages d’origine.` }, { now: 'Maintenant', afterIdle: 'Après inactivité', start: 'Démarrer', stop: 'Arrêter', suspend: 'Suspendre', resume: 'Reprendre', delete: 'Supprimer', external: 'Serveur existant', managedLocal: 'Passerelle gérée par Happier' }, {
+        destinations: { transcript: "Copier un visuel dans cette session, dans la conversation.", board: "Copier un visuel dans cette session, sur le tableau.", both: "Copier un visuel dans cette session, dans la conversation et sur le tableau." },
+        origins: origins => `La copie conserve son accès réseau à ${origins}.`,
+        open: "La copie conserve son accès réseau à tout site web.",
+    }),
+    it: copy({ title: 'Crea un link pubblico al documento', named: name => `Creare un link pubblico per «${name}»?`, summary: 'Chiunque abbia questo link potrà leggere il documento.' }, { change: ({ name, kind }) => `Modifica «${name}» (${kind}) per tutto il tuo lavoro.`, reset: ({ name, kind }) => `Rimuovi le tue modifiche a «${name}» (${kind}) e usa le impostazioni originali.` }, { now: 'Ora', afterIdle: 'Dopo l’inattività', start: 'Avvia', stop: 'Arresta', suspend: 'Sospendi', resume: 'Riprendi', delete: 'Elimina', external: 'Server esistente', managedLocal: 'Gateway gestito da Happier' }, {
+        destinations: { transcript: "Copia un elemento visivo in questa sessione, nella conversazione.", board: "Copia un elemento visivo in questa sessione, sulla bacheca.", both: "Copia un elemento visivo in questa sessione, nella conversazione e sulla bacheca." },
+        origins: origins => `La copia mantiene l’accesso alla rete a ${origins}.`,
+        open: "La copia mantiene l’accesso alla rete a qualsiasi sito web.",
+    }),
+    ja: copy({ title: 'ドキュメントの公開リンクを作成', named: name => `「${name}」の公開リンクを作成しますか？`, summary: 'このリンクを知っている人は誰でもドキュメントを読めます。' }, { change: ({ name, kind }) => `「${name}」（${kind}）をすべての作業で変更します。`, reset: ({ name, kind }) => `「${name}」（${kind}）への変更を削除し、元の設定を使用します。` }, { now: '今すぐ', afterIdle: 'アイドル後', start: '開始', stop: '停止', suspend: '一時停止', resume: '再開', delete: '削除', external: '既存のサーバー', managedLocal: 'Happier が管理するゲートウェイ' }, {
+        destinations: { transcript: "ビジュアルをこのセッションの会話にコピーします。", board: "ビジュアルをこのセッションのボードにコピーします。", both: "ビジュアルをこのセッションの会話とボードにコピーします。" },
+        origins: origins => `コピーは ${origins} へのネットワークアクセスを維持します。`,
+        open: "コピーはすべてのウェブサイトへのネットワークアクセスを維持します。",
+    }),
+    pl: copy({ title: 'Utwórz publiczny link do dokumentu', named: name => `Utworzyć publiczny link do „${name}”?`, summary: 'Każdy, kto ma ten link, będzie mógł przeczytać dokument.' }, { change: ({ name, kind }) => `Zmień „${name}” (${kind}) dla całej swojej pracy.`, reset: ({ name, kind }) => `Usuń swoje zmiany w „${name}” (${kind}) i użyj oryginalnych ustawień.` }, { now: 'Teraz', afterIdle: 'Po bezczynności', start: 'Uruchom', stop: 'Zatrzymaj', suspend: 'Wstrzymaj', resume: 'Wznów', delete: 'Usuń', external: 'Istniejący serwer', managedLocal: 'Brama zarządzana przez Happier' }, {
+        destinations: { transcript: "Skopiuj wizualizację do tej sesji, do rozmowy.", board: "Skopiuj wizualizację do tej sesji, na tablicę.", both: "Skopiuj wizualizację do tej sesji, do rozmowy i na tablicę." },
+        origins: origins => `Kopia zachowuje dostęp do sieci pod adresami ${origins}.`,
+        open: "Kopia zachowuje dostęp do sieci do dowolnej witryny.",
+    }),
+    pt: copy({ title: 'Criar link público para o documento', named: name => `Criar um link público para «${name}»?`, summary: 'Qualquer pessoa com este link poderá ler o documento.' }, { change: ({ name, kind }) => `Alterar «${name}» (${kind}) para todo o seu trabalho.`, reset: ({ name, kind }) => `Remover as suas alterações a «${name}» (${kind}) e usar as definições originais.` }, { now: 'Agora', afterIdle: 'Após inatividade', start: 'Iniciar', stop: 'Parar', suspend: 'Suspender', resume: 'Retomar', delete: 'Eliminar', external: 'Servidor existente', managedLocal: 'Gateway gerido pelo Happier' }, {
+        destinations: { transcript: "Copiar um elemento visual para esta sessão, na conversa.", board: "Copiar um elemento visual para esta sessão, no quadro.", both: "Copiar um elemento visual para esta sessão, na conversa e no quadro." },
+        origins: origins => `A cópia mantém o acesso à rede a ${origins}.`,
+        open: "A cópia mantém o acesso à rede a qualquer site.",
+    }),
+    ru: copy({ title: 'Создать общедоступную ссылку на документ', named: name => `Создать общедоступную ссылку на «${name}»?`, summary: 'Любой, у кого есть эта ссылка, сможет прочитать документ.' }, { change: ({ name, kind }) => `Изменить «${name}» (${kind}) для всей вашей работы.`, reset: ({ name, kind }) => `Удалить ваши изменения в «${name}» (${kind}) и использовать исходные настройки.` }, { now: 'Сейчас', afterIdle: 'После простоя', start: 'Запустить', stop: 'Остановить', suspend: 'Приостановить', resume: 'Возобновить', delete: 'Удалить', external: 'Существующий сервер', managedLocal: 'Шлюз под управлением Happier' }, {
+        destinations: { transcript: "Скопировать визуальный элемент в эту сессию, в беседу.", board: "Скопировать визуальный элемент в эту сессию, на доску.", both: "Скопировать визуальный элемент в эту сессию, в беседу и на доску." },
+        origins: origins => `Копия сохраняет сетевой доступ к ${origins}.`,
+        open: "Копия сохраняет сетевой доступ к любому сайту.",
+    }),
+    zhHans: copy({ title: '创建文档公开链接', named: name => `为“${name}”创建公开链接？`, summary: '任何拥有此链接的人都可以阅读该文档。' }, { change: ({ name, kind }) => `为所有工作更改“${name}”（${kind}）。`, reset: ({ name, kind }) => `移除对“${name}”（${kind}）的更改并使用原始设置。` }, { now: '立即', afterIdle: '空闲后', start: '启动', stop: '停止', suspend: '挂起', resume: '恢复', delete: '删除', external: '现有服务器', managedLocal: '由 Happier 管理的网关' }, {
+        destinations: { transcript: "将可视内容复制到此会话的对话中。", board: "将可视内容复制到此会话的看板上。", both: "将可视内容复制到此会话的对话和看板上。" },
+        origins: origins => `副本保留对 ${origins} 的网络访问权限。`,
+        open: "副本保留访问任意网站的网络权限。",
+    }),
+    zhHant: copy({ title: '建立文件公開連結', named: name => `為「${name}」建立公開連結？`, summary: '任何擁有此連結的人都可以閱讀該文件。' }, { change: ({ name, kind }) => `為所有工作變更「${name}」（${kind}）。`, reset: ({ name, kind }) => `移除對「${name}」（${kind}）的變更並使用原始設定。` }, { now: '立即', afterIdle: '閒置後', start: '啟動', stop: '停止', suspend: '暫停', resume: '恢復', delete: '刪除', external: '現有伺服器', managedLocal: '由 Happier 管理的閘道' }, {
+        destinations: { transcript: "將視覺內容複製到此工作階段的對話中。", board: "將視覺內容複製到此工作階段的看板上。", both: "將視覺內容複製到此工作階段的對話和看板上。" },
+        origins: origins => `複本保留對 ${origins} 的網路存取權限。`,
+        open: "複本保留存取任何網站的網路權限。",
+    }),
 } as const;
