@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { ModuleKind, transpileModule } from 'typescript';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../../../packages/plugins/claude/src/agent/transcripts/internalEventTypes';
 import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definition';
@@ -28,9 +28,10 @@ import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspa
 import { readBundledPluginPublicationFailures, writeBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { requiresBundledPackagedRuntime } from './bundledPackagedRuntimeEligibility.ts';
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage, writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox';
+import { writeRetainedCatalogAgent } from '../__tests__/testkit/bundledPluginProjectionSandbox';
 import { prepareBundledWorkspaceDependenciesForCli } from '../buildSharedDeps.mjs';
 import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
-import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../../../../packages/agents/src/generated/bundledAgentDefinitions';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID, BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS } from '../../../../packages/agents/src/generated/bundledAgentDefinitions';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../packages/agents/src/generated/agentIds';
 import { collectBundledAgentContributionIdentities, importPluginAuthorRuntimeModules, main, runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries.ts';
 import { renderAgentIdsTs } from './bundledPlugins/agentFacts.ts';
@@ -43,10 +44,23 @@ import type { BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
 import { renderCliBundledAgentRegistrationBindingsTs } from './bundledPlugins/registry.ts';
 import { runAgentSkillDeliveryContract } from '@happier-dev/plugin-sdk/testing';
 import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/serialize';
+import { OPENROUTER_PROVIDER_CONTRIBUTION } from '../../../../packages/plugins/openrouter/src/provider/contribution';
+import { createAccountProviderActionExecuteV1, type AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
+import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderConnectionForMachine } from '../../src/providers/registry';
+import type { ProviderContributionRegistryView } from '../../src/providers/registry';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { createRuntimeProviderServices } from '../../src/providers/probe/runtimeServices';
+import { createProviderProbeHttpClient, type ProviderProbeTransportRequest } from '../../src/providers/probe/client';
+import { parseOpenRouterKeyUsage, parseOpenRouterCredits } from '../../../../packages/plugins/openrouter/src/provider/usage/parsers';
+import { resolveAccountSettingsScopeKeyForToken } from '../../src/settings/accountSettings/accountSettingsScopeKey';
+import { encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 
 const generatorSource = readFileSync(new URL('./generateBundledPluginEntries.ts', import.meta.url), 'utf8');
 const registryRendererSource = readFileSync(new URL('./bundledPlugins/registry.ts', import.meta.url), 'utf8');
-const voiceRendererSource = readFileSync(new URL('./bundledPlugins/voice.ts', import.meta.url), 'utf8');
 const authoredAgentManifests = await importPluginAuthorRuntimeModules(sourceImport =>
   Promise.all(BUNDLED_FIRST_PARTY_PLUGIN_METADATA.filter(entry => entry.agentId).map(async metadata => ({
     metadata,
@@ -64,31 +78,6 @@ function sourceBetween(startMarker: string, endMarker: string, source = generato
 }
 
 describe('bundled Agent skill delivery coverage', () => {
-  it('reads packaged locale Resource JSON alongside transitional inline bundles', () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-translation-resource-'));
-    const localeDirectory = join(root, 'packages/plugins/example/assets/i18n');
-    mkdirSync(localeDirectory, { recursive: true });
-    writeFileSync(join(localeDirectory, 'fr.json'), JSON.stringify({
-      'plugins.example.title': 'Canaux',
-      'plugins.example.empty': '',
-    }));
-    try {
-      expect(collectBundledPluginUiTranslations([{
-        pluginPackageId: 'example',
-        manifest: { contributes: {
-          resources: [{ id: 'i18n.fr', kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json' }],
-          ui: { translations: [
-            { locale: 'en', messages: { 'plugins.example.title': 'Channels' } },
-            { locale: 'fr', resourceId: 'i18n.fr' },
-          ] },
-        } },
-      }], root)).toEqual({
-        en: { 'plugins.example.title': 'Channels' },
-        fr: { 'plugins.example.empty': '', 'plugins.example.title': 'Canaux' },
-      });
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-
   for (const { metadata, authored } of authoredAgentManifests) {
     const ingestion = ingestPluginManifestV2(authored.PLUGIN_MANIFEST);
     if (!ingestion.ok) throw new Error(`${metadata.pluginId}: ${JSON.stringify(ingestion.diagnostics)}`);
@@ -240,12 +229,12 @@ describe('generated output ownership', () => {
     } finally { cleanup(); }
   });
 
-  it('loads public SDK source facts through the author runtime without compiler declaration aliases', async () => {
+  it('loads canonical Agent source facts through the author runtime without compiler declaration aliases', async () => {
     const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-author-source-exports-');
     const entryPath = join(repoRoot, 'author-entry.ts');
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'author-source-fixture', type: 'module' }));
     writeFileSync(entryPath, [
-      "import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/first-party/connected-accounts';",
+      "import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';",
       "import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';",
       'export const PROFILE = ANTIGRAVITY_OAUTH_PROFILE;',
       "export const HOME_PATH = expandHomeDirPath('~/happier-loader-fixture');",
@@ -254,7 +243,7 @@ describe('generated output ownership', () => {
     try {
       const loaded = await importPluginAuthorRuntimeModules(async sourceImport => {
         const source = await sourceImport(new URL(
-          '../../../../packages/plugin-sdk/src/first-party/connected-accounts/index.ts',
+          '../../../../packages/protocol/src/agents/antigravity/oauthProfile.ts',
           import.meta.url,
         ).href, import.meta.url) as Readonly<{ ANTIGRAVITY_OAUTH_PROFILE: Readonly<{ callbackUrl: string }> }>;
         const entry = await sourceImport(pathToFileURL(entryPath).href, import.meta.url) as Readonly<{
@@ -443,6 +432,26 @@ describe('generated output ownership', () => {
     });
     expect(output).toContain('BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS: readonly string[] = Object.freeze([])');
   });
+  it('projects native-home keys without loading the Agent runtime for comparison', () => {
+    const projection = sourceBetween('async function readSourceProjectionFacts(', 'async function readBundledPluginPackages(');
+    expect(projection).not.toContain('readBundledAgentRuntimeFacts(');
+    expect(projection).toContain('agentNativeHomeEnvironmentKeys: loadedAgentFacts.agentNativeHomeEnvironmentKeys');
+  });
+  it('preserves native-home projection bytes across every bundled Agent static source', async () => {
+    const keysByAgent = await importPluginAuthorRuntimeModules(sourceImport => Promise.all(
+      BUNDLED_FIRST_PARTY_PLUGIN_METADATA.filter(entry => entry.agentId).map(async metadata => {
+        const definition = await sourceImport(new URL(`../../../../packages/plugins/${metadata.pluginPackageId}/src/agent/definition.ts`, import.meta.url).href,
+          import.meta.url) as Readonly<Record<string, unknown>>;
+        return readAgentNativeHomeEnvironmentKeys(definition.AGENT_STATE_SHARING_DESCRIPTOR);
+      }),
+    ));
+    const keys = [...new Set(keysByAgent.flat())].sort();
+    expect(keys).toEqual(BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS);
+    const output = renderBundledAgentDefinitionsTs({ agentIds: [], agentDefinitionsById: {}, nativeHomeEnvironmentKeys: keys });
+    const declaration = (source: string) => source.match(/export const BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS[^;]+;/u)?.[0];
+    const published = readFileSync(new URL('../../../../packages/agents/src/generated/bundledAgentDefinitions.ts', import.meta.url), 'utf8');
+    expect(declaration(output)).toBe(declaration(published));
+  });
   it('projects the released output reader declaration from the Claude private classifier', () => {
     expect(BUNDLED_AGENT_DEFINITIONS_BY_ID.claude?.releasedOutputTranscriptRecordReader?.nonTranscriptRecordTypes)
       .toEqual([...INTERNAL_CLAUDE_EVENT_TYPES]);
@@ -514,7 +523,60 @@ describe('packaged runtime eligibility', () => {
 });
 
 describe('bundled plugin installed runtime publication', () => {
-  it('replaces only marker-owned runtime outputs for declarative-only plugins', async () => {
+  it('target-owned publication materializes cold and stale package manifests from controller declarations', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-target-owned-publication-');
+    try {
+      const packageRoot = writeWorkspacePackageFixture({ repoRoot,
+        workspacePath: 'packages/plugins/inspector', packageName: '@happier-dev/plugins-inspector',
+        manifestOverrides: { files: ['dist', 'assets', '.happier-plugin'] },
+      });
+      writeBundledPluginSourceInputs({ repoRoot, pluginId: 'inspector', writePackageJson: false });
+      const manifest = { schemaVersion: 2, id: 'happier.inspector', version: '0.0.0', displayName: 'Inspector',
+        runtime: { apiVersion: 1 }, contributes: { resources: [{ id: 'payload', kind: 'asset',
+          path: 'assets/payload.txt', contentType: 'text/plain' }] } };
+      writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+      mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+      mkdirSync(join(packageRoot, 'assets'), { recursive: true });
+      writeFileSync(join(packageRoot, 'dist/index.js'), 'export {};');
+      writeFileSync(join(packageRoot, 'assets/payload.txt'), 'payload');
+      const manifestPath = join(packageRoot, '.happier-plugin/plugin.json');
+      mkdirSync(dirname(manifestPath), { recursive: true });
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      const admitted = ingestPluginManifestV2(manifest);
+      if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+      const pluginPackages: BundledPluginPackage[] = [{ pluginPackageId: 'inspector', pluginId: manifest.id,
+        packageName: '@happier-dev/plugins-inspector', packageVersion: '0.0.0', manifest: admitted.manifest }];
+      const uiPath = join(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
+      mkdirSync(dirname(uiPath), { recursive: true });
+      writeFileSync(uiPath, renderUiBundledPluginEntriesTs({ packageNames: pluginPackages.map(entry => entry.packageName), pluginPackages }));
+      writeRetainedCatalogAgent(repoRoot, happyCliDir);
+      writeCliBundledHostPackage({ happyCliDir,
+        bundledDependencies: ['@happier-dev/plugins-inspector', '@happier-dev/plugins-fixture-acp'] });
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write', '--aggregate']),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') });
+      const declarationPath = join(happyCliDir, 'assets/bundled-plugin-manifests/inspector.json');
+      const declarationBytes = readFileSync(declarationPath, 'utf8');
+      const catalogPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+      const catalogBytes = readFileSync(catalogPath, 'utf8');
+      rmSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+      expect(existsSync(manifestPath)).toBe(false);
+      // Only admitted controller declarations are publication inputs on replicas.
+      writeFileSync(join(packageRoot, 'src/manifest.ts'), 'throw new Error("Unpublished source declaration");');
+      const publish = () => main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector',
+        '--package-artifacts', '--target-owned-only']);
+      await publish();
+      expect(JSON.parse(readFileSync(manifestPath, 'utf8'))).toEqual(JSON.parse(declarationBytes));
+      writeFileSync(manifestPath, '{}');
+      await publish();
+      expect(JSON.parse(readFileSync(manifestPath, 'utf8'))).toEqual(JSON.parse(declarationBytes));
+      expect(readFileSync(declarationPath, 'utf8')).toBe(declarationBytes);
+      expect(readFileSync(catalogPath, 'utf8')).toBe(catalogBytes);
+    } finally { cleanup(); }
+  }, 120_000);
+
+  it('replaces marker-owned runtime outputs and the derived manifest for declarative-only plugins', async () => {
     const packageRoot = mkdtempSync(join(tmpdir(), 'happier-declarative-runtime-reconcile-'));
     const runtimeRoot = join(packageRoot, '.happier-plugin');
     try {
@@ -523,7 +585,7 @@ describe('bundled plugin installed runtime publication', () => {
       mkdirSync(join(runtimeRoot, 'agent/runtime'), { recursive: true });
       writeFileSync(join(packageRoot, 'assets/brand.png'), 'static package asset\n');
       writeFileSync(join(runtimeRoot, 'author-notes.txt'), 'author-owned runtime notes\n');
-      writeFileSync(join(runtimeRoot, 'plugin.json'), '{"id":"happier.agent.declarative"}\n');
+      writeFileSync(join(runtimeRoot, 'plugin.json'), '{"id":"stale.manifest"}\n');
       writeFileSync(join(runtimeRoot, 'daemon.js'), 'stale daemon\n');
       writeFileSync(join(runtimeRoot, '.happier-chunks/retired.js'), 'retired chunk\n');
       writeFileSync(join(runtimeRoot, 'agent/runtime/factory.js'), 'retired runner\n');
@@ -938,11 +1000,12 @@ describe('bundled plugin UI translation aggregation', () => {
     ].join('\n'));
     try {
       execFileSync(process.execPath, [
-        'scripts/workspaces/runTypeScriptCli.mjs', '--strict', '--declaration', '--emitDeclarationOnly',
+        fileURLToPath(new URL('../../../../scripts/workspaces/runTypeScriptCli.mjs', import.meta.url)),
+        '--strict', '--declaration', '--emitDeclarationOnly',
         '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler',
         '--skipLibCheck', '--outDir', join(root, 'declarations'), generated, consumer,
       ], {
-        cwd: new URL('../../../../', import.meta.url), stdio: 'inherit',
+        cwd: root, stdio: 'inherit',
         // This isolated declaration fixture runs within the admitted test suite,
         // not the full-workspace compiler's separate capacity reservation.
         env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true',
@@ -1039,41 +1102,174 @@ describe('bundled plugin UI translation aggregation', () => {
 });
 
 describe('CLI bundled plugin registry projection', () => {
-  function writeRetainedCatalogAgent(repoRoot: string, happyCliDir: string) {
-    // A declarative ACP Agent supplies a real retained identity without a
-    // custom runtime/factory graph unrelated to semantic publication.
-    const manifest = {
-      schemaVersion: 2, id: 'happier.fixture-acp', version: '0.0.0', displayName: 'Fixture ACP',
-      runtime: { apiVersion: 1 }, contributes: { agents: [{
-        ...CUSTOM_ACP_MANIFEST.contributes.agents![0]!, id: 'fixture-acp',
-        runtime: { kind: 'acp', transport: { kind: 'webSocket', url: 'ws://localhost/fixture' } },
-      }] },
-    };
-    const ingestion = ingestPluginManifestV2(manifest);
-    if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
-    const packageRoot = writeWorkspacePackageFixture({
-      repoRoot, workspacePath: 'packages/plugins/fixture-acp', packageName: '@happier-dev/plugins-fixture-acp',
+  it('declares enrollment roles for every bundled Machine provisioner', () => {
+    const provisioners = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.flatMap(locator => {
+      const ingestion = ingestPluginManifestV2(readBundledPluginManifest(locator));
+      if (!ingestion.ok) throw new Error(`${locator.pluginId}: ${JSON.stringify(ingestion.diagnostics)}`);
+      return (ingestion.manifest.contributes.machineProvisioners ?? []).map(provisioner => ({
+        pluginId: locator.pluginId,
+        provisioner,
+      }));
     });
-    writeBundledPluginSourceInputs({ repoRoot, pluginId: 'fixture-acp', writePackageJson: false });
-    writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
-    writeFileSync(join(packageRoot, 'src/index.ts'), `export { PLUGIN_MANIFEST as manifest } from './manifest.js'; export function activate() {}`);
-    mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
-    writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify({
-      ...CUSTOM_ACP_DEFINITION, id: 'fixture-acp', core: {
-        ...CUSTOM_ACP_DEFINITION.core, id: 'fixture-acp', cliSubcommand: 'fixture-acp', detectKey: 'fixture-acp',
-      },
-    })};`);
-    mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
-    writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
-    const bindingsPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
-    mkdirSync(dirname(bindingsPath), { recursive: true });
-    writeFileSync(bindingsPath, renderCliBundledAgentRegistrationBindingsTs([{
-      pluginId: manifest.id, localId: 'fixture-acp',
-      implementationOwnerId: 'fixture-acp', registrationFamily: 'agents',
-    }]));
-  }
 
-  it.each([false, true])('scoped publication projects authored peers despite stale package artifacts (packageArtifacts=%s)', async (packageArtifacts) => {
+    expect(provisioners.length).toBeGreaterThan(0);
+    for (const { pluginId, provisioner } of provisioners) {
+      expect(provisioner, `${pluginId}/${provisioner.id}`).toMatchObject({
+        enrollmentRole: expect.stringMatching(/^(server|personal|sandbox)$/u),
+      });
+    }
+  });
+
+  it.each(['scoped', 'aggregate'] as const)('%s publication refreshes retained-storage facts in the UI machine catalog', async mode => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-machine-declaration-twin-');
+    try {
+      const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(entry => entry.pluginId === 'happier.machine.fly');
+      if (!locator) throw new Error('Missing bundled Fly fixture');
+      const ingestion = ingestPluginManifestV2(readBundledPluginManifest(locator));
+      if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+      const manifest = ingestion.manifest;
+      const descriptor = manifest.contributes.machineProvisioners![0]!;
+      expect(descriptor.billing.storageCharges?.length).toBeGreaterThan(0);
+      const packageName = '@happier-dev/plugins-machine-fly';
+      const packageRoot = writeWorkspacePackageFixture({ repoRoot, workspacePath: 'packages/plugins/machine-fly', packageName });
+      writeBundledPluginSourceInputs({ repoRoot, pluginId: 'machine-fly', writePackageJson: false });
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [packageName] });
+      mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+      writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), serializeCanonicalPluginManifest(manifest));
+      const uiPath = join(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
+      mkdirSync(dirname(uiPath), { recursive: true });
+      writeFileSync(uiPath, renderUiBundledPluginEntriesTs({ packageNames: [], pluginPackages: [{
+        pluginPackageId: 'machine-fly', pluginId: manifest.id, packageName, packageVersion: '0.0.0',
+        manifest: { ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [{ ...descriptor,
+          billing: { location: 'cloud', stoppedBilling: 'not-billed' },
+        }] } },
+      }] }));
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write',
+          ...(mode === 'aggregate' ? ['--aggregate'] : ['--workspace', 'plugins-machine-fly'])]),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') });
+      const block = sourceBetween('export const BUNDLED_MACHINE_PROVISIONER_DECLARATIONS', '\n});', readFileSync(uiPath, 'utf8')) + '\n});';
+      const exports: Record<string, Record<string, { descriptor: typeof descriptor }>> = {};
+      runInNewContext(transpileModule(block, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+      expect(exports.BUNDLED_MACHINE_PROVISIONER_DECLARATIONS?.[`${manifest.id}/${descriptor.id}`]?.descriptor).toEqual(descriptor);
+    } finally { cleanup(); }
+  });
+
+  it.each(['scoped', 'aggregate'] as const)('%s publication keeps UI-issued OpenRouter Account grants current at daemon admission', async mode => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-provider-declaration-twin-');
+    try {
+      const contributionKey = 'happier.provider.openrouter/openrouter';
+      const definition = ProviderContributionV1Schema.parse(OPENROUTER_PROVIDER_CONTRIBUTION);
+      const { usageSources: _usageSources, ...staleDefinition } = definition;
+      const packageRoot = writeWorkspacePackageFixture({ repoRoot, workspacePath: 'packages/plugins/openrouter',
+        packageName: '@happier-dev/plugins-openrouter' });
+      writeBundledPluginSourceInputs({ repoRoot, pluginId: 'openrouter', writePackageJson: false });
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-openrouter'] });
+      const ingestion = ingestPluginManifestV2({ schemaVersion: 2, id: 'happier.provider.openrouter', version: '0.0.0',
+        displayName: 'OpenRouter', runtime: { apiVersion: 1 }, contributes: { providers: [definition] } });
+      if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+      mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+      writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), serializeCanonicalPluginManifest(ingestion.manifest));
+      const uiPath = join(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
+      mkdirSync(dirname(uiPath), { recursive: true });
+      const oldUi = renderUiBundledPluginEntriesTs({ packageNames: [], pluginPackages: [{
+        pluginPackageId: 'openrouter', pluginId: ingestion.manifest.id, packageName: '@happier-dev/plugins-openrouter',
+        packageVersion: '0.0.0', manifest: { ...ingestion.manifest, contributes: { providers: [staleDefinition] } },
+      }] });
+      writeFileSync(uiPath, oldUi);
+      const readUiDeclarations = (): readonly AccountProviderDeclarationV1[] => {
+        const source = readFileSync(uiPath, 'utf8');
+        const block = sourceBetween('export const BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS',
+          'export const BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS', source);
+        const exports: Record<string, Record<string, AccountProviderDeclarationV1>> = {};
+        runInNewContext(transpileModule(block, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+        return Object.values(exports.BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS!);
+      };
+      let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+      const account = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+        readCatalog: async () => ({ status: 'ready', revision: 1, catalog }), readDefinitions: async () => readUiDeclarations(),
+        // Account catalog persistence is the only substituted boundary.
+        writeCatalog: async input => { catalog = input.catalog; return { status: 'updated' }; },
+      });
+      const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
+        assertCurrent() {}, account, async rpc() { throw new Error('Account authoring must not use Machine RPC'); },
+        async setDefault() { throw new Error('No model default mutation expected'); },
+      }) });
+      const context = { surface: 'ui' as const, bypassApprovals: true };
+      expect(await executor.execute('providers.connections.create_contribution', {
+        action: 'createContribution', connectionId: 'pc_ui_openrouter', contributionKey,
+        displayName: null, savedSecretId: 'ss_dummy', enable: false,
+      }, context)).toMatchObject({ ok: true });
+      const enable = () => executor.execute('providers.connections.enabled.set', {
+        action: 'setEnabled', connectionId: 'pc_ui_openrouter', scope: 'account', enabled: true,
+      }, context);
+      const readDaemonRegistry = () => {
+        const current = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
+          'assets/bundled-plugin-manifests/openrouter.json'), 'utf8')));
+        if (!current.ok) throw new Error(JSON.stringify(current.diagnostics));
+        return { providersByContributionKey: new Map([[contributionKey, { pluginId: current.manifest.id,
+            identity: { pluginId: current.manifest.id, localId: 'openrouter' }, provenance: 'first_party',
+            source: { kind: 'bundled' }, definition: current.manifest.contributes.providers![0]! }]]),
+          providerActivationOccurrenceIdsByPluginId: new Map([[current.manifest.id, 'openrouter-test-occurrence']]),
+        } satisfies ProviderContributionRegistryView;
+      };
+      const admit = () => resolveProviderConnectionForMachine({ connectionId: 'pc_ui_openrouter', machineId: 'machine-a',
+        providerSettings: composeProviderSettingsV1(catalog, {}), registry: readDaemonRegistry(),
+        dnsEvidenceByEndpointUrl: new Map([['https://openrouter.ai/api/v1', ['1.1.1.1']]]),
+      });
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write',
+          ...(mode === 'aggregate' ? ['--aggregate'] : ['--workspace', 'plugins-openrouter'])]),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') });
+      expect(await enable()).toMatchObject({ ok: true });
+      expect(admit()).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'account' } } });
+      expect(readUiDeclarations()[0]?.definition.usageSources).toEqual(definition.usageSources);
+      const requests: ProviderProbeTransportRequest[] = [];
+      const settingsKey = new Uint8Array(32).fill(7);
+      const snapshot = { source: 'cache' as const,
+        settings: AccountSettingsSchema.parse({ secrets: [{ id: 'ss_dummy', name: 'Dummy OpenRouter key', kind: 'apiKey',
+          encryptedValue: { _isSecretValue: true, encryptedValue: encryptSecretStringV1('dummy-openrouter-key',
+            settingsKey, length => new Uint8Array(length).fill(5)) } }] }),
+        providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog },
+        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [settingsKey],
+        scopeKey: resolveAccountSettingsScopeKeyForToken('openrouter-fixture-account'),
+      };
+      const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir: join(repoRoot, 'runtime'),
+        registry: readDaemonRegistry(), getAccountSettingsSnapshot: () => snapshot,
+        featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'],
+        client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport: async request => {
+          requests.push(request); return { status: 401, headers: {}, body: Buffer.alloc(0) };
+        } }),
+        resolveContributedUsageParsers: async () => ({ activationOccurrenceId: 'openrouter-test-occurrence',
+          isCurrent: () => true, parsersByFormat: { 'openrouter-key-usage': parseOpenRouterKeyUsage,
+            'openrouter-account-credits': parseOpenRouterCredits } }),
+      });
+      const usage = await services.refreshUsage({ connectionId: 'pc_ui_openrouter', machineId: 'machine-a' });
+      expect(usage, JSON.stringify(usage)).toMatchObject({ status: 'success', sources: [
+        { sourceId: 'key-usage', status: 'error', error: { code: 'provider_endpoint_unauthorized' } },
+        { sourceId: 'account-credits', status: 'not_configured' },
+      ] });
+      expect(requests.map(request => request.url)).toEqual(['https://openrouter.ai/api/v1/key']);
+      expect(requests[0]?.headers.authorization).toBe('Bearer dummy-openrouter-key');
+      // The semantic publication must preserve the executable/UI portions it did not derive.
+      const stripProviders = (source: string) => source.replace(sourceBetween('export const BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS',
+        'export const BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS', source), '');
+      expect(stripProviders(readFileSync(uiPath, 'utf8'))).toBe(stripProviders(oldUi));
+      // A genuine declaration change still revokes authority: never weaken the grant validator.
+      writeFileSync(uiPath, oldUi);
+      expect(await enable()).toMatchObject({ ok: true });
+      expect(admit()).toMatchObject({ status: 'resolved', record: { authorization: {
+        authorized: false, errorCode: 'provider_account_grant_stale' } } });
+      await expect(withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'check', '--aggregate']),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/generated output differs: .*generatedBundledPluginEntries\.ts/u);
+    } finally { cleanup(); }
+  });
+
+  it.each([false, true])('scoped publication retains published peers and strict source checks (packageArtifacts=%s)', async (packageArtifacts) => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-authored-projection-');
     const packages = ['inspector', 'neighbor'];
     for (const id of packages) {
@@ -1096,20 +1292,25 @@ describe('CLI bundled plugin registry projection', () => {
     writeRetainedCatalogAgent(repoRoot, happyCliDir);
     writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [...packages, 'fixture-acp'].map(id => `@happier-dev/plugins-${id}`) });
     try {
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write', '--aggregate']),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(repoRoot, 'publication.lock') });
       await main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector',
         ...(packageArtifacts ? ['--package-artifacts'] : [])]);
       for (const id of packages) {
         expect(JSON.parse(readFileSync(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`), 'utf8')))
-          .toMatchObject({ id: `happier.${id}`, displayName: `Authored ${id}` });
+          .toMatchObject({ id: `happier.${id}`, displayName: `${id === 'inspector' ? 'Authored' : 'Stale'} ${id}` });
         expect(JSON.parse(readFileSync(join(repoRoot, `packages/plugins/${id}/.happier-plugin/plugin.json`), 'utf8')))
           .toMatchObject({ displayName: packageArtifacts && id === 'inspector' ? `Authored ${id}` : `Stale ${id}` });
       }
-      // Governance must also reject drift in a committed/installed serialized
-      // peer even when its source-derived host projection is already current.
+      // Check mode still reads all current source and rejects serialized drift.
       await expect(main(['--root', repoRoot, '--mode', 'check', '--scope', 'projections', '--workspace', 'plugins-inspector']))
         .rejects.toThrow(/plugin\.json.*Run .*generateBundledPluginEntries\.ts.*--package-artifacts/u);
-      // Repair serialized declarations using the canonical serializer and the
-      // real source projection already emitted above, then prove check recovery.
+      // Align the peer's authored facts with its retained publication, then
+      // repair the package artifacts through the canonical serializer.
+      const peerSource = join(repoRoot, 'packages/plugins/neighbor/src/manifest.ts');
+      writeFileSync(peerSource, readFileSync(peerSource, 'utf8').replace('Authored neighbor', 'Stale neighbor'));
       for (const id of [...packages, 'fixture-acp']) {
         const ingestion = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
           `assets/bundled-plugin-manifests/${id}.json`), 'utf8')));
@@ -1823,35 +2024,38 @@ describe('bundled Voice UI declaration projection', () => {
     expect(renderBundledVoiceRuntimeEntriesTs(webOnly, 'ios')).not.toContain('CODEX_BUNDLED_VOICE_ACTIVATE');
     expect(renderBundledVoiceRuntimeEntriesTs(webOnly, 'web')).toContain('CODEX_BUNDLED_VOICE_ACTIVATE');
   });
-  it('projects manifest JSON without a plugin manifest-module import and retains only executable UI imports', () => {
-    const manifestProjection = sourceBetween(
-      'function renderBundledVoiceManifestProjectionConstant(',
-      'function renderBundledVoiceEntriesTs(',
-      voiceRendererSource,
-    );
-    const metadataRenderer = sourceBetween(
-      'function renderBundledVoiceEntriesTs(',
-      'function renderBundledVoiceRuntimeEntriesTs(',
-      voiceRendererSource,
-    );
-    const runtimeRenderer = voiceRendererSource.slice(voiceRendererSource.indexOf('function renderBundledVoiceRuntimeEntriesTs('));
-
-    expect(manifestProjection).toContain('Object.freeze(');
-    expect(manifestProjection).toContain('renderJsonLiteral(source.manifest');
-    expect(metadataRenderer).not.toContain('${source.packageName}/manifest');
-    expect(metadataRenderer).toContain('renderBundledVoiceManifestProjectionConstant(source)');
-    expect(metadataRenderer).toContain('createBundledVoiceProviderPresentations');
-    expect(metadataRenderer).not.toContain('activate as');
-    expect(runtimeRenderer).not.toContain('${source.packageName}/manifest');
-    expect(runtimeRenderer).toContain('renderBundledVoiceManifestProjectionConstant(source)');
-    expect(runtimeRenderer).toContain(
-      '${source.conversationClient.exportName} as ${prefix}_BUNDLED_VOICE_ACTIVATE',
-    );
+  it('emits only admitted Voice declarations and reuses them in the executable projection', () => {
+    const authored = authoredAgentManifests.find(entry => entry.metadata.pluginPackageId === 'codex');
+    if (!authored) throw new Error('Missing bundled Codex declaration');
+    const ingestion = ingestPluginManifestV2(authored.authored.PLUGIN_MANIFEST);
+    if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+    const packages = [{ pluginPackageId: 'codex', packageName: authored.metadata.packageName,
+      packageVersion: authored.metadata.packageVersion, pluginId: ingestion.manifest.id, manifest: ingestion.manifest,
+      hasConversationProvider: true, conversationClient: { artifactId: 'voice-runtime-web', exportName: 'activate' },
+      conversationPlatforms: ['web', 'ios', 'android'], presentations: [],
+    }] satisfies Parameters<typeof renderBundledVoiceEntriesTs>[0];
+    const metadata = renderBundledVoiceEntriesTs(packages);
+    const runtime = renderBundledVoiceRuntimeEntriesTs(packages, 'web');
+    const projected: Array<{ id: string; contributes: { voiceProviders: unknown[] } }> = [];
+    const js = transpileModule(metadata, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText;
+    runInNewContext(js, { exports: {}, require: (id: string) => {
+      if (id.includes('bundledVoiceManifestProjection')) return {
+        projectBundledVoiceManifestContributions: (value: typeof projected[number]) => { projected.push(value); return []; },
+        createBundledVoiceProviderPresentations: () => [],
+      };
+      if (id.includes('generatedBundledVoiceSelectionOptions')) return { BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS: {} };
+      throw new Error(`Unexpected generated dependency: ${id}`);
+    } });
+    expect(projected).toEqual(packages.map(({ manifest }) => ({ id: manifest.id,
+      contributes: { voiceProviders: manifest.contributes.voiceProviders } })));
+    expect(runtime).toContain("from './generatedBundledVoiceEntries'");
+    expect(runtime).not.toContain('"voiceProviders":');
+    expect(runtime).not.toContain('/manifest');
   });
 
   it('reads committed manifest bytes through the canonical Protocol parser and reports invalid artifacts', () => {
     const manifestReader = sourceBetween(
-      'function readCommittedBundledPluginManifest(',
+      'function readSerializedBundledPluginManifest(',
       'async function synchronizeSerializedPluginManifest(',
     );
     const manifestNormalizer = sourceBetween(
@@ -1868,7 +2072,7 @@ describe('bundled Voice UI declaration projection', () => {
   it('reads every bundled plugin manifest through one isolated-module loader', () => {
     const manifestLoader = sourceBetween(
       'async function loadPluginManifest(',
-      'function readCommittedBundledPluginManifest(',
+      'function readSerializedBundledPluginManifest(',
     );
 
     expect(manifestLoader).toContain('importTypescriptModule(manifestPath');

@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, realpathSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import {
   copyCliBinRuntimeFiles,
-  copyCliWorkspaceSyncRuntimeFiles,
   createCliBinPreflightSandbox,
   runHappierBin,
   writeCliProjectFixture,
@@ -171,17 +170,12 @@ describe('apps/cli bin/happier.mjs preflight', () => {
     }
   });
 
-  it('launches a manifest-backed local snapshot without refreshing bundled workspaces', () => {
+  it('launches a manifest-backed installed snapshot without refreshing bundled workspaces', () => {
     const { rootDir: tmp, cleanup } = createCliBinPreflightSandbox('happier-bin-preflight-');
     try {
       const projectRoot = join(tmp, 'apps', 'cli');
       const binDir = join(projectRoot, 'bin');
       const bundledProtocolDir = join(projectRoot, 'node_modules', '@happier-dev', 'protocol');
-      const workspaceProtocolDir = join(tmp, 'packages', 'protocol');
-      const scriptsDir = join(tmp, 'scripts', 'workspaces');
-
-      mkdirSync(join(workspaceProtocolDir, 'dist'), { recursive: true });
-      mkdirSync(scriptsDir, { recursive: true });
 
       writeCliProjectFixture({
         projectRoot,
@@ -198,21 +192,6 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         'utf8',
       );
       copyCliBinRuntimeFiles({ binDir });
-      copyCliWorkspaceSyncRuntimeFiles({ scriptsDir });
-
-      writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
-      writeFileSync(join(tmp, 'pnpm-lock.yaml'), '# lock\n', 'utf8');
-      writeFileSync(join(tmp, 'pnpm-workspace.yaml'), 'packages: []\n');
-      writeProtocolBundleStub({
-        packageDir: workspaceProtocolDir,
-        exportsMap: {
-          '.': './dist/index.js',
-          './changes': './dist/changes/index.js',
-        },
-        distFiles: {
-          'dist/changes/index.js': 'export const change = true;\n',
-        },
-      });
       writeProtocolBundleStub({
         packageDir: bundledProtocolDir,
         exportsMap: {

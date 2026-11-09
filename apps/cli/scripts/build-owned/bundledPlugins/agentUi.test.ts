@@ -9,6 +9,7 @@ import { ModuleKind, transpileModule } from 'typescript';
 import { ScriptKind, ScriptTarget, createSourceFile, isCallExpression, isIdentifier, isObjectLiteralExpression, isPropertyAssignment, isSatisfiesExpression, isVariableStatement } from 'typescript';
 
 import { renderBundledAgentPresentationTs, renderUiBundledPluginEntriesTs } from './agentUi.ts';
+import { renderBundledAgentDeclarationTypeTs, renderBundledAgentDeclarationsTs, renderBundledUiDeclarationImportsTs } from './uiDeclarations.ts';
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as CLAUDE_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
 import { renderCliBundledPluginEntriesTs, renderCliBundledPluginManifestEntriesTs } from './registry.ts';
@@ -60,6 +61,39 @@ describe('bundled Agent exclusion projections', () => {
                 descriptor: { usageIdentity: { requiredContext: 'organization' } },
             },
         });
+    });
+
+    it('compiles bundled Account settings with heterogeneous nested object schemas', () => {
+        const admitted = ingestPluginManifestV2(CLAUDE_MANIFEST);
+        if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+        const pluginPackages: readonly BundledPluginPackage[] = [{
+            pluginPackageId: 'claude', pluginId: admitted.manifest.id, packageName: '@happier-dev/plugins-claude',
+            packageVersion: '0.0.0', agentId: 'claude', manifest: admitted.manifest,
+        }];
+        const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+        const fixtureDir = mkdtempSync(join(tmpdir(), 'bundled-agent-settings-types-'));
+        try {
+            const fixturePath = join(fixtureDir, 'projection.ts');
+            writeFileSync(fixturePath, [
+                "import type { CanonicalAgentId } from '@happier-dev/agents';",
+                renderBundledUiDeclarationImportsTs(),
+                renderBundledAgentDeclarationTypeTs(),
+                renderBundledAgentDeclarationsTs(pluginPackages),
+            ].join('\n'));
+            const configPath = join(fixtureDir, 'tsconfig.json');
+            writeFileSync(configPath, JSON.stringify({
+                compilerOptions: {
+                    strict: true, noEmit: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler',
+                    skipLibCheck: true, types: ['node'], typeRoots: [join(repoRoot, 'node_modules/@types')],
+                },
+                files: [fixturePath],
+            }));
+            const compilation = spawnSync(process.execPath, [
+                'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', configPath,
+            ], { cwd: repoRoot, encoding: 'utf8', env: process.env });
+            expect(compilation.error).toBeUndefined();
+            expect(compilation.status, compilation.stdout + compilation.stderr).toBe(0);
+        } finally { rmSync(fixtureDir, { recursive: true, force: true }); }
     });
 
     it('publishes exact contributed presentation through the existing no-execute producer', () => {

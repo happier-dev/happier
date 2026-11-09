@@ -1,0 +1,64 @@
+2026-11-07T06:26:50.063Z [DEBUG] MDM settings load completed in 0ms
+2026-11-07T06:26:50.065Z [DEBUG] Config file read as missing at start-up: looking again.
+2026-11-07T06:26:50.067Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/settings.json
+2026-11-07T06:26:50.068Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /etc/claude-code/managed-settings.json
+2026-11-07T06:26:50.069Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/.claude/settings.json
+2026-11-07T06:26:50.070Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/.claude/settings.local.json
+2026-11-07T06:26:50.076Z [DEBUG] CA certs: Config fallback - globalEnv keys: , settingsEnv keys: none
+2026-11-07T06:26:50.077Z [DEBUG] [init] configureGlobalMTLS starting
+2026-11-07T06:26:50.078Z [DEBUG] [init] configureGlobalMTLS complete
+2026-11-07T06:26:50.078Z [DEBUG] [init] configureGlobalAgents starting
+2026-11-07T06:26:50.078Z [DEBUG] CA certs: stores=bundled,system, extraCertsPath=undefined
+2026-11-07T06:26:50.078Z [DEBUG] CA certs: Loaded 118 bundled root certificates
+2026-11-07T06:26:50.084Z [DEBUG] CA certs: Loaded 121 system CA certificates
+2026-11-07T06:26:50.088Z [DEBUG] CA certs: Dropped blocked certificate 40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367 from bundled
+2026-11-07T06:26:50.098Z [DEBUG] CA certs: Dropped blocked certificate bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3 from system
+2026-11-07T06:26:50.098Z [DEBUG] CA certs: Dropped blocked certificate 125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f from system
+2026-11-07T06:26:50.098Z [DEBUG] CA certs: Dropped blocked certificate 40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367 from system
+2026-11-07T06:26:50.110Z [DEBUG] mTLS: Creating HTTPS agent with custom certificates
+2026-11-07T06:26:50.114Z [DEBUG] [init] configureGlobalAgents complete
+2026-11-07T06:26:50.117Z [DEBUG] Git remote URL: null
+2026-11-07T06:26:50.117Z [DEBUG] No git remote URL found
+2026-11-07T06:26:50.118Z [DEBUG] Error log sink initialized
+2026-11-07T06:26:50.124Z [ERROR] Failed to save config with lock: Error: ENOENT: no such file or directory, lstat '/tmp/happier-test-home-D1b2d4/user/.claude.json'
+2026-11-07T06:26:50.127Z [DEBUG] Setting permissions for new file: 600
+2026-11-07T06:26:50.127Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.94a6eb4dcdc3
+2026-11-07T06:26:50.130Z [DEBUG] Temp file written successfully, size: 84 bytes
+2026-11-07T06:26:50.130Z [DEBUG] Created /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.133Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.133Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.934385bb847e
+2026-11-07T06:26:50.133Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.134Z [DEBUG] Temp file written successfully, size: 167 bytes
+2026-11-07T06:26:50.134Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.934385bb847e to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.134Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.135Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.135Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.022fbca4081d
+2026-11-07T06:26:50.135Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.136Z [DEBUG] Temp file written successfully, size: 203 bytes
+2026-11-07T06:26:50.136Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.022fbca4081d to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.136Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.137Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.137Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.62e2c4b19c86
+2026-11-07T06:26:50.137Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.138Z [DEBUG] Temp file written successfully, size: 242 bytes
+2026-11-07T06:26:50.138Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.62e2c4b19c86 to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.138Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.139Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.139Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.4b63b605fa4b
+2026-11-07T06:26:50.139Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.139Z [DEBUG] Temp file written successfully, size: 269 bytes
+2026-11-07T06:26:50.139Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.4b63b605fa4b to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.139Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.140Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.140Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.6dd01009a050
+2026-11-07T06:26:50.140Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.141Z [DEBUG] Temp file written successfully, size: 317 bytes
+2026-11-07T06:26:50.141Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.6dd01009a050 to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.141Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.141Z [DEBUG] Preserving file permissions: 100600
+2026-11-07T06:26:50.142Z [DEBUG] Writing to temp file: /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.256265bea9fa
+2026-11-07T06:26:50.142Z [DEBUG] Applied original permissions to temp file
+2026-11-07T06:26:50.142Z [DEBUG] Temp file written successfully, size: 343 bytes
+2026-11-07T06:26:50.142Z [DEBUG] Renaming /tmp/happier-test-home-D1b2d4/user/.claude.json.tmp.3547394.256265bea9fa to /tmp/happier-test-home-D1b2d4/user/.claude.json
+2026-11-07T06:26:50.142Z [DEBUG] File /tmp/happier-test-home-D1b2d4/user/.claude.json written atomically
+2026-11-07T06:26:50.151Z [ERROR] Could not open /dev/tty for stdin override: Error: ENXIO: no such device or address, open '/dev/tty'

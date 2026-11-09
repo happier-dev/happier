@@ -31,6 +31,8 @@ const { PluginScaffoldUiModeSchema } = await import('@happier-dev/protocol/actio
 const { getAgentCliSetupRecommendedIds } = await import('@happier-dev/agents');
 const { projectPluginCommandDeclarations } = await import('../../../src/cli/pluginCommandDeclarations.ts');
 const { assertActionCommandPathsFitStaticRegistry } = await import('../../../src/cli/commandDescriptors.ts');
+const { compactActionSchemas } = await import('./actionSchemas.ts');
+const { ingestPluginManifestV2 } = await import('@happier-dev/protocol/plugins/manifest');
 
 
 export function bundledPluginManifestAssetRelativePath(pluginPackageId: string): string {
@@ -136,14 +138,20 @@ export function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
   return lines.join('\n');
 }
 
-/** The same normalized declarations, stored outside the eagerly imported module. */
+/** Admit compact declaration assets without changing authored runtime agreement facts. */
 export function renderCliBundledPluginManifestAssets(params: Readonly<{
   pluginPackages: readonly BundledPluginPackage[];
 }>): readonly Readonly<{ relativePath: string; out: string }>[] {
-  return params.pluginPackages.map((entry) => ({
-    relativePath: bundledPluginManifestAssetRelativePath(entry.pluginPackageId),
-    out: `${renderCompactJsonLiteral(entry.manifest)}\n`,
-  }));
+  return params.pluginPackages.map((entry) => {
+    const admitted = ingestPluginManifestV2(compactActionSchemas(entry.manifest));
+    if (!admitted.ok) {
+      throw new Error(`Invalid compacted manifest '${entry.pluginId}': ${admitted.diagnostics.map(diagnostic => diagnostic.message).join('; ')}`);
+    }
+    return {
+      relativePath: bundledPluginManifestAssetRelativePath(entry.pluginPackageId),
+      out: `${renderCompactJsonLiteral(admitted.manifest)}\n`,
+    };
+  });
 }
 
 /** Demand-only help models from the existing compiler; never eager root metadata. */

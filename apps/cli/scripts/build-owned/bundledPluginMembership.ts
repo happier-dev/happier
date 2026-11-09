@@ -168,6 +168,9 @@ export function syncCliBundledPluginMembership(params: Readonly<{
     return bundledPluginPackageNames;
   }
 
+  if (JSON.stringify(existingBundled) === JSON.stringify(nextBundled)
+    && JSON.stringify(existingDependencies) === JSON.stringify(nextDependencies)) return bundledPluginPackageNames;
+
   cliPackageJson.bundledDependencies = nextBundled;
   cliPackageJson.dependencies = nextDependencies;
   writeJson(cliPackageJsonPath, cliPackageJson);

@@ -18,14 +18,9 @@ function writeSnapshot(
   cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, { outputDir, builtAt });
 }
 
-function writeLocalRepoFixture(repoRoot: string) {
+function writeInstalledFixture(repoRoot: string) {
   const projectRoot = resolve(repoRoot, 'apps', 'cli');
-  mkdirSync(resolve(repoRoot, 'scripts', 'workspaces'), { recursive: true });
-  writeFileSync(
-    resolve(repoRoot, 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs'),
-    'export function syncBundledWorkspacePackages() {}\n',
-    'utf8',
-  );
+  mkdirSync(projectRoot, { recursive: true });
   return projectRoot;
 }
 
@@ -33,7 +28,7 @@ describe('importPreparedRuntimeEntrypoint', () => {
   it('does not retry an external dependency failure while the selected snapshot is unchanged', async () => {
     const repoRoot = createTempDirSync('happier-cli-import-entrypoint-unchanged-');
     try {
-      const projectRoot = writeLocalRepoFixture(repoRoot);
+      const projectRoot = writeInstalledFixture(repoRoot);
       writeSnapshot(
         resolve(projectRoot, 'dist'),
         'export const ready = true;\n',
@@ -62,7 +57,7 @@ describe('importPreparedRuntimeEntrypoint', () => {
   it('re-resolves after an atomic snapshot swap, including identical-content generations', async () => {
     const repoRoot = createTempDirSync('happier-cli-import-entrypoint-swap-');
     try {
-      const projectRoot = writeLocalRepoFixture(repoRoot);
+      const projectRoot = writeInstalledFixture(repoRoot);
       const distDir = resolve(projectRoot, 'dist');
       const stagingDir = resolve(projectRoot, 'dist.staging.writer');
       const backupDir = resolve(projectRoot, 'dist.backup.writer');

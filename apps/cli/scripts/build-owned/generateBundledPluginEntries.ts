@@ -66,8 +66,10 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { AgentId } from '@happier-dev/agents';
+import { createCliSourceLoader } from '../../../../packages/cli-common/cliSourceLoader.mjs';
 import { resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readAgentNativeHomeEnvironmentKeys } from '../../src/plugins/authoring/agentNativeHomeEnvironmentKeys.ts';
+import { projectPackedSessionRunnerModulePath } from '../../src/plugins/authoring/projectPackedSessionRunnerModulePath.ts';
 import { parseBundledPluginPublicationFailures } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import {
   resolveWorkspaceBundleLockPath,
@@ -91,6 +93,11 @@ import {
   type ProjectionPublicationLease,
 } from './bundledPlugins/outputs.ts';
 import { mapWithConcurrency } from './bundledPlugins/concurrency.ts';
+import {
+  prepareCanonicalRuntimeWorkspacePackages,
+  selectCanonicalRuntimeWorkspacePackageRoots,
+} from './bundledPlugins/runtimeWorkspaces.mjs';
+export { selectCanonicalRuntimeWorkspacePackageRoots } from './bundledPlugins/runtimeWorkspaces.mjs';
 import {
   BUNDLED_VOICE_RUNTIME_PLATFORMS,
   resolveBundledVoiceRuntimeProjectionOutPath,
@@ -154,6 +161,7 @@ import {
   renderBundledAgentPresentationTs,
   toAgentConstPrefix,
 } from './bundledPlugins/agentUi.ts';
+import { renderRetainedUiBundledPluginEntriesTs } from './bundledPlugins/retainedUi.ts';
 import {
   renderBundledVoiceEntriesTs,
   renderBundledVoiceSelectionOptionsTs,
@@ -278,6 +286,10 @@ type GeneratorWorkspaceDependencies = Readonly<{
 type BundledAgentCatalogDependencies = Readonly<{
   agents: Readonly<Pick<AgentIdsWorkspaceModule, 'AGENT_IDS'>>;
 }>;
+type BundledPluginManifestDependencies = Readonly<{
+  protocol: Pick<GeneratorWorkspaceDependencies['protocol'],
+    'ingestPluginManifestV2' | 'derivePluginDaemonContributionRegistrationRights'>;
+}>;
 /**
  * The bounded dependency slice the compiler-input projection may use.
  *
@@ -383,6 +395,16 @@ async function loadGeneratorWorkspaceDependencies(): Promise<GeneratorWorkspaceD
   });
 }
 
+async function loadDaemonProjectionDependencies(): Promise<BundledPluginManifestDependencies> {
+  const protocol = await importCanonicalWorkspaceModule(
+    '@happier-dev/protocol', 'plugins/manifest',
+  ) as ProtocolManifestWorkspaceModule;
+  return Object.freeze({ protocol: Object.freeze({
+    ingestPluginManifestV2: protocol.ingestPluginManifestV2,
+    derivePluginDaemonContributionRegistrationRights: protocol.derivePluginDaemonContributionRegistrationRights,
+  }) });
+}
+
 /**
  * Loads only the Agents runtime the compiler-input projection reads.
  *
@@ -423,10 +445,7 @@ export async function importPluginAuthorRuntimeModules<T>(
 ): Promise<T> {
   // All dependencies and authoring modules share one invocation's source graph.
   // tsImport() creates a new namespace per call, duplicating that graph.
-  generatorSourceLoader ??= import('tsx/esm/api').then(({ register }) => register({
-    namespace: 'happier-bundled-plugin-generator',
-    tsconfig: fileURLToPath(new URL('./tsconfig.generator-runtime.json', import.meta.url)),
-  }));
+  generatorSourceLoader ??= createCliSourceLoader('happier-bundled-plugin-generator');
   const loader = await generatorSourceLoader;
   return await operation(loader.import);
 }
@@ -458,14 +477,18 @@ async function loadPluginAuthorRuntimeSupportModules(): Promise<PluginAuthorRunt
         '../../src/plugins/authoring/bundleDaemonRuntime.ts',
         import.meta.url,
       ).href, import.meta.url) as Promise<PluginDaemonRuntimeStagingModule>,
-      tsImport(new URL(
-        '../../src/plugins/authoring/runtimeStagingSource.ts',
-        import.meta.url,
-      ).href, import.meta.url) as Promise<PluginRuntimeStagingSourceModule>,
+      loadPluginRuntimeStagingSourceModule(),
     ]);
     return Object.freeze({ staging, source });
   });
   return await pluginAuthorRuntimeSupportModulesPromise;
+}
+
+async function loadPluginRuntimeStagingSourceModule(): Promise<PluginRuntimeStagingSourceModule> {
+  return await importPluginAuthorRuntimeModules(async (sourceImport) => (
+    await sourceImport(new URL('../../src/plugins/authoring/runtimeStagingSource.ts', import.meta.url).href,
+      import.meta.url) as PluginRuntimeStagingSourceModule
+  ));
 }
 
 async function loadPluginAuthorRuntimeModules(): Promise<PluginAuthorRuntimeModules> {
@@ -1727,8 +1750,9 @@ function normalizePluginManifest(
 /**
  * Reads one bundled plugin's authored manifest. Every first-party package —
  * voice included — is authored through the plugin authoring API, so the manifest
- * is computed rather than a static literal and is evaluated here in an isolated
- * child process. The no-execute contract belongs to installed discovery, which
+ * is computed rather than a static literal. Publication evaluates it in an
+ * isolated child; private dev derivation shares the activation source graph.
+ * The no-execute contract belongs to installed discovery, which
  * reads the packed `.happier-plugin/plugin.json` this pack step produces.
  */
 async function loadPluginManifest(
@@ -1736,16 +1760,18 @@ async function loadPluginManifest(
   pluginPackageId: string,
   dependencies: Readonly<{ protocol: BundledPluginManifestParser }>
     | Promise<Readonly<{ protocol: BundledPluginManifestParser }>>,
+  reuseAuthorRuntimeGraph = false,
 ): Promise<PluginManifestJson> {
   const manifestPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/manifest.ts');
   if (!existsSync(manifestPath)) {
     throw new Error(`Missing required plugin manifest for shippable plugin package ${pluginPackageId}: ${manifestPath}`);
   }
 
-  // Authored inspection has its own process and does not consume the parent's
-  // workspace modules. Load those independent graphs together, then validate.
+  // Resolve the authored declaration and its host parser together, then validate.
   const [mod, resolvedDependencies] = await Promise.all([
-    importTypescriptModule(manifestPath, { exports: ['PLUGIN_MANIFEST'] }) as Promise<{ PLUGIN_MANIFEST?: unknown }>,
+    (reuseAuthorRuntimeGraph
+      ? importPluginAuthorRuntimeModules(async (sourceImport) => await sourceImport(pathToFileURL(manifestPath).href, import.meta.url))
+      : importTypescriptModule(manifestPath, { exports: ['PLUGIN_MANIFEST'] })) as Promise<{ PLUGIN_MANIFEST?: unknown }>,
     dependencies,
   ]);
   if (!('PLUGIN_MANIFEST' in mod)) {
@@ -1759,12 +1785,11 @@ async function loadPluginManifest(
  * installed plugins. Generated declaration projections consume this normalized
  * JSON rather than importing a plugin's authored manifest module.
  */
-function readCommittedBundledPluginManifest(
-  packageRoot: string,
+function readSerializedBundledPluginManifest(
+  manifestPath: string,
   packageName: string,
   parser: BundledPluginManifestParser,
 ): BundledPluginManifestJson {
-  const manifestPath = resolve(packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH);
   if (!existsSync(manifestPath)) {
     throw new Error(
       `Missing bundled plugin manifest artifact for '${packageName}': ${manifestPath}. `
@@ -1807,7 +1832,7 @@ function assertNoBundledAgentManifestUiBehavior(
 async function normalizeBundledSourceManifest(params: Readonly<{
   packageRoot: string;
   manifest: PluginManifestJson;
-  dependencies: GeneratorWorkspaceDependencies;
+  dependencies: BundledPluginManifestDependencies;
 }>): Promise<PluginManifestJson> {
   const manifestSerializer = await loadPluginManifestSerializerModule();
   const authoredManifest = params.manifest;
@@ -1821,7 +1846,6 @@ async function normalizeBundledSourceManifest(params: Readonly<{
         packageRoot: params.packageRoot,
         manifest: authoredManifest,
       })).sessionRunnerFactories;
-      const { staging } = await loadPluginAuthorRuntimeSupportModules();
       return {
         ...authoredManifest,
         runtime: {
@@ -1829,7 +1853,7 @@ async function normalizeBundledSourceManifest(params: Readonly<{
           agentFactories: factories.map((factory) => ({
             localAgentId: factory.localAgentId,
             locator: factory.locator,
-            normalizedModulePath: staging.projectPackedSessionRunnerModulePath({
+            normalizedModulePath: projectPackedSessionRunnerModulePath({
               daemonEntrypoint,
               locatorModule: factory.locator.module,
             }),
@@ -1916,7 +1940,7 @@ function manifestDeclaresAgentRuntime(
 
 function manifestRequiresSessionRunnerFactory(
   manifest: PluginManifestJson,
-  dependencies: GeneratorWorkspaceDependencies,
+  dependencies: BundledPluginManifestDependencies,
 ): boolean {
   const contributes = manifest.contributes;
   if (!isRecord(contributes)) return false;
@@ -2148,7 +2172,7 @@ async function readBundledAgentRuntimeFacts(params: Readonly<{
 >>> {
   const sourceEntryPath = resolve(params.packageRoot, 'src', 'index.ts');
   const manifestSerializer = await loadPluginManifestSerializerModule();
-  const { source } = await loadPluginAuthorRuntimeSupportModules();
+  const source = await loadPluginRuntimeStagingSourceModule();
   const runtimeSource = await source.evaluatePluginAuthorRuntimeStagingSource({
     locator: sourceEntryPath,
     rootPath: params.packageRoot,
@@ -2332,9 +2356,16 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
   getCanonicalWorkspacePackageRoots: () => Readonly<Record<string, string>> | undefined;
 }>): Promise<void> {
   const resources = readManifestContributionArray(params.manifest, 'resources');
+  const registryCatalogPaths = readManifestContributionArray(params.manifest, 'registrySources').flatMap((source) => {
+    if (!isJsonObject(source) || source.packageContent === undefined) return [];
+    if (!isJsonObject(source.packageContent) || typeof source.packageContent.path !== 'string') {
+      throw new Error(`Bundled package '${params.manifest.id}' has an invalid registry package-content path`);
+    }
+    return [normalizeDeclaredBundledPackagePath(source.packageContent.path, 'registry package content')];
+  });
   const requiresPackagedRuntime = requiresBundledPackagedRuntime({
     hasDaemonEntrypoint: manifestDeclaresDaemonEntrypoint(params.manifest),
-    hasResources: resources.length > 0,
+    hasResources: resources.length > 0 || registryCatalogPaths.length > 0,
     requiresSessionRunnerFactory: manifestRequiresSessionRunnerFactory(
       params.manifest,
       params.dependencies,
@@ -2459,12 +2490,15 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
       throw new Error(`Bundled package '${params.manifest.id}' artifact omits resource '${resourcePath}'`);
     }
   }
+  for (const path of registryCatalogPaths) {
+    if (!files.has(path)) {
+      throw new Error(`Bundled package '${params.manifest.id}' artifact omits registry catalog '${path}'`);
+    }
+  }
   // The prepared package tree itself is the publication authority. Pack-time
   // staging compares these current bytes directly; no generated record mirrors
   // them or assigns a second currentness identity.
 }
-
-const BUNDLED_PLUGIN_WORKSPACE_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 export function resolveGeneratorPackagedRuntimePreparation(
   workspaceNames: readonly string[],
@@ -2496,20 +2530,6 @@ export function resolveGeneratorPackagedRuntimePreparation(
  * package output or installed `node_modules` copy would mix ownership domains;
  * the existing first-party resolver must fail closed for those imports.
  */
-export function selectCanonicalRuntimeWorkspacePackageRoots(
-  bundles: readonly Readonly<{ packageName: string; srcDir: string }>[],
-): Readonly<Record<string, string>> {
-  const roots: Record<string, string> = {};
-  for (const bundle of bundles) {
-    if (bundle.packageName.startsWith(BUNDLED_PLUGIN_WORKSPACE_PACKAGE_PREFIX)) continue;
-    if (Object.hasOwn(roots, bundle.packageName)) {
-      throw new Error(`Duplicate canonical workspace package root for '${bundle.packageName}'`);
-    }
-    roots[bundle.packageName] = bundle.srcDir;
-  }
-  return Object.freeze(roots);
-}
-
 function createCanonicalWorkspacePackageRootsReader(
   repoRoot: string,
   dependencies: GeneratorWorkspaceDependencies,
@@ -2552,16 +2572,6 @@ async function readSourceProjectionFacts(params: Readonly<{
       params.pluginPackageId,
     )
     : undefined;
-  const runtimeFacts = agentDefinition
-    ? await readBundledAgentRuntimeFacts({
-      packageRoot: resolve(params.repoRoot, 'packages/plugins', params.pluginPackageId),
-      manifest: params.manifest,
-    })
-    : undefined;
-  if (runtimeFacts && JSON.stringify(runtimeFacts.agentNativeHomeEnvironmentKeys)
-    !== JSON.stringify(loadedAgentFacts?.agentNativeHomeEnvironmentKeys)) {
-    throw new Error(`Agent native-home registration differs from static source facts: ${definitionPath}`);
-  }
   if (agentDefinition) {
     rejectRetiredAgentRuntimeContributionsAggregate(agentDefinition, definitionPath);
   }
@@ -2737,7 +2747,7 @@ export async function runRuntimeConsumedAgentFactsPrivatePhase(
 /** Refresh data-only Agent facts with the canonical loader, projection and writer. */
 async function publishSourceAgentDefinitions(
   options: Pick<GeneratorOptions, 'rootDir' | 'mode'>,
-  publicationContext: WorkspaceBundleLockContext,
+  publicationContext: ProjectionPublicationLease | undefined,
 ): Promise<void> {
   const definitions = await readBundledSourceAgentDefinitionProjection(options.rootDir);
   const outPath = resolve(options.rootDir, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
@@ -2747,7 +2757,7 @@ async function publishSourceAgentDefinitions(
     nativeHomeEnvironmentKeys: definitions.nativeHomeEnvironmentKeys,
   });
   if (options.mode === 'check') assertGeneratedOutputMatches(outPath, out);
-  else publishCoherentProjectionOutputs(options.rootDir, [{ outPath, out }], publicationContext);
+  else publishCoherentProjectionOutputs(options.rootDir, [{ outPath, out }], requireGeneratorPublicationLease(publicationContext));
 }
 
 async function readBundledSourceAgentDefinitionProjection(
@@ -2802,10 +2812,14 @@ async function collectBundledPluginSourcePackages(
     repoRoot: string;
     bundledPluginPackageNames: readonly string[];
     mode: Mode;
-    dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies>;
     synchronizeSerializedManifest: boolean;
-    daemonProjectionsOnly?: boolean;
-  }>,
+    targetOwnedOnly?: boolean;
+  }> & (
+    | Readonly<{ daemonProjectionsOnly: true;
+      dependencies: BundledPluginManifestDependencies | Promise<BundledPluginManifestDependencies> }>
+    | Readonly<{ daemonProjectionsOnly?: false;
+      dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies> }>
+  ),
 ): Promise<Readonly<{
   sourcePluginPackages: readonly BundledPluginSourcePackage[];
   failures: readonly BundledPluginPackageFailure[];
@@ -2814,6 +2828,9 @@ async function collectBundledPluginSourcePackages(
   if (!existsSync(pluginsRoot)) {
     return Object.freeze({ sourcePluginPackages: Object.freeze([]), failures: Object.freeze([]) });
   }
+  // Only the private dev derivation already evaluates real activation in the
+  // author's source graph. Publication/checks keep isolated manifest inspection.
+  const reuseAuthorRuntimeGraph = params.daemonProjectionsOnly && params.mode === 'write';
 
   const collectSource = async (packageName: string): Promise<Readonly<{
     sourcePluginPackage?: BundledPluginSourcePackage;
@@ -2832,13 +2849,16 @@ async function collectBundledPluginSourcePackages(
         throw new Error(`Invalid plugin package version for ${pluginPackageId}: expected non-empty string`);
       }
 
-      const sourceManifest = await loadPluginManifest(
-        params.repoRoot,
-        pluginPackageId,
-        params.dependencies,
-      );
       const dependencies = await params.dependencies;
-      const manifest = await normalizeBundledSourceManifest({ packageRoot, manifest: sourceManifest, dependencies });
+      const manifest = params.targetOwnedOnly
+        ? readSerializedBundledPluginManifest(
+          resolve(params.repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId)),
+          packageName,
+          dependencies.protocol,
+        )
+        : await normalizeBundledSourceManifest({ packageRoot,
+          manifest: await loadPluginManifest(params.repoRoot, pluginPackageId, dependencies,
+            reuseAuthorRuntimeGraph), dependencies });
       // Package publication materializes its declarations. The existing strict
       // CI/package check also covers present serialized outputs (including
       // tracked plugin.json files), without requiring ignored artifacts in a
@@ -2858,7 +2878,7 @@ async function collectBundledPluginSourcePackages(
         pluginPackageId,
         packageName,
         manifest,
-        dependencies,
+        dependencies: await params.dependencies,
       });
 
       return Object.freeze({ sourcePluginPackage: Object.freeze({
@@ -2903,13 +2923,13 @@ async function collectBundledPluginSourcePackages(
       }) });
     }
   };
-  // Daemon admission reads the first-party declarations as one captured
-  // graph. Share its inspection worker instead of loading the SDK separately
-  // for every manifest; full publication retains per-plugin process isolation.
-  const collectedSources = params.daemonProjectionsOnly
-    ? await withTypescriptModuleInspectionSession(() => mapWithConcurrency(params.bundledPluginPackageNames, 2, collectSource))
-    : await mapWithConcurrency(params.bundledPluginPackageNames, 2,
-      packageName => withTypescriptModuleInspectionSession(() => collectSource(packageName)));
+  const collectDaemonSources = () => mapWithConcurrency(params.bundledPluginPackageNames, 2, collectSource);
+  const collectedSources = reuseAuthorRuntimeGraph
+    ? await collectDaemonSources()
+    : params.daemonProjectionsOnly
+      ? await withTypescriptModuleInspectionSession(collectDaemonSources)
+      : await mapWithConcurrency(params.bundledPluginPackageNames, 2,
+        packageName => withTypescriptModuleInspectionSession(() => collectSource(packageName)));
 
   const sourcePluginPackages = collectedSources.flatMap(
     (entry) => entry.sourcePluginPackage ? [entry.sourcePluginPackage] : [],
@@ -3010,7 +3030,8 @@ async function collectBundledPluginPackages(
     bundledPluginPackageNames: params.bundledPluginPackageNames,
     mode: params.mode,
     dependencies: params.dependencies,
-    synchronizeSerializedManifest: params.packageArtifacts === true,
+    synchronizeSerializedManifest: params.packageArtifacts === true && !params.targetOwnedOnly,
+    targetOwnedOnly: params.targetOwnedOnly,
   });
   if (params.packageArtifacts !== true) {
     return Object.freeze({ pluginPackages: sourceResult.sourcePluginPackages, failures: sourceResult.failures });
@@ -3051,8 +3072,6 @@ function readSerializedBundledPluginPackages(
 
   const out: BundledPluginPackage[] = [];
   const failures: BundledPluginPackageFailure[] = [];
-  const pluginOwnerById = new Map<string, string>();
-  const agentOwnerById = new Map<string, string>();
   for (const packageName of bundledPluginPackageNames) {
     let entry: BundledPluginPackage;
     try {
@@ -3072,8 +3091,8 @@ function readSerializedBundledPluginPackages(
       throw new Error(`Invalid plugin package version for ${pluginPackageId}: expected non-empty string`);
     }
 
-    const manifest = readCommittedBundledPluginManifest(
-      packageRoot,
+    const manifest = readSerializedBundledPluginManifest(
+      resolve(packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH),
       packageName,
       dependencies.protocol,
     );
@@ -3103,6 +3122,19 @@ function readSerializedBundledPluginPackages(
       }));
       continue;
     }
+    out.push(entry);
+  }
+  return Object.freeze({
+    pluginPackages: Object.freeze(out.sort((left, right) => left.packageName.localeCompare(right.packageName))),
+    failures: Object.freeze(failures),
+  });
+}
+
+function assertUniqueBundledPluginIdentities(pluginPackages: readonly BundledPluginPackage[]): void {
+  const pluginOwnerById = new Map<string, string>();
+  const agentOwnerById = new Map<string, string>();
+  for (const entry of pluginPackages) {
+    const packageName = entry.packageName;
     const previousPluginOwner = pluginOwnerById.get(entry.pluginId);
     if (previousPluginOwner) {
       throw new Error(`Duplicate bundled plugin id '${entry.pluginId}' from '${previousPluginOwner}' and '${packageName}'`);
@@ -3116,12 +3148,7 @@ function readSerializedBundledPluginPackages(
       }
       agentOwnerById.set(agentId, packageName);
     }
-    out.push(entry);
   }
-  return Object.freeze({
-    pluginPackages: Object.freeze(out.sort((left, right) => left.packageName.localeCompare(right.packageName))),
-    failures: Object.freeze(failures),
-  });
 }
 
 /** Read the last admitted catalog, without reopening foreign source or package artifacts. */
@@ -3156,6 +3183,39 @@ async function readPublishedBundledPluginPackages(
       ...(typeof row.agentId === 'string' ? { agentId: row.agentId } : {}),
     }];
   });
+}
+
+/** Admission remains owned by Protocol and the private host; this publisher supplies the effective catalog. */
+async function assertBundledPluginCatalog(
+  pluginPackages: readonly BundledPluginPackage[],
+  affectedPluginIds?: ReadonlySet<string>,
+): Promise<void> {
+  assertUniqueBundledPluginIdentities(pluginPackages);
+  const protocol = await importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/manifest') as ProtocolManifestWorkspaceModule;
+  const manifests = pluginPackages.map(entry => entry.manifest);
+  const references = protocol.resolvePluginManifestSetReferencesV2(manifests, affectedPluginIds);
+  if (!references.ok) throw new Error(protocol.formatPluginManifestIngestionDiagnostics(references.diagnostics));
+  const targetedPluginContributions = manifests.flatMap(manifest => manifest.contributes.targetedPluginContributions
+    .filter(definition => !affectedPluginIds || affectedPluginIds.has(manifest.id) || affectedPluginIds.has(definition.target.pluginId))
+    .map(definition => ({ pluginId: manifest.id, definition })));
+  if (targetedPluginContributions.length === 0) return;
+  const admission = await importCanonicalWorkspaceModule(
+    '@happier-dev/cli-common', 'plugins/registration',
+  ) as typeof import('@happier-dev/cli-common/plugins/registration');
+  const result = admission.resolveAdmittedTargetedContributions({
+    pluginContributionPoints: manifests.flatMap(manifest => manifest.contributes.pluginContributionPoints.map(definition => ({ pluginId: manifest.id, definition }))),
+    targetedPluginContributions,
+    actions: manifests.flatMap(manifest => manifest.contributes.actions.map(definition => ({
+      pluginId: manifest.id, definition: admission.projectTargetedContributionActionDefinition(definition),
+    }))),
+    uiRenderersV2: manifests.flatMap(manifest => manifest.contributes.ui.renderers.map(definition => ({
+      pluginId: manifest.id, identity: { pluginId: manifest.id, localId: definition.id }, definition,
+    }))),
+    // Declaration-only admission never executes or publishes these occurrences.
+    occurrenceIdsByPluginId: Object.fromEntries(manifests.map(manifest => [manifest.id, manifest.id])),
+  });
+  const diagnostics = Object.values(result.diagnosticsByPluginId).flat();
+  if (diagnostics.length > 0) throw new Error(diagnostics.map(diagnostic => `${diagnostic.contribution.pluginId}/${diagnostic.contribution.localId}: ${diagnostic.message}`).join('\n'));
 }
 
 export function collectBuiltInLegacyConnectedAccountCompatibility(
@@ -3386,6 +3446,7 @@ export async function collectBundledFirstPartyVoiceProjectionSources(
   pluginPackages: readonly BundledPluginPackage[],
   readPresentationFacts = true,
   excludedPackageNames: ReadonlySet<string> = new Set(),
+  sourcePackageNames?: ReadonlySet<string>,
 ): Promise<Readonly<{
   sources: readonly BundledFirstPartyVoiceProjectionSource[];
   failures: readonly BundledPluginPackageFailure[];
@@ -3438,7 +3499,6 @@ export async function collectBundledFirstPartyVoiceProjectionSources(
       pluginPackage.pluginPackageId,
       'package.json',
     );
-    const packageJson = readJson(packageJsonPath) as Record<string, unknown>;
     const conversationContributions = readManifestContributionArray(
       pluginPackage.manifest,
       'voiceProviders',
@@ -3474,9 +3534,9 @@ export async function collectBundledFirstPartyVoiceProjectionSources(
         conversationPlatforms.add(platform as BundledVoiceRuntimePlatform);
       }
     }
-    if (conversationClient) {
+    if (conversationClient && (!sourcePackageNames || sourcePackageNames.has(pluginPackage.packageName))) {
       assertBundledVoicePackageExport(
-        packageJson,
+        readJson(packageJsonPath) as Record<string, unknown>,
         pluginPackage.packageName,
         conversationClient.artifactId,
       );
@@ -3594,7 +3654,7 @@ function syncBundledVoiceUiPackageDependencies(params: Readonly<{
 export async function publishBundledPluginSemanticProjection(
   options: GeneratorOptions,
   dependencies: Readonly<{ protocol: BundledPluginManifestParser }>,
-  publicationLease: ProjectionPublicationLease,
+  publicationLease: ProjectionPublicationLease | undefined,
   additionalOutputs: readonly Readonly<{ outPath: string; out: string }>[] = [],
   publicationFailures: readonly BundledPluginPackageFailure[] = [],
   sourceResult?: Readonly<{
@@ -3602,7 +3662,9 @@ export async function publishBundledPluginSemanticProjection(
     failures: readonly BundledPluginPackageFailure[];
   }>,
 ): Promise<readonly BundledPluginPackageFailure[]> {
-  const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir);
+  const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir, {
+    requireManifestSource: options.mode !== 'write' || options.workspaceNames.length === 0,
+  });
   const serialized = sourceResult
     ?? readSerializedBundledPluginPackages(options.rootDir, bundledPluginPackageNames, dependencies);
   // Invalid declarations cannot supply complete membership. Optional runtime
@@ -3614,6 +3676,14 @@ export async function publishBundledPluginSemanticProjection(
   const selectedPackageNames = options.mode === 'write' && options.workspaceNames.length > 0
     ? new Set(resolveSelectedBundledPluginPackageNames(bundledPluginPackageNames, options.workspaceNames))
     : undefined;
+  const affectedPluginIds = selectedPackageNames ? new Set([
+    ...pluginPackages.filter(entry => selectedPackageNames.has(entry.packageName)).map(entry => entry.pluginId),
+    ...[...selectedPackageNames].flatMap(packageName => {
+      const manifestPath = resolve(options.rootDir, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageNameToPackageId(packageName)));
+      return existsSync(manifestPath) ? [(readJson(manifestPath) as BundledPluginManifestJson).id] : [];
+    }),
+  ]) : undefined;
+  await assertBundledPluginCatalog(pluginPackages, affectedPluginIds);
   const cliOutPath = resolve(
     options.rootDir,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
@@ -3648,15 +3718,24 @@ export async function publishBundledPluginSemanticProjection(
     options.rootDir,
     pluginPackages.filter((entry) => !runtimeFailures.some((failure) => failure.packageName === entry.packageName)),
     false,
+    new Set(),
+    selectedPackageNames,
   );
   const voiceRuntimeOutputs = options.targetOwnedOnly ? [] : renderBundledVoiceRuntimeProjectionOutputs(
     options.rootDir, voiceProjection.sources, runtimeFailures, options.mode,
   );
+  const { uiOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
+  const uiDeclarationOutputs = [];
+  if (!options.targetOwnedOnly && existsSync(uiOutPath)) {
+    uiDeclarationOutputs.push({ outPath: uiOutPath, out: renderRetainedUiBundledPluginEntriesTs(
+      readFileSync(uiOutPath, 'utf8'), pluginPackages, uiOutPath,
+    ) });
+  }
 
   if (options.mode === 'check') {
     assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
     for (const output of cliManifestAssetOutputs) assertGeneratedOutputMatches(output.outPath, output.out);
-    for (const output of [...additionalOutputs, ...voiceRuntimeOutputs]) {
+    for (const output of [...additionalOutputs, ...voiceRuntimeOutputs, ...uiDeclarationOutputs]) {
       assertGeneratedOutputMatches(output.outPath, output.out);
     }
     return failures;
@@ -3668,7 +3747,8 @@ export async function publishBundledPluginSemanticProjection(
       : []),
     ...additionalOutputs,
     ...voiceRuntimeOutputs,
-  ], publicationLease);
+    ...uiDeclarationOutputs,
+  ], requireGeneratorPublicationLease(publicationLease));
   if (options.aggregateOnly) {
     // Serialized manifests cannot settle an unrelated authored-source failure.
     // Aggregate publication replaces only diagnostics actually evaluated here;
@@ -3765,7 +3845,7 @@ function renderGeneratedCompilerInputs(params: Readonly<{
  */
 async function publishGeneratedCompilerInputs(
   options: GeneratorOptions,
-  publicationLease: ProjectionPublicationLease,
+  publicationLease: ProjectionPublicationLease | undefined,
 ): Promise<void> {
   const dependencies = await loadGeneratedCompilerInputDependencies();
   const out = renderGeneratedCompilerInputs({
@@ -3784,7 +3864,7 @@ async function publishGeneratedCompilerInputs(
     }
     return;
   }
-  publishCoherentProjectionOutputs(options.rootDir, outputs, publicationLease);
+  publishCoherentProjectionOutputs(options.rootDir, outputs, requireGeneratorPublicationLease(publicationLease));
 }
 
 function collectReleasedFlatSessionMetadataRuntimeDescriptorReaderContributions(
@@ -4353,7 +4433,7 @@ function assertDescriptorConnectedServiceLabelTranslations(
 
 async function generateDaemonProjections(
   options: GeneratorOptions,
-  dependencies: GeneratorWorkspaceDependencies,
+  dependencies: BundledPluginManifestDependencies,
 ): Promise<readonly BundledPluginPackageFailure[]> {
   const { sourcePluginPackages: pluginPackages, failures } = await collectBundledPluginSourcePackages({
     repoRoot: options.rootDir,
@@ -4381,7 +4461,7 @@ async function generateDaemonProjections(
 async function generateBundledPluginEntries(
   options: GeneratorOptions,
   dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies>,
-  publicationLease: WorkspaceBundleLockContext,
+  publicationLease: ProjectionPublicationLease | undefined,
   inheritedFailures: readonly BundledPluginPackageFailure[] = [],
 ): Promise<readonly BundledPluginPackageFailure[]> {
   if (options.daemonProjectionsOnly) return await generateDaemonProjections(options, await dependencies);
@@ -4390,7 +4470,8 @@ async function generateBundledPluginEntries(
   }
 
   if (options.workspaceNames.length > 0) {
-    const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir);
+    const timing = createBundledPluginTimingReporter();
+    const bundledPluginPackageNames = readBundledPluginPackageNames(options.rootDir, { requireManifestSource: options.mode !== 'write' });
     const selectedPackageNames = resolveSelectedBundledPluginPackageNames(
       bundledPluginPackageNames,
       options.workspaceNames,
@@ -4408,10 +4489,13 @@ async function generateBundledPluginEntries(
       dependencies,
       packageArtifacts: options.packageArtifacts,
     });
+    timing.phase('selected-source-and-package-artifacts');
     const selectedPluginPackages = selectedResult.pluginPackages;
     dependencies = await dependencies;
-    // Ordinary scoped publication rejects an invalid selected declaration; only a
-    // package-artifact build records it so healthy packages continue.
+    // Invalid target declarations are fatal in both source and artifact writes.
+    // Optional runtime preparation failures retain their existing diagnostics policy.
+    const declarationFailures = selectedResult.failures.filter(failure => failure.diagnostic.code === 'plugin_manifest_invalid');
+    if (declarationFailures.length > 0) throwBundledPluginPackageFailures(declarationFailures);
     if (!options.packageArtifacts && selectedResult.failures.length > 0) throwBundledPluginPackageFailures(selectedResult.failures);
     const failures = mergeBundledPluginFailures(inheritedFailures, selectedResult.failures);
     assertNoBundledPluginPublicationFailures(failures, options.mode);
@@ -4431,7 +4515,9 @@ async function generateBundledPluginEntries(
         dependencies,
         synchronizeSerializedManifest: false,
       });
-      return await publishBundledPluginSemanticProjection(
+      timing.phase(options.mode === 'write' ? 'published-peer-declarations' : 'current-peer-source');
+      try {
+        return await publishBundledPluginSemanticProjection(
           options,
           dependencies,
           publicationLease,
@@ -4443,6 +4529,9 @@ async function generateBundledPluginEntries(
             failures: sourceResult.failures,
           },
         );
+      } finally {
+        timing.phase('semantic-catalog-publication');
+      }
     }
     return failures;
   }
@@ -4467,6 +4556,7 @@ async function generateBundledPluginEntries(
   // intact and report its preparation error instead of publishing a partial set.
   if (failures.length > 0) throwBundledPluginPackageFailures(failures);
   const pluginPackages = discoveredPluginPackages.pluginPackages;
+  await assertBundledPluginCatalog(pluginPackages);
   const builtInLegacyConnectedAccountCompatibility =
     collectBuiltInLegacyConnectedAccountCompatibility(
       options.rootDir,
@@ -4699,8 +4789,13 @@ async function generateBundledPluginEntries(
     { outPath: uiVoiceEntriesOutPath, out: uiVoiceEntriesOut },
     { outPath: protocolVoiceSelectionOptionsOutPath, out: protocolVoiceSelectionOptionsOut },
     ...voiceRuntimeOutputs,
-  ], publicationLease);
+  ], requireGeneratorPublicationLease(publicationLease));
   return failures;
+}
+
+function requireGeneratorPublicationLease(lease: ProjectionPublicationLease | undefined): ProjectionPublicationLease {
+  if (!lease) throw new Error('Bundled plugin publication requires a workspace publication lease');
+  return lease;
 }
 
 async function withGeneratorPublicationLock<T>(
@@ -4717,7 +4812,7 @@ async function withGeneratorPublicationLock<T>(
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const parsed = parseGeneratorCliArgs(argv);
   const { options } = normalizeCanonicalGeneratorPublication(argv, parsed,
-    readBundledPluginPackageNames(parsed.rootDir, { requireManifestSource: !parsed.daemonOutputRoot })
+    readBundledPluginPackageNames(parsed.rootDir, { requireManifestSource: !parsed.daemonOutputRoot && (parsed.mode !== 'write' || parsed.workspaceNames.length === 0) })
       .map((name) => name.replace('@happier-dev/', '')));
   const timing = createBundledPluginTimingReporter();
   if (options.daemonOutputRoot) {
@@ -4726,47 +4821,70 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
     // The caller owns this private captured build output. No checkout
     // publication or workspace writer lock participates in source derivation.
-    const dependencies = await loadGeneratorWorkspaceDependencies();
+    const dependencies = await loadDaemonProjectionDependencies();
     await loadPluginAuthorRuntimeForScope('manifest');
     await generateDaemonProjections(options, dependencies);
     timing.phase('daemon-source-derivation');
     return;
   }
-  await withGeneratorPublicationLock(async (lease) => {
-    if (options.agentDefinitionsOnly) {
-      await publishSourceAgentDefinitions(options, lease);
-      return;
+  try {
+    if (options.packageArtifacts && resolvePluginAuthorRuntimeLoadScope(options) === 'full') {
+      // Direct artifact publication needs the same fresh workspace outputs as
+      // buildSharedDeps callers. Prepare before taking publication custody so
+      // nested compilers can acquire their own capacity and package leases.
+      const workspaces = await importCanonicalWorkspaceModule('@happier-dev/cli-common', 'workspaces') as CliCommonWorkspacesModule;
+      await prepareCanonicalRuntimeWorkspacePackages(options.rootDir,
+        workspaces.resolveWorkspaceBundlesFromPackageJson({
+          repoRoot: options.rootDir,
+          hostPackageDir: resolve(options.rootDir, 'apps', 'cli'),
+        }));
+      timing.phase('runtime-workspaces-ready');
     }
-    if (options.compilerInputsOnly) {
-      await publishGeneratedCompilerInputs(options, lease);
-      return;
-    }
-    const failures = readInheritedBundledPluginFailures(options.inheritedFailuresStdin, options.rootDir);
-    // Start isolated inspection while the host graph loads. Its admission
-    // promise still gates normalization and every publication path below.
-    const dependencies = Promise.all([
-      loadGeneratorWorkspaceDependencies(),
-      loadPluginAuthorRuntimeForScope(resolvePluginAuthorRuntimeLoadScope(options)),
-    ]).then(([dependencies]) => dependencies);
-    await Promise.all([
-      dependencies,
-      publishGeneratorEntries(options, dependencies, lease, failures),
-    ]);
-  });
-  timing.phase('generation-and-publication');
+    const generate = async (lease?: WorkspaceBundleLockContext) => {
+      if (lease) timing.phase('publication-lock-acquired');
+      if (options.agentDefinitionsOnly) {
+        await publishSourceAgentDefinitions(options, lease);
+        return;
+      }
+      if (options.compilerInputsOnly) {
+        await publishGeneratedCompilerInputs(options, lease);
+        return;
+      }
+      const failures = readInheritedBundledPluginFailures(options.inheritedFailuresStdin, options.rootDir);
+      // Start isolated inspection while the host graph loads. Its admission
+      // promise still gates normalization and every publication path below.
+      const dependencies = Promise.all([
+        loadGeneratorWorkspaceDependencies(),
+        loadPluginAuthorRuntimeForScope(resolvePluginAuthorRuntimeLoadScope(options)),
+      ]).then(([dependencies]) => {
+        timing.phase('host-dependencies-ready');
+        return dependencies;
+      });
+      await Promise.all([
+        dependencies,
+        publishGeneratorEntries(options, dependencies, lease, failures),
+      ]);
+    };
+    // Checks validate current source and projections without publishing. Only
+    // writers participate in publication custody and its admission ordering.
+    if (options.mode === 'check') await generate();
+    else await withGeneratorPublicationLock(generate);
+  } finally {
+    timing.phase('generation-and-publication');
+  }
 }
 
 async function publishGeneratorEntries(
   options: GeneratorOptions,
   dependencies: GeneratorWorkspaceDependencies | Promise<GeneratorWorkspaceDependencies>,
-  lease: WorkspaceBundleLockContext,
+  lease: ProjectionPublicationLease | undefined,
   pluginFailures: readonly BundledPluginPackageFailure[],
 ): Promise<void> {
   const publishedFailures = await generateBundledPluginEntries(options, dependencies, lease, pluginFailures);
   if (options.mode === 'write' && !options.aggregateOnly) {
     writeBundledPluginPublicationFailures(options.rootDir, publishedFailures,
       options.workspaceNames.length > 0
-        ? resolveSelectedBundledPluginPackageNames(readBundledPluginPackageNames(options.rootDir), options.workspaceNames)
+        ? resolveSelectedBundledPluginPackageNames(readBundledPluginPackageNames(options.rootDir, { requireManifestSource: false }), options.workspaceNames)
         : undefined);
   }
 }

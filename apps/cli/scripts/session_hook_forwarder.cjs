@@ -3,7 +3,7 @@
  * Session Hook Forwarder
  *
  * This script forwards Agent lifecycle hooks without making native policy decisions.
- * Hosted identity-proof hooks share the native hook lifetime; observational hooks make one bounded attempt.
+ * Each hook makes one attempt within its native command-hook lifetime.
  *
  * Usage: echo '{"session_id":"..."}' | node session_hook_forwarder.cjs <port> [hook_event_name] [--qualified-external-session] --secret-file <path>
  */
@@ -20,7 +20,6 @@ function reportFailure(stage, error) {
 }
 
 
-const FORWARDING_DEADLINE_MS = 500;
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_QUALIFIED_INPUT_BYTES = 64 * 1024;
 const MAX_HOSTED_SECRET_FILE_BYTES = 4 * 1024;
@@ -38,16 +37,9 @@ let settled = false;
 function finish() {
     if (settled) return;
     settled = true;
-    clearTimeout(deadline);
     request?.destroy();
     process.exit(0);
 }
-
-// The synchronous native hook already owns cancellation and its timeout. Returning early here
-// would let accepted input and its transcript outrun the host's authenticated grant/follower.
-const waitsForNativeHookLifetime = !qualifiedExternalSession
-    && (hookEventName === 'SessionStart' || hookEventName === 'UserPromptSubmit');
-const deadline = waitsForNativeHookLifetime ? null : setTimeout(finish, FORWARDING_DEADLINE_MS);
 
 function readFlagValue(args, flag) {
     const index = args.indexOf(flag);

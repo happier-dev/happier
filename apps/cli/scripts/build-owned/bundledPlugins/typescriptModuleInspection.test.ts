@@ -125,19 +125,19 @@ describe('per-Plugin TypeScript inspection worker', () => {
     }
   }, 240_000);
 
-  it('inspects current SDK source exports without compiler declaration aliases', async () => {
+  it('inspects canonical package source exports without compiler declaration aliases', async () => {
     const root = await createFixture();
     await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
     // A compiler declaration alias can point at installed bytes from an older SDK.
     // The source-tool worker must select the canonical source export instead.
     await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: {
-      '@happier-dev/plugin-sdk/first-party/connected-accounts': ['./stale-profile.d.ts'],
+      '@happier-dev/protocol/agents/antigravity/oauth-profile': ['./stale-profile.d.ts'],
     } } }), 'utf8');
     await writeFile(join(root, 'stale-profile.d.ts'), 'export { ANTIGRAVITY_OAUTH_PROFILE } from "./stale-profile.js";\n', 'utf8');
     await writeFile(join(root, 'stale-profile.js'), 'export const ANTIGRAVITY_OAUTH_PROFILE = {};\n', 'utf8');
     const sourceProfile = join(root, 'plug#in', 'source-profile.ts');
     await writeFile(sourceProfile, [
-      "import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/first-party/connected-accounts';",
+      "import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';",
       'export const SOURCE_PROFILE = { allowRawAuthorizationCode: ANTIGRAVITY_OAUTH_PROFILE.allowRawAuthorizationCode };',
     ].join('\n'), 'utf8');
     const ownerUrl = new URL('./typescriptModuleInspection.ts', import.meta.url).href;

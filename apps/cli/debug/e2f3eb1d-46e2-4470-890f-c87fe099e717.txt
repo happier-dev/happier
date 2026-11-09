@@ -1,0 +1,22 @@
+2026-11-07T06:26:58.538Z [DEBUG] MDM settings load completed in 0ms
+2026-11-07T06:26:58.540Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/settings.json
+2026-11-07T06:26:58.541Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /etc/claude-code/managed-settings.json
+2026-11-07T06:26:58.542Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/.claude/settings.json
+2026-11-07T06:26:58.543Z [DEBUG] Broken symlink or missing file encountered for settings.json at path: /home/leeroy.guest/.happier-stack/workspace/0.3/apps/cli/.claude/settings.local.json
+2026-11-07T06:26:58.547Z [DEBUG] CA certs: Config fallback - globalEnv keys: , settingsEnv keys: none
+2026-11-07T06:26:58.549Z [DEBUG] [init] configureGlobalMTLS starting
+2026-11-07T06:26:58.549Z [DEBUG] [init] configureGlobalMTLS complete
+2026-11-07T06:26:58.549Z [DEBUG] [init] configureGlobalAgents starting
+2026-11-07T06:26:58.549Z [DEBUG] CA certs: stores=bundled,system, extraCertsPath=undefined
+2026-11-07T06:26:58.549Z [DEBUG] CA certs: Loaded 118 bundled root certificates
+2026-11-07T06:26:58.555Z [DEBUG] CA certs: Loaded 121 system CA certificates
+2026-11-07T06:26:58.560Z [DEBUG] CA certs: Dropped blocked certificate 40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367 from bundled
+2026-11-07T06:26:58.568Z [DEBUG] CA certs: Dropped blocked certificate bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3 from system
+2026-11-07T06:26:58.569Z [DEBUG] CA certs: Dropped blocked certificate 125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f from system
+2026-11-07T06:26:58.569Z [DEBUG] CA certs: Dropped blocked certificate 40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367 from system
+2026-11-07T06:26:58.579Z [DEBUG] mTLS: Creating HTTPS agent with custom certificates
+2026-11-07T06:26:58.583Z [DEBUG] [init] configureGlobalAgents complete
+2026-11-07T06:26:58.585Z [DEBUG] Git remote URL: null
+2026-11-07T06:26:58.585Z [DEBUG] No git remote URL found
+2026-11-07T06:26:58.586Z [DEBUG] Error log sink initialized
+2026-11-07T06:26:58.592Z [ERROR] Could not open /dev/tty for stdin override: Error: ENXIO: no such device or address, open '/dev/tty'

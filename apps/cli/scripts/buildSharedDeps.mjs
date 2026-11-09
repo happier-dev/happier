@@ -33,6 +33,7 @@ import {
 import {
   assertResolvedRuntimeDependencyMatchesDeclaration,
   copyDirDereferenceContainedSync,
+  isCanonicalWorkspacePackageLink,
   omitWorkspaceSourceCondition,
   resolveInstalledRuntimePackage,
 } from '../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
@@ -255,16 +256,12 @@ export async function runCanonicalBundledPluginArtifactPublisher({
     pluginFailures = [...pluginFailures, ...prepared.failedPluginBuilds];
   }
 
+  const { sourceBuildNodeArgs } = await import('../../stack/scripts/utils/proc/runSourceBuildCommand.mjs');
   const command = process.execPath;
   const args = [
     resolve(repoRoot, 'apps', 'cli', 'scripts', 'withNodeHeapLimit.mjs'),
     process.execPath,
-    // Register source resolution before Node links the publisher's static graph.
-    '--import',
-    pathToFileURL(resolve(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs')).href,
-    '--conditions=happier-source',
-    '--experimental-strip-types',
-    generatorPath,
+    ...sourceBuildNodeArgs({ repoDir: repoRoot, scriptPath: generatorPath }),
     '--root',
     repoRoot,
     '--mode',
@@ -715,6 +712,7 @@ export function syncBundledWorkspaceDist(opts = {}) {
   const workspaceNames = normalizeSourceDevSharedDepsWorkspaceNames(opts.workspaceNames);
   syncBundledWorkspacePackages({
     repoRoot,
+    publicationMode: opts.publicationMode ?? 'live',
     hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : CLI_BUNDLED_HOST_APPS,
     ...(workspaceNames.length > 0 ? { packages: workspaceNames } : {}),
     replaceExisting: opts.replaceExisting,
@@ -809,6 +807,8 @@ export function syncBundledWorkspaceRuntimeDependencies(opts = {}) {
   for (const bundle of targetPackageNames
     ? bundles.filter((candidate) => targetPackageNames.has(candidate.packageName))
     : bundles) {
+    // Canonical workspace dependencies remain owned by the package manager.
+    if (isCanonicalWorkspacePackageLink(bundle)) continue;
     vendorBundledPackageRuntimeDependencies({
       srcPackageJsonPath: resolve(bundle.srcDir, 'package.json'),
       destPackageDir: bundle.destDir,
@@ -2078,12 +2078,11 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
 
   const canPublishPreparedWorkspaceDist = (workspaceName) => {
     if (!sourceChangedWorkspaceNames.has(workspaceName)) return true;
-    // The package owner certifies QA captures independently of later source
+    // The package owner certifies captures independently of later source
     // edits. Consume that coherent output, but leave readiness unstamped so
     // the next request still rebuilds. Plugin projections also consume authored
     // manifests, so their existing source-coherence fence remains necessary.
-    return env[WORKSPACE_BUILD_MODE_ENV] === 'qa-runtime'
-      && !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX)
+    return !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX)
       && isWorkspacePackageOutputValid(resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }), {
         monorepoRoot: repoRoot,
         dependencyDirs: resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, workspaceName, readFile }),
@@ -2143,9 +2142,9 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
         ?? (String(childBuildEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
           ? {
               // A one-way dev-target replica owns the ignored plugin build trees
-              // consumed by its daemon. Publish only the matching target-owned
-              // inventories; source-synchronized projections remain validation
-              // inputs and must not be repaired by a replica writer.
+              // consumed by its daemon, including package plugin.json files.
+              // Materialize them from synchronized CLI declaration assets;
+              // those declarations and source projections stay controller-owned.
               mode: 'write',
               targetOwnedOnly: true,
             }

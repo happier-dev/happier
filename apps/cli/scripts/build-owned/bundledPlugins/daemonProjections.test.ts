@@ -1,7 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { transform } from 'esbuild';
 import { expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
@@ -13,6 +14,66 @@ import { readWorkspaceBuildInputs } from '../../../../../apps/stack/scripts/util
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage } from '../../__tests__/testkit/packageLayoutSandbox';
 import { resolveGeneratorHostProjectionOutPaths } from './projectionPaths.mjs';
 import { renderCliBundledPluginManifestAssets, renderCliBundledPluginManifestEntriesTs } from './registry';
+import { readBundledPluginPackageNames } from '../bundledPluginMembership';
+
+it('evaluates one authored graph per bundled plugin at the current inventory scale', async () => {
+  const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-daemon-graph-count-');
+  try {
+    const sourceRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+    const { brand: _brand, resources: _resources, ...manifest } = PLUGIN_MANIFEST;
+    writeCliBundledHostPackage({ happyCliDir });
+    const evaluationLog = join(repoRoot, 'factory-evaluations.jsonl');
+    // Every package contributes a real Agent registration. The manifest and
+    // activation entry import the same factory, as first-party SDK authors do.
+    const roots = Array.from({ length: readBundledPluginPackageNames(sourceRoot).length }, (_, index) => {
+      const pluginId = `scale-${index}`;
+      const root = writeBundledPluginSourceInputs({ repoRoot, pluginId });
+      writeFileSync(join(root, 'package.json'), JSON.stringify({
+        name: `@happier-dev/plugins-${pluginId}`, version: '0.0.0', type: 'module',
+        exports: { '.': { 'happier-source': './src/index.ts' } },
+      }));
+      writeFileSync(join(root, 'src/manifest.ts'), [
+        "import './agent/runtime/factory.js';",
+        `export const PLUGIN_MANIFEST = ${JSON.stringify({ ...manifest, id: `happier.${pluginId}` })};`,
+      ].join('\n'));
+      const factoryPath = join(root, 'src/agent/runtime/factory.ts');
+      mkdirSync(dirname(factoryPath), { recursive: true });
+      writeFileSync(factoryPath, [
+        "import { appendFileSync } from 'node:fs';",
+        `appendFileSync(${JSON.stringify(evaluationLog)}, ${JSON.stringify(`${pluginId}\n`)});`,
+        'export function createFixture() { throw new Error("factory is not invoked at admission"); }',
+      ].join('\n'));
+      writeFileSync(join(root, 'src/index.ts'), [
+        "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+        "import { createFixture } from './agent/runtime/factory.js';",
+        'export function activate(api) {',
+        "  api.agents.register('custom-acp', createFixture, {sessionRunnerFactory: {",
+        "    module: './agent/runtime/factory', export: 'createFixture', runtimeApiVersion: 1,",
+        '  }});',
+        '}',
+      ].join('\n'));
+      return root;
+    });
+    const projectionRoot = join(repoRoot, 'projections');
+    await promisify(execFile)(process.execPath, ['--conditions=happier-source', '--import',
+      join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+      join(sourceRoot, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'),
+      '--root', repoRoot, '--daemon-projections', '--daemon-output-root', projectionRoot,
+    ], { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '' } });
+    const evaluations = readFileSync(evaluationLog, 'utf8').trim().split('\n');
+    expect(evaluations).toHaveLength(roots.length);
+    expect(new Set(evaluations).size).toBe(roots.length);
+    const scaled = await readCliSourceEntries({ repoDir: repoRoot, projectionRoot, manifest: {}, transform });
+    const normalizedPath = projectPackedSessionRunnerModulePath({
+      daemonEntrypoint: manifest.entrypoints!.daemon!, locatorModule: './agent/runtime/factory',
+    });
+    for (const root of roots) {
+      const relativeRoot = relative(repoRoot, root).replaceAll('\\', '/');
+      expect(scaled.entries[`${relativeRoot}/${normalizedPath.replace(/\.js$/u, '')}`])
+        .toBe(join(root, 'src/agent/runtime/factory.ts'));
+    }
+  } finally { cleanup(); }
+}, 240_000);
 
 it('derives isolated source daemon projections while keeping committed-output checks strict', async () => {
   const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-daemon-projections-');
@@ -43,6 +104,7 @@ it('derives isolated source daemon projections while keeping committed-output ch
     for (const path of ['tsconfig.json', 'tsconfig.runtime.json']) {
       cpSync(join(sourceRoot, 'apps/cli', path), join(happyCliDir, path));
     }
+
     const { main } = await import(pathToFileURL(join(scriptsDir, 'build-owned/generateBundledPluginEntries.ts')).href) as typeof import('../generateBundledPluginEntries');
     writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-fixture'] });
     writeFileSync(join(happyCliDir, 'package.json'), JSON.stringify({
@@ -96,6 +158,7 @@ it('derives isolated source daemon projections while keeping committed-output ch
     const assetPath = join(happyCliDir, asset.relativePath);
     mkdirSync(dirname(assetPath), { recursive: true });
     writeFileSync(assetPath, asset.out);
+
     const check = () => main(['--root', repoRoot, '--mode', 'check', '--daemon-projections']);
     await check();
     const { entries } = await readCliSourceEntries({ repoDir: repoRoot, manifest: {}, transform });

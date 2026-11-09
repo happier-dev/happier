@@ -38,8 +38,7 @@
       "@/*": [
         "./src/*"
       ],
-      // Packaging and author examples can contain installed SDK/UI copies.
-      // The authored host graph uses one prepared workspace declaration identity.
+      // Packaging and author examples can contain installed SDK copies.
       // Extensionless SDK targets retain adjacent declarations for compilation
       // while source runtimes resolve executable JS rather than loading .d.ts.
       "@happier-dev/plugin-sdk": [
@@ -48,13 +47,6 @@
       "@happier-dev/plugin-sdk/*": [
         "../../packages/plugin-sdk/dist/*/index",
         "../../packages/plugin-sdk/dist/*"
-      ],
-      "@happier-dev/plugin-ui": [
-        "../../packages/plugin-ui/dist/index.d.ts"
-      ],
-      "@happier-dev/plugin-ui/*": [
-        "../../packages/plugin-ui/dist/*/index.d.ts",
-        "../../packages/plugin-ui/dist/*.d.ts"
       ]
     }
   },

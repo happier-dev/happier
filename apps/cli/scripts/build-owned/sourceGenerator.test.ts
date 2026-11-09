@@ -4,9 +4,13 @@ import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage } from '../__tests__/testkit/packageLayoutSandbox';
-import { renderCliBundledAgentRegistrationBindingsTs } from './bundledPlugins/registry';
+import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage, writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox';
+import { readBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
+import { renderCliBundledAgentRegistrationBindingsTs, renderCliBundledPluginManifestAssets, renderCliBundledPluginManifestEntriesTs } from './bundledPlugins/registry';
 import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../packages/plugins/custom-acp/src/manifest';
+import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { ingestPluginManifestV2 } from '../../../../packages/protocol/src/plugins/manifest/index.ts';
+import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 async function createSourceGeneratorFixture() {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-source-generator-');
@@ -19,7 +23,12 @@ async function createSourceGeneratorFixture() {
       cpSync(join(sourceRoot, path), join(repoRoot, path), { recursive: true });
     };
     try {
+      for (const app of ['ui', 'server']) {
+        mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+        writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+      }
       copy('scripts');
+      copy('apps/stack/bin');
       copy('apps/stack/scripts');
       copy('apps/cli/scripts');
       copy('apps/cli/src');
@@ -37,14 +46,20 @@ async function createSourceGeneratorFixture() {
       symlinkSync(join(sourceRoot, 'node_modules'), join(repoRoot, 'node_modules'), 'dir');
       const sourceOnlyLoader = join(repoRoot, 'source-only-loader.mjs');
       writeFileSync(sourceOnlyLoader, `
-        import { registerHooks } from 'node:module';
-        registerHooks({ resolve(specifier, context, nextResolve) {
-          const result = nextResolve(specifier, context);
+        import { register } from 'node:module';
+        await import('./packages/cli-common/registerSourceRuntime.mjs');
+        register(new URL('./source-only-hook.mjs', import.meta.url));
+      `);
+      // Observe the resolved graph after the canonical tsx resolver has mapped
+      // authored .js specifiers to source; a synchronous observer bypasses it.
+      writeFileSync(join(repoRoot, 'source-only-hook.mjs'), `
+        export async function resolve(specifier, context, nextResolve) {
+          const result = await nextResolve(specifier, context);
           if (/(?:packages|@happier-dev)\\/[^/]+\\/(?:dist|package-dist)\\//u.test(result.url)) {
             throw new Error('Generator consumed internal dist: ' + result.url);
           }
           return result;
-        } });
+        }
       `);
       writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-selected'] });
       writeFileSync(join(happyCliDir, 'package.json'), JSON.stringify({
@@ -96,14 +111,38 @@ async function createSourceGeneratorFixture() {
       const unrelatedRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'unrelated' });
       writeFileSync(join(unrelatedRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-unrelated', version: '0.0.0', type: 'module' }));
       const { brand: _brand, resources: _resources, ...unrelatedManifest } = manifest;
-      writeFileSync(join(unrelatedRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify({ ...unrelatedManifest, id: 'happier.unrelated', contributes: {} })};`);
+      const peerManifest = { ...unrelatedManifest, id: 'happier.unrelated', contributes: {} };
+      writeFileSync(join(unrelatedRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(peerManifest)};`);
+      // A scoped write consumes the last published declarations for peers.
+      // Seed that catalog with this fixture's peer through the real renderers,
+      // rather than retaining the copied checkout's unrelated catalog.
+      const admittedPeer = ingestPluginManifestV2(peerManifest);
+      if (!admittedPeer.ok) throw new Error(JSON.stringify(admittedPeer.diagnostics));
+      const peers = [{ pluginPackageId: 'unrelated', pluginId: peerManifest.id,
+        packageName: '@happier-dev/plugins-unrelated', packageVersion: '0.0.0', manifest: admittedPeer.manifest }];
+      writeFileSync(join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+        renderCliBundledPluginManifestEntriesTs({ pluginPackages: peers }));
+      for (const asset of renderCliBundledPluginManifestAssets({ pluginPackages: peers })) {
+        const assetPath = join(happyCliDir, asset.relativePath);
+        mkdirSync(dirname(assetPath), { recursive: true });
+        writeFileSync(assetPath, asset.out);
+      }
       const generator = join(happyCliDir, 'scripts/build-owned/generateBundledPluginEntries.ts');
-      const run = (mode: 'write' | 'check', options: Readonly<{ packageArtifacts?: boolean; workspace?: string; preload?: string }> = {}) => promisify(execFile)(process.execPath,
-        ['--import', join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'), '--conditions=happier-source', '--import', sourceOnlyLoader, ...(options.preload ? ['--import', options.preload] : []),
+      const nonwaitingPreload = join(repoRoot, 'require-nonwaiting-publication.mjs');
+      // Reproduce an admitted caller without borrowing the parent's lease.
+      writeFileSync(nonwaitingPreload, [
+        "process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED = '0';",
+        "delete process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;",
+        "delete process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES;",
+      ].join('\n'));
+      const run = (mode: 'write' | 'check', options: Readonly<{ packageArtifacts?: boolean; targetOwnedOnly?: boolean; workspace?: string; preload?: string; preparation?: 'compiler-inputs' | 'agent-definitions' }> = {}) => promisify(execFile)(process.execPath,
+        ['--conditions=happier-source', '--import', sourceOnlyLoader, ...(options.preload ? ['--import', options.preload] : []),
           '--experimental-strip-types', generator, '--root', repoRoot,
           ...(mode === 'check' && !options.packageArtifacts ? ['--scope', 'projections'] : []),
           ...(options.packageArtifacts ? ['--package-artifacts'] : []),
-          '--workspace', options.workspace ?? 'plugins-selected', '--mode', mode],
+          ...(options.targetOwnedOnly ? ['--target-owned-only'] : []),
+          ...(options.preparation ? [`--${options.preparation}`] : ['--workspace', options.workspace ?? 'plugins-selected']),
+          '--mode', mode],
         { cwd: repoRoot, env: { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: '0',
           // Keep the no-dist assertion active in the real inspection children too.
           NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${JSON.stringify(pathToFileURL(sourceOnlyLoader).href)}`,
@@ -111,7 +150,7 @@ async function createSourceGeneratorFixture() {
       await run('write');
       const projection = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
       const published = readFileSync(projection, 'utf8');
-      return { repoRoot, packageRoot, sourceWorkspaces, projection, published, manifest, run, cleanup };
+      return { repoRoot, packageRoot, sourceWorkspaces, projection, published, manifest, run, nonwaitingPreload, cleanup };
     } catch (error) {
       cleanup();
       throw error;
@@ -139,14 +178,58 @@ describe('bundled generator preparation process boundary', () => {
     await run('check');
   }, 120_000);
 
-  it('rejects a stale semantic projection', async () => {
-    const { projection, published, run } = fixture;
+  it('rejects a stale semantic projection while another publisher owns the lease', async () => {
+    const { repoRoot, projection, published, run, nonwaitingPreload: preload } = fixture;
     try {
       writeFileSync(projection, `${published}\nexport const drift = true;\n`);
-      await expect(run('check')).rejects.toThrow(/differs/u);
+      await withWorkspaceBundleLock(async () => {
+        await expect(run('check', { preload })).rejects.toThrow(/generated output differs/u);
+      }, { lockPath: join(repoRoot, '.project/tmp/cli-dist-build.lock') });
     } finally {
       writeFileSync(projection, published);
     }
+  }, 120_000);
+
+  it('checks current source while another publisher owns the lease', async () => {
+    const { repoRoot, packageRoot, projection, run, nonwaitingPreload: preload } = fixture;
+    const lockPath = join(repoRoot, '.project/tmp/cli-dist-build.lock');
+    const before = readFileSync(projection, 'utf8');
+    await withWorkspaceBundleLock(async () => {
+      const owner = readFileSync(lockPath, 'utf8');
+      await run('check', { preload });
+      expect(readFileSync(projection, 'utf8')).toBe(before);
+      expect(existsSync(join(packageRoot, '.happier-plugin'))).toBe(false);
+      expect(JSON.parse(readFileSync(lockPath, 'utf8')).pid).toBe(JSON.parse(owner).pid);
+    }, { lockPath });
+  }, 120_000);
+
+  it('excludes competing writes while another publisher owns the lease', async () => {
+    const { repoRoot, projection, run, nonwaitingPreload: preload } = fixture;
+    const before = readFileSync(projection, 'utf8');
+    const lockPath = join(repoRoot, '.project/tmp/cli-dist-build.lock');
+    await withWorkspaceBundleLock(async () => {
+      await expect(run('write', { preload })).rejects.toThrow(/HSTACK_WORKSPACE_ADMISSION_ORDER.*Workspace publication lease is busy/u);
+      expect(readFileSync(projection, 'utf8')).toBe(before);
+    }, { lockPath });
+  }, 120_000);
+
+  it.each(['compiler-inputs', 'agent-definitions'] as const)('%s checks retain validation without writer custody', async (preparation) => {
+    const { repoRoot, run, nonwaitingPreload: preload } = fixture;
+    const options = { preparation };
+    const lockPath = join(repoRoot, '.project/tmp/cli-dist-build.lock');
+    const outputPath = join(repoRoot, 'packages/agents/src/generated',
+      preparation === 'compiler-inputs' ? 'agentIds.ts' : 'bundledAgentDefinitions.ts');
+    const published = readFileSync(outputPath, 'utf8');
+    await withWorkspaceBundleLock(async () => {
+      const owner = readFileSync(lockPath, 'utf8');
+      try {
+        writeFileSync(outputPath, `${published}\nexport const drift = true;\n`);
+        await expect(run('check', { ...options, preload })).rejects.toThrow(/generated output differs/u);
+      } finally {
+        writeFileSync(outputPath, published);
+      }
+      expect(JSON.parse(readFileSync(lockPath, 'utf8')).pid).toBe(JSON.parse(owner).pid);
+    }, { lockPath });
   }, 120_000);
 
   it('checks packaged resource membership without reading payload bytes', async () => {
@@ -201,5 +284,49 @@ describe('bundled generator preparation process boundary', () => {
     } finally {
       writeFileSync(manifestPath, authoredManifest);
     }
+  }, 120_000);
+
+  it('prepares fresh dependency dist before direct package-artifact publication takes its lease', async () => {
+    const { repoRoot, run } = fixture;
+    const dependencyRoot = join(repoRoot, 'packages/attention');
+    mkdirSync(join(dependencyRoot, 'src'), { recursive: true });
+    mkdirSync(join(dependencyRoot, 'scripts'), { recursive: true });
+    writeFileSync(join(dependencyRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/attention', version: '0.0.0', type: 'module',
+      scripts: { build: 'node scripts/build.mjs' },
+      exports: { './v1': { 'happier-source': './src/index.ts', default: './dist/index.js' } },
+    }));
+    writeFileSync(join(dependencyRoot, 'scripts/build.mjs'), [
+      "import { copyFileSync, existsSync } from 'node:fs';",
+      "import { join } from 'node:path';",
+      // The actual compiler process must run before publication owns the lease.
+      `if (existsSync(${JSON.stringify(join(repoRoot, '.project/tmp/cli-dist-build.lock'))})) throw new Error('Compiler entered while generator held publication custody');`,
+      "copyFileSync('src/index.ts', join(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'));",
+    ].join('\n'));
+    writeFileSync(join(dependencyRoot, 'src/index.ts'), 'export const prior = 1;\n');
+    await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/attention']);
+    expect(readFileSync(join(dependencyRoot, 'dist/index.js'), 'utf8')).toContain('prior = 1');
+    writeFileSync(join(dependencyRoot, 'src/index.ts'), 'export const prior = 1;\nexport const added = 2;\n');
+    const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'freshness' });
+    const manifest = { schemaVersion: 2, id: 'happier.freshness', version: '0.0.0', displayName: 'Freshness',
+      runtime: { apiVersion: 1 }, contributes: {} };
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugins-freshness', version: '0.0.0', type: 'module',
+      files: ['.happier-plugin'], dependencies: { '@happier-dev/attention': 'workspace:*' },
+    }));
+    writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+    writeFileSync(join(packageRoot, 'src/index.ts'), [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      "import { added } from '@happier-dev/attention/v1';",
+      'export function activate() {}',
+      'export const freshnessValue = added;',
+    ].join('\n'));
+    const cliManifestPath = join(repoRoot, 'apps/cli/package.json');
+    const cliManifest = JSON.parse(readFileSync(cliManifestPath, 'utf8'));
+    writeFileSync(cliManifestPath, JSON.stringify({ ...cliManifest,
+      bundledDependencies: [...cliManifest.bundledDependencies, '@happier-dev/attention', '@happier-dev/plugins-freshness'],
+    }));
+    await run('write', { packageArtifacts: true, workspace: 'plugins-freshness' });
+    expect(readFileSync(join(dependencyRoot, 'dist/index.js'), 'utf8')).toContain('added = 2');
   }, 120_000);
 });

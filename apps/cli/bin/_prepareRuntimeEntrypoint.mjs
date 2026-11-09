@@ -1,11 +1,8 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  resolveRuntimeEntrypoint,
-  resolveValidRuntimeEntrypoint,
-} from './_resolveRuntimeEntrypoint.mjs';
+import { resolveRuntimeEntrypoint } from './_resolveRuntimeEntrypoint.mjs';
 
 const DEFAULT_HOST_APPS = ['cli'];
 
@@ -38,32 +35,6 @@ function resolveLocalRepoRoot(projectRoot) {
   return resolve(projectRoot, '..', '..');
 }
 
-async function buildLocalRuntimeSnapshot(projectRoot, repoRoot, opts, heldLockValue) {
-  const buildModulePath = resolve(projectRoot, 'scripts', 'build.mjs');
-  if (!existsSync(buildModulePath)) {
-    throw new Error(`Cannot build missing CLI runtime snapshot under ${projectRoot}`);
-  }
-
-  const { buildCliDist } = await import(pathToFileURL(buildModulePath).href);
-  const buildEnv = {
-    ...(opts.env ?? process.env),
-  };
-  if (heldLockValue) {
-    buildEnv.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD = heldLockValue;
-  }
-  await buildCliDist({
-    packageRoot: projectRoot,
-    repoRoot,
-    lockPath: opts.cliDistLockPath ?? opts.lockPath,
-    lockTimeoutMs: opts.lockTimeoutMs,
-    lockPollIntervalMs: opts.lockPollIntervalMs,
-    lockStaleAfterMs: opts.lockStaleAfterMs,
-    skipLock: true,
-    heldLockValue,
-    env: buildEnv,
-  });
-}
-
 function resolveWorkspaceBundleLockModulePath(repoRoot, opts = {}) {
   const explicit = String(opts.lockModulePath ?? '').trim();
   if (explicit) return existsSync(explicit) ? explicit : null;
@@ -77,14 +48,6 @@ function resolveCliSharedDepsBuildLockPath(repoRoot, opts = {}) {
     opts.sharedDepsLockPath
       ?? opts.lockPath
       ?? resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock'),
-  );
-}
-
-function resolveCliDistBuildLockPath(repoRoot, opts = {}) {
-  return String(
-    opts.cliDistLockPath
-      ?? opts.lockPath
-      ?? resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
   );
 }
 
@@ -119,36 +82,6 @@ async function withOptionalCliSharedDepsBuildLock(repoRoot, fn, opts = {}) {
   );
 }
 
-async function withOptionalCliDistBuildLock(repoRoot, fn, opts = {}) {
-  return await withOptionalWorkspaceBuildLock(
-    repoRoot,
-    fn,
-    opts,
-    resolveCliDistBuildLockPath,
-  );
-}
-
-async function prepareLocalSharedDependencies(projectRoot, repoRoot, opts) {
-  const buildSharedDepsModulePath = resolve(projectRoot, 'scripts', 'buildSharedDeps.mjs');
-  if (!existsSync(buildSharedDepsModulePath)) {
-    throw new Error(`Cannot build missing CLI shared dependencies under ${projectRoot}`);
-  }
-
-  const { main: buildSharedDeps } = await import(pathToFileURL(buildSharedDepsModulePath).href);
-  // This owner prepares generator children before taking its publication lock.
-  // Holding that lock here makes those children wait on their own parent.
-  await buildSharedDeps({
-    repoRoot,
-    env: opts.env ?? process.env,
-    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot, opts),
-    lockModulePath: opts.lockModulePath,
-    lockTimeoutMs: opts.lockTimeoutMs,
-    lockPollIntervalMs: opts.lockPollIntervalMs,
-    lockStaleAfterMs: opts.lockStaleAfterMs,
-    heldLockValue: opts.heldLockValue ?? opts.heldLockPath,
-  });
-}
-
 export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opts = {}) {
   if (isDisabled(opts.env ?? process.env)) return;
 
@@ -176,34 +109,20 @@ export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opt
   });
 }
 
-export async function prepareRuntimeEntrypoint(projectRoot, relativePath, opts = {}) {
+export async function prepareRuntimeEntrypoint(projectRoot, relativePath) {
   const physicalProjectRoot = realpathSync.native(resolve(projectRoot));
   const repoRoot = resolveLocalRepoRoot(physicalProjectRoot);
   if (!repoRoot) {
     return resolveRuntimeEntrypoint(physicalProjectRoot, relativePath);
   }
 
-  const readyEntrypoint = resolveValidRuntimeEntrypoint(physicalProjectRoot, relativePath);
-  if (readyEntrypoint) return readyEntrypoint;
-
-  await prepareLocalSharedDependencies(physicalProjectRoot, repoRoot, opts);
-
-  return await withOptionalCliDistBuildLock(repoRoot, async ({ heldLockValue } = {}) => {
-    const concurrentlyBuiltEntrypoint = resolveValidRuntimeEntrypoint(physicalProjectRoot, relativePath);
-    if (concurrentlyBuiltEntrypoint) return concurrentlyBuiltEntrypoint;
-
-    await buildLocalRuntimeSnapshot(physicalProjectRoot, repoRoot, opts, heldLockValue);
-    const builtEntrypoint = resolveValidRuntimeEntrypoint(physicalProjectRoot, relativePath);
-    if (!builtEntrypoint) {
-      throw new Error(`CLI build completed without a valid runtime snapshot under ${physicalProjectRoot}`);
-    }
-    return builtEntrypoint;
-  }, {
-    lockPath: opts.cliDistLockPath ?? opts.lockPath,
-    lockModulePath: opts.lockModulePath,
-    lockTimeoutMs: opts.lockTimeoutMs,
-    lockPollIntervalMs: opts.lockPollIntervalMs,
-    lockStaleAfterMs: opts.lockStaleAfterMs,
-    env: opts.env,
-  });
+  // Repository wrappers consume authored exports, just like other source tools.
+  // A valid compiled closure proves integrity, not freshness against moving source.
+  const { resolveWorkspaceSource } = await import(pathToFileURL(
+    resolve(repoRoot, 'packages', 'cli-common', 'sourceRuntimeEntries.mjs'),
+  ).href);
+  const manifest = JSON.parse(readFileSync(resolve(physicalProjectRoot, 'package.json'), 'utf8'));
+  const subpath = relativePath.replaceAll('\\', '/').replace(/\.mjs$/, '');
+  const specifier = subpath === 'index' ? manifest.name : `${manifest.name}/${subpath}`;
+  return resolveWorkspaceSource(new Map([[manifest.name, { root: physicalProjectRoot, manifest }]]), specifier);
 }

@@ -400,8 +400,8 @@ async function unpackManifestEntry(entry, archivesDir, unpackedPath, checksums) 
 
 /**
  * Record the materialized runtime asset through the one CLI build-manifest
- * owner. The manifest carries exactly one runtime asset, so a distribution that
- * staged more than one leaf for this platform is incoherent and fails closed.
+ * owner. This archive channel supplies one managed-runtime leaf per platform;
+ * independently packaged native assets retain their own records in that manifest.
  */
 function recordCliRuntimeAsset(toolsDir, entries) {
     if (entries.length === 0) return;

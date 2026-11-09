@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -452,45 +452,46 @@ describe('buildSharedDeps', () => {
     }
   });
 
-  it('preloads source resolution through a file URL before linking the canonical publisher graph', async () => {
-    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-publisher-source-preload space #-');
+  it('loads relative emitted JavaScript specifiers from TypeScript in the publisher child', async () => {
+    const repoRoot = createTempDirSync('happier-cli-publisher-source-loader-');
+    const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
     try {
-      writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'fixture', private: true, type: 'module' }));
-      const scriptDir = join(happyCliDir, 'scripts');
-      const generatorDir = join(scriptDir, 'build-owned');
-      const dependencyDir = join(repoRoot, 'packages', 'publisher-source-fixture');
+      const scriptDir = resolve(repoRoot, 'apps/cli/scripts');
+      const generatorDir = resolve(scriptDir, 'build-owned');
+      const conditionalPackageDir = resolve(repoRoot, 'node_modules/source-fixture');
       mkdirSync(generatorDir, { recursive: true });
-      mkdirSync(join(dependencyDir, 'src'), { recursive: true });
-      mkdirSync(join(repoRoot, 'packages'), { recursive: true });
-      symlinkSync(join(sourceRepoRoot, 'packages', 'cli-common'), join(repoRoot, 'packages', 'cli-common'), 'dir');
-      mkdirSync(join(repoRoot, 'node_modules'), { recursive: true });
-      symlinkSync(dependencyDir, join(repoRoot, 'node_modules', 'publisher-source-fixture'), 'dir');
-      mkdirSync(join(repoRoot, 'scripts', 'testing'), { recursive: true });
-      symlinkSync(join(sourceRepoRoot, 'scripts', 'testing', 'process'), join(repoRoot, 'scripts', 'testing', 'process'), 'dir');
-      cpSync(join(cliScriptsSourceDir, 'withNodeHeapLimit.mjs'), join(scriptDir, 'withNodeHeapLimit.mjs'));
-      writeFileSync(join(dependencyDir, 'package.json'), JSON.stringify({
-        name: 'publisher-source-fixture', type: 'module',
-        exports: { 'happier-source': './src/index.ts', default: './missing-dist.js' },
+      mkdirSync(conditionalPackageDir, { recursive: true });
+      mkdirSync(resolve(repoRoot, 'packages'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps/stack/bin'), { recursive: true });
+      // Keep the real runtime and heap-wrapper process boundary. No inherited
+      // preload may hide a missing loader on the publisher's explicit launch.
+      symlinkSync(resolve(sourceRoot, 'packages/cli-common'), resolve(repoRoot, 'packages/cli-common'), 'junction');
+      symlinkSync(resolve(sourceRoot, 'scripts'), resolve(repoRoot, 'scripts'), 'junction');
+      cpSync(resolve(sourceRoot, 'apps/stack/bin/localSourceRuntimeBootstrap.mjs'),
+        resolve(repoRoot, 'apps/stack/bin/localSourceRuntimeBootstrap.mjs'));
+      cpSync(resolve(sourceRoot, 'apps/cli/scripts/withNodeHeapLimit.mjs'), resolve(scriptDir, 'withNodeHeapLimit.mjs'));
+      writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({ type: 'module' }));
+      writeFileSync(resolve(conditionalPackageDir, 'package.json'), JSON.stringify({
+        name: 'source-fixture', type: 'module',
+        exports: { 'happier-source': './value.mjs', default: './missing-dist.js' },
       }));
-      writeFileSync(join(dependencyDir, 'src/index.ts'), "export { value } from './value.js';\n");
-      writeFileSync(join(dependencyDir, 'src/value.ts'), "export const value: string = 'authored-source';\n");
-      writeFileSync(join(generatorDir, 'generateBundledPluginEntries.ts'), [
-        "import '../../../../packages/cli-common/registerSourceRuntime.mjs';",
-        "import { value } from 'publisher-source-fixture';",
+      writeFileSync(resolve(conditionalPackageDir, 'value.mjs'), "export const authority = 'source';\n");
+      writeFileSync(resolve(generatorDir, 'value.ts'), 'export const value: number = 42;\n');
+      writeFileSync(resolve(generatorDir, 'generateBundledPluginEntries.ts'), [
+        "import { value } from './value.js';",
+        "import { authority } from 'source-fixture';",
         "import { writeFileSync } from 'node:fs';",
-        "writeFileSync(process.env.PUBLISHER_RESULT_PATH, JSON.stringify({ value, execArgv: process.execArgv }));",
+        "writeFileSync('publisher-result.json', JSON.stringify({ value, authority }));",
       ].join('\n'));
-      const resultPath = join(repoRoot, 'publisher-result.txt');
-      await expect(runCanonicalBundledPluginArtifactPublisher({
+
+      await runCanonicalBundledPluginArtifactPublisher({
         repoRoot, mode: 'check', quiet: true,
-        env: { ...process.env, NODE_OPTIONS: '', PUBLISHER_RESULT_PATH: resultPath },
-      })).resolves.toBe(true);
-      const result = JSON.parse(readFileSync(resultPath, 'utf8'));
-      expect(result.value).toBe('authored-source');
-      const preloadSpecifier = result.execArgv[result.execArgv.indexOf('--import') + 1];
-      expect(new URL(preloadSpecifier).protocol).toBe('file:');
-      expect(fileURLToPath(preloadSpecifier)).toBe(join(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs'));
-    } finally { cleanup(); }
+        env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '' },
+      });
+      expect(JSON.parse(readFileSync(resolve(repoRoot, 'publisher-result.json'), 'utf8'))).toEqual({ value: 42, authority: 'source' });
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
   });
 
   it('retains a quiet bundled Plugin publisher failure diagnostic', async () => {
@@ -4806,6 +4807,34 @@ describe('buildSharedDeps', () => {
 
     expect(cpSync).toHaveBeenCalledTimes(1);
     expect(cpSync.mock.calls[0]?.[0]).toBe('/repo/packages/plugins/opencode/dist');
+  });
+
+  it('keeps package-manager dependency links intact when the CLI consumes a source workspace link', () => {
+    const repoRoot = createTempDirSync('happy-cli-live-runtime-links-');
+    try {
+      const cliDir = resolve(repoRoot, 'apps/cli');
+      const sourceDir = resolve(repoRoot, 'packages/protocol');
+      const dependencyDir = resolve(repoRoot, 'node_modules/fixture-dependency');
+      const dependencyLink = resolve(sourceDir, 'node_modules/fixture-dependency');
+      const destinationDir = resolve(cliDir, 'node_modules/@happier-dev/protocol');
+      for (const dir of [cliDir, sourceDir, dependencyDir, dirname(dependencyLink), dirname(destinationDir)]) {
+        mkdirSync(dir, { recursive: true });
+      }
+      writeFileSync(resolve(cliDir, 'package.json'), JSON.stringify({ bundledDependencies: ['@happier-dev/protocol'] }));
+      writeFileSync(resolve(sourceDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/protocol', version: '1.0.0', dependencies: { 'fixture-dependency': '1.0.0' },
+      }));
+      writeFileSync(resolve(dependencyDir, 'package.json'), JSON.stringify({ name: 'fixture-dependency', version: '1.0.0', main: 'index.js' }));
+      writeFileSync(resolve(dependencyDir, 'index.js'), 'module.exports = "current";\n');
+      symlinkSync(dependencyDir, dependencyLink, process.platform === 'win32' ? 'junction' : 'dir');
+      symlinkSync(sourceDir, destinationDir, process.platform === 'win32' ? 'junction' : 'dir');
+      syncBundledWorkspaceRuntimeDependencies({ repoRoot });
+      expect(lstatSync(dependencyLink).isSymbolicLink()).toBe(true);
+      writeFileSync(resolve(dependencyDir, 'index.js'), 'module.exports = "updated";\n');
+      expect(readFileSync(resolve(dependencyLink, 'index.js'), 'utf8')).toContain('updated');
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
   });
 
   it('vendors runtime dependencies only for explicitly targeted bundled workspaces', () => {

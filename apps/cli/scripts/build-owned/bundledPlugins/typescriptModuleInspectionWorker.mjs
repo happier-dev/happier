@@ -1,13 +1,12 @@
 import { createInterface } from 'node:readline';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import { createCliSourceLoader } from '../../../../../packages/cli-common/cliSourceLoader.mjs';
 
 const OUTPUT_MARKER = '__HAPPIER_GENERATOR_MODULE_JSON__';
 
-const { register } = await import('tsx/esm/api');
-const runtimeTsconfigPath = fileURLToPath(new URL('../tsconfig.generator-runtime.json', import.meta.url));
 // One session has one immutable inspection graph. tsImport creates a fresh
 // namespace per request and re-evaluates shared source dependencies each time.
-const sourceLoader = register({ namespace: 'happier-typescript-inspection', tsconfig: runtimeTsconfigPath });
+const sourceLoader = await createCliSourceLoader('happier-typescript-inspection');
 
 function serializeModule(imported, requestedExports) {
   const selected = imported && typeof imported === 'object'

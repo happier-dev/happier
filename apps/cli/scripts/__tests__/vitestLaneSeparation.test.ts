@@ -211,13 +211,13 @@ describe('Vitest lane separation', () => {
         ).toEqual(expect.stringContaining('/packages/channels-protocol/src/v1/index'));
     });
 
-    it('resolves the public Plugin SDK lock bridge from its declared public leaf', () => {
+    it('resolves the canonical host lock from its declared workspace leaf', () => {
         expect(
             workspacePackageSourcesPlugin.resolveId(
-                '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock',
+                '@happier-dev/cli-common/fs/jsonOwnerFileLock',
             ),
         ).toEqual(expect.stringContaining(
-            '/packages/plugin-sdk/src/host/fs/json-owner-file-lock/index.public.ts',
+            '/packages/cli-common/src/fs/jsonOwnerFileLock.ts',
         ));
         expect(workspacePackageSourcesPlugin.resolveId(
             '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock',

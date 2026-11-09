@@ -126,6 +126,28 @@ export function collectProviderExecutableFactPathsV1(contribution: unknown): rea
   }
   addPath(paths, 'modelLoad', isRecord(contribution.modelLoad));
 
+  // Usage sources, inline-completion operations and request-cost decoding each
+  // reach a vendor path or interpret a vendor response, so they need evidence like endpoints.
+  for (const operation of readRecordArray(contribution, 'inlineCompletion')) {
+    const id = readString(operation, 'id');
+    if (!id) throw new Error('Provider inline-completion operation is missing an id');
+    addPath(paths, `inlineCompletion.${id}`);
+  }
+  for (const source of readRecordArray(contribution, 'usageSources')) {
+    const id = readString(source, 'id');
+    if (!id) throw new Error('Provider usage source is missing an id');
+    addPath(paths, `usageSources.${id}`);
+  }
+  if (isRecord(contribution.requestCost)) {
+    for (const endpointTemplateId of readOptionalStringArray(
+      contribution.requestCost,
+      'endpointTemplateIds',
+      'Provider request-cost endpointTemplateIds',
+    )) {
+      addPath(paths, `requestCost.${endpointTemplateId}`);
+    }
+  }
+
   if (isRecord(contribution.managedRuntime)) {
     addPath(paths, 'managedRuntime.kind', typeof contribution.managedRuntime.kind === 'string');
     for (const dependency of readOptionalStringArray(

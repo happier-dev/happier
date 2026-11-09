@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -46,7 +46,17 @@ async function waitForValidRuntimeEntrypoint(projectRoot, relativePath, opts) {
 
 export async function importPreparedRuntimeEntrypoint(projectRoot, relativePath, opts = {}) {
   const importModule = opts.importModule ?? ((specifier) => import(specifier));
-  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, relativePath, opts);
+  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, relativePath);
+  const physicalProjectRoot = realpathSync.native(resolve(projectRoot));
+  if (entrypoint.startsWith(resolve(physicalProjectRoot, 'src') + sep)) {
+    const { createCliSourceLoader } = await import(pathToFileURL(
+      resolve(physicalProjectRoot, '..', '..', 'packages', 'cli-common', 'cliSourceLoader.mjs'),
+    ).href);
+    const loader = await createCliSourceLoader('cli-bin-runtime');
+    // CLI dispatch continues asynchronously after its entry module evaluates.
+    // The runtime owns this loader for the rest of the process, including lazy imports.
+    return await loader.import(pathToFileURL(entrypoint).href, import.meta.url);
+  }
   const selectedSnapshot = resolveValidRuntimeSnapshot(projectRoot, relativePath);
   const selectedEntrypointExisted = existsSync(entrypoint);
 

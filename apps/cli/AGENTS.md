@@ -54,13 +54,13 @@ Details: [Agent catalog](../../docs/agents-catalog.md), [Providers](../../docs/p
 
 Voice runtime `.ios.ts` / `.android.ts` siblings are emitted only when manifest-declared platform membership differs from the common file. Platform package exports select each plugin implementation; equal host projections share one file.
 
-The normalized CLI manifest projections in `assets/bundled-plugin-manifests/*.json` are the tracked clean-checkout declaration source. The generated TypeScript locator module carries paths and metadata only; catalog consumers read declarations lazily through the bundled manifest reader. `packages/plugins/*/.happier-plugin/plugin.json` is an on-demand package artifact, produced alongside the runtime for distribution; some copies remain tracked. Source Agent preparation consumes the tracked JSON projections without requiring packaged artifacts. Scoped package publication derives peer declarations from current source without republishing peers' package artifacts.
+The normalized CLI manifest projections in `assets/bundled-plugin-manifests/*.json` are the tracked clean-checkout declaration source. The generated TypeScript locator module carries paths and metadata only; catalog consumers read declarations lazily through the bundled manifest reader. `packages/plugins/*/.happier-plugin/plugin.json` is an on-demand package artifact, produced alongside the runtime for distribution; some copies remain tracked. Source Agent preparation consumes the tracked JSON projections without requiring packaged artifacts. A `--workspace` write validates selected packages from current source and uses the last published catalog declarations for peers. Cross-plugin identity, reference and targeted-contribution checks involving the selection still apply; package artifacts are prepared only for selected packages. Unscoped writes and every `--mode check` continue to validate all current source.
 
 - Change the generator, never an emitted file. A hand edit to any emitted artifact is erased by the next run and is a review finding; the real defect is in the generator, in a bundled plugin's manifest, or in the bundled-plugin membership list.
 - Regeneration is the **last** step of a batch and runs **once**. Adding, renaming or re-manifesting a bundled plugin invalidates every emitted artifact, and several programs do this concurrently. Land every manifest/membership source change first, then run one regeneration:
 
   ```bash
-  node --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write
+  node --conditions=happier-source --import ./packages/cli-common/registerSourceRuntime.mjs apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write
   ```
 
 - The semantic drift gate already exists — do not add a second one. It runs the same publisher in `--mode check` and CI reaches it through `test:migration:governance`:
@@ -82,6 +82,8 @@ The normalized CLI manifest projections in `assets/bundled-plugin-manifests/*.js
 - Daemon lifecycle, state files, local HTTP control, backend sockets, spawn hooks, and session tracking are production behavior and require TDD.
 - Preserve graceful shutdown, stale-process cleanup, authentication, and validation semantics.
 - Reuse daemon-owned process/session helpers rather than adding ad hoc spawn or cleanup paths.
+- A settled daemon or runner issues no recurring server reads except named liveness. Re-read server state on the live change signal, not per activity read, RPC or wake, and reuse context the daemon already holds for a tracked Session without turning it into a TTL cache. Prove it with requests per idle minute by caller.
+- A startup budget or required-readiness wait applies only to dependencies the Session requires; optional and third-party integrations start on their own defaults and never hold the first turn.
 
 ## Binary-safe runtime and packaging
 
