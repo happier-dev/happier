@@ -606,6 +606,10 @@ export type MachineProcessesActionResultById = {
                     };
                 };
                 expectedEffectDigest?: string | undefined;
+                setupReview?: undefined | {
+                    reviewedEffect: JsonValue;
+                    reviewedEffectDigest: string;
+                };
             };
             response: {
                 protocolVersion: 1;

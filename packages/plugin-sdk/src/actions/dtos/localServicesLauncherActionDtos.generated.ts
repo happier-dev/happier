@@ -58,6 +58,10 @@ export type LocalServicesLauncherActionInputById = {
             };
         };
         expectedEffectDigest?: string | undefined;
+        setupReview?: undefined | {
+            reviewedEffect: unknown;
+            reviewedEffectDigest: string;
+        };
     };
     readonly "localServices.launcher.openPreview": {
         [x: string]: unknown;

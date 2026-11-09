@@ -1036,6 +1036,10 @@ export type ProvidersActionInputById = {
             providerConnectionId: string;
             modelId: string;
         };
+    } | {
+        machineId: string;
+        connectionId: string;
+        forceRefresh: true;
     };
     readonly "providers.models.manual.add": AccountOperand<{
         machineId: string;
@@ -1559,6 +1563,7 @@ export type ProvidersActionInputById = {
                     managedRuntime: {
                         kind: 'managed';
                         endpointTemplateIds: string[];
+                        credentialRequired?: true | undefined;
                         sharing?: 'connectionMachine' | undefined;
                         sourceEnvelopeTransport?: 'cpx-v1' | undefined;
                         dependencies?: string[] | undefined;
@@ -4815,6 +4820,67 @@ export type ProvidersActionResultById = {
             name?: string | undefined;
         }[];
         catalogObserved?: boolean | undefined;
+        sourceCatalogs?: undefined | {
+            purpose: string;
+            catalogObserved: boolean;
+            models: {
+                id: string;
+                source: 'manual' | 'probe' | 'static';
+                stale: boolean;
+                loadState: 'loaded' | 'unknown' | 'unloaded';
+                visibility: 'hidden_all_agents' | 'visible';
+                descriptor?: undefined | {
+                    id: string;
+                    name: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
+                    description?: string | undefined;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
+                        name: string;
+                        type: string;
+                        currentValue: string;
+                        description?: string | undefined;
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                name?: string | undefined;
+            }[];
+        }[];
     };
     readonly "providers.models.projection": {
         status: 'error';
@@ -5290,6 +5356,7 @@ export type ProvidersActionResultById = {
                 };
                 groupId: string;
             };
+            catalogObserved?: boolean | undefined;
             sourceAuthority?: undefined | {
                 provider: {
                     identity: {
@@ -5651,6 +5718,22 @@ export type ProvidersActionResultById = {
         }[];
     };
     readonly "providers.models.refresh": {
+        status: 'error';
+        error: {
+            v: 1;
+            code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
+            retryable: boolean;
+            action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+            requestId?: string | undefined;
+            failureCause?: ActionFailureCauseV1 | undefined;
+            connectionId?: (string) | undefined;
+            machineId?: string | undefined;
+            sourceProfileId?: string | undefined;
+            retryAfterMs?: number | undefined;
+            reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+            savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+        };
+    } | {
         status: 'error';
         error: {
             v: 1;
@@ -6124,6 +6207,7 @@ export type ProvidersActionResultById = {
                 };
                 groupId: string;
             };
+            catalogObserved?: boolean | undefined;
             sourceAuthority?: undefined | {
                 provider: {
                     identity: {
@@ -6482,6 +6566,131 @@ export type ProvidersActionResultById = {
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
             };
+        }[];
+    } | {
+        status: 'success';
+        connectionId: string;
+        connectionRevision: number;
+        manualModelPolicy: 'allowed' | 'catalog-only';
+        modelLoadAction: 'available' | 'descriptor_absent' | 'feature_disabled' | 'machine_required';
+        models: {
+            id: string;
+            source: 'manual' | 'probe' | 'static';
+            stale: boolean;
+            loadState: 'loaded' | 'unknown' | 'unloaded';
+            visibility: 'hidden_all_agents' | 'visible';
+            descriptor?: undefined | {
+                id: string;
+                name: string;
+                costTier?: 'low' | 'premium' | 'standard' | undefined;
+                aliases?: string[] | undefined;
+                description?: string | undefined;
+                contextWindowTokens?: number | undefined;
+                inlineCompletion?: undefined | {
+                    operationId: string;
+                    tokenAccounting: 'utf8-bytes';
+                    promptOverheadTokens: number;
+                    outputTokens?: number | undefined;
+                    maxOutputTokens?: number | undefined;
+                    rawFimTemplate?: undefined | {
+                        prefix: string;
+                        suffix: string;
+                        middle: string;
+                    };
+                };
+                nextEdit?: undefined | {
+                    operationId: string;
+                    tokenAccounting: 'utf8-bytes';
+                    promptOverheadTokens: number;
+                    outputTokens?: number | undefined;
+                    maxOutputTokens?: number | undefined;
+                };
+                extendedContextModelId?: string | undefined;
+                modelOptions?: undefined | {
+                    id: string;
+                    name: string;
+                    type: string;
+                    currentValue: string;
+                    description?: string | undefined;
+                    options?: undefined | {
+                        value: string;
+                        name: string;
+                        description?: string | undefined;
+                    }[];
+                    overridesWhenOn?: undefined | {
+                        optionIds: string[];
+                        forcedValue?: string | undefined;
+                    };
+                }[];
+                capabilities?: undefined | {
+                    toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                };
+            };
+            name?: string | undefined;
+        }[];
+        catalogObserved?: boolean | undefined;
+        sourceCatalogs?: undefined | {
+            purpose: string;
+            catalogObserved: boolean;
+            models: {
+                id: string;
+                source: 'manual' | 'probe' | 'static';
+                stale: boolean;
+                loadState: 'loaded' | 'unknown' | 'unloaded';
+                visibility: 'hidden_all_agents' | 'visible';
+                descriptor?: undefined | {
+                    id: string;
+                    name: string;
+                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    aliases?: string[] | undefined;
+                    description?: string | undefined;
+                    contextWindowTokens?: number | undefined;
+                    inlineCompletion?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                        rawFimTemplate?: undefined | {
+                            prefix: string;
+                            suffix: string;
+                            middle: string;
+                        };
+                    };
+                    nextEdit?: undefined | {
+                        operationId: string;
+                        tokenAccounting: 'utf8-bytes';
+                        promptOverheadTokens: number;
+                        outputTokens?: number | undefined;
+                        maxOutputTokens?: number | undefined;
+                    };
+                    extendedContextModelId?: string | undefined;
+                    modelOptions?: undefined | {
+                        id: string;
+                        name: string;
+                        type: string;
+                        currentValue: string;
+                        description?: string | undefined;
+                        options?: undefined | {
+                            value: string;
+                            name: string;
+                            description?: string | undefined;
+                        }[];
+                        overridesWhenOn?: undefined | {
+                            optionIds: string[];
+                            forcedValue?: string | undefined;
+                        };
+                    }[];
+                    capabilities?: undefined | {
+                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                    };
+                };
+                name?: string | undefined;
+            }[];
         }[];
     };
     readonly "providers.models.manual.add": {

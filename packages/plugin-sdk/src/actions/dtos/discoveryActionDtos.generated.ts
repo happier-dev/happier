@@ -4613,6 +4613,7 @@ export type DiscoveryActionResultById = {
                         };
                         groupId: string;
                     };
+                    catalogObserved?: boolean | undefined;
                     sourceAuthority?: undefined | {
                         provider: {
                             identity: {
