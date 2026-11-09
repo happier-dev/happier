@@ -31,6 +31,8 @@ import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invoca
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { createNightlyBackupsWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -107,6 +109,7 @@ function manifest(environmentId: string, id: string, time: string) {
 type Answers = Readonly<{
   history?: unknown;
   bindingRefusal?: string;
+  missedSchedule?: boolean;
 }>;
 
 /** A Postgres Environment opened on its Database page; the receipt keeps a pre-migration backup when asked. */
@@ -245,6 +248,28 @@ async function renderDatabase(
 
   const effects: Array<{ actionId: string; input: Record<string, unknown> }> =
     [];
+  if (input.answers?.missedSchedule) {
+    const { deploymentDataTargetOperands } = await import('./deploymentRestore');
+    const target = deploymentDataTargetOperands(detail);
+    if (!target || !detail.runtimeTargetLink?.activeDeploymentId) throw new Error('Expected deployed backup target');
+    const response = AutomationDefinitionDetailsResponseSchema.parse({ automations: [{
+      id: 'nightly-backups', name: 'Nightly backups', description: null, enabled: true,
+      targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      workflowDefinitionId: null, scopeSessionId: null,
+      assignments: [{ machineId, enabled: true, priority: 0, updatedAt: 1 }],
+      triggers: [{ id: 'nightly-schedule', kind: 'schedule', revision: 0, enabled: true,
+        createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null,
+        schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null } }],
+      executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+        workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
+        inlineDefinition: createNightlyBackupsWorkflowV1(),
+        inputs: { backupTarget: { ...target, serverId: serverIdentityId,
+          deploymentId: detail.runtimeTargetLink.activeDeploymentId, configRevision: 1 },
+          retention: backup.retention, verificationLevel: 'manifestReadBack' },
+      } } },
+    }], nextCursor: null });
+    homes.answer(serverId, 'POST /v3/automations/query', { body: response });
+  }
   for (const actionId of [
     'deployments.backups.history',
     'deployments.backups.run',
@@ -597,6 +622,20 @@ describe('Environment → Data → Add (P10)', () => {
 });
 
 describe('Environment → Data → Database page (P9)', () => {
+  it('settles backup facts after Back up now from a real missed-schedule notice', async () => {
+    const view = await renderDatabase({ answers: { missedSchedule: true } });
+    try {
+      expect(await view.settle(`${page}.missed.action`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.missed.action`);
+      expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
+      const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
+      expect(view.screen.findByTestId(`${page}.lastGood`)?.props.detail)
+        .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')));
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
+    } finally { await view.dispose(); }
+  });
+
   it('resolves each retained database by its service after a second database was added', async () => {
     const view = await renderDatabase({ database: 'mysql' });
     try {
