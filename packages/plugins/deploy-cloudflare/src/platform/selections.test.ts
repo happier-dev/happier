@@ -255,7 +255,8 @@ it('preserves host HTTP PluginError codes and causes while authoring missing rea
     state.fail(new PluginError({ code: 'credential_unavailable', details }));
     await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'credential_unavailable', data: { details } });
     state.fail(new PluginError({ code: 'denied' }));
-    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'denied', data: { code: 'denied' } });
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'denied',
+      data: { code: 'denied', details: { requiredFact: 'cloudflarePermissions', remedy: expect.any(String) } } });
   } finally { await state.kit.dispose(); }
 });
 

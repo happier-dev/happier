@@ -16,6 +16,7 @@ import {
   waitForTestEvent,
 } from '@/dev/testkit';
 import { t } from '@/text';
+import type { DomainIngressInspection } from './DeploymentDomainIngressFields';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -456,7 +457,7 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
   function pendingInspect() {
     const signals: AbortSignal[] = [];
     // The provider read never answers by itself; only its caller's cancellation settles it.
-    const inspectPlatformTarget = vi.fn((_action: string, _input: Record<string, unknown>, operation?: { signal?: AbortSignal }) => {
+    const inspectPlatformTarget = vi.fn<DomainIngressInspection>((_action, _input, operation) => {
       const signal = operation?.signal;
       if (signal) signals.push(signal);
       return new Promise<never>((_resolve, reject) => {
@@ -497,6 +498,29 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it.each(['zones', 'tunnels'] as const)('clears the old %s error when Retry is cancelled and retains the form choice', async kind => {
+    const { signals, inspectPlatformTarget } = pendingInspect();
+    const failure = { ok: false as const, code: 'denied',
+      details: { requiredFact: 'cloudflarePermissions', remedy: 'Reconnect the selected Cloudflare account.' } };
+    inspectPlatformTarget.mockResolvedValueOnce(kind === 'zones' ? failure : { ok: true,
+      value: { kind: 'ready', zones: [{ zoneId: 'chosen-zone', name: 'happier.dev' }], options: [] } });
+    const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
+    try {
+      if (kind === 'tunnels') {
+        inspectPlatformTarget.mockResolvedValueOnce(failure);
+        await screen.pressByTestIdAsync(`${id}.ingress.read`);
+      }
+      expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.${kind}.retry`);
+      await screen.pressByTestIdAsync(`${id}.ingress.${kind}.cancel`);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(screen.findByTestId(`${id}.ingress.${kind}.stopped`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).toBeNull();
+      expect(screen.findByTestId(`${id}.host`)?.props.value).toBe('docs.happier.dev');
+      if (kind === 'tunnels') expect(screen.findByTestId(`${id}.ingress.zone`)).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('closing the form cancels a read still in flight', async () => {
     const { signals, inspectPlatformTarget } = pendingInspect();
     const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
@@ -508,12 +532,15 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
 });
 
 describe('Environment → Domains: a Find zones refusal names its own cause (PAGE-ACCEPT-88 N13)', () => {
-  it.each(['hostname_outside_zone', 'denied'])('shows the zones cause, not deploy recovery, with Retry (%s)', async (reason) => {
-    const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+  it.each(['provider-output', 'action-failure'] as const)('displays provider-authored recovery with Retry from %s', async source => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
-    const inspectPlatformTarget = vi.fn(async () => ({ ok: true as const, value: { kind: 'unavailable', options: [], reason } }));
+    const reason = 'denied';
+    const details = { requiredFact: 'cloudflarePermissions', remedy: 'Ask the Cloudflare account owner to restore zone access.' };
+    const inspectPlatformTarget = vi.fn(async () => source === 'provider-output'
+      ? { ok: true as const, value: { kind: 'unavailable', options: [], reason, ...details } }
+      : { ok: false as const, code: reason, details });
     const { screen, controller, settle } = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
     try {
       expect(await settle(id)).not.toBeNull();
@@ -527,8 +554,7 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
       const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
       expect(card?.props.diagnosticCode).toBe(reason);
-      // The deployment refusal fallback ("Check deployment history…") is not a zones cause.
-      expect(card?.props.title).not.toBe(readDeploymentFailureRecoveryV1('').remedy);
+      expect(card?.props.title).toBe(details.remedy);
       expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);
       expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);

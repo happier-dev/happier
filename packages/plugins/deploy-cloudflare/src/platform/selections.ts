@@ -152,7 +152,7 @@ const readSelections: typeof readSelectionsImpl = async (input, context) => {
   catch (error) {
     context.signal.throwIfAborted();
     if (!isPluginError(error)) throw error;
-    const reason = error.code === 'credential_unavailable' || error.code === 'plugin_fetch_adapter_unavailable' ? error.code
+    const reason = error.code === 'credential_unavailable' || error.code === 'plugin_fetch_adapter_unavailable' || error.code === 'denied' ? error.code
       : error.code === 'outcome_unknown' && error.data.failureCause?.phase === 'connected_account.http.execute'
         ? 'network_unavailable' : undefined;
     if (reason === undefined) throw error;

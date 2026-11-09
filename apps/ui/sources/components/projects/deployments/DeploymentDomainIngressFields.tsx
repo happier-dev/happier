@@ -39,26 +39,6 @@ const selectionAction = 'happier.deploy.cloudflare/actions/cloudflare-named/sele
 const binding = relayAccessProviderDescriptorsById.cloudflareNamed!.homeUi!.credentialBindings![0]!;
 const id = 'project-deployments.environment.domains.add.ingress';
 
-/**
- * A Cloudflare read's cause in the person's words. The deployment recovery owner's typed remedy wins when it has one
- * (a producer-authored remedy or a known code); its generic deploy fallback ("check deployment history") is not a
- * zones or tunnels cause, so the selection read's own reason is named instead (PAGE-ACCEPT-88 N13).
- */
-function cloudflareReadRemedy(reason: string, details?: unknown): string {
-  const owner = readDeploymentFailureRecoveryV1(reason, details).remedy;
-  if (owner !== readDeploymentFailureRecoveryV1('').remedy) return owner;
-  switch (reason) {
-    case 'credential_unavailable': return t('projects.deployments.editors.cfCredential');
-    case 'denied': return t('projects.deployments.editors.cfDenied');
-    case 'account_id_unavailable': return t('projects.deployments.editors.cfAccountId');
-    case 'hostname_outside_zone': return t('projects.deployments.editors.cfOutsideZone');
-    case 'network_unavailable': return t('projects.deployments.editors.cfNetwork');
-    case 'provider_unavailable':
-    case 'invalid_provider_output': return t('projects.deployments.editors.cfProvider');
-    default: return t('projects.deployments.editors.cfUnknown');
-  }
-}
-
 /** Read provider-owned choices only on a deliberate press. Input edits retire the old choice locally. */
 export function useDeploymentDomainIngressFields(props: Readonly<{
   hostname: string;
@@ -131,7 +111,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const diagnosticDetail = providerStatus ? `HTTP ${providerStatus}`
         : cause ? `${cause.phase}: ${cause.errorCode ?? cause.errorClass}` : undefined;
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: cloudflareReadRemedy(reason, result.ok ? value : result.details),
+        remedy: readDeploymentFailureRecoveryV1(reason, result.ok ? value : result.details).remedy,
         ...(diagnosticDetail ? { diagnosticDetail } : {}) };
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
@@ -163,7 +143,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const failure = readDeploymentActionError(error);
       const reason = failure.kind === 'refused' ? failure.code : 'unknown_error';
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: cloudflareReadRemedy(reason, failure.kind === 'refused' ? failure.failure?.details : undefined) };
+        remedy: readDeploymentFailureRecoveryV1(reason, failure.kind === 'refused' ? failure.failure?.details : undefined).remedy };
       if (kind === 'zones') {
         setZones({ key: zoneKey, credentialKey, ...unavailable });
         setZoneChoice(null);
@@ -179,6 +159,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const cancelRead = (kind: 'zones' | 'tunnels') => {
     stopRead();
     setReading(null);
+    if (kind === 'zones') setZones(current => current?.kind === 'unavailable' ? null : current);
+    else setTunnels(current => current?.kind === 'unavailable' ? null : current);
     setStopped({ kind, key: kind === 'zones' ? zoneKey : tunnelKey });
   };
   /** The loading row with a visible Cancel, then a stopped row with Retry: the shared state-line pattern. */
