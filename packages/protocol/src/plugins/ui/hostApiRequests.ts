@@ -1,5 +1,5 @@
 import * as zMini from 'zod/mini';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 import { z } from 'zod/mini';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
@@ -193,7 +193,7 @@ export const PluginUiReadComposerRequestV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type PluginUiReadComposerRequestV1 =
   z.infer<typeof PluginUiReadComposerRequestV1Schema>;
-export const PluginUiReadComposerResultV1Schema = ComposerReadResultV1Schema;
+export const PluginUiReadComposerResultV1Schema = lazyZodSchema(() => ComposerReadResultV1Schema);
 export type PluginUiReadComposerResultV1 =
   z.infer<typeof PluginUiReadComposerResultV1Schema>;
 
@@ -201,7 +201,7 @@ export type PluginUiReadComposerResultV1 =
 export const PluginUiWatchComposerRequestV1Schema = PluginUiReadComposerRequestV1Schema;
 export type PluginUiWatchComposerRequestV1 =
   z.infer<typeof PluginUiWatchComposerRequestV1Schema>;
-export const PluginUiWatchComposerEventV1Schema = ComposerSnapshotV1Schema;
+export const PluginUiWatchComposerEventV1Schema = lazyZodSchema(() => ComposerSnapshotV1Schema);
 export type PluginUiWatchComposerEventV1 =
   z.infer<typeof PluginUiWatchComposerEventV1Schema>;
 
@@ -211,14 +211,14 @@ export const PluginUiApplyComposerRequestV1Schema = lazyZodSchema(() => z.strict
 }));
 export type PluginUiApplyComposerRequestV1 =
   z.infer<typeof PluginUiApplyComposerRequestV1Schema>;
-export const PluginUiApplyComposerResultV1Schema = ComposerTransactionResultV1Schema;
+export const PluginUiApplyComposerResultV1Schema = lazyZodSchema(() => ComposerTransactionResultV1Schema);
 export type PluginUiApplyComposerResultV1 =
   z.infer<typeof PluginUiApplyComposerResultV1Schema>;
 
 export const PluginUiFocusComposerRequestV1Schema = PluginUiReadComposerRequestV1Schema;
 export type PluginUiFocusComposerRequestV1 =
   z.infer<typeof PluginUiFocusComposerRequestV1Schema>;
-export const PluginUiFocusComposerResultV1Schema = ComposerFocusResultV1Schema;
+export const PluginUiFocusComposerResultV1Schema = lazyZodSchema(() => ComposerFocusResultV1Schema);
 export type PluginUiFocusComposerResultV1 =
   z.infer<typeof PluginUiFocusComposerResultV1Schema>;
 
@@ -229,7 +229,7 @@ export const PluginUiSetComposerDecorationsRequestV1Schema = lazyZodSchema(() =>
 }));
 export type PluginUiSetComposerDecorationsRequestV1 =
   z.infer<typeof PluginUiSetComposerDecorationsRequestV1Schema>;
-export const PluginUiSetComposerDecorationsResultV1Schema = ComposerDecorationResultV1Schema;
+export const PluginUiSetComposerDecorationsResultV1Schema = lazyZodSchema(() => ComposerDecorationResultV1Schema);
 export type PluginUiSetComposerDecorationsResultV1 =
   z.infer<typeof PluginUiSetComposerDecorationsResultV1Schema>;
 
@@ -247,7 +247,7 @@ export const PluginUiPickComposerMediaRequestV1Schema = lazyZodSchema(() => z.st
 }));
 export type PluginUiPickComposerMediaRequestV1 =
   z.infer<typeof PluginUiPickComposerMediaRequestV1Schema>;
-export const PluginUiPickComposerMediaResultV1Schema = ComposerContentHandleV1Schema;
+export const PluginUiPickComposerMediaResultV1Schema = lazyZodSchema(() => ComposerContentHandleV1Schema);
 export type PluginUiPickComposerMediaResultV1 =
   z.infer<typeof PluginUiPickComposerMediaResultV1Schema>;
 
@@ -258,7 +258,7 @@ export const PluginUiInspectComposerContentRequestV1Schema = lazyZodSchema(() =>
 }));
 export type PluginUiInspectComposerContentRequestV1 =
   z.infer<typeof PluginUiInspectComposerContentRequestV1Schema>;
-export const PluginUiInspectComposerContentResultV1Schema = ComposerContentInspectWireResultV1Schema;
+export const PluginUiInspectComposerContentResultV1Schema = lazyZodSchema(() => ComposerContentInspectWireResultV1Schema);
 export type PluginUiInspectComposerContentResultV1 =
   z.infer<typeof PluginUiInspectComposerContentResultV1Schema>;
 
@@ -451,7 +451,7 @@ export type PluginUiHostApiOpenExternalLinkRequestV1 =
  * can never smuggle a host route, machine, Resource, or ambient plugin identity
  * through it.
  */
-export const PluginUiDestinationReferenceV1Schema = PluginContributionIdentityV1Schema;
+export const PluginUiDestinationReferenceV1Schema = lazyDefinition(() => PluginContributionIdentityV1Schema);
 export type PluginUiDestinationReferenceV1 = PluginContributionIdentityV1;
 
 /**
@@ -459,7 +459,7 @@ export type PluginUiDestinationReferenceV1 = PluginContributionIdentityV1;
  * selectors and mounted-action normalization consume this form after their
  * caller binding has been established.
  */
-export const PluginUiQualifiedActionReferenceV1Schema = PluginContributionIdentityV1Schema;
+export const PluginUiQualifiedActionReferenceV1Schema = lazyDefinition(() => PluginContributionIdentityV1Schema);
 export type PluginUiQualifiedActionReferenceV1 = PluginContributionIdentityV1;
 
 /**
