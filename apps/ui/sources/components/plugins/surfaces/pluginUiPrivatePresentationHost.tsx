@@ -5,7 +5,7 @@ import {
     ExecutableParticipantPickerPresentation,
 } from './pluginUiPrivateContent';
 import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
-import { usePluginVoiceAttempt } from './PluginVoicePresence';
+import { usePluginVoiceAttempt, usePluginVoiceReadAloudPhase } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 import { createCollectionSpacesStripHost, PluginEntityFlatReorderList } from '@/components/ui/lists/collection/collectionSpacesStripHost';
 import * as React from 'react';
@@ -13,6 +13,8 @@ import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanCh
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import type { HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
 import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
+import { PluginUiMenuPresentation } from './pluginUiMenuPresentation';
+import type { PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { SelectionCheckGlyph, type SelectionCheckSize, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
@@ -359,6 +361,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     },
     renderVoicePresence: (input: VoicePresenceProps) => <PluginVoicePresence {...input} />,
     useVoiceAttempt: usePluginVoiceAttempt,
+    useVoiceReadAloudPhase: usePluginVoiceReadAloudPhase,
     renderVoiceMark: (input: VoiceMarkProps) => <PluginVoiceMark {...input} />,
     renderVoiceStatusLine: (input: VoiceStatusLineProps) => <PluginVoiceStatusLine {...input} />,
     renderVoiceTransport: (input: VoiceTransportProps) => <PluginVoiceTransport {...input} />,
@@ -431,24 +434,8 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     renderChangedFilesReview(input: HappierChangedFilesReviewRequest) {
         return <PluginUiPrivateChangedFilesReview {...resolveHappierChangedFilesReviewRequest(input)} />;
     },
-    renderPopover(input: Readonly<{
-        open: boolean;
-        anchorRef: React.RefObject<unknown>;
-        followScrollRef?: React.RefObject<unknown>;
-        focusReturnRef?: React.RefObject<unknown>;
-        initialFocusRef?: React.RefObject<unknown>;
-        placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
-        presentation?: 'popover' | 'menu' | 'dropdown' | 'context';
-        width?: 'anchor' | 'content';
-        autoFocusOnOpen?: boolean;
-        sheet?: Readonly<{ title: string; footer?: React.ReactNode; header?: 'none' }>;
-        onRequestClose(): void;
-        content(controls: Readonly<{
-            requestClose(reason: 'selection' | 'escape'): void;
-            maxHeight: number;
-            presentation?: 'sheet';
-        }>): React.ReactNode;
-    }>) {
+    renderPopover(input: Parameters<PluginUiPresentationHost['renderPopover']>[0]) {
+        if (input.menu) return <PluginUiMenuPresentation input={{ ...input, menu: input.menu }} />;
         const presentation = resolvePluginUiPopoverPresentation(input);
         return (
             <Popover

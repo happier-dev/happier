@@ -89,7 +89,7 @@ export type LocalVoiceTtsController = Readonly<{
     speak: (ctx: LocalVoiceTtsRequest) => Promise<void>;
     say: (ctx: Omit<LocalVoiceTtsRequest, 'registerPlaybackStopper'> & { signal?: AbortSignal; source?: VoiceReadAloudSource }) => Promise<Readonly<{ status: 'completed' | 'cancelled' }>>;
     stopSay: () => boolean;
-    readSay: () => 'idle' | 'preparing' | 'speaking';
+    readSay: () => import('@happier-dev/plugin-ui').VoiceReadAloudPhase;
     readSaySource: () => VoiceReadAloudSource | null;
     subscribeSay: (listener: () => void) => () => void;
 }>;

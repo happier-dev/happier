@@ -28,7 +28,7 @@ import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { HostTaskShareSheet } from '../hostApi/taskShareSheet.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
-import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '../components/Voice.js';
+import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps, VoiceReadAloudPhase } from '../components/Voice.js';
 import type { VoiceAttemptPresentation } from '@happier-dev/plugin-sdk/voice';
 import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
@@ -38,6 +38,14 @@ import type { HappierCollectionAddMenuHost } from '../presentation/collection/Co
 import type { BotFaceProps } from '../components/BotFace.js';
 import type { PlanChecklistCardProps } from '../components/PlanChecklistCard.js';
 import type { PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '../components/PageLayout.js';
+import type { MenuProps } from '../components/Overlay.js';
+
+/** Submenu trees project through the host's existing menu navigation and phone-sheet owner. */
+export type PluginUiMenuPresentation = Pick<MenuProps, 'items' | 'groups' | 'radioGroups' | 'showGroupLabels' | 'search' | 'onSelect'> & Readonly<{
+  accessibilityLabel: string;
+  /** A SheetMenu applies choices in place until its explicit close control is used. */
+  keepOpen: boolean;
+}>;
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -226,6 +234,7 @@ export type PluginUiPresentationHost = Readonly<{
   renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
   renderVoicePresence?(input: Omit<VoicePresenceProps, 'fallback' | 'presented'>): ReactNode;
   useVoiceAttempt?(): VoiceAttemptPresentation | null;
+  useVoiceReadAloudPhase?(): VoiceReadAloudPhase | null;
   renderVoiceMark?(input: Omit<VoiceMarkProps, 'fallback'>): ReactNode;
   renderVoiceStatusLine?(input: Omit<VoiceStatusLineProps, 'fallback'>): ReactNode;
   renderVoiceTransport?(input: Omit<VoiceTransportProps, 'fallback'>): ReactNode;
@@ -457,6 +466,8 @@ export type PluginUiPresentationHost = Readonly<{
     placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
     /** Semantic disposition selects the host's established portal sizing contract. */
     presentation?: PluginUiPopoverPresentation;
+    /** Semantic submenu rows; the host renders these through its incumbent menu rather than content. */
+    menu?: PluginUiMenuPresentation;
     /**
      * `anchor` (a field box's choice list) matches the trigger's width. `content` (every other trigger)
      * sizes to the content, with the trigger's width only as a minimum. Hosts that do not size by content

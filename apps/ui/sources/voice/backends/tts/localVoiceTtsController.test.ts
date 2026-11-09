@@ -197,12 +197,15 @@ describe('localVoiceTtsController', () => {
         const credentials = await TokenStorage.getCredentialsForServerUrl(account.homes.voice!.serverUrl);
         const { VoiceTopBarPresence } = await import('@/components/voice/presence/VoiceTopBarPresence');
         const { useVoiceReadAloud } = await import('@/components/voice/presence/VoiceReadAloud');
+        const { VoicePresence, VoiceMark, VoiceStatusLine, VoiceTransport, useVoiceReadAloudPhase } = await import('@happier-dev/plugin-ui');
+        const { PluginUiPresentationHostProviderInternal } = await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
+        const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+        const publicVoiceHost = createPluginUiPrivatePresentationHost(undefined);
         const { TranscriptJumpAttention } = await import('@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay');
         const { useVoiceReadAloudMessagePhase } = await import('@/components/voice/presence/useVoiceReadAloudMessagePhase');
         const { buildVoicePresenceFixture } = await import('@/components/dev/voicePresence/voicePresenceFixtures');
         const { t } = await import('@/text');
         const { translateVoiceReadiness } = await import('@/voice/settings/panels/voiceProviderReadinessPresentation');
-        let catalog: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let refreshCatalog: (() => void) | undefined;
         let runtimeSupported = true;
         if (provider === 'local_neural') {
@@ -220,7 +223,6 @@ describe('localVoiceTtsController', () => {
                 }
                 return answerSpeechRpc(request);
             });
-            const { VoiceSpeechModelCatalogRuntime } = await import('@/voice/session/VoiceSpeechModelCatalogRuntime');
             const { captureDaemonVoiceModelCatalogObservation } = await import('@/voice/settings/panels/modelCatalog/daemonVoiceModelCatalogObservation');
             refreshCatalog = () => captureDaemonVoiceModelCatalogObservation('tts-machine').invalidate();
             if (platform === 'web') {
@@ -228,18 +230,27 @@ describe('localVoiceTtsController', () => {
                 // Account/Machine fixture identities differ; all selection and readiness facts are real.
                 expect(captureDaemonVoiceModelCatalogObservation('tts-machine').getSnapshot())
                     .toEqual({ loading: false, stale: true, errorCode: null, statuses: [] });
-            } else {
-                catalog = await renderScreen(React.createElement(InjectedAuthProvider, {
-                    credentials, children: React.createElement(VoiceSpeechModelCatalogRuntime),
-                }));
             }
         }
         const retained = buildVoicePresenceFixture('ended');
         const dismiss = vi.fn();
+        function PublicReadingPhase() {
+            return React.createElement('PublicReadingPhase', { phase: useVoiceReadAloudPhase() });
+        }
         function Presence() {
-            return React.createElement(VoiceTopBarPresence, {
-                voice: { ...retained, onDismissEnded: dismiss }, readAloud: useVoiceReadAloud(),
-            });
+            return React.createElement(React.Fragment, null,
+                React.createElement(VoiceTopBarPresence, {
+                    voice: { ...retained, onDismissEnded: dismiss }, readAloud: useVoiceReadAloud(),
+                }),
+                React.createElement(PluginUiPresentationHostProviderInternal, { host: publicVoiceHost },
+                    React.createElement(VoicePresence, { target: { kind: 'default' } },
+                        React.createElement(PublicReadingPhase),
+                        React.createElement(VoiceMark, { size: 20, testID: 'public-reading-mark' }),
+                        React.createElement(VoiceStatusLine, { size: 'pill', testID: 'public-reading-status' }),
+                        React.createElement(VoiceTransport, { size: 'pill', testID: 'public-reading-transport' }),
+                    ),
+                ),
+            );
         }
         const presence = await renderScreen(React.createElement(Presence));
         const rowRenders = { target: 0, sibling: 0, foreignHome: 0 };
@@ -297,11 +308,14 @@ describe('localVoiceTtsController', () => {
             expect(rowRenders.sibling).toBe(initialRowRenders.sibling);
             expect(rowRenders.foreignHome).toBe(initialRowRenders.foreignHome);
             await vi.waitFor(() => expect(presence.getTextContent()).toContain(t('voicePresence.readAloud.speaking')));
-            await presence.pressByTestIdAsync('voice-top-bar-read-aloud-stop');
+            expect(presence.findByTestId('public-reading-status')?.props.children).toBe(t('voicePresence.readAloud.speaking'));
+            expect(presence.findByType('PublicReadingPhase').props.phase).toBe('speaking');
+            await presence.pressByTestIdAsync('public-reading-transport-read-aloud-stop');
             if (provider === 'device') expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
             else if (platform === 'web') expect(browserAudio.pause).toHaveBeenCalledTimes(1);
             else expect(encodedAudio.stop).toHaveBeenCalledTimes(1);
             expect(localVoiceTtsController.readSay()).toBe('idle');
+            expect(presence.findByType('PublicReadingPhase').props.phase).toBe('idle');
             expect(messageActions.findAllHostsByTestId('transcript-read-aloud-highlight')).toHaveLength(0);
             await presence.pressByTestIdAsync('voice-top-bar-transport-dismiss');
             expect(dismiss).toHaveBeenCalledTimes(1);
@@ -324,7 +338,6 @@ describe('localVoiceTtsController', () => {
             await probes.unmount();
             await presence.unmount();
             await messageActions.unmount();
-            await catalog?.unmount();
         }
     });
 

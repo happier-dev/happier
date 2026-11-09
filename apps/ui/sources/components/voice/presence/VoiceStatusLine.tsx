@@ -5,22 +5,14 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 
 import { t } from '@/text';
 
 import { VoiceStatusCell } from './VoiceStatusCell';
-
-export type VoiceStatusLineSize = 'pill' | 'island' | 'hero';
-
-const METRICS: Readonly<Record<VoiceStatusLineSize, Readonly<{ fontSize: number; lineHeight: number; gap: number }>>> = {
-    pill: { fontSize: 12.5, lineHeight: 16, gap: 7 },
-    island: { fontSize: 13, lineHeight: 17, gap: 7 },
-    hero: { fontSize: 17, lineHeight: 22, gap: 10 },
-};
+import { VOICE_STATUS_LINE_METRICS, type VoiceStatusLineSize } from './voiceStatusLineMetrics';
+export type { VoiceStatusLineSize } from './voiceStatusLineMetrics';
 
 /** Conversation states in which a call is underway; reconnecting keeps the call it is restoring. */
 const CLOCKED_STATES: ReadonlySet<VoiceSurfaceState> = new Set<VoiceSurfaceState>([
@@ -58,7 +50,7 @@ export const VoiceStatusLine = React.memo(function VoiceStatusLine(props: Readon
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const metrics = METRICS[props.size];
+    const metrics = VOICE_STATUS_LINE_METRICS[props.size];
     // The clock says a call is running: only while one is underway, never while it is still
     // opening, blocked or failed (lab ST).
     const startedAt = readVoiceElapsedStartedAt(props.voice);
@@ -111,9 +103,7 @@ export const VoiceElapsed = React.memo(function VoiceElapsed(props: Readonly<{
     fontSize?: number;
     lineHeight?: number;
 }>): React.ReactElement {
-    const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
-    const elapsed = useElapsedTime(props.startedAt, presented && viewed);
+    const elapsed = useElapsedTime(props.startedAt);
     return (
         <Text
             numberOfLines={1}

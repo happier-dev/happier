@@ -28,6 +28,13 @@ export function useVoiceAttempt(): VoiceAttemptPresentation | null {
   return useOptionalPluginUiPresentationHost()?.useVoiceAttempt?.() ?? null;
 }
 
+export type VoiceReadAloudPhase = 'idle' | 'preparing' | 'speaking';
+
+/** The existing host playback phase; null outside a supported VoicePresence. */
+export function useVoiceReadAloudPhase(): VoiceReadAloudPhase | null {
+  return useOptionalPluginUiPresentationHost()?.useVoiceReadAloudPhase?.() ?? null;
+}
+
 export type VoiceMarkProps = Readonly<{ size: number; testID?: string; fallback?: ReactNode }>;
 export function VoiceMark({ fallback, ...input }: VoiceMarkProps): ReactElement {
   return <>{useOptionalPluginUiPresentationHost()?.renderVoiceMark?.(input) ?? fallback}</>;

@@ -170,6 +170,13 @@ still uses the ordinary conversation Action described below. Mute, End, recovery
 and dismissal use the current host attempt and normal approval policy. `target`
 chooses only an idle Start intent; it cannot retarget an active call.
 
+The same binding follows the host's Read aloud playback. Outside a conversation,
+`VoiceMark` shows the speaker and `VoiceStatusLine` shows preparation or reading;
+`VoiceTransport` supplies Stop. During a conversation, Stop remains independent
+of Mute and End. `useVoiceReadAloudPhase()` returns `idle`, `preparing` or `speaking`
+inside the binding, and `null` without a supported host binding. These parts use
+the existing host playback owner and expose no spoken text or audio runtime.
+
 `VoiceCompactTranscript` displays the host's compact caption or latest conversation
 words, following the person's transcript setting. It shares the binding's attempt
 and the same renderer as the app's compact Voice surfaces; authors supply only an

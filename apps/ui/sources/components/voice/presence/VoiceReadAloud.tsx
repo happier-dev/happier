@@ -10,6 +10,8 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { localVoiceTtsController } from '@/voice/backends/tts/localVoiceTtsController';
 
+import { VOICE_STATUS_LINE_METRICS, type VoiceStatusLineSize } from './voiceStatusLineMetrics';
+
 export type VoiceReadAloudPhase = ReturnType<
   typeof localVoiceTtsController.readSay
 >;
@@ -52,19 +54,20 @@ const METRICS: Readonly<
     }>
   >
 > = {
-  pill: { fontSize: 12.5, lineHeight: 16, glyph: 15, button: 24, icon: 15 },
-  island: { fontSize: 13, lineHeight: 17, glyph: 18, button: 32, icon: 16 },
+  pill: { ...VOICE_STATUS_LINE_METRICS.pill, glyph: 15, button: 24, icon: 15 },
+  island: { ...VOICE_STATUS_LINE_METRICS.island, glyph: 18, button: 32, icon: 16 },
 };
 
 /** The speaker glyph that takes the mark's place while Voice reads aloud outside a conversation. */
 export function VoiceReadAloudGlyph(
-  props: Readonly<{ size: VoiceReadAloudSize }>,
+  props: Readonly<{ size: VoiceReadAloudSize | number; testID?: string }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
   return (
     <Icon
       name="speaker-high"
-      size={METRICS[props.size].glyph}
+      testID={props.testID}
+      size={typeof props.size === 'number' ? props.size : METRICS[props.size].glyph}
       color={theme.colors.text.secondary}
     />
   );
@@ -74,11 +77,11 @@ export function VoiceReadAloudGlyph(
 export function VoiceReadAloudStatus(
   props: Readonly<{
     phase: VoiceReadAloudPhase;
-    size: VoiceReadAloudSize;
+    size: VoiceStatusLineSize;
     testID?: string;
   }>,
 ): React.ReactElement {
-  const metrics = METRICS[props.size];
+  const metrics = VOICE_STATUS_LINE_METRICS[props.size];
   return (
     <Text
       testID={props.testID ?? 'voice-read-aloud-status'}
