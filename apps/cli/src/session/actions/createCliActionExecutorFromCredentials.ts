@@ -1295,16 +1295,20 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (request.v !== 2) return null;
         const executor = resolveApprovalExecutor(request);
         if (executor.kind === 'unavailable') return actionFailure('approval_origin_unavailable');
-        if (executor.kind === 'app' && executor.placement === 'client'
-          && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId)) {
-          return actionFailure('approval_origin_unavailable');
-        }
+        const remoteClientReplay = executor.kind === 'app' && executor.placement === 'client'
+          && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId);
+        const origin = request.executionOriginV1;
+        // The strict origin owner already binds the private root to this target.
+        const clientReplayMachineId = remoteClientReplay && origin.externalActionExecutionAuthorization
+          && origin.target?.kind === 'machine' ? origin.target.machineId : undefined;
+        if (remoteClientReplay && !clientReplayMachineId) return actionFailure('approval_origin_unavailable');
         if (machineAdmissionTransport || params.machineActionDirectTargetTransport
           || params.pluginActionExecutionOwner === 'current_process'
-          || executor.kind === 'app') return null;
+          || executor.kind === 'app' && !remoteClientReplay) return null;
         // A live effect stays in its original waiter. Machine RPC only carries
         // the authenticated decision to that process; it never rebuilds input.
-        const machineId = executor.kind === 'daemon' ? executor.machineId : executor.daemonMachineId;
+        const machineId = executor.kind === 'daemon' ? executor.machineId
+          : executor.kind === 'live_invocation' ? executor.daemonMachineId : clientReplayMachineId;
         if (!machineId) return actionFailure('approval_origin_unavailable');
         const forwardedDecision = decision ?? (executor.kind === 'live_invocation' ? 'approve' as const : undefined);
         if (!request.executionOriginV1.serverIdentityId) return actionFailure('approval_origin_unavailable');

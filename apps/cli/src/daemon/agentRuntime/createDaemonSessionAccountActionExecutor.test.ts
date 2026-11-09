@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ProjectSourcesMoveToTeamOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
@@ -756,13 +757,14 @@ describe('daemon Session Account authority', () => {
   });
 
   it.each([
-    ...(['find', 'settings', 'link', 'client', 'visual', 'relation', 'relation-server-error', 'unsigned-visual', 'unsigned-server-error', 'unsigned-retired', 'unsigned-revoked', 'unsigned-foreign-home', 'unsigned-unavailable'] as const)
+    ...(['find', 'settings', 'link', 'client', 'source-move-remote-approval', 'visual', 'relation', 'relation-server-error', 'unsigned-visual', 'unsigned-server-error', 'unsigned-retired', 'unsigned-revoked', 'unsigned-foreign-home', 'unsigned-unavailable'] as const)
       .map(kind => ({ kind, requester: 'owner' as const })),
     ...(['find', 'settings'] as const).map(kind => ({ kind, requester: 'unknown' as const })),
   ])(
     'routes an installed Session $kind Action through its canonical approval replay owner ($requester requester)', async ({ kind, requester }) => {
     const unsigned = kind.startsWith('unsigned-');
     const relation = kind.startsWith('relation');
+    const sourceMoveRemote = kind === 'source-move-remote-approval';
     const runnerCarrier = kind === 'find' || kind === 'settings' || kind === 'link';
     const serverHttpBaseUrl = 'https://client-source.test';
     const homeId = 'srv_client-source';
@@ -770,7 +772,7 @@ describe('daemon Session Account authority', () => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
     const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'source-account', tokenEpoch: 0,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null,
-      ...(runnerCarrier ? { credentialProvenance: 'stored_session' as const } : {}),
+      ...(runnerCarrier || sourceMoveRemote ? { credentialProvenance: 'stored_session' as const } : {}),
     };
     // Installation-file reads and Home HTTP are genuine boundaries; all signing,
     // Session custody, approval policy/currentness and reverse delivery stay real.
@@ -783,15 +785,19 @@ describe('daemon Session Account authority', () => {
       'ui.find': { approvalRequiredSurfaces: ['agent'] },
       'session.board.item.upsert': { approvalRequiredSurfaces: ['agent'] },
       'session.manager.set': { approvalRequiredSurfaces: ['agent'] },
+      'projects.sources.moveToTeam': { approvalRequiredSurfaces: ['agent'] },
     } } });
     setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1, loadedAtMs: 1,
       settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
-    const actionId = kind === 'find' ? 'ui.find' as const
+    const actionId = sourceMoveRemote ? 'projects.sources.moveToTeam' as const
+      : kind === 'find' ? 'ui.find' as const
       : kind === 'settings' ? 'settings.set' as const
       : kind === 'link' ? 'sessions.external.link.ensure' as const
       : kind === 'client' ? 'relay.runtime.open_path' as const
       : relation ? 'session.manager.set' as const : 'session.board.item.upsert' as const;
-    const input = kind === 'find' ? { op: 'set', query: 'approval needle' }
+    const input = sourceMoveRemote ? { serverId: homeId, sourceId: 'personal-source', expectedRevision: 1,
+      teamId: 'destination-team', requestKey: 'source-move-remote-approval' }
+      : kind === 'find' ? { op: 'set', query: 'approval needle' }
       : kind === 'settings' ? { anchor: 'transcript.pinEnabled', value: false }
       : kind === 'link' ? { machineId: source.machineId, agentId: 'codex', remoteSessionId: 'native-link', source: { kind: 'codexHome', home: 'user' } }
       : relation ? { sessionId: 'bob-session', managerSessionId: 'lead-session', expectedManagerSessionId: null }
@@ -801,15 +807,17 @@ describe('daemon Session Account authority', () => {
         source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Approved visual' } } },
       },
     };
-    const target = runnerCarrier || kind === 'client' || relation ? { kind: 'machine' as const, machineId: source.machineId }
+    const target = runnerCarrier || sourceMoveRemote || kind === 'client' || relation ? { kind: 'machine' as const, machineId: source.machineId }
       : { kind: 'session' as const, sessionId: 'bob-session' };
     const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
     const mutations: unknown[] = [];
     const rawSession = createSessionRecordFixture({ id: 'bob-session', share: null,
+      ...(sourceMoveRemote ? { active: true } : {}),
       encryptionMode: 'plain', metadata: JSON.stringify({ machineId: source.machineId, permissionMode: 'default' }),
       effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
         capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
     const rows = new Map<string, Record<string, unknown>>();
+    const resultPublications = new Set<string>();
     const mintedRequests: unknown[] = [];
     let currentHomeId = homeId;
     let sessionCurrent = true;
@@ -869,6 +877,15 @@ describe('daemon Session Account authority', () => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected HTTP object body');
       expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
       const path = new URL(String(url)).pathname;
+      if (sourceMoveRemote && path === '/v2/sessions/bob-session/pending') {
+        const localId = Reflect.get(body, 'localId');
+        expect(localId).toEqual(expect.stringMatching(/^approval-result:/));
+        if (typeof localId !== 'string') throw new Error('Missing approval result input identity');
+        expect(Reflect.get(body, 'requestedAction')).toEqual({ v: 1, kind: 'enqueue' });
+        const didWrite = !resultPublications.has(localId);
+        resultPublications.add(localId);
+        return { status: 200, data: { didWrite } };
+      }
       if (path === '/v2/account/settings') {
         const content = Reflect.get(body, 'content');
         if (!content || typeof content !== 'object' || Reflect.get(content, 't') !== 'plain') throw new Error('Expected plain settings');
@@ -942,7 +959,11 @@ describe('daemon Session Account authority', () => {
         options.onIssued();
         await clientCompleted;
         return { ok: true, result: { v: 1, execution: { ok: true, result: kind === 'find'
-          ? { status: 'results', current: 1, total: 1, coverage: 'loaded' } : { status: 'completed' } } } };
+          ? { status: 'results', current: 1, total: 1, coverage: 'loaded' }
+          : sourceMoveRemote ? ProjectSourcesMoveToTeamOutputV1Schema.parse({ kind: 'completed',
+            source: { id: 'personal-source', revision: 2, name: 'Personal source',
+              owner: { kind: 'team', teamId: 'destination-team' }, audience: [], createdByAccountId: 'source-account' },
+            childOperations: [] }) : { status: 'completed' } } } };
       },
     }));
     let executor!: ReturnType<typeof createCliActionExecutorFromCredentials>;
@@ -1118,7 +1139,7 @@ describe('daemon Session Account authority', () => {
       expect(resolveApprovalExecutor(open).kind).toBe('daemon');
       expect(mintedRequests).toEqual([]);
     } else {
-      if (!runnerCarrier) expect(resolveApprovalExecutor(open).kind).toBe(kind === 'client' || relation ? 'app' : 'daemon');
+      if (!runnerCarrier) expect(resolveApprovalExecutor(open).kind).toBe(sourceMoveRemote || kind === 'client' || relation ? 'app' : 'daemon');
       if (!open.executionOriginV1.externalActionInputSignature) throw new Error('Missing signed client approval origin');
       expect(open.executionOriginV1).toMatchObject({ accountId: 'source-account', requestId: invocationRequestId, target });
       expect(verifyExternalActionApprovalInputV1({ authorizationToken: 'source-home-proof', actionId, input: open.actionArgs, target,
@@ -1155,6 +1176,51 @@ describe('daemon Session Account authority', () => {
       return;
     }
     expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
+    if (sourceMoveRemote) {
+      // Automatic Session production above minted and signed this target. A
+      // contextual Machine on the deciding CLI must not replace that authority.
+      expect(resolveApprovalExecutor(open)).toEqual({ kind: 'app', placement: 'client' });
+      const originalAuthority = structuredClone(open.executionOriginV1);
+      const rpc = new RpcHandlerManager({ scopePrefix: source.machineId, localMachineId: source.machineId,
+        encryptionMode: 'plain', logger: () => {}, authorizeRequest: async () => ({ ok: true }) });
+      registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: executor });
+      // Machine RPC and connected-client RPC are the genuine process/network
+      // boundaries; the credentialed producer, CAS, replay and dispatcher run.
+      vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+        expect(request.machineId).toBe(source.machineId);
+        const approved = await runWithServerHttpBaseUrl(serverHttpBaseUrl,
+          () => store.approvalsGet({ artifactId, serverId: null }));
+        expect(approved).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
+        const replay = await rpc.handleRequest({ method: `${source.machineId}:${request.method}`,
+          params: request.request, callerAuthority: 'present_user' });
+        expect(replay).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
+          result: { kind: 'completed', source: { owner: { kind: 'team', teamId: 'destination-team' } } } } } });
+        return replay;
+      });
+      const decider = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+        serverId: configuration.activeServerId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+        machineId: 'unrelated-context-machine', externalActionClient: true });
+      const decide = () => decider.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: configuration.activeServerId, serverIdentityId: homeId, runtimeAccountId: 'source-account',
+      });
+      completeClient();
+      const decisionResult = await decide();
+      expect(decisionResult, JSON.stringify(decisionResult.ok ? { ok: true } : {
+        ok: false, errorCode: decisionResult.errorCode, effectAttempted: decisionResult.effectAttempted,
+      })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
+        result: { kind: 'completed', source: { id: 'personal-source', owner: { kind: 'team', teamId: 'destination-team' } } } } } });
+      expect(deliveries).toMatchObject([{ actionId: 'projects.sources.moveToTeam', input }]);
+      expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(deliveries).toHaveLength(1);
+      expect([...resultPublications]).toEqual([`approval-result:${artifactId}`]);
+      const retained = await runWithServerHttpBaseUrl(serverHttpBaseUrl,
+        () => store.approvalsGet({ artifactId, serverId: null }));
+      expect(retained).toMatchObject({ status: 'executed', actionArgs: open.actionArgs,
+        executionOriginV1: originalAuthority, execution: { ok: true } });
+      expect(rows.size).toBe(1);
+      return;
+    }
     // The approving device writes the strict approved Artifact, then calls the
     // actual public replay RPC with its authenticated human transport authority.
     expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsUpdate({ artifactId, serverId: null,
