@@ -877,6 +877,24 @@ it.each(['present', 'absent'] as const)('writes an allowed subscription price th
   } finally { await f.close(); }
 });
 
+it('lists saved Connected Accounts through the agent Session signed inventory root', async () => {
+  const f = await fixture();
+  const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'saved' };
+  f.app.addHook('onSend', async (request, reply, payload) => request.url === '/v1/account/profile' && reply.statusCode === 200
+    ? JSON.stringify(AccountProfileSchema.parse({ id: storage.account.id, connectedAccountsV4: [{ ref,
+      status: 'connected', authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null,
+      revisionSemantics: 'legacy_unfenced', credentialRevision: null }], connectedAccountGroupsV4: [] })) : payload);
+  try {
+    const outcome = await f.execute(f.operation('connectedServices.accounts.list', {}),
+      { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({ ok: true,
+      result: { accounts: [{ account: { ref } }], pools: [] } });
+    const reads = f.observations.filter(row => row.path === '/v1/account/profile');
+    expect(reads).toContainEqual(expect.objectContaining({ method: 'GET', status: 200, signed: true, bearer: false }));
+    expect(reads.every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
+  } finally { await f.close(); }
+});
+
 it.each(['usage.query', 'usage.recap.private.compose', 'usage.recap.private.export'] as const)(
   'reads personal accounting through the Session Action daemon and signed Home authentication: %s', async actionId => {
   const f = await fixture();
