@@ -191,6 +191,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   ctx: OpenCodeRuntimeContext;
   directory: string;
   scope: OpenCodeRuntimeScope;
+  finiteExecutionRun?: boolean;
   client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
@@ -802,16 +803,18 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         });
       }
       if (!ownsActiveHostTurn(hostTurnId)) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+      const completion = classifyOpenCodeAssistantCompletion(message);
       if (providerSessionError === null) {
         const info = asRecord(record?.info);
         const error = info?.error;
         if (error !== undefined && error !== null) {
           providerSessionError = error;
           providerSessionErrorProviderId = readNonBlankOpaqueIdentifier(info?.providerID);
+        } else if (params.finiteExecutionRun && completion.kind === 'terminal_success' && completion.finish === 'length') {
+          providerSessionError = new Error('OpenCode stopped at its output limit before the finite helper completed.');
         }
       }
       if (parts.length > 0) currentTurnAssistantWithPartsCount += 1;
-      const completion = classifyOpenCodeAssistantCompletion(message);
       if (completion.kind === 'terminal_success') {
         if (text) {
           terminalAssistantMessageCount += 1;

@@ -470,7 +470,7 @@ function createRuntime(
           channel: 'assistant',
           text: createOutput({ runId: request.runId, findings: normalizeDeepSecFindings([]), runResult }),
         });
-        return { status: 'complete' };
+        return { status: 'failed', diagnostic: { code: 'deepsec_scope_failed', severity: 'error' } };
       }
       const provider = request.providerBinding
         ? readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment) : null;
@@ -525,12 +525,17 @@ function createRuntime(
             warning: runResult.warning,
           }),
         });
-        return { status: 'complete' };
+        return { status: 'failed', diagnostic: { code: 'deepsec_confirmation_required', severity: 'error' } };
       }
 
       const findings = normalizeDeepSecFindings(parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
       emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
-      return { status: 'complete' };
+      return runResult.status === 'completed'
+        ? { status: 'complete' }
+        : { status: 'failed', diagnostic: {
+          code: runResult.status === 'readiness_failed' ? 'deepsec_readiness_failed' : 'deepsec_process_failed',
+          severity: 'error',
+        } };
     },
   });
 }

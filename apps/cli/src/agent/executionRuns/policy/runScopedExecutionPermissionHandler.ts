@@ -3,7 +3,7 @@ import type { ExecutionRunPermissionInteractionMode } from './executionRunPermis
 import { createExecutionRunPermissionHandler } from './executionRunPermissionDecision';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
-import { isHostOccurrenceQuestion } from '@/agent/permissions/requestKind';
+import { isAgentStructuredQuestionRequest, isHostOccurrenceQuestion } from '@/agent/permissions/requestKind';
 import { buildRunScopedExecutionPermissionRequestId, readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 
 export { buildRunScopedExecutionPermissionRequestId };
@@ -61,7 +61,7 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
       ? { ...context, mcpToolPolicy: policy } : context;
   };
   const readImmediate: NonNullable<AcpPermissionHandler['getImmediateDecision']> = (toolCallId, toolName, input, context) => {
-    if (isHostOccurrenceQuestion(toolName, context)) return null;
+    if (isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     const inherited = params.handler.getImmediateDecision?.(toolCallId, toolName, input, mcpContext(toolName, context)) ?? null;
     if (inherited?.decision === 'denied' || inherited?.decision === 'abort') return inherited;
     return toolPolicy?.getImmediateDecision(toolCallId, toolName, input, context) ?? inherited;
@@ -98,19 +98,21 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
         : {}),
       async handleToolCall(toolCallId, toolName, input, context) {
         const requestId = scopedRequestId(toolCallId);
+        const question = isAgentStructuredQuestionRequest({ toolName, source: context?.source });
         const immediate = readImmediate(requestId, toolName, input, context);
         if (immediate) return immediate;
         // Startup questions have no admitted executable turn. Keep their exact
         // Run scope, but let the Session question owner collect the person's answer.
         const interactionMode = isHostOccurrenceQuestion(toolName, context) ? undefined : params.readInteractionMode?.();
-        if (interactionMode === 'deterministic' || interactionMode === 'fail_closed') {
-          return { decision: 'denied' };
-        }
-        if (interactionMode === 'interaction_unavailable') {
+        if (interactionMode === 'interaction_unavailable'
+          || (question && (interactionMode === 'deterministic' || interactionMode === 'fail_closed'))) {
           throw Object.assign(
             new Error('Execution-run permission interaction target is unavailable'),
             { code: 'execution_run_interaction_unavailable' },
           );
+        }
+        if (interactionMode === 'deterministic' || interactionMode === 'fail_closed') {
+          return { decision: 'denied' };
         }
         pendingRequestIds.add(requestId);
         try {

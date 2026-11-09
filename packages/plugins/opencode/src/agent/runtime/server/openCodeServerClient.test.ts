@@ -31,6 +31,66 @@ const HEALTHY_MANAGED_SERVICE_SNAPSHOT = Object.freeze({
   diagnosticsTruncated: false,
 }) satisfies ManagedServiceSnapshot;
 
+describe('OpenCode public model configuration reaches the native prompt', () => {
+  it.each(['v1', 'v2'] as const)('uses the changed model on the next %s prompt', async dialect => {
+    const requests: ManagedServiceRequest[] = [];
+    const client = createClient({ directory: '/repo', dialect, request: async request => {
+      requests.push(request);
+      const path = new URL(request.pathAndQuery, 'http://native.invalid').pathname;
+      if (path.endsWith('/event')) return {
+        ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'text/event-stream' },
+        body: new ReadableStream<Uint8Array>({ start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'server.connected',
+            ...(dialect === 'v2' ? { data: {} } : { properties: {} }) })}\n\n`));
+          request.signal?.addEventListener('abort', () => controller.close(), { once: true });
+        } }),
+      };
+      const models = ['first', 'selected'].map(id => ({ id, providerID: 'example', name: id,
+        status: 'active', capabilities: { input: ['text'] } }));
+      if (path === '/provider') return createJsonResponse({ all: [{ id: 'example',
+        models: Object.fromEntries(models.map(model => [model.id, model])) }], connected: ['example'], default: {} });
+      if (path === '/api/provider') return createJsonResponse({ data: [{ id: 'example' }] });
+      if (path === '/api/model') return createJsonResponse({ data: models });
+      if (path.endsWith('/config')) return createJsonResponse({ model: 'example/first' });
+      if (path.endsWith('/session') && request.method === 'POST') {
+        return createJsonResponse(dialect === 'v2' ? { data: { id: 'model-session' } } : { id: 'model-session' });
+      }
+      if (path.endsWith('/model')) return createNoContentResponse();
+      if (path.endsWith('/prompt') || (path.endsWith('/message') && request.method === 'POST')) {
+        return createJsonResponse(dialect === 'v2' ? { data: { id: 'native-input' } } : { id: 'native-input' });
+      }
+      return createJsonResponse(dialect === 'v2' ? { data: [] } : []);
+    } });
+    const operations = createOpenCodeServerRuntime({ ctx: createContextFixture({ managedServerBaseUrl: 'http://native.invalid' }),
+      directory: '/repo', happierSessionId: 'model-config-session', client, dialect,
+      mcpRegistration: Promise.resolve({ requiredHappier: { status: 'ready' }, registeredServers: [] }),
+      mcpProjection: { registrations: [], requiredHappierServerName: null, requiredHappierConfigurationPresent: false } });
+    await operations.openSession({ kind: 'create' });
+    const runtime = createOpenCodeSessionRuntime({ operations,
+      request: { kind: 'create', sessionId: 'model-config-session', cwd: '/repo' },
+      disposeOperations: async () => { await operations.resetOrDisposeRuntime(); } });
+    try {
+      expect(await runtime.updateConfiguration?.({ mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'example/selected', updatedAtMs: 1, selectionSource: 'explicit' },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options: {} }))
+        .toMatchObject({ status: dialect === 'v1' ? 'deferred' : 'applied' });
+      expect(await runtime.send({ inputIds: ['selected-model-input'], input: { text: 'Use the changed model' },
+        delivery: { kind: 'newTurn', turnId: 'selected-model-turn' } })).toMatchObject({ status: 'admitted' });
+      const writes = requests.filter(request => request.method === 'POST' || request.method === 'PUT');
+      if (dialect === 'v1') {
+        expect(readJsonRequestBody(writes.find(request => new URL(request.pathAndQuery, 'http://native.invalid').pathname.endsWith('/message'))))
+          .toMatchObject({ model: { providerID: 'example', modelID: 'selected' } });
+      } else {
+        const modelIndex = writes.findIndex(request => request.pathAndQuery.includes('/model'));
+        const promptIndex = writes.findIndex(request => request.pathAndQuery.includes('/prompt'));
+        expect(modelIndex).toBeGreaterThanOrEqual(0);
+        expect(promptIndex).toBeGreaterThan(modelIndex);
+        expect(readJsonRequestBody(writes[modelIndex])).toEqual({ model: { providerID: 'example', id: 'selected' } });
+      }
+    } finally { await runtime.dispose(); }
+  });
+});
+
 describe('OpenCode semantic event custody while catalog projection awaits', () => {
   it('drains admitted semantic work before reporting a transport read failure', async () => {
     const owner = new AbortController();

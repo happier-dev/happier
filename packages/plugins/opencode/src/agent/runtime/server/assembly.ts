@@ -194,6 +194,7 @@ type OpenCodeServerRuntimeAssemblyCommon = Readonly<{
   env?: Readonly<Record<string, string>>;
   configParts?: readonly OpenCodeConfigPart[];
   permissionMode?: string | null;
+  finiteExecutionRun?: boolean;
   mcpServers?: unknown;
   signal?: AbortSignal;
   mcpService?: AgentSessionMcpService;
@@ -351,6 +352,7 @@ export async function createOpenCodeServerRuntimeAssembly(
       client,
       env: params.env,
       permissionMode: params.permissionMode,
+      finiteExecutionRun: params.finiteExecutionRun,
       dialect: dialectDetection.dialect,
       workspaceWrites: configuration?.workspaceWrites,
       ...(typeof providerConfigPart?.model === 'string' ? { providerModelId: providerConfigPart.model } : {}),

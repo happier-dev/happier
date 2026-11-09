@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionConfigurationSnapshot, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { createFxAgentRuntime } from '../../../../../../../packages/plugins/fx/src/agent/runtime/factory';
 import { FX_PLUGIN } from '../../../../../../../packages/plugins/fx/src/manifest';
@@ -27,11 +27,13 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current') {
       ? { ...option, currentValue: 'custom/current', options: [...option.options, {value:'custom/current',name:'Custom'}] } : option);
     for await (const line of createInterface({ input: process.stdin })) {
       const r = JSON.parse(line); if (r.id === undefined) continue;
-      requests.push({ method: r.method, params: r.params });
+      requests.push({ method: r.method, params: r.params,
+        ...(r.method === 'session/prompt' ? { model: configOptions.find(option => option.id === 'model').currentValue } : {}) });
       writeFileSync(process.env.CAPTURE, JSON.stringify(requests));
       let result = {}; let error;
       if (r.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: {} };
       if (r.method === 'session/new') result = { sessionId: 'native-models', configOptions };
+      if (r.method === 'session/prompt') result = { stopReason: 'end_turn' };
       if (r.method === 'session/set_config_option') {
         if (r.params.configId === 'model' && process.env.SCENARIO === 'refuse') {
           error = { code: -32602, message: 'Model was refused by the native route' };
@@ -81,6 +83,8 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current') {
   },
   setters: () => (JSON.parse(readFileSync(capture, 'utf8')) as Array<{method: string; params: {configId?: string; value?: string}}>)
     .filter(request => request.method === 'session/set_config_option').map(request => request.params),
+  promptModels: () => (JSON.parse(readFileSync(capture, 'utf8')) as Array<{method: string; model?: string}>)
+    .filter(request => request.method === 'session/prompt').map(request => request.model),
   async dispose() { publications.dispose(); await context.dispose(); } };
 }
 
@@ -88,6 +92,19 @@ function configuration(model: string, selectionSource: 'explicit' | 'inherited' 
   return { mode: { value: null, updatedAtMs: 0 }, model: { value: model, updatedAtMs: 1,
     ...(selectionSource ? { selectionSource } : {}) },
     permissionIntent: { value: null, updatedAtMs: 0 }, options: { provider: { value: provider, updatedAtMs: 1 } } };
+}
+
+async function sendCompletedPrompt(session: AgentSessionRuntime, turnId: string, text: string) {
+  let complete!: () => void;
+  const completed = new Promise<void>(resolve => { complete = resolve; });
+  const subscription = session.watch(event => {
+    if (event.kind === 'turn-complete' && event.turnId === turnId) complete();
+  });
+  try {
+    expect(await session.send({ inputIds: [turnId], input: { text }, delivery: { kind: 'newTurn', turnId } }))
+      .toMatchObject({ status: 'admitted' });
+    await completed;
+  } finally { subscription.dispose(); }
 }
 
 describe('FX model selection through the public ACP owner', () => {
@@ -113,17 +130,20 @@ describe('FX model selection through the public ACP owner', () => {
     });
   });
 
-  it('applies an explicit live unlisted choice after the native route accepts it', async () => {
+  it('uses an accepted explicit live model for the next native prompt without reapplying unchanged configuration', async () => {
     await withTempDir('fx-live-model-', async dir => {
       const f = await fixture(dir, 'accept');
       const session = await f.open();
       try {
+        await sendCompletedPrompt(session, 'before-model-change', 'Use the native default');
         expect(await session.updateConfiguration?.(configuration('custom/new', 'explicit')))
           .toMatchObject({ status: 'applied' });
         expect(f.setters().map(params => params.value)).toEqual(['gateway', 'custom/new']);
         expect(f.publications.modelsSource.read().currentModelId).toBe('custom/new');
         await session.updateConfiguration?.(configuration('custom/new', 'explicit'));
         expect(f.setters().map(params => params.value)).toEqual(['gateway', 'custom/new']);
+        await sendCompletedPrompt(session, 'after-model-change', 'Use the selected model');
+        expect(f.promptModels()).toEqual(['gpt-6.1-sol', 'custom/new']);
       } finally { await session.dispose(); await f.dispose(); }
     });
   });
@@ -152,6 +172,8 @@ describe('FX model selection through the public ACP owner', () => {
           code: 'acp_configuration_update_failed', message: expect.stringContaining('Model was refused by the native route'),
         } });
         expect(f.publications.modelsSource.read().currentModelId).toBe('gpt-6.1-sol');
+        await sendCompletedPrompt(session, 'after-model-refusal', 'Keep the working model');
+        expect(f.promptModels()).toEqual(['gpt-6.1-sol']);
       } finally { await session.dispose(); await f.dispose(); }
     });
   });

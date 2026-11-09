@@ -15,6 +15,58 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
+it.each([
+    { interaction: 'approval', permissionMode: 'default', intent: 'delegate' },
+    { interaction: 'question', permissionMode: 'default', intent: 'delegate' },
+    { interaction: 'question', permissionMode: 'read_only', intent: 'delegate' },
+    { interaction: 'question', permissionMode: 'default', intent: 'review' },
+] as const)('fails a finite $intent $permissionMode run whose native $interaction cannot be presented', async ({ interaction, permissionMode, intent }) => {
+    const runId = `unsupported-${interaction}-${permissionMode}`;
+    const lease = { pluginId: 'acme.detached', pluginVersion: '1.0.0', agentId: 'acme.detached/default',
+        localAgentId: 'default', occurrenceId: runId, isCurrent: () => true };
+    const factory = {
+        async open(request: AgentExecutionRunOpenRequest, context: AgentExecutionRunRuntimeContextV1) {
+            if (request.kind === 'fork') throw new Error('No fork');
+            // Only the provider-native conversation is a boundary fake. It can
+            // finish normally after an unavailable prompt was denied by its SDK.
+            return await createExecutionRunHostBackendFromConversationRuntime({ request, openConversation: async () => {
+                let listener: ((event: AgentExecutionRunConversationEventV1) => void) | undefined;
+                return {
+                    watch(next) { listener = next; return { dispose() { listener = undefined; } }; },
+                    async send(input) {
+                        listener?.({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+                        if (interaction === 'approval') await context.services.interactions.requestApproval({
+                            kind: 'approval', title: 'Write file',
+                            subject: { kind: 'tool', name: 'Write', input: { path: '/repo/a', content: 'changed' } },
+                        });
+                        else await context.services.interactions.askQuestions({ kind: 'questions', title: 'Choose scope',
+                            questions: [{ id: 'scope', prompt: 'Which scope?', type: 'text', required: true }],
+                        });
+                        listener?.({ kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant', text: 'Partial answer' });
+                        listener?.({ kind: 'turn-complete', turnId: input.delivery.turnId });
+                        return { status: 'admitted' as const };
+                    },
+                    async dispose() {},
+                };
+            } });
+        },
+    };
+    const start = { intent, runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response' } as const;
+    const host = createNativeAgentExecutionRunHostRuntime({
+        runtime: { sessions: { async open() { throw new Error('No Session identity'); }, executionRunContextV1: factory } },
+        executionRunContextV1: factory, lease, supportsResume: false,
+        options: { cwd: '/repo', runId, scope: 'detached', backendId: lease.agentId, permissionMode, start },
+        createExecutionRunContext: createNativeAgentExecutionRunContextLeaseFactory({ lease, runId, start, permissionMode,
+            controllerOccurrenceId: `${runId}-controller`, callId: `${runId}-call`, sidechainId: `${runId}-sidechain`,
+            runtimeRegistry: null, directory: '/repo', machineId: 'machine', accountSettings: null,
+        }),
+    });
+    try {
+        await host.provisionRuntime({ initialPrompt: 'Complete the helper task' });
+        await expect(host.waitForTurnCompletion?.()).rejects.toMatchObject({ executionRunErrorCode: 'execution_run_interaction_unavailable' });
+    } finally { await host.dispose(); }
+});
+
 it.each(['public', 'narrowed', 'no_tools'] as const)('keeps detached %s native approvals on the active input authority', async source => {
     const runId = `authority-${source}`;
     const permissionMode = source === 'public' ? 'read_only' : source === 'no_tools' ? 'no_tools' : 'yolo';

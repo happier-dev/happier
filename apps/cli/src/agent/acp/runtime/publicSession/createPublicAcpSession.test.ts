@@ -766,6 +766,9 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'refused') {
               ok(request.id, { stopReason: 'refusal' });
+            } else if (scenario === 'max_tokens' || scenario === 'max_turn_requests') {
+              update(sessionId, 'incomplete ACP output');
+              ok(request.id, { stopReason: scenario });
             } else if (scenario === 'unknown-stop-reason') {
               ok(request.id, { stopReason: 'future_stop', usage: {
                 inputTokens: 17, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 2, reasoningTokens: 3,
@@ -1542,7 +1545,7 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it.each(['completed', 'prompt-effect-unobserved'] as const)('projects witnessed ACP consumption through an Execution Run without creating a Session identity (%s)', async scenario => {
+  it.each(['completed', 'prompt-effect-unobserved', 'max_tokens', 'max_turn_requests'] as const)('projects witnessed ACP consumption through an Execution Run without creating a Session identity (%s)', async scenario => {
     await withTempDir('happier-public-acp-execution-run-', async (dir) => {
       const fixture = createFixture(dir, scenario);
       const run = await createPublicAcpExecutionRun({
@@ -1567,10 +1570,18 @@ describe('createPublicAcpSession', () => {
           expect(events).toContainEqual(expect.objectContaining({ kind: 'output-delta', text: 'hello from ACP' }));
           expect(events.some(event => event.kind === 'run-failed')).toBe(false);
           await expect(run.send({ text: 'A finite Run cannot accept another turn' })).resolves.toMatchObject({ status: 'unavailable' });
-        } else {
+        } else if (scenario === 'prompt-effect-unobserved') {
           expect(events).toContainEqual(expect.objectContaining({
             kind: 'run-failed', diagnostic: expect.objectContaining({ code: 'acp_input_custody_unknown' }),
           }));
+        } else {
+          expect(events).toContainEqual(expect.objectContaining({ kind: 'output-delta', text: 'incomplete ACP output' }));
+          expect(events).toContainEqual(expect.objectContaining({
+            kind: 'run-failed', diagnostic: expect.objectContaining({
+              code: 'acp_turn_failed', details: expect.objectContaining({ stopReason: scenario }),
+            }),
+          }));
+          expect(events.some(event => event.kind === 'run-complete')).toBe(false);
         }
         expect(events.every((event) => event.runId === 'execution-run-1')).toBe(true);
         expect(events.every((event) => !('sessionId' in event))).toBe(true);

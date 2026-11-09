@@ -513,7 +513,7 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_process_failed' } });
     expect(readStructuredOutput(events)).toMatchObject({
       status: 'failed',
       error: { code: 'deepsec_process_failed' },
@@ -549,7 +549,7 @@ describe('activate', () => {
     expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
   });
 
-  it('publishes required cost confirmation as a structured failed outcome', async () => {
+  it('fails required confirmation without launching and lets the caller retry explicitly', async () => {
     const fixture = createRuntimeContext();
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open(createOpenRequest({
@@ -562,7 +562,7 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_confirmation_required' } });
     expect(readStructuredOutput(events)).toMatchObject({
       status: 'failed',
       error: { code: 'deepsec_confirmation_required' },
@@ -570,6 +570,18 @@ describe('activate', () => {
     });
     expect(fixture.resolve).not.toHaveBeenCalled();
     expect(fixture.run).not.toHaveBeenCalled();
+
+    const retried = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-confirmed-retry',
+      profileLocalId: 'repository-security-audit',
+      includeExplicitMode: false,
+      confirmedCostWarning: true,
+    }), fixture.context);
+    if (!retried) throw new Error('Expected explicit DeepSec retry');
+    const retryEvents = await watchToTerminal(retried);
+    await retried.dispose();
+    expect(retryEvents.at(-1)?.kind).toBe('run-complete');
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process']);
   });
 
   it('publishes repository audit process failures as diagnosable partial findings', async () => {
@@ -605,7 +617,7 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_process_failed' } });
     expect(readStructuredOutput(events)).toMatchObject({
       summary: 'DeepSec review partially completed with 1 finding(s).',
       reviewOutcome: 'partial',
@@ -703,7 +715,7 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_scope_failed' } });
     expect(readStructuredOutput(events)).toMatchObject({
       status: 'failed',
       error: { code: 'deepsec_scope_failed' },
@@ -831,7 +843,7 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_readiness_failed' } });
     expect(readStructuredOutput(events)).toMatchObject({
       status: 'failed',
       error: { code: 'deepsec_readiness_failed' },

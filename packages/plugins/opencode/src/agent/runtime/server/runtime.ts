@@ -18,6 +18,7 @@ export function createOpenCodeServerRuntime(params: Readonly<{
   client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
+  finiteExecutionRun?: boolean;
   workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
   dialect?: OpenCodeServerDialect;
