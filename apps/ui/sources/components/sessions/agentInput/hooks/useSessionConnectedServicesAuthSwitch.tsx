@@ -10,8 +10,10 @@ import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new
 
 import type {
     ConnectedAccountServiceKey} from '@happier-dev/protocol/connect/connected-service-bindings';
-import type {
-    ConnectedServiceUxDiagnosticV1} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import {
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
+    type ConnectedServiceUxDiagnosticV1} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type {
     PluginProjectedAgentConnectedAccountPurposeV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
@@ -720,6 +722,18 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setOptimisticBindingsByServiceId(previousBindings);
             return;
         }
+        const presentFailure = (errorCode: string | undefined, failureServiceId = serviceId) => {
+            Modal.alert(t('common.error'), presentSessionAuthSwitchFailure(errorCode),
+                buildConnectedServiceUxDiagnosticAlertButtons({
+                    actions: [{ kind: CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts, labelKey: 'connectedServices.title' }],
+                    handlers: {
+                        openConnectedAccounts: () => fireAndForget(openConnectSheet(failureServiceId),
+                            { tag: 'SessionAuthSwitch.connect' }),
+                        dismiss: () => {},
+                    },
+                    translate: t,
+                }));
+        };
         void params.applyBinding({
             sessionId: params.sessionId,
             agentId,
@@ -849,10 +863,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             // Suppress the generic one-shot error alert so the failure is not
             // double-surfaced and stays recoverable.
             if (partialNotice) return;
-            Modal.alert(
-                t('common.error'),
-                presentSessionAuthSwitchFailure(result.errorCode),
-            );
+            presentFailure(result.errorCode, result.serviceId ?? serviceId);
         }).catch((error) => {
             if (switchAttemptIdRef.current !== attemptId) return;
             if (isNonTerminalRestartTimeoutError(error)) {
@@ -870,7 +881,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setActionableState(null);
             setProviderSessionDiagnosticActionState(null);
             setOptimisticBindingsByServiceId(previousBindings);
-            Modal.alert(t('common.error'), t('connectedServices.authSwitch.switchFailed'));
+            presentFailure(readRpcErrorCode(error));
         });
         })();
     }, [

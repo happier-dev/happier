@@ -17,6 +17,14 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
+import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
+
+/** Closed spawn refusals retain the same availability vocabulary as the Machine inventory. */
+export function readSessionAgentAvailabilityFailure(code: unknown): 'needsSignIn' | 'notInstalled' | null {
+    if (code === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) return 'needsSignIn';
+    if (code === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING) return 'notInstalled';
+    return null;
+}
 
 function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
     errorCode: string | undefined,
@@ -61,7 +69,11 @@ function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
 }
 
 export function presentSessionAuthSwitchFailure(errorCode: string | undefined): string {
-    return t(resolveSessionConnectedServiceAuthSwitchErrorMessageKey(errorCode));
+    const messageKey = resolveSessionConnectedServiceAuthSwitchErrorMessageKey(errorCode);
+    const message = messageKey === 'connectedServices.authSwitch.switchFailed'
+        ? `${t(messageKey)}\n\n${t('connectedServices.diagnostics.body.default')}`
+        : t(messageKey);
+    return errorCode ? t('errors.errorWithCode', { message, code: errorCode }) : message;
 }
 
 function isTeamCredentialRefusal(code: string): code is ProviderBrokerAdmissionFailureCodeV1 {
@@ -90,6 +102,10 @@ export function presentSessionStartupFailureRecovery(codes: readonly unknown[]):
 function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntimeIssueV1): string | null {
     const nativeAuth = presentSessionAgentAuthRequired(issue);
     if (nativeAuth) return nativeAuth.message;
+    const agentAvailability = readSessionAgentAvailabilityFailure(code);
+    if (agentAvailability) return describeAgentReadinessCause({
+        title: t('newSession.wizardSection.agent'), state: agentAvailability,
+    });
     if (code === 'codex_refresh_free_auth_unsupported') {
         if (issue?.failureCause?.reason === 'refresh_bridge_unavailable') {
             return t('session.startFailure.cause.codex_refresh_bridge_unavailable');

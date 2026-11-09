@@ -1,6 +1,7 @@
 import { renderHook as renderBaseHook, standardCleanup } from '@/dev/testkit';
 import * as React from 'react';
 import { t, type TranslationKey } from '@/text';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import type { RenderHookOptions } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -341,6 +342,9 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
         translate: (key: string, params?: Record<string, unknown>) => {
+            if (key === 'errors.errorWithCode') {
+                return `${String(params?.message)} (${String(params?.code)})`;
+            }
             if (key === 'connectedServices.authChip.connectedCountLabel') {
                 return `Auth: ${String(params?.count ?? '')}`;
             }
@@ -1122,11 +1126,14 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             await Promise.resolve();
         });
 
-        // Neutral failure surface: a plain error alert, no routing, no
-        // actionable diagnostic, and the optimistic binding is reverted.
+        // The refusal retains its code and offers account review without routing
+        // automatically; the optimistic binding is reverted.
         expect(modalAlertMock).toHaveBeenCalledWith(
             'common.error',
-            'connectedServices.authSwitch.errors.unsupportedService',
+            'connectedServices.authSwitch.errors.unsupportedService (unsupported_service)',
+            expect.arrayContaining([
+                expect.objectContaining({ text: 'connectedServices.title', onPress: expect.any(Function) }),
+            ]),
         );
         expect(routerPushMock).not.toHaveBeenCalled();
         expect(hook.getCurrent().statusBadges).toEqual([]);
@@ -1309,9 +1316,60 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(modalAlertMock).toHaveBeenCalledWith(
             'common.error',
-            messageKey,
+            t('errors.errorWithCode', { message: t(messageKey), code: errorCode }),
+            expect.arrayContaining([expect.objectContaining({ text: 'connectedServices.title', onPress: expect.any(Function) })]),
         );
         expect(renderChipPopover(hook).bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({ source: 'native' });
+    });
+
+    it.each([
+        { agentId: 'claude', serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY, pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        { agentId: 'codex', serviceId: CODEX_SERVICE_KEY, pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        { agentId: 'acme.review/reviewer', serviceId: NOVEL_SERVICE_KEY, pluginId: 'acme.review', localId: 'reviewer-service' },
+    ])('retains the current account and exposes the typed refusal and account recovery for $agentId', async ({ agentId, serviceId, pluginId, localId }) => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        profileState.current = {
+            connectedAccountsV4: ['ai3', 'ai1'].map(accountId => v4Account({ pluginId, localId, accountId, kind: 'oauth' })),
+            connectedAccountGroupsV4: [], connectedServiceCredentialRevisionsV1: [],
+        };
+        const previousBinding = { source: 'connected', selection: 'profile', profileId: 'ai3' } as const;
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            applyBinding: setSessionConnectedServiceAuthBindingMock, sessionId: 'session-1', agentId,
+            machineId: 'machine-1', serverId: 'server-1', sessionActive: true,
+            connectedAccounts: [{ purpose: 'primary', service: { pluginId, localId } }],
+            sessionMetadata: { connectedServices: { v: 2, bindingsByServiceId: { [serviceId]: previousBinding } } },
+            settings: { connectedServicesDefaultProfileByServiceId: {} }, switchingDisabledReason: null,
+        }));
+        // A settled owner refusal and a typed transport refusal reach distinct branches.
+        for (const failure of ['owner', 'transport'] as const) {
+            const code = failure === 'owner' ? 'provider_session_state_unavailable_for_resume' : RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
+            if (failure === 'owner') {
+                setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({ ok: false, errorCode: code, serviceId,
+                    diagnostics: { uxDiagnostic: {
+                        code, failurePhase: 'continuity', source: 'manual_auth_switch', serviceId, retryable: false,
+                        suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'],
+                    } },
+                });
+            } else {
+                setSessionConnectedServiceAuthBindingMock.mockRejectedValueOnce(createRpcCallError({
+                    error: 'private upstream diagnostic', errorCode: code,
+                }));
+            }
+            await act(async () => {
+                renderChipPopover(hook).setBindingForService(serviceId, { source: 'connected', selection: 'profile', profileId: 'ai1' });
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            const alert = modalAlertMock.mock.calls.at(-1);
+            expect(alert?.[1]).toContain(code);
+            expect(alert?.[1]).not.toContain('private upstream diagnostic');
+            const buttons = alert?.[2] as Array<{ text: string; onPress?: () => void }> | undefined;
+            const reviewAccounts = buttons?.find(button => button.text === 'connectedServices.title');
+            expect(reviewAccounts?.onPress).toBeTypeOf('function');
+            await act(async () => { reviewAccounts?.onPress?.(); await Promise.resolve(); });
+            expectConnectSheet({ pluginId, localId });
+            expect(renderChipPopover(hook).bindingsByServiceId[serviceId]).toEqual(previousBinding);
+        }
     });
 
     it('surfaces per-service non-applied badges when multi-service hot apply partially succeeds', async () => {
