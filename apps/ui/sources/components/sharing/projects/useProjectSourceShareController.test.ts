@@ -6,7 +6,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourcesController } from '@/components/projects/sources/projectSourcesController';
 import { useProjectSourceShareController } from './useProjectSourceShareController';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { ProjectSourcesUpdateInputV1Schema, type ProjectSourceRepositorySelectorV1,
@@ -63,7 +63,18 @@ describe('Source audience ShareSheet controller', () => {
         await act(async () => { hook.getCurrent().actions.addPrincipal(principal); });
         expect(hook.getCurrent().model.grants[0].level).toEqual({ kind: 'editable', value: 'view', options: ['view'] });
         expect(hook.getCurrent().model.revision).toBe(2);
+        // Only the exact row under review may submit a live Source removal.
+        await act(async () => { hook.getCurrent().actions.confirmRemove(principal); });
+        expect(writes).toHaveLength(1);
         await act(async () => { hook.getCurrent().actions.requestRemove(principal); });
+        expect(writes).toHaveLength(1);
+        expect(hook.getCurrent().model.grants[0].removal.kind).toBe('confirming');
+        await act(async () => { hook.getCurrent().actions.cancelRemove(principal); });
+        expect(hook.getCurrent().model.grants[0].removal.kind).toBe('allowed');
+        await act(async () => { hook.getCurrent().actions.requestRemove(principal); });
+        await act(async () => { hook.getCurrent().actions.confirmRemove({ kind: 'team', teamId: 'other' }); });
+        expect(writes).toHaveLength(1);
+        await act(async () => { hook.getCurrent().actions.confirmRemove(principal); });
         expect(hook.getCurrent().model.grants).toEqual([]);
         expect(writes).toEqual([
             { serverId: scope.serverId, sourceId: source.id, expectedRevision: 1, patch: { audience: [{ principal, level: 'view' }] } },

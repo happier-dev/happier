@@ -1,4 +1,5 @@
 import { pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import type {
     PluginPermissionGrant,
@@ -57,7 +58,7 @@ export function markPluginPermissionGrantRefreshFailed(
 }
 
 export function applyPluginPermissionGrantList(
-    _state: PluginPermissionGrantState,
+    state: PluginPermissionGrantState,
     response: PluginPermissionGrantListResponse,
 ): PluginPermissionGrantState {
     const grantsById: Record<string, PluginPermissionGrant> = {};
@@ -76,14 +77,14 @@ export function applyPluginPermissionGrantList(
         pendingRequestIds.push(request.id);
     }
 
-    return {
+    return retainDeep(state, {
         grantsById,
         grantIds,
         pendingRequestsById,
         pendingRequestIds,
         status: 'ready',
         error: null,
-    };
+    });
 }
 
 function removeId(ids: readonly string[], id: string): readonly string[] {

@@ -15,6 +15,7 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { getStorage } from '@/sync/domains/state/storage';
 import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -63,6 +64,36 @@ describe('Machine removal consequences', () => {
 });
 
 describe('Machine sharing through the canonical controller and sheet', () => {
+    it('publishes no new grant projection for five equal refreshes of 128 grants and retains unchanged rows on a real change', async () => {
+        let snapshot: MachineAccessGrantsListResponseV1 = { ...initial, grants: Array.from({ length: 128 }, (_, index) => ({
+            ...initial.grants[0]!, principal: { kind: 'account', accountId: `person-${index}` },
+            display: { name: `Person ${index}` }, audience: [], removal: { losesAccessAccountIds: [`person-${index}`] },
+        })) };
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-share-identity.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(snapshot) : undefined });
+        let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useMachineShareController>>>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            let projections = 0;
+            hook = await renderHook(() => {
+                const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
+                React.useEffect(() => { projections += 1; }, [controller.model.grants]);
+                return controller;
+            });
+            await vi.waitFor(() => expect(hook!.getCurrent().response?.grants).toHaveLength(128));
+            const previous = hook.getCurrent();
+            projections = 0;
+            for (let index = 0; index < 5; index += 1) await act(async () => { await hook!.getCurrent().retryContent(); });
+            expect(hook.getCurrent().response).toBe(previous.response);
+            expect(hook.getCurrent().model.grants).toBe(previous.model.grants);
+            expect(projections).toBe(0);
+            snapshot = { ...snapshot, grants: snapshot.grants.map((grant, index) => index === 0 ? { ...grant, level: 'admin' } : grant) };
+            await act(async () => { await hook!.getCurrent().retryContent(); });
+            expect(hook.getCurrent().model.grants[0]?.level.value).toBe('admin');
+            expect(hook.getCurrent().response?.grants[1]).toBe(previous.response?.grants[1]);
+            expect(projections).toBe(1);
+        } finally { await hook?.unmount(); await home.dispose(); }
+    });
     it.each(['full', 'inline'] as const)('keeps isolation pending until the supported Machine policy arrives without changing grants (%s)', async (presentation) => {
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://guest-placement.test', accountId: 'alice' }],
             route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
@@ -243,9 +274,10 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const offline = () => screen!.findByTestId('machine-share-offline') !== null;
             await vi.waitFor(() => expect(offline()).toBe(true));
             await act(async () => withdrawMachinePresenceForScope(scope));
-            expect(offline()).toBe(false);
+            // a4df3f74f0: socket withdrawal supplies no new Machine fact; retain known offline presence.
+            expect(offline()).toBe(true);
             await act(async () => captureMachinePresenceObservation({ ...scope, accountId: 'bob' })([machine.id]));
-            expect(offline()).toBe(false);
+            expect(offline()).toBe(true);
             await act(async () => captureMachinePresenceObservation(scope)([machine.id]));
             expect(offline()).toBe(true);
             await act(async () => { await home.switchAccount('machine', 'bob'); applyMachine(); });
@@ -260,14 +292,11 @@ describe('Machine sharing through the canonical controller and sheet', () => {
 
     it.each([
         ['machines.access.grant.remove', false], ['machines.access.grant.remove', true],
-        ['machines.access.leave', false], ['machines.access.leave', true],
     ] as const)('asks in the row before %s with waiver=%s, then applies once on Confirm', async (actionId, waived) => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        const leaving = actionId === 'machines.access.leave';
-        let snapshot: MachineAccessGrantsListResponseV1 = leaving ? { ...initial, canManage: false, grants: [], ownDirectGrant: true,
-            access: { ...initial.access, role: 'use' }, ownAccessSources: [{ principal: bob, displayName: 'Bob' }] } : initial;
-        const accountId = leaving ? 'bob' : 'alice';
+        let snapshot: MachineAccessGrantsListResponseV1 = initial;
+        const accountId = 'alice';
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-removal-waiver.test', accountId, settings: {
             actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: waived ? { [actionId]: ['ui'] } : {} },
         } }], route: request => {
@@ -275,7 +304,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             if (request.method === 'GET') return Response.json(snapshot);
             if (request.method === 'DELETE') {
                 snapshot = { ...snapshot, grants: [], ownDirectGrant: false, ownAccessSources: [] };
-                return Response.json(leaving ? { kind: 'left', effectiveAccess: 'none' } : { kind: 'removed', effectiveAccess: 'manage' });
+                return Response.json({ kind: 'removed', effectiveAccess: 'manage' });
             }
             return undefined;
         } });
@@ -288,7 +317,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                     presentation="full" testID="machine-share-editor" />;
             }
             const screen = await renderScreen(<Surface />);
-            const rowId = leaving ? 'machine-share-your-access' : 'machine-share-grant-account:bob';
+            const rowId = 'machine-share-grant-account:bob';
             await vi.waitFor(() => expect(screen.findByTestId(rowId)).not.toBeNull());
             await screen.pressByTestIdAsync(rowId);
             const deletes = () => home.requests.filter(request => request.method === 'DELETE');
@@ -296,20 +325,37 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')).toBeNull();
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
             expect(deletes()).toHaveLength(0);
-            // The person leaving reads their own consequence; a manager removing someone reads who loses access, by name.
-            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(leaving
-                ? t('machines.sharing.leaveLoss', { machine: 'Devbox' })
-                : t('machines.sharing.effectiveLoss', { people: 'Bob', machine: 'Devbox' }));
+            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children)
+                .toBe(t('machines.sharing.effectiveLoss', { people: 'Bob', machine: 'Devbox' }));
             await screen.pressByTestIdAsync('machine-share-remove-cancel:account:bob');
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')).toBeNull();
             expect(deletes()).toHaveLength(0);
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
             await screen.pressByTestIdAsync('machine-share-remove-confirm:account:bob');
             await vi.waitFor(() => expect(deletes()).toHaveLength(1));
-            expect(home.requests.find(request => request.method === 'DELETE')?.body).toEqual(leaving ? {} : { principal: bob });
+            expect(home.requests.find(request => request.method === 'DELETE')?.body).toEqual({ principal: bob });
             expect(Modal.confirm).not.toHaveBeenCalled();
         } finally { await home.dispose(); }
     });
+    it('returns a row to its saved level, with no error, when the person cancels the change', async () => {
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-cancel-upgrade.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
+        let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useMachineShareController>>>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            hook = await renderHook(() => useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope }));
+            await vi.waitFor(() => expect(hook!.getCurrent().model.grants).toHaveLength(1));
+            await act(async () => { hook!.getCurrent().actions.setAccessLevel(bob, 'admin'); });
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(hook!.getCurrent().model.grants[0]?.level.value).toBe('view'));
+            expect(JSON.stringify(hook.getCurrent().model.grants[0])).not.toContain(t('machines.sharing.unavailable', { machine: 'Devbox' }));
+            expect(home.requests.filter(request => request.path === '/v1/machines/machine/access' && request.method !== 'GET')).toHaveLength(0);
+        } finally { await hook?.unmount(); await home.dispose(); }
+    });
+
     it('retains dated census for transport loss, then clears it on denial and discards an older read', async () => {
         let mode: 'ready' | 'transport' | 'unavailable' | 'pending' | 'denied' = 'ready';
         let pending: { signal: AbortSignal | null | undefined; finish: (response: Response) => void } | undefined;
@@ -798,7 +844,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
         } finally { await home.dispose(); }
     });
 
-    it('retries waived Leave after failure and discloses overlapping inherited access without exposing a manager roster', async () => {
+    it('leaves directly, retries after failure and retains overlapping inherited access without exposing a manager roster', async () => {
         let failLeave = true;
         let snapshot: MachineAccessGrantsListResponseV1 = { ...initial, canManage: false, grants: [], ownDirectGrant: true,
             access: { ...initial.access, role: 'use' }, ownAccessSources: [
@@ -838,8 +884,6 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(text).toContain(t('machines.sharing.through', { audience: 'Teammates' }));
             await screen.pressByTestIdAsync('machine-share-your-access');
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
-            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(t('machines.sharing.overlap'));
-            await screen.pressByTestIdAsync('machine-share-remove-confirm:account:bob');
             await vi.waitFor(() => expect(screen.findByTestId('machine-share-retry:account:bob')).not.toBeNull());
             expect(screen.findByTestId('machine-share-remove-confirm:account:bob')).toBeNull();
             failLeave = false;
@@ -852,11 +896,12 @@ describe('Machine sharing through the canonical controller and sheet', () => {
         } finally { await home.dispose(); }
     });
 
-    it('tells someone leaving their only access what Leave does to them, in their own words', async () => {
+    it('leaves the only direct access on one press without opening a review', async () => {
         const snapshot: MachineAccessGrantsListResponseV1 = { ...initial, canManage: false, grants: [], ownDirectGrant: true,
             access: { ...initial.access, role: 'use' }, ownAccessSources: [{ principal: bob, displayName: 'Bob' }] };
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-leave-only.test', accountId: 'bob' }],
-            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(snapshot) : undefined });
+            route: request => request.path === '/v1/machines/machine/access'
+                ? Response.json(request.method === 'GET' ? snapshot : { kind: 'left', effectiveAccess: 'none' }) : undefined });
         try {
             const scope = { serverId: home.homes.machine!.id, accountId: 'bob' };
             function Surface() {
@@ -869,10 +914,9 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             await vi.waitFor(() => expect(screen.findByTestId('machine-share-your-access')).not.toBeNull());
             await screen.pressByTestIdAsync('machine-share-your-access');
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
-            // The owner-facing census sentence ("Bob can't start new work…") is not how the
-            // person leaving reads their own consequence.
-            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children)
-                .toBe(t('machines.sharing.leaveLoss', { machine: 'Devbox' }));
+            await vi.waitFor(() => expect(home.requests.filter(request => request.method === 'DELETE')).toHaveLength(1));
+            expect(screen.findByTestId('machine-share-remove-confirm:account:bob')).toBeNull();
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-your-access')).toBeNull());
         } finally { await home.dispose(); }
     });
 

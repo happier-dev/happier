@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { PluginPermissionGrantListActionOutputV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
+import { applyPluginPermissionGrantList, createEmptyPluginPermissionGrantState } from './store';
 
 type StoreModule = Readonly<{
     createEmptyPluginPermissionGrantState: () => unknown;
@@ -78,6 +80,30 @@ function grant(overrides: Record<string, unknown> = {}) {
 }
 
 describe('plugin permission grant UI state', () => {
+    it('retains 128 grants and pending requests on equal refreshes while publishing only changed entries', () => {
+        const response = PluginPermissionGrantListActionOutputV1Schema.parse({
+            grants: Array.from({ length: 128 }, (_, index) => ({ ...grant({ id: `grant-${index}` }),
+                v: 1, accountId: 'owner', subject: subjectA, grantedByUserId: 'owner' })),
+            pendingRequests: Array.from({ length: 128 }, (_, index) => {
+                const { pluginName: _name, requestedAt: _at, ...request } = pendingRequest({ id: `request-${index}` });
+                return { ...request, v: 1, accountId: 'owner', subject: subjectA };
+            }),
+        });
+        const previous = applyPluginPermissionGrantList(createEmptyPluginPermissionGrantState(), response);
+        let next = previous;
+        for (let index = 0; index < 5; index += 1) next = applyPluginPermissionGrantList(next,
+            PluginPermissionGrantListActionOutputV1Schema.parse(response));
+        expect(next).toBe(previous);
+        const changed = applyPluginPermissionGrantList(next, { ...response,
+            grants: response.grants.map((row, index) => index === 0 ? { ...row, status: 'revoked' } : row),
+            pendingRequests: response.pendingRequests.map((row, index) => index === 0 ? { ...row, reason: 'Updated reason' } : row),
+        });
+        expect(changed.grantsById['grant-0']).toBeUndefined();
+        expect(changed.grantsById['grant-1']).toBe(previous.grantsById['grant-1']);
+        expect(changed.pendingRequestsById['request-0'].reason).toBe('Updated reason');
+        expect(changed.pendingRequestsById['request-1']).toBe(previous.pendingRequestsById['request-1']);
+        expect(changed.pendingRequestIds).toBe(previous.pendingRequestIds);
+    });
     it('preserves trusted grants and pending requests while refresh is in flight', async () => {
         const store = await loadStore();
         expect(store).not.toBeNull();

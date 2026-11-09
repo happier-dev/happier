@@ -28,6 +28,7 @@ import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { describeMachineShareTrust } from './machineShareTrust';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type MachineShareGrantRow = ShareGrantRowModel & Readonly<{
     readiness: 'ready' | 'key_pending' | 'refused';
@@ -60,8 +61,7 @@ function failure(code: string, machine: string, person = t('shareSheet.person'),
     if (isAuthorityLoss(code) || code === 'custodian_protected') return { code,
         message: code === 'custodian_protected' ? t('machines.sharing.custodianProtected') : t('machines.sharing.denied', { machine }), retryable: false };
     // An issued mutation without acknowledgement cannot safely be replayed by a row Retry.
-    const retryable = !isActionApprovalDeclinedErrorCode(code)
-        && !['outcome_unknown', 'machine_access_stale_scope', 'unsupported_action'].includes(code);
+    const retryable = !['outcome_unknown', 'machine_access_stale_scope', 'unsupported_action'].includes(code);
     return { code, retryable, message: change && retryable
         ? t('machines.sharing.saveFailed', { person, draft: levelLabel(change.draft), current: levelLabel(change.current) })
         : t('machines.sharing.unavailable', { machine }) };
@@ -156,7 +156,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         if (request.signal.aborted || lifetime.signal.aborted) return;
         const parsed = result?.ok ? MachineAccessGrantsListResponseV1Schema.safeParse(result.result) : null;
         if (parsed?.success && parsed.data.machineId === machineId) {
-            setState(previous => ({ ...previous, response: parsed.data, phase: 'ready', issue: undefined }));
+            setState(previous => retainDeep<State>(previous, { ...previous, response: parsed.data, phase: 'ready', issue: undefined }));
         } else {
             const refusal = result?.ok ? MachineAccessRefusalV1Schema.safeParse(result.result) : null;
             const code = result?.ok ? refusal?.success ? refusal.data.code : 'machine_access_invalid_response' : errorCode(result);
@@ -230,6 +230,15 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             : mutation.actionId === 'machines.access.grant.remove' ? { ...target, principal: mutation.principal } : target;
         const fail = (code: string) => {
             if (lifetime.signal.aborted) return;
+            if (isActionApprovalDeclinedErrorCode(code)) {
+                // The person said no: nothing changed and nothing failed, so the row returns to its saved level.
+                intents.current.delete(key);
+                setState(previous => {
+                    const { [key]: _declined, ...operations } = previous.operations;
+                    return { ...previous, operations };
+                });
+                return;
+            }
             const row = responseRef.current?.grants.find(candidate => sessionAccessSubjectKey(candidate.principal) === key);
             const issue = failure(code, machineName, names.current.get(key) ?? row?.display.name ?? undefined,
                 mutation.actionId === 'machines.access.grant.set' && row && row.level !== mutation.level
@@ -279,20 +288,22 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         await settle(result.result);
     }, [target, context, execute, scope, machineName, approval.requestApproval, load, clearProjection]);
 
-    // The Action policy treats a direct press as enough (`uiConfirmation: 'direct'`), so the row owns the review.
+    // Other-person removal uses the row review; a person's own Leave is a direct Action.
     const [confirmingRemoval, setConfirmingRemoval] = React.useState<string | null>(null);
     const canRemove = React.useCallback((ref: PrincipalRefV1) => (canWrite || (canLeave && sessionAccessSubjectKey(ref) === ownKey))
         && !(ref.kind === 'account' && ref.accountId === response?.custodian.accountId), [canWrite, canLeave, ownKey, response]);
     const requestRemove = React.useCallback<ShareSheetActions['requestRemove']>(ref => {
-        if (canRemove(ref)) setConfirmingRemoval(sessionAccessSubjectKey(ref));
-    }, [canRemove]);
+        if (!canRemove(ref)) return;
+        const key = sessionAccessSubjectKey(ref);
+        if (key === ownKey && canLeave) void mutate({ actionId: 'machines.access.leave', principal: ref });
+        else setConfirmingRemoval(key);
+    }, [canRemove, ownKey, canLeave, mutate]);
     const confirmRemove = React.useCallback<ShareSheetActions['confirmRemove']>(ref => {
         const key = sessionAccessSubjectKey(ref);
         if (confirmingRemoval !== key || !canRemove(ref)) return;
         setConfirmingRemoval(null);
-        void mutate(key === ownKey && canLeave ? { actionId: 'machines.access.leave', principal: ref }
-            : { actionId: 'machines.access.grant.remove', principal: ref });
-    }, [confirmingRemoval, canRemove, ownKey, canLeave, mutate]);
+        void mutate({ actionId: 'machines.access.grant.remove', principal: ref });
+    }, [confirmingRemoval, canRemove, mutate]);
     // The work a removal would touch is read only while its review is open.
     const workTargets = React.useMemo(() => confirmingRemoval === null ? [] : [{ machineId, scope, online: online ?? null }],
         [confirmingRemoval === null, machineId, scope.serverId, scope.accountId, online]);
@@ -347,9 +358,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         readiness: response.access.accessState,
         audience: [], canPrepareKeys: false,
         level: { kind: 'locked', value: response.access.role === 'manage' ? 'admin' : 'view', reason: { code: 'own_access', message: t('machines.sharing.ownHistory', { machine: machineName }) } },
-        // Address the person leaving directly, rather than using the owner's audience summary.
-        removal: response.ownDirectGrant ? removal(ownPrincipal, inherited.length === 0
-            ? [t('machines.sharing.leaveLoss', { machine: machineName })] : removalConsequences([])) : { kind: 'blocked',
+        removal: response.ownDirectGrant ? { kind: 'allowed' } : { kind: 'blocked',
             reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
         operation: state.operations[ownKey] ?? IDLE,
     } : null;
