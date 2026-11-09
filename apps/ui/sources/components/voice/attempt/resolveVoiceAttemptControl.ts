@@ -71,6 +71,8 @@ export type VoiceAttemptControl = Readonly<{
     canMute: boolean;
     canDismissFailedAttempt?: boolean;
     canCommitInput?: boolean;
+    /** The call is waiting on the person's Send: only then do compact containers carry it and say so. */
+    awaitingSend?: boolean;
     muted: boolean;
     /** The canonical runtime capture fact; distinct from the user's mute preference. */
     capturing: boolean;
@@ -101,6 +103,8 @@ export function resolveVoiceAttemptControl(input: Readonly<{
     canStop: boolean;
     muted: boolean;
     canCommitInput?: boolean;
+    /** The capture ends the turn on silence, so nothing is waiting on Send. */
+    inputEndsOnSilence?: boolean;
     capturing: boolean;
     /**
      * The canonical start-admission answer from `resolveVoiceStartAdmission`.
@@ -157,6 +161,9 @@ export function resolveVoiceAttemptControl(input: Readonly<{
         canDismissFailedAttempt,
         canCommitInput: input.status === 'connected' && Boolean(input.sessionId)
             && input.canCommitInput === true,
+        awaitingSend: input.status === 'connected' && Boolean(input.sessionId)
+            && input.canCommitInput === true && input.inputEndsOnSilence !== true
+            && input.surfaceState === 'listening' && !input.muted,
         // Muting is available for a connected attempt even while a half-duplex provider has
         // temporarily closed capture; the preference still governs the next capture window.
         canMute:

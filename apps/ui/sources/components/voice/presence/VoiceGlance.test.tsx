@@ -272,4 +272,24 @@ describe('VoiceGlance', () => {
         screen.pressByTestId('voice-glance-start-again');
         expect(voice.onPrimaryAction).toHaveBeenCalledTimes(1);
     });
+
+    it('keeps the ended actions to words the row can hold: starting fresh is one quiet icon', async () => {
+        const idle = resolveVoiceAttemptControl({
+            surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,
+            muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
+        });
+        const voice: VoiceAttemptControlProjection = {
+            ...attempt(), ...idle, statusWord: 'Voice ended', canOpenConversation: true, onNewConversation: vi.fn(),
+            ended: { sessionId: 'voice-1', adapterId: 'local_direct', startedAt: 1_000, endedAt: 253_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null },
+        };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
+
+        expect(screen.findByTestId('voice-glance-new-conversation')?.props.accessibilityLabel).toBe(t('voicePresence.newConversation'));
+        expect(screen.getTextContent()).toContain(t('voicePresence.continueConversation'));
+        // The third word is what wrapped the row; the control keeps its full accessible name instead.
+        expect(screen.getTextContent()).not.toContain('New');
+        screen.pressByTestId('voice-glance-new-conversation');
+        expect(voice.onNewConversation).toHaveBeenCalledTimes(1);
+        expect(voice.onPrimaryAction).not.toHaveBeenCalled();
+    });
 });

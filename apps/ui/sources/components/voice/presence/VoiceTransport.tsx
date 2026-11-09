@@ -50,6 +50,7 @@ const COMPACT_WELL_SIZE = 26;
  * The transport rule (§4.1, VE-03), decided once for every size: Mute never ends and End never mutes.
  * An admitted recovery (Retry while reconnecting, Allow microphone, Set up) takes Mute's place and End
  * stays; an attempt that can no longer be ended offers its recovery and its dismissal.
+ * A call waiting on the person's Send carries it too, even at the compact sizes.
  */
 function resolveVoiceTransportControls(voice: VoiceAttemptControlProjection) {
     const recovery = voice.recoveryAvailable && voice.recoveryLabel ? voice.recoveryLabel : null;
@@ -58,9 +59,9 @@ function resolveVoiceTransportControls(voice: VoiceAttemptControlProjection) {
         const dismiss = voice.canDismissFailedAttempt === true
             ? voice.onDismissFailedAttempt
             : voice.ended ? voice.onDismissEnded : undefined;
-        return { recovery, mute: false, end: false, dismiss };
+        return { recovery, mute: false, send: false, end: false, dismiss };
     }
-    return { recovery, mute: recovery === null, end: true, dismiss: undefined };
+    return { recovery, mute: recovery === null, send: recovery === null && voice.awaitingSend === true, end: true, dismiss: undefined };
 }
 
 /**
@@ -124,11 +125,27 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
 
     const muteLabel = voice.muted ? t('voiceSurface.a11y.unmute') : t('voiceSurface.a11y.mute');
     const endLabel = t('voiceAssistant.endVoice');
+    const sendLabel = voice.commitInputLabel;
+    const send = controls.send && sendLabel && voice.onCommitInput ? (
+        // The composer's own Send: one filled arrow, nearest the words that ask for it.
+        <IconButton
+            testID={`${testID}-send`}
+            iconName="arrow-up"
+            accessibilityLabel={sendLabel}
+            tooltip={sendLabel}
+            size={geometry.size}
+            iconSize={geometry.icon}
+            fill="primary"
+            interactiveTargetGapPx={geometry.gap}
+            onPress={voice.onCommitInput}
+        />
+    ) : null;
 
     return (
         <View testID={testID} style={[styles.row, { gap: geometry.gap }]}>
             {readAloudStop}
             {recovery}
+            {send}
             {controls.mute ? (
                 <IconButton
                     testID={`${testID}-mute`}
@@ -239,8 +256,18 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             leading={glyph(voice.muted ? 'microphone-slash' : 'microphone')}
         />
     );
+    // While the call is waiting on it, Send is the one filled control of the row.
     const send = voice.canCommitInput && voice.commitInputLabel && voice.onCommitInput
-        ? secondary('send', voice.commitInputLabel, 'arrow-up', voice.onCommitInput)
+        ? voice.awaitingSend ? (
+            <RoundButton
+                testID={`${testID}-send`}
+                size={button}
+                style={control}
+                title={voice.commitInputLabel}
+                onPress={voice.onCommitInput}
+                leading={glyph('arrow-up', theme.colors.button.primary.tint)}
+            />
+        ) : secondary('send', voice.commitInputLabel, 'arrow-up', voice.onCommitInput)
         : null;
     const interrupt = turn?.canBargeIn ? secondary('interrupt', t('voicePresence.interrupt'), 'hand', turn.onBargeIn) : null;
     // A reply can be cancelled without ending the call (thinking, or speaking without barge-in).

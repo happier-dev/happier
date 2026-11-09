@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -34,7 +35,7 @@ import {
   VoiceElapsed,
   VoiceStatusLine,
 } from './VoiceStatusLine';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** How many of the latest turns the glance reads back; the full history is the conversation itself. */
 const GLANCE_TURNS = 3;
@@ -325,13 +326,15 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
         testID={`${props.testID}-ended-pending`}
       />
       {/* One bordered action, the way back to the conversation; Start again is a quiet text
-                action beside it — the hero mark above is already the start control. */}
-      <View style={[styles.controls, styles.endedControls]}>
+                action beside it — the hero mark above is already the start control. They share one
+                row at every width: the bordered action is the one that gives way. */}
+      <View style={styles.endedControls}>
         {voice.canOpenConversation ? (
           <RoundButton
             testID={`${props.testID}-open-conversation`}
             display="secondary"
             size={size}
+            style={styles.endedOpen}
             title={t('voicePresence.openConversation')}
             onPress={voice.onOpenConversation}
             leading={
@@ -343,26 +346,29 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
             }
           />
         ) : null}
-        {/* While New is offered, Start resumes this conversation, so it says Continue; New is the
-            quiet way to a fresh one. Both stay text actions: the mark above is the start control. */}
+        {/* While New is offered, Start resumes this conversation, so it says Continue. Starting fresh
+            is the least-used of the three, so it is the one that needs no word. */}
         {voice.canStart ? (
           <RoundButton
             testID={`${props.testID}-start-again`}
             display="inverted"
             size={size}
+            style={styles.endedQuiet}
             title={voice.onNewConversation ? t('voicePresence.continueConversation') : t('voicePresence.startAgain')}
             textStyle={styles.startAgain}
             onPress={voice.onPrimaryAction}
           />
         ) : null}
         {voice.canStart && voice.onNewConversation ? (
-          <RoundButton
+          <IconButton
             testID={`${props.testID}-new-conversation`}
-            display="inverted"
-            size={size}
-            title={t('voicePresence.newConversationShort')}
+            iconName="plus"
             accessibilityLabel={t('voicePresence.newConversation')}
-            textStyle={styles.startAgain}
+            tooltip={t('voicePresence.newConversation')}
+            variant="plain"
+            // Level with the labelled pills beside it.
+            size={props.sheet ? HAPPIER_PAGE_METRICS.controlHeightPx : HAPPIER_PAGE_METRICS.smallControlHeightPx}
+            iconSize={iconSize}
             onPress={voice.onNewConversation}
           />
         ) : null}
@@ -557,13 +563,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,
   },
-  // The ended state's actions: one row that wraps rather than clipping in the narrow Companion column.
-  controls: {
+  // The ended state's actions stay on one row in every host, the narrow Companion column included.
+  endedControls: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: theme.space.s6,
+    gap: theme.space.s8,
   },
-  endedControls: { gap: theme.space.s8, justifyContent: 'flex-start' },
+  endedOpen: { flexShrink: 1, minWidth: 0 },
+  endedQuiet: { flexShrink: 0 },
   startAgain: { color: theme.colors.text.secondary },
 }));

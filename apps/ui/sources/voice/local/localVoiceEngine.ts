@@ -602,6 +602,12 @@ function isEndpointDrivenCaptureProvider(provider: LocalVoiceCaptureProvider): p
   return provider === 'device' || provider === 'local_neural';
 }
 
+/** The admitted capture finishes the person's turn on silence, so Send is only an early finish. */
+export function isLocalVoiceInputEndpointDriven(): boolean {
+  const captureAttempt = captureAdmission?.captureAttempt;
+  return captureAttempt?.handsFree === true && isEndpointDrivenCaptureProvider(captureAttempt.provider);
+}
+
 async function maybeRearmHandsFreeCapture(
   origin: LocalVoiceCaptureAdmission,
   followUp: Readonly<{

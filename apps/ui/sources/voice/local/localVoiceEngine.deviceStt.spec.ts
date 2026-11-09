@@ -68,6 +68,19 @@ describe('local voice engine device STT (experimental)', () => {
     const previousWindow = (globalThis as { window?: object }).window;
     const previousDocument = (globalThis as { document?: object }).document;
 
+    it.each([[true, true], [false, false]] as const)('reports whether the capture ends its own turn (hands-free %s)', async (handsFree, endsOnSilence) => {
+        await configureDuplexDeviceSpeech(handsFree);
+        const engine = await loadLocalVoiceEngineWithCompatState();
+        const { createLocalVoiceAdapter } = await import('@/voice/adapters/local/createLocalVoiceAdapter');
+        try {
+            await engine.toggleLocalVoiceTurn('s1');
+            const adapter = createLocalVoiceAdapter('local_direct', { currentUiContext: {} as never });
+            expect(adapter.getSnapshot()).toMatchObject({ canCommitInput: true, inputEndsOnSilence: endsOnSilence });
+        } finally {
+            await engine.stopLocalVoiceSession();
+        }
+    }, 180_000);
+
     it('rearms hands-free capture when the submitted coding turn is cancelled remotely without a reply', async () => {
         const storage = await configureDuplexDeviceSpeech(true);
         speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));

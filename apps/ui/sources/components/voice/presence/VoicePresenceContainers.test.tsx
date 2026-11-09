@@ -49,7 +49,7 @@ vi.mock('react-native', async () => {
 
 type Phase = 'idle' | 'live' | 'connecting' | 'listening' | 'reconnecting' | 'failed';
 
-function projection(phase: Phase, overrides: Partial<{ muted: boolean }> = {}): VoiceAttemptControlProjection {
+function projection(phase: Phase, overrides: Partial<{ muted: boolean; canCommitInput: boolean; inputEndsOnSilence: boolean }> = {}): VoiceAttemptControlProjection {
     const surfaceState: VoiceSurfaceState = phase === 'idle' ? 'idle' : phase === 'failed' ? 'error' : phase;
     const control = resolveVoiceAttemptControl({
         surfaceState,
@@ -58,6 +58,8 @@ function projection(phase: Phase, overrides: Partial<{ muted: boolean }> = {}): 
         sessionId: phase === 'idle' ? null : 'voice-1',
         canStop: phase !== 'idle' && phase !== 'failed',
         muted: overrides.muted === true,
+        canCommitInput: overrides.canCommitInput,
+        inputEndsOnSilence: overrides.inputEndsOnSilence,
         capturing: phase === 'listening',
         startAdmitted: true,
         hasRecovery: phase === 'reconnecting' || phase === 'failed',
@@ -81,6 +83,8 @@ function projection(phase: Phase, overrides: Partial<{ muted: boolean }> = {}): 
         onToggleMute: vi.fn(),
         onRecover: vi.fn(),
         onDismissFailedAttempt: vi.fn(),
+        commitInputLabel: control.canCommitInput ? t('common.send') : null,
+        onCommitInput: vi.fn(),
         openConversationSessionId: null,
         openConversationSessionAddress: null,
         canOpenConversation: false,
@@ -243,6 +247,45 @@ describe('VoiceTransport', () => {
         screen.pressByTestId('voice-transport-dismiss');
         expect(voice.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
         expect(voice.ended).toBeUndefined();
+    });
+});
+
+describe('a call that waits for Send', () => {
+    const anchor = React.createRef<View>();
+
+    it('puts Send beside Mute and End on the pill and says to press it', async () => {
+        const voice = projection('listening', { canCommitInput: true });
+        screen = await renderScreen(<VoiceTopBarPresence voice={voice} />);
+
+        expect(screen.getTextContent()).toContain(t('voicePresence.captions.listeningSend'));
+        screen.pressByTestId('voice-top-bar-transport-send');
+        expect(voice.onCommitInput).toHaveBeenCalledTimes(1);
+        expect(voice.onToggle).not.toHaveBeenCalled();
+    });
+
+    it('puts Send on the island and leads its second line with the same instruction', async () => {
+        const voice = projection('listening', { canCommitInput: true });
+        screen = await renderScreen(<VoiceIsland voice={voice} phone={false} width={330} anchorRef={anchor} sectionOpen={false}
+            onOpenSection={() => {}} shouldSuppressPress={() => false} />);
+
+        expect(screen.getTextContent()).toContain(t('voicePresence.captions.listeningSend'));
+        screen.pressByTestId('voice-island-transport-send');
+        expect(voice.onCommitInput).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays quiet when the capture finishes the turn by itself, leaving Send to the Voice section', async () => {
+        const voice = projection('listening', { canCommitInput: true, inputEndsOnSilence: true });
+        screen = await renderScreen(<VoiceTopBarPresence voice={voice} />);
+
+        expect(screen.findByTestId('voice-top-bar-transport-send')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('voicePresence.captions.listeningSend'));
+    });
+
+    it('does not ask for Send while the microphone is muted', async () => {
+        screen = await renderScreen(<VoiceTopBarPresence voice={projection('listening', { canCommitInput: true, muted: true })} />);
+
+        expect(screen.findByTestId('voice-top-bar-transport-send')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('voicePresence.captions.listeningSend'));
     });
 });
 

@@ -29,14 +29,13 @@ export type VoicePresenceTranslation = Readonly<{
     setUpHint: string;
     startAgain: string;
     newConversation: string;
-    newConversationShort: string;
     continueConversation: string;
     endedCaption: (params: Readonly<{ elapsed: string }>) => string;
     dismiss: string;
     mute: string;
     unmute: string;
     end: string;
-    captions: Readonly<{ connecting: string; listening: string; transcribing: string; thinking: string; thinkingInputUnavailable: string; speaking: string; interrupted: string; muted: string; reconnecting: string; blocked: string; failed: string; needsYou: string }>;
+    captions: Readonly<{ connecting: string; listening: string; listeningSend: string; transcribing: string; thinking: string; thinkingInputUnavailable: string; speaking: string; interrupted: string; muted: string; reconnecting: string; blocked: string; failed: string; needsYou: string }>;
     /** The transport's short recovery verbs; the full recovery label stays the accessible name. */
     recovery: Readonly<{ allow: string; setUp: string }>;
     /** Read-aloud (Say) outside a conversation: its status word and Stop. */
@@ -72,14 +71,13 @@ export const voicePresenceTranslationsEnglish = { en: {
         setUpHint: 'Opens Voice settings to choose how Voice talks',
         startAgain: 'Start again',
         newConversation: 'New conversation',
-        newConversationShort: 'New',
         continueConversation: 'Continue',
         endedCaption: ({ elapsed }) => `${elapsed} · the conversation is saved`,
         dismiss: 'Dismiss',
         mute: "Mute",
         unmute: "Unmute",
         end: "End",
-        captions: { thinkingInputUnavailable: "Wait for the reply before sending more.", connecting: "Opening the audio channel", listening: "Go ahead", transcribing: "Turning that into text", thinking: "Working out an answer", speaking: "You can interrupt any time", interrupted: "Go ahead", muted: "Unmute to talk · Voice can still speak", reconnecting: "Lost the connection · trying again", blocked: "Allow microphone access to talk", failed: "Try again, or check Voice settings", needsYou: "Waiting for your decision" },
+        captions: { thinkingInputUnavailable: "Wait for the reply before sending more.", connecting: "Opening the audio channel", listening: "Go ahead", listeningSend: "Talk, then press Send", transcribing: "Turning that into text", thinking: "Working out an answer", speaking: "You can interrupt any time", interrupted: "Go ahead", muted: "Unmute to talk · Voice can still speak", reconnecting: "Lost the connection · trying again", blocked: "Allow microphone access to talk", failed: "Try again, or check Voice settings", needsYou: "Waiting for your decision" },
         recovery: { allow: "Allow", setUp: "Set up" },
         readAloud: { preparing: "Getting ready to read", speaking: "Reading aloud", stop: "Stop reading" },
         containerA11y: ({ status }) => `Voice, ${status}`,

@@ -64,6 +64,7 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
                 ? 'error' as const
                 : 'connected' as const;
     const recovery = state === 'blocked' || state === 'reconnecting' || failed;
+    const sendable = state === 'listening' || state === 'muted';
     const control = resolveVoiceAttemptControl({
         surfaceState,
         tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
@@ -75,8 +76,8 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         startAdmitted: true,
         hasRecovery: recovery,
         canDismissFailedAttempt: failed,
-        // A muted conversation holds what was said so far; Send commits it without unmuting.
-        canCommitInput: state === 'muted',
+        // Hands-free is off by default, so a listening call waits for Send; a muted one holds what was said.
+        canCommitInput: sendable,
     });
     // The real recovery copy (`resolveVoiceSurfaceRecovery`): a denied microphone is allowed, a lost transport retried.
     const recoveryLabel = state === 'blocked' ? t('voicePresence.recovery.allow') : recovery ? t('common.retry') : null;
@@ -91,8 +92,8 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         statusWord: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         statusLabel: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         ended: state === 'ended' ? { sessionId: 'specimen-voice', adapterId: null, startedAt: SPECIMEN_STARTED_AT - 118_000, endedAt: SPECIMEN_STARTED_AT + 134_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null } : null,
-        commitInputLabel: state === 'muted' ? t('common.send') : null,
-        onCommitInput: state === 'muted' ? NOOP : undefined,
+        commitInputLabel: sendable ? t('common.send') : null,
+        onCommitInput: sendable ? NOOP : undefined,
         onDismissEnded: NOOP,
         onDismissFailedAttempt: NOOP,
         // A conversation that started 2:14 ago; transcript belongs to the surface fixture below.

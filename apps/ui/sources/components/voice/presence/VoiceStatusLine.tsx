@@ -10,6 +10,8 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 
+import { t } from '@/text';
+
 import { VoiceStatusCell } from './VoiceStatusCell';
 
 export type VoiceStatusLineSize = 'pill' | 'island' | 'hero';
@@ -87,6 +89,12 @@ export const VoiceStatusLine = React.memo(function VoiceStatusLine(props: Readon
             {startedAt !== null && !hero ? (
                 <VoiceElapsed startedAt={startedAt} fontSize={metrics.fontSize} lineHeight={metrics.lineHeight} />
             ) : null}
+            {props.size === 'pill' && props.voice.awaitingSend ? (
+                // The pill has no caption line, so the next step rides the status line; it gives way first.
+                <Text numberOfLines={1} style={[styles.nextStep, { fontSize: metrics.fontSize, lineHeight: metrics.lineHeight }]}>
+                    {t('voicePresence.captions.listeningSend')}
+                </Text>
+            ) : null}
             {endedSeconds !== null && !hero ? (
                 // The ended call's length, still: it was measured, it no longer ticks.
                 <Text numberOfLines={1} style={[styles.elapsed, { fontSize: metrics.fontSize, lineHeight: metrics.lineHeight }]}>
@@ -132,6 +140,12 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('bold'),
         letterSpacing: -0.17,
         flexShrink: 1,
+    },
+    nextStep: {
+        ...Typography.default(),
+        color: theme.colors.text.secondary,
+        flexShrink: 1,
+        minWidth: 0,
     },
     elapsed: {
         ...Typography.tabular(),

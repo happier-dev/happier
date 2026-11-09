@@ -27,6 +27,14 @@ describe('Voice presence captions for a bound Session target', () => {
       .toEqual({ kind: 'caption', text: voice.captionLabel });
   });
 
+  it('tells the person to press Send only while the call is waiting for it, ahead of the last words', () => {
+    const waiting = { ...base, surfaceState: 'listening', awaitingSend: true } as const;
+    expect(resolveVoicePresenceCaption(waiting)).toBe(t('voicePresence.captions.listeningSend'));
+    expect(resolveVoiceCompactLine(waiting, 'Earlier reply', 'Release captain'))
+      .toEqual({ kind: 'caption', text: t('voicePresence.captions.listeningSend') });
+    expect(resolveVoicePresenceCaption({ ...waiting, awaitingSend: false })).toBe(t('voicePresence.captions.listening'));
+  });
+
   it('captions connecting to a Session as reading its instructions, and global connecting unchanged', () => {
     expect(
       resolveVoicePresenceCaption(

@@ -47,8 +47,12 @@ export function createLocalVoiceAdapter(
   id: VoiceAdapterId,
   capabilities: LocalVoiceAdapterCapabilities,
 ): VoiceAdapterController {
-  const getSnapshot = (): VoiceSessionSnapshot =>
-    deriveLocalVoiceSessionSnapshot(id, 'local', getVoiceConversationRuntimeSnapshot());
+  const getSnapshot = (): VoiceSessionSnapshot => {
+    const snapshot = deriveLocalVoiceSessionSnapshot(id, 'local', getVoiceConversationRuntimeSnapshot());
+    return snapshot.canCommitInput === true
+      ? { ...snapshot, inputEndsOnSilence: localVoiceRuntimeController.isInputEndpointDriven() }
+      : snapshot;
+  };
 
   const start = async (opts: Parameters<VoiceAdapterController['start']>[0]) => {
     void opts.initialContext;

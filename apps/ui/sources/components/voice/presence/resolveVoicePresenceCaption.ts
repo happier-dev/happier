@@ -11,13 +11,14 @@ const FAILED: ReadonlySet<string> = new Set(['permission_required', 'error']);
 const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'reconnecting', 'permission_required', 'error']);
 
 type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>
-    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput'>>;
+    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput' | 'awaitingSend'>>;
 
 /**
  * The call state's one helpful line (lab `voice-presence` captions): a failure's reason from the
  * projection (`captionLabel`) wins, then muted, then a waiting request (the status word already says
  * Needs you, so the caption cannot report the phase beneath it), otherwise the conversing/connection
  * state's caption.
+ * A call waiting on Send says so: silence alone never ends the person's turn there.
  * Connecting to a bound Session reads its instructions (lab `b-voice C`, D38): one caption inside the
  * existing connecting state, not a new lifecycle step. `targetName` is null in global mode.
  */
@@ -25,6 +26,7 @@ export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: str
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
     if (voice.live && voice.statusCell === 'needs_you') return t('voicePresence.captions.needsYou');
+    if (voice.awaitingSend) return t('voicePresence.captions.listeningSend');
     if (voice.surfaceState === 'live') return voice.captionLabel.trim() || null;
     if (voice.live && voice.surfaceState === 'thinking' && voice.canCommitInput === false) return t('voicePresence.captions.thinkingInputUnavailable');
     if (voice.surfaceState === 'connecting' && targetName) return t('sessionVoice.preparing', { name: targetName });
@@ -45,7 +47,7 @@ export function resolveVoiceCompactLine(
     targetName: string | null = null,
 ): Readonly<{ kind: 'caption' | 'transcript'; text: string }> | null {
     const caption = resolveVoicePresenceCaption(voice, targetName);
-    const callFirst = (voice.live && (voice.muted || voice.statusCell === 'needs_you'
+    const callFirst = (voice.live && (voice.muted || voice.awaitingSend === true || voice.statusCell === 'needs_you'
         || (voice.surfaceState === 'thinking' && voice.canCommitInput === false))) || CALL_FIRST.has(voice.surfaceState);
     if (callFirst) return caption ? { kind: 'caption', text: caption } : null;
     const line = latestTranscriptText?.trim();
