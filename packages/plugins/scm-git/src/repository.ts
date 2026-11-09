@@ -124,7 +124,7 @@ export async function getGitSnapshot(input: {
     if (!statusResult.success) {
         return {
             success: false,
-            errorCode: getScmCommandIndeterminateErrorCode(statusResult) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            errorCode: (factsOnly ? getScmCommandIndeterminateErrorCode(statusResult) : null) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
             error: statusResult.stderr || 'Failed to read repository status',
         };
     }
