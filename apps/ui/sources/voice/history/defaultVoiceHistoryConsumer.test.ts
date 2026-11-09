@@ -17,8 +17,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
@@ -55,6 +55,56 @@ afterEach(async () => {
 });
 
 describe('canonical History Account boundary', () => {
+  it('reuses warm metadata across 100 conversations and acquires only a missing row on explicit refresh', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { switchConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    const homeId = await historyHttp.addHome({ name: 'Warm History Home', serverUrl: 'https://warm-history.test',
+      accountId: 'warm-history-account', currentAccount: true });
+    const sessions = Object.fromEntries(Array.from({ length: 100 }, (_, index) => {
+      const id = `warm-history-${index}`;
+      return [id, createSessionFixture({ id, serverId: homeId, seq: 20, active: false,
+        metadata: { ...fixtureMetadata, ...buildVoiceConversationMetadata() } })];
+    }));
+    const records = Object.values(sessions).map(session => createPlainSessionByIdResponseFixture(session).session);
+    historyHttp.answer(homeId, '/v2/sessions', { body: { sessions: records, hasNext: false, nextCursor: null } });
+    historyHttp.answer(homeId, '/v2/sessions/archived', { body: { sessions: [], hasNext: false, nextCursor: null } });
+    for (const id of Object.keys(sessions)) {
+      historyHttp.answer(homeId, `/v2/sessions/${id}`, { body: createPlainSessionByIdResponseFixture(sessions[id]!) });
+      historyHttp.answer(homeId, `/v1/sessions/${id}/messages`, { body: SessionMessagesPageV1Schema.parse({
+        messages: [], hasMore: false, nextBeforeSeq: null,
+      }) });
+    }
+    setRuntimeFetch(createSessionReadBatchFetchBoundary(historyHttp.request));
+    const metadataRequests = () => historyHttp.requests.filter(request =>
+      request.path === '/v2/sessions/read-batch' || /^\/v2\/sessions\/warm-history-\d+$/.test(request.path));
+    const metadataReads = () => metadataRequests().length;
+    const transcriptReads = () => historyHttp.requests.filter(request =>
+      /^\/v1\/sessions\/warm-history-\d+\/messages/.test(request.path)).length;
+    try {
+      await switchConnectionToActiveServer();
+      const consumer = createDefaultVoiceHistoryConsumer();
+      await consumer.open();
+      expect(Object.keys(sessions).every(id => storage.getState().sessions[id])).toBe(true);
+      const warmReads = metadataReads();
+      const warmTranscripts = transcriptReads();
+      await consumer.open();
+      expect(metadataReads() - warmReads).toBe(0);
+      expect(transcriptReads() - warmTranscripts).toBe(100);
+      // A known list row may lack its full document; authoritative deletion is a different lifecycle.
+      storage.setState(state => {
+        const sessions = { ...state.sessions };
+        delete sessions['warm-history-0'];
+        return { sessions };
+      });
+      const missingReads = metadataReads();
+      await consumer.open();
+      expect(metadataRequests().slice(missingReads).map(request => request.path)).toEqual(['/v2/sessions/warm-history-0']);
+      expect(storage.getState().sessions['warm-history-0']).toBeDefined();
+    } finally {
+      await disconnectActiveServerConnection();
+    }
+  });
+
   it('keeps cold discovery, hydration, transcript paging and carrier deletion on the admitted Account', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { switchConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
@@ -68,12 +118,7 @@ describe('canonical History Account boundary', () => {
     const session = createSessionFixture({ id: sessionId, serverId: homeId, seq: 20, active: false,
       metadata: { ...fixtureMetadata, ...buildVoiceConversationMetadata() },
     });
-    const metadata = createSessionMetadataHttpBoundary(() => ({ [sessionId]: session }));
-    const response = metadata.handle(`https://history-owner.test/v2/sessions/${sessionId}`);
-    if (!response) throw new Error('Missing canonical History Session response');
-    const detail: unknown = await response.json();
-    if (!detail || typeof detail !== 'object' || !('session' in detail)) throw new Error('Missing canonical Session detail');
-    const wire = SessionCurrentProjectionRecordV1Schema.parse(detail.session);
+    const wire = SessionCurrentProjectionRecordV1Schema.parse(createPlainSessionByIdResponseFixture(session).session);
     historyHttp.answer(homeId, '/v1/auth/ping', { body: {} });
     historyHttp.answer(homeId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     historyHttp.answer(homeId, '/v2/sessions', { body: { sessions: [wire], hasNext: false, nextCursor: null } });

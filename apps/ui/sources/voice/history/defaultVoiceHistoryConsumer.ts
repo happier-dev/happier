@@ -265,7 +265,6 @@ export function createDefaultVoiceHistoryConsumer() {
     },
     hydrateSession: (sessionId, authority) =>
       sync.ensureSessionVisibleForMessageRoute(sessionId, {
-        forceRefresh: true,
         hydrateMessages: false,
         authority,
       }),
