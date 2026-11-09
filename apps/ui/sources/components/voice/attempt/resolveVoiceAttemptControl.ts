@@ -18,10 +18,10 @@ export type VoiceAttemptPrimaryAction = 'start' | 'end' | 'recover' | 'setup' | 
 export type VoiceAttemptMarkPose = 'mic' | 'light' | 'shadow' | 'blocked';
 export type VoiceAttemptStatusCell = 'thinking' | 'working' | 'needs_you' | null;
 
-/** The Session attention owner's real requests, excluding hidden-carrier stuck input. */
-export function resolveVoiceSessionNeedsYou(status: Pick<SessionAwarenessPresentationV1, 'state' | 'actionRequiredReason'> | null | undefined, hiddenSession = false): boolean {
+/** Voice waits for a decision only for the Session attention owner's real requests. */
+export function resolveVoiceSessionNeedsYou(status: Pick<SessionAwarenessPresentationV1, 'state' | 'actionRequiredReason'> | null | undefined): boolean {
     return status?.state === 'permission_required' || (status?.state === 'action_required'
-        && !(hiddenSession && status.actionRequiredReason === 'blocked_input'));
+        && status.actionRequiredReason === 'request');
 }
 
 export function resolveVoiceAttemptActionability(input: Readonly<{
@@ -124,8 +124,6 @@ export function resolveVoiceAttemptControl(input: Readonly<{
     setupOffered?: boolean;
     /** Already projected by the shared Session awareness owner; never provider-authored copy. */
     sessionStatus?: Pick<SessionAwarenessPresentationV1, 'state' | 'statusText' | 'actionRequiredReason'> | null;
-    /** Hidden operational carrier, as identified by the canonical Voice custody metadata owner. */
-    hiddenSession?: boolean;
 }>): VoiceAttemptControl {
     // Disconnected media can still belong to a failed attempt. Keep its existing recovery
     // presentation until the lifecycle owner clears it; presence never implies an open microphone.
@@ -185,7 +183,7 @@ export function resolveVoiceAttemptControl(input: Readonly<{
                 ? 'shadow'
                 : input.status === 'disconnected' ? 'mic' : 'light',
         statusCell: input.status !== 'connected' ? null
-            : resolveVoiceSessionNeedsYou(input.sessionStatus, input.hiddenSession)
+            : resolveVoiceSessionNeedsYou(input.sessionStatus)
                 ? 'needs_you'
                 : input.sessionStatus?.state === 'thinking' ? 'working'
                     : input.surfaceState === 'thinking' ? 'thinking' : null,

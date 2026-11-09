@@ -64,13 +64,12 @@ describe('resolveVoiceAttemptControl', () => {
         expect(resolveVoiceAttemptControl({ ...base, sessionStatus: { state: 'thinking', statusText: 'Working' } }))
             .toMatchObject({ statusCell: null });
     });
-    it.each(['listening', 'speaking'] as const)('keeps %s for hidden-carrier queue recovery and genuine requests actionable', (surfaceState) => {
+    it.each(['listening', 'speaking'] as const)('keeps %s for blocked input and genuine requests actionable', (surfaceState) => {
         const live = { ...base, status: 'connected' as const, surfaceState, canStop: true,
-            sessionId: 'carrier', hiddenSession: true };
+            sessionId: 'carrier' };
         const blocked = { state: 'action_required' as const, statusText: 'Needs you', actionRequiredReason: 'blocked_input' as const };
         expect(resolveVoiceAttemptControl({ ...live, sessionStatus: blocked }))
             .toMatchObject({ statusCell: null, surfaceState, primaryAction: 'end' });
-        expect(resolveVoiceAttemptControl({ ...live, hiddenSession: false, sessionStatus: blocked }).statusCell).toBe('needs_you');
         expect(resolveVoiceAttemptControl({ ...live, sessionStatus: { ...blocked, actionRequiredReason: 'request' } }).statusCell).toBe('needs_you');
         expect(resolveVoiceAttemptControl({ ...live, sessionStatus: { state: 'permission_required', statusText: 'Needs you' } }).statusCell).toBe('needs_you');
         expect(resolveVoiceAttemptControl({ ...live, status: 'error', surfaceState: 'error', hasRecovery: true }))

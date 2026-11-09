@@ -575,8 +575,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const primarySession = useSession(primaryRequestSessionAddress?.sessionId ?? openConversationSessionId ?? snapSessionId ?? '',
         primaryRequestSessionAddress?.serverId ?? openConversationSessionAddress?.serverId ?? recoverySessionServerId);
     const primaryStatus = useSessionStatus(primarySession, { subscribeToSession: false, workingTextMode: 'static' });
-    const primarySessionIsHidden = primarySession !== null
-        && isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(primarySession));
     // A native Voice Agent raises approvals on its own conversation Session,
     // independently of the coding target. Both retain ordinary Session custody.
     const conversationRequestAddress = activeOpenConversationTarget?.requestAddress ?? null;
@@ -584,13 +582,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         ? null : conversationRequestAddress;
     const conversationSession = useSession(otherRequestAddress?.sessionId ?? '', otherRequestAddress?.serverId);
     const conversationStatus = useSessionStatus(conversationSession, { subscribeToSession: false, workingTextMode: 'static' });
-    const conversationSessionIsHidden = conversationSession !== null
-        && isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(conversationSession));
-    const presentConversationRequest = resolveVoiceSessionNeedsYou(conversationStatus, conversationSessionIsHidden)
-        && !resolveVoiceSessionNeedsYou(primaryStatus, primarySessionIsHidden);
+    const presentConversationRequest = resolveVoiceSessionNeedsYou(conversationStatus)
+        && !resolveVoiceSessionNeedsYou(primaryStatus);
     const pendingRequestSessionAddress = presentConversationRequest ? otherRequestAddress : primaryRequestSessionAddress;
     const sessionStatus = presentConversationRequest ? conversationStatus : primaryStatus;
-    const presentedSessionIsHidden = presentConversationRequest ? conversationSessionIsHidden : primarySessionIsHidden;
     const elapsedStartedAt = getVoiceSessionAttemptStartedAt();
     // Hold is not inferred from commitInput or mute: the capture-input owner must admit the gesture.
     const canHoldToTalk = snap.status === 'connected' && snap.canHoldToTalk === true;
@@ -638,7 +633,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
          */
         setupOffered: ownsVoiceRuntime && !setupDismissed,
         sessionStatus,
-        hiddenSession: presentedSessionIsHidden,
     }), [
         bindingScope,
         ownsVoiceRuntime,
@@ -649,7 +643,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         sessionStatus?.state,
         sessionStatus?.statusText,
         sessionStatus?.actionRequiredReason,
-        presentedSessionIsHidden,
         snap.canStop,
         snap.canCommitInput,
         snap.inputEndsOnSilence,

@@ -1810,7 +1810,7 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     }
   });
 
-  it('keeps the live call phase for blocked-only hidden input and a real request retains Needs you', async () => {
+  it.each([true, false])('keeps the live call phase for blocked input and real requests retain Needs you (hidden=%s)', async (hidden) => {
     const { setVoiceSessionSnapshot } =
       await import('@/voice/session/voiceSessionStore');
     const session = createSessionFixture({
@@ -1824,7 +1824,7 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
       pendingUserActionRequestCount: 0,
       metadata: {
         ...createSessionFixture().metadata!,
-        systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        ...(hidden ? { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } : {}),
       },
     });
     getStorage().setState((state) => ({
@@ -2400,12 +2400,26 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     });
     expect(hook.getCurrent()).toMatchObject({
       surfaceState: 'error',
-      statusWord: hasFailureTitle ? t('session.usageLimitRecovery.banner.title') : t('voiceAssistant.connectionError'),
+      statusWord: hasFailureTitle ? t('session.usageLimitRecovery.banner.title') : t('common.error'),
       captionLabel: hasFailureTitle ? 'The provider has no usage remaining.' : t('settingsVoice.local.machineErrors.provider_error'),
     });
     expect(hook.getCurrent().statusWord).not.toBe(hook.getCurrent().captionLabel);
     await hook.unmount();
   });
+
+  it.each(['voice_connection_failed', 'voice_connection_timeout'])(
+    'names the explicit connection failure %s without changing its retry recovery', async (errorMessage) => {
+      const hook = await renderControl({
+        adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,
+        errorCode: 'provider_error', errorMessage, errorPresentation: 'error', errorRecoveryAction: 'retry',
+      });
+      expect(hook.getCurrent()).toMatchObject({
+        surfaceState: 'error', statusWord: t('voiceAssistant.connectionError'),
+        captionLabel: t('settingsVoice.local.machineErrors.provider_error'),
+      });
+      await hook.unmount();
+    },
+  );
 
   it('names the unreachable Machine in the top bar through the shared typed failure presentation', async () => {
     const hook = await renderControl({
@@ -2716,7 +2730,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
     return { ...runtime, start: sdk.startSession, stop: sdk.endSession };
   }
 
-  it('surfaces a conversation approval while its bound coding Session has no request', async () => {
+  it('surfaces a conversation approval while its bound coding Session has only blocked input', async () => {
     const target = { serverId: recoveryRuntime.serverId, sessionId: 'coding-target' };
     const routing = await installRoutingLifecycle(target);
     const hook = await renderControl({ kind: 'session', sessionAddress: target });
@@ -2730,6 +2744,8 @@ describe('useVoiceAttemptControl idle targeting', () => {
     // fixture's default binding otherwise collapses conversation and target.
     await act(async () => {
       getStorage().setState((state) => ({ sessions: { ...state.sessions,
+        [target.sessionId]: { ...state.sessions[target.sessionId]!, active: true, activeAt: Date.now(),
+          pendingCount: 1, pendingBlockedCount: 1, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 },
         [conversation.sessionId]: createSessionFixture({ id: conversation.sessionId, serverId: conversation.serverId,
           metadata: { ...createSessionFixture().metadata!, systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } }),
       } }));
@@ -2738,6 +2754,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
     });
     try {
       expect(hook.getCurrent().pendingRequestSessionAddress).toEqual(target);
+      expect(hook.getCurrent().statusCell).toBeNull();
       await act(async () => getStorage().setState((state) => ({
         sessions: {
           ...state.sessions,
@@ -3353,13 +3370,47 @@ describe('useVoiceAttemptControl idle targeting', () => {
     },
   );
 
-  it('opens History for a targetless runtime attempt without navigating its hidden carrier or rebinding', async () => {
+  it('names an ended conversation from its captured provider after the live binding is removed', async () => {
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    const { setVoiceSessionSnapshot, dismissVoiceSessionEndedAttempt } = await import('@/voice/session/voiceSessionStore');
+    const { useVoiceConversationHeaderSubtitle } = await import('@/voice/presence/useVoiceConversationHeaderSubtitle');
+    const { writeVoiceProviderSettingsConfig } = await import('@/sync/domains/settings/voiceSettings');
+    seedVoiceSettings({
+      ...writeVoiceProviderSettingsConfig(getStorage().getState().settings.voice,
+        'happier.voice.elevenlabs/realtime-elevenlabs', ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS),
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+    });
+    const accountScope = initialStorageState.profileScope!;
+    const address = { serverId: accountScope.serverId, sessionId: 'ended-local-conversation' };
+    const binding = {
+      adapterId: 'local_conversation', controlSessionId: 'ended-local-control',
+      conversationSessionId: address.sessionId, conversationSessionAddress: address,
+      transcriptMode: 'native_session' as const, targetSessionAddress: null, updatedAt: 45,
+    };
+    voiceSessionBindingStore.getState().bind(binding);
+    setVoiceSessionSnapshot({ adapterId: binding.adapterId, sessionId: binding.controlSessionId,
+      status: 'connected', mode: 'listening', canStop: true }, binding,
+      { accountScope, conversationScope: { kind: 'voice_home' } });
+    const metadata = { hiddenSystemSession: true, systemSessionKind: 'voice_custody' };
+    const header = await renderHook(() => useVoiceConversationHeaderSubtitle(metadata, address));
+    try {
+      await act(async () => {
+        setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+        voiceSessionBindingStore.getState().unbind(address.sessionId);
+      });
+      expect(header.getCurrent()).toBe(`${t('voiceMoments.globalVoice')} · ${t('settingsVoice.mode.local')}`);
+    } finally {
+      await header.unmount();
+      dismissVoiceSessionEndedAttempt();
+      voiceSessionBindingStore.getState().unbind(address.sessionId);
+    }
+  });
+
+  it('opens the retained carrier for a targetless runtime attempt without rebinding', async () => {
     const { voiceSessionBindingStore } =
       await import('@/voice/binding/voiceConversationBindingStore');
     const { setVoiceSessionSnapshot } =
       await import('@/voice/session/voiceSessionStore');
-    const { SETTINGS_ROUTES } =
-      await import('@/components/settings/catalog/routes');
     const binding = {
       adapterId: 'local_conversation',
       controlSessionId: 'global-control',
@@ -3383,12 +3434,12 @@ describe('useVoiceAttemptControl idle targeting', () => {
     });
     const hook = await renderControl(GLOBAL_TARGET, HostedConversation);
     expect(hook.getCurrent().canOpenConversation).toBe(true);
-    expect(hook.getCurrent().openConversationSessionAddress).toBeNull();
+    expect(hook.getCurrent().openConversationSessionAddress).toEqual(binding.conversationSessionAddress);
     await act(async () => hook.getCurrent().onOpenConversation());
     expect(
       hook.tree.root.findByProps({ testID: 'voice-open-destination' }).props
         .children,
-    ).toBe(SETTINGS_ROUTES.voiceHistory);
+    ).toBe(`/session/hidden-history?serverId=${recoveryRuntime.serverId}`);
     expect(
       voiceSessionBindingStore
         .getState()
@@ -3407,7 +3458,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
     {
       lifetime: 'runtime_attempt' as const,
       target: null,
-      destination: '/settings/voice/history',
+      destination: '/session/saved-conversation?serverId=ended-home',
     },
     {
       lifetime: undefined,
@@ -3415,7 +3466,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
       destination: '/session/saved-conversation?serverId=ended-home',
     },
   ])(
-    'opens the captured ended destination after binding removal ($destination)',
+    'opens the captured ended destination from VoiceGlance after binding removal ($destination)',
     async ({ lifetime, target, destination }) => {
       const { voiceSessionBindingStore } =
         await import('@/voice/binding/voiceConversationBindingStore');
@@ -3450,10 +3501,16 @@ describe('useVoiceAttemptControl idle targeting', () => {
         binding,
         { accountScope, conversationScope: { kind: 'voice_home' } },
       );
+      const { useVoiceSurfaceModel } = await import('@/components/voice/surface/useVoiceSurfaceModel');
+      const { VoiceGlance } = await import('@/components/voice/presence/VoiceGlance');
+      function EndedGlance({ children }: React.PropsWithChildren) {
+        const model = useVoiceSurfaceModel({ variant: 'sidebar' });
+        return <>{children}{model ? <VoiceGlance model={model} presentation="popover" /> : null}</>;
+      }
       const hook = await renderControl({
         kind: 'session',
         sessionAddress: { serverId: 'new-home', sessionId: 'new-target' },
-      });
+      }, EndedGlance);
       try {
         await act(async () => {
           setVoiceSessionSnapshot({
@@ -3470,7 +3527,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
         expect(hook.getCurrent().canOpenConversation).toBe(true);
         expect(hook.getCurrent().targetSessionAddress).toEqual(admittedTarget);
         await act(async () => {
-          await hook.getCurrent().onOpenConversation();
+          await hook.tree.root.findByProps({ testID: 'voice-glance-open-conversation' }).props.onPress();
         });
         expect(routerMock.instance?.spies.push.mock.calls.at(-1)?.[0]).toBe(
           destination.replace('ended-home', accountScope.serverId),
