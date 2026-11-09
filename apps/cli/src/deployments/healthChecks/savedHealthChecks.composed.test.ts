@@ -13,7 +13,8 @@ import { MachineServicesDetailResultV1Schema, sealAutomationTriggerDefinitionSto
     createActionExecutor, type AutomationEventStoredDefinitionProjectionV1 } from '@happier-dev/protocol';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
-import { createSavedHealthChecksHost } from './savedHealthChecks';
+import { createSavedHealthChecksHost, type SavedMachineServiceHealthResult } from './savedHealthChecks';
+import { publishSavedServiceHealthResult } from './publishServiceHealth';
 import { readAdoptedHealthCheckBatch } from './readAdoptedHealthCheckBatch';
 import { createCurrentDomainEdgeObservation } from './currentDomainEdgeObservation';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -96,7 +97,7 @@ describe('saved source finite native producer binding', () => {
             } });
         const serviceFor = (adoption: typeof f) => createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => adoption.owner,
             readObserver: () => adoption.observer, now: () => 1000, openDomainArtifact: async () => null,
-            onServiceResult: value => owner.machineServiceRows.publishHealthResult(handle, value),
+            onServiceResult: value => publishSavedServiceHealthResult(owner, value),
         }).bind(adoption.seed, { actions: {
             execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }),
         } as unknown as ActionsService, http: { requestStream: async () => ({ status: 200,
@@ -127,54 +128,73 @@ describe('saved source finite native producer binding', () => {
     });
 
     it('publishes recorded saved HTTP results into adopted service health without clock-only pushes', async () => {
-        const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
-        const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
-        const serviceId = 'b0193e23-7277-4d70-a16e-18c094edc6c4';
-        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId, serviceId },
-            checks: [{ checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' },
-                binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:40797', expectStatus: 200 },
-                periodMs: 60000, consecutiveFailuresBeforeAlerting: 2 }] };
-        const f = await adopted(sourceConfig, machineId);
-        const owner = runtime.registry.projectManagedServices;
-        const handle = await owner.superviseMachine({ serverId: 'server', machineId,
-            watch: { v: 1, watchId: serviceId, name: 'QA-HEALTH-PUBLISH-1109-http.service',
-                adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
-                nativeResourceId: 'user/QA-HEALTH-PUBLISH-1109-http.service', lifecyclePurpose: 'development' },
-            isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
-                async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
-                async stop() { return { status: 'stopped' }; },
-            } });
-        let status = 200;
-        let now = 1000;
-        const changes: unknown[] = [];
-        const subscription = owner.machineServiceRows.subscribe(machineId, [handle], change => changes.push(change.row?.health));
-        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
-            readObserver: () => f.observer, now: () => now, openDomainArtifact: async () => null,
-            onServiceResult: value => owner.machineServiceRows.publishHealthResult(handle, value),
-        }).bind(f.seed, { actions: { execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }) } as unknown as ActionsService,
-            http: { requestStream: async () => ({ status, finalUrl: 'http://127.0.0.1:40797', headers: {},
-                chunks: (async function* () {})(), dispose: async () => {} }) } as unknown as HttpService });
+        const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
         try {
-            const read = () => service!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
-            await read();
-            expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current', observedAtMs: 1000 });
-            expect(changes).toHaveLength(1);
-            now += 60000; await read(); await handle.inspectCurrentOccurrence();
-            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
-            expect(changes).toHaveLength(1);
-            status = 503; now += 60000; await read();
-            expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
-            expect(changes).toHaveLength(2);
-            const page = await f.readStoredDefinitions.mock.results[0]!.value;
-            f.readStoredDefinitions.mockResolvedValueOnce({ ...page, revision: '2', definitions: [] });
-            expect(await f.owner.refresh()).toEqual({ kind: 'adopted', revision: '2' });
-            owner.machineServiceRows.reconcileHealthResults(entry => readAdoptedHealthCheckBatch({
-                resolveAdoptedDefinitionSet: () => f.owner, caller: entry.caller, occurrenceId: entry.occurrenceId,
-                sourceInstanceId: entry.sourceInstanceId, signal: f.seed.signal,
-            }).kind === 'available');
-            expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
-            expect(changes).toHaveLength(3);
-        } finally { subscription.dispose(); await handle.dispose(); await runtime.dispose(); }
+            await withTempDir('happier-saved-service-health-home-', async homeDir => {
+                env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+                    HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+                reloadConfiguration();
+                const serverUrl = 'https://health-home.example.test';
+                const profile = await addServerProfile({ name: 'saved-health', serverUrl, webappUrl: serverUrl });
+                const homeId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
+                await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+                    descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl,
+                        revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } });
+                expect(profile.id).not.toBe(homeId);
+                const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+                const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
+                const serviceId = '6d6375ac-3a3c-4d1a-bf45-6af1f3dba203';
+                const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId, serviceId },
+                    checks: [{ checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' },
+                        binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:40797', expectStatus: 200 },
+                        periodMs: 60000, consecutiveFailuresBeforeAlerting: 2 }] };
+                const f = await adopted(sourceConfig, machineId);
+                const owner = runtime.registry.projectManagedServices;
+                const handle = await owner.superviseMachine({ serverId: homeId, machineId,
+                    watch: { v: 1, watchId: serviceId, name: 'QA-HEALTH-PUBLISH-1109-http.service',
+                        adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
+                        nativeResourceId: 'user/QA-HEALTH-PUBLISH-1109-http.service', lifecyclePurpose: 'development' },
+                    isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+                        async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                        async stop() { return { status: 'stopped' }; },
+                    } });
+                let status = 200;
+                let now = 1000;
+                const changes: unknown[] = [];
+                const subscription = owner.machineServiceRows.subscribe(machineId, [handle], change => changes.push(change.row?.health));
+                const published: SavedMachineServiceHealthResult[] = [];
+                const service = createSavedHealthChecksHost({ serverId: profile.id, resolveAdoptedDefinitionSet: () => f.owner,
+                    readObserver: () => f.observer, now: () => now, openDomainArtifact: async () => null,
+                    onServiceResult: value => { published.push(value); return publishSavedServiceHealthResult(owner, value); },
+                }).bind(f.seed, { actions: { execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }) } as unknown as ActionsService,
+                    http: { requestStream: async () => ({ status, finalUrl: 'http://127.0.0.1:40797', headers: {},
+                        chunks: (async function* () {})(), dispose: async () => {} }) } as unknown as HttpService });
+                try {
+                    const read = () => service!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
+                    await read();
+                    expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current', observedAtMs: 1000 });
+                    expect(changes).toHaveLength(1);
+                    now += 60000; await read(); await handle.inspectCurrentOccurrence();
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+                    expect(changes).toHaveLength(1);
+                    status = 503; now += 60000; await read();
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
+                    expect(changes).toHaveLength(2);
+                    await publishSavedServiceHealthResult(owner, { ...published[0]!, serverId: 'srv_unrelated_home' });
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
+                    expect(changes).toHaveLength(2);
+                    const page = await f.readStoredDefinitions.mock.results[0]!.value;
+                    f.readStoredDefinitions.mockResolvedValueOnce({ ...page, revision: '2', definitions: [] });
+                    expect(await f.owner.refresh()).toEqual({ kind: 'adopted', revision: '2' });
+                    owner.machineServiceRows.reconcileHealthResults(entry => readAdoptedHealthCheckBatch({
+                        resolveAdoptedDefinitionSet: () => f.owner, caller: entry.caller, occurrenceId: entry.occurrenceId,
+                        sourceInstanceId: entry.sourceInstanceId, signal: f.seed.signal,
+                    }).kind === 'available');
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
+                    expect(changes).toHaveLength(3);
+                } finally { subscription.dispose(); await handle.dispose(); await runtime.dispose(); }
+            });
+        } finally { env.restore(); reloadConfiguration(); }
     });
 
     it('reads an Environment heartbeat at its controller through the same saved source and exact receipt owner', async () => {
