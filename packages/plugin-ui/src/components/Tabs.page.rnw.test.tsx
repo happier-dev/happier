@@ -4,6 +4,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { View } from 'react-native';
 import { Tabs } from './Tabs.js';
+import { ScrollArea } from './Layout.js';
 import { Text } from './Text.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
@@ -286,5 +287,27 @@ describe('Tabs lead (what leads the page above its tabs)', () => {
         expect(leads[0]!.closest('[data-testid="story"]')).not.toBeNull();
       } finally { mount.unmount(); }
     }
+  });
+
+  it('scrolls the lead away with the selected panel, its tab row pinned inside that one scroll', async () => {
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(createSurfaceContext())} context={createSurfaceContext()}>
+        <Tabs value="overview" onValueChange={() => {}} ariaLabel="Entry" lead={lead} layout="fill">
+          <Tabs.Item value="overview" title="Overview"><ScrollArea testID="story-scroll"><Text value="Overview body" /></ScrollArea></Tabs.Item>
+          <Tabs.Item value="files" title="Files"><Text value="Files body" /></Tabs.Item>
+        </Tabs>
+      </PluginUiProvider>,
+    );
+    try {
+      await act(async () => {});
+      const scroller = mount.container.querySelector('[data-testid="story-scroll"]')!;
+      const leads = mount.container.querySelectorAll('[data-testid="page-lead"]');
+      expect(leads).toHaveLength(1);
+      expect(scroller.contains(leads[0]!)).toBe(true);
+      const tablists = mount.container.querySelectorAll('[role="tablist"]');
+      expect(tablists).toHaveLength(1);
+      expect(scroller.contains(tablists[0]!)).toBe(true);
+      expect(leads[0]!.compareDocumentPosition(tablists[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally { mount.unmount(); }
   });
 });

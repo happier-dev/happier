@@ -1774,7 +1774,10 @@ detail is presented beside, or over, its collection. Nested source Tabs stay
 `tabList="host"` so they cannot replace the outer navigation.
 
 Pass `lead` for what leads the page above its tabs, such as a pushed detail's
-title and facts. Tabs draws it above the tab row while the row is in the page.
+title and facts. While the tab row is in the page, the selected panel's own
+`ScrollArea` draws the lead and the row first: the lead scrolls away and the row
+stays pinned at the top of that one scroll. A panel without a `ScrollArea` (a
+bounded chat) gets both drawn above it instead.
 When the row is the host's navigation (phone Bottom, or `tabList="host"`), the
 selected panel places `<Tabs.Lead />` where its story starts, so the lead
 scrolls away with it. Nested Tabs without a `lead` pass the outer one through.

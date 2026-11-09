@@ -1,4 +1,4 @@
-import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
+import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
 import {
   ScrollView,
   View,
@@ -19,6 +19,8 @@ import { PluginUiScrollActivityProvider } from '../../presentationHost/scrollAct
 import { useHappierPageChrome } from './pageChrome.js';
 import { HappierColumnEdgeContext, useHappierColumnEdgePx } from './columnEdge.js';
 import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
+import { HappierScrollHeadContextInternal } from './scrollHead.js';
+import { resolveHappierUiPalette, useOptionalHappierUiPalette, useOptionalHappierUiTheme } from '../../environment/context.js';
 
 // The semantic gap vocabulary is owned by the RN-free shared module so the
 // public adapter and the host declarative renderer cannot disagree about it.
@@ -196,6 +198,26 @@ export function HappierScrollArea({
   const usePaneHeaderReporter = host?.paneHeaderScroll?.useReporter ?? useNoPaneHeaderReporter;
   const paneHeaderReporter = usePaneHeaderReporter();
   const reportTop = !nested && scrollProps.horizontal !== true ? paneHeaderReporter : null;
+  // The selected tab's page head (its lead and tab row, `HappierTabs` `lead`): the primary scroll area draws them first,
+  // so the lead scrolls away and the row pins at the top of this one scroll (never a second scroll owner).
+  const offeredHead = useContext(HappierScrollHeadContextInternal);
+  const head = !nested && scrollProps.horizontal !== true ? offeredHead : null;
+  const claimHead = head?.claim;
+  useLayoutEffect(() => claimHead?.(), [claimHead]);
+  const theme = useOptionalHappierUiTheme();
+  const palette = useOptionalHappierUiPalette(theme) ?? (theme === null ? null : resolveHappierUiPalette(theme));
+  const offsetRef = useRef(0);
+  const leadHeightRef = useRef(0);
+  const selection = head?.selection;
+  const lastSelection = useRef(selection);
+  // A switch while the row is pinned brings the new tab in at its top, the row still pinned; above that, it stays put.
+  useEffect(() => {
+    if (lastSelection.current === selection) return;
+    lastSelection.current = selection;
+    if (selection !== undefined && offsetRef.current > leadHeightRef.current) {
+      scrollSourceRef.current?.scrollTo({ y: leadHeightRef.current, animated: false });
+    }
+  }, [selection]);
   const createTracker = host?.createScrollActivityTracker;
   const tracker = useMemo(() => createTracker?.(scrollSourceRef, scrollProps.horizontal === true) ?? null,
     [createTracker, scrollProps.horizontal]);
@@ -207,6 +229,13 @@ export function HappierScrollArea({
         paddingLeft: safeAreaInsets.left,
       }
     : undefined;
+  const column = (node: ReactNode) => columnMaxWidthPx === undefined ? node : (
+    // The column also owns the page's sheet edge, so a plain block (a line of text, Markdown, a button, a
+    // banner) stands on it instead of the column's side; sheets, page states and titles keep their own edges.
+    <View style={{ alignSelf: 'center', width: '100%', maxWidth: columnMaxWidthPx, paddingHorizontal: edgePx }}>
+      {edgePx === 0 ? node : <HappierColumnEdgeContext.Provider value={edgePx}>{node}</HappierColumnEdgeContext.Provider>}
+    </View>
+  );
   return (
     <PluginUiPopoverScrollSourceProvider scrollSourceRef={scrollSourceRef}>
       <PluginUiScrollActivityProvider tracker={tracker}>
@@ -214,7 +243,11 @@ export function HappierScrollArea({
       <ScrollView
         ref={scrollSourceRef}
         {...scrollProps}
-        onScroll={event => { tracker?.onScroll(event); reportTop?.(event.nativeEvent.contentOffset.y); scrollProps.onScroll?.(event); }}
+        onScroll={event => {
+          offsetRef.current = event.nativeEvent.contentOffset.y;
+          tracker?.onScroll(event); reportTop?.(event.nativeEvent.contentOffset.y); scrollProps.onScroll?.(event);
+        }}
+        {...(head === null ? {} : { stickyHeaderIndices: [1] })}
         onLayout={event => { tracker?.onLayout(event); scrollProps.onLayout?.(event); }}
         onContentSizeChange={tracker?.onContentSizeChange}
         scrollEventThrottle={scrollProps.scrollEventThrottle ?? (reportTop ? 16 : undefined)}
@@ -224,15 +257,13 @@ export function HappierScrollArea({
         contentContainerStyle={[insetStyle, contentContainerStyle]}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
       >
+        {head === null ? null : column(<View onLayout={(event) => { leadHeightRef.current = event.nativeEvent.layout.height; }}>{head.lead}</View>)}
+        {head === null ? null : (
+          <View style={palette === null ? undefined : { backgroundColor: palette.page }}>{column(head.strip)}</View>
+        )}
         {/* A page's scroll owns its column: every block (a banner, a card, a state), not only the
             sections that centre themselves, sits on the column the page header uses (R-APP-4). */}
-        {columnMaxWidthPx === undefined ? children : (
-          // The column also owns the page's sheet edge, so a plain block (a line of text, Markdown, a button, a
-          // banner) stands on it instead of the column's side; sheets, page states and titles keep their own edges.
-          <View style={{ alignSelf: 'center', width: '100%', maxWidth: columnMaxWidthPx, paddingHorizontal: edgePx }}>
-            {edgePx === 0 ? children : <HappierColumnEdgeContext.Provider value={edgePx}>{children}</HappierColumnEdgeContext.Provider>}
-          </View>
-        )}
+        {column(children)}
       </ScrollView>
       </HappierScrollAreaNestedContext.Provider>
       </PluginUiScrollActivityProvider>

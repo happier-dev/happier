@@ -14,6 +14,7 @@ import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presenta
 import type { HappierStyleProp } from '../presentation/portableTypes.js';
 import { Button, IconButton } from './Button.js';
 import { Icon } from './Icon.js';
+import { Text } from './Text.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
@@ -331,21 +332,31 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
     return () => publishBack(null);
   }, [backLabel, publishBack]);
   const backTestID = props.testID === undefined ? {} : { testID: `${props.testID}:back` };
-  const back = (style?: HappierStyleProp) => <View style={style}>{backLabel === undefined ? <IconButton
+  const back = (style?: HappierStyleProp, trailing?: ReactNode) => <View style={style}>{backLabel === undefined ? <IconButton
     icon={<Icon name="back" tone="secondary" />}
     accessibilityLabel={translate('happier.plugin-ui.detailsPane.back', 'Back')}
     onPress={props.onClose}
     {...backTestID}
   /> : <Button variant="plain" size="small" singleLine icon={<Icon name="back" tone="secondary" />} title={backLabel}
-    onPress={props.onClose} {...backTestID} />}</View>;
+    onPress={props.onClose} {...backTestID} />}{trailing}</View>;
   const backInBand = hostBack || publishBack !== undefined;
   if (props.title === undefined || placement === 'backOnly') {
     if (backInBand) return <View />;
+    // While the story carries the large title, a band of its own keeps the compact title beside the way back, as a
+    // navigation band shows it (`publishTitle`): the large title scrolls away under it.
+    const compactTitle = placement === 'backOnly' && props.title !== undefined && publishTitle === undefined ? (
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text variant="heading" numberOfLines={1} value={props.title}
+          {...(props.testID === undefined ? {} : { testID: `${props.testID}:band-title` })} />
+      </View>
+    ) : null;
     return back({
       flexDirection: 'row',
+      alignItems: 'center',
+      gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
       paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
       paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
-    });
+    }, compactTitle);
   }
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef}>

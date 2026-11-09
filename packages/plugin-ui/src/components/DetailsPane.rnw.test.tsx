@@ -401,6 +401,16 @@ describe('DetailPage (an item that is its own page)', () => {
     banded.unmount();
   });
 
+  it('hands the title to its own band while the story carries it, as a navigation band shows it', async () => {
+    const view = mountWithPane(page(vi.fn()), null);
+    await flush();
+    measure(view, 390);
+    expect(view.container.querySelector('[data-testid="story-lead"] [role="heading"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="entry-page:band-title"]')?.textContent)
+      .toBe('Move cart totals to server-side rounding');
+    view.unmount();
+  });
+
   it('is the plain page where its list page would split: the detail draws its own header', async () => {
     const view = mountWithPane(page(vi.fn()), null);
     await flush();

@@ -24,6 +24,7 @@ import { HAPPIER_SEGMENTED_METRICS } from '../form/SegmentedChoice.js';
 import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
+import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { listWebFocusableElements } from '../interaction/webFocusableElements.js';
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -465,11 +466,17 @@ export function HappierTabs(props: Readonly<{
   // Nested Tabs without a lead of their own pass the enclosing page's lead through to their panels.
   const enclosingLead = useContext(HappierTabsLeadContext);
   const panelLead = props.lead === undefined ? enclosingLead : hideStrip ? props.lead : null;
-  return (
-    <HappierTabsLeadContext.Provider value={panelLead}>
-    <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
-      {hideStrip || props.lead === undefined ? null : props.lead}
-      {hideStrip ? null : <View style={props.trailing === undefined ? undefined : { flexDirection: trailingBeforeTabs ? 'row-reverse' : 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
+  // With its row drawn here, the lead and the row are offered to the selected panel's primary scroll area so they
+  // scroll as one page (the row pinned); drawn above the panel only while no scroll area there claims them.
+  const enclosingHead = useContext(HappierScrollHeadContextInternal);
+  const [headClaims, setHeadClaims] = useState(0);
+  const claimHead = useMemo(() => () => {
+    setHeadClaims((count) => count + 1);
+    return () => { setHeadClaims((count) => count - 1); };
+  }, []);
+  const headOffered = !hideStrip && props.lead !== undefined;
+  const headClaimed = headOffered && headClaims > 0;
+  const stripNode = <View style={props.trailing === undefined ? undefined : { flexDirection: trailingBeforeTabs ? 'row-reverse' : 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
       {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
       {pageStrip ? null : <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />}
       {/* With an owned panel, More precedes the tablist in keyboard order;
@@ -571,7 +578,14 @@ export function HappierTabs(props: Readonly<{
       </HappierScrollArea>
       </View>
       {trailingBeforeTabs ? null : props.trailing}
-      </View>}
+      </View>;
+  const panelHead: HappierScrollHeadInternal | null = headOffered
+    ? { lead: props.lead, strip: stripNode, selection: selectedValue ?? '', claim: claimHead } : enclosingHead;
+  return (
+    <HappierTabsLeadContext.Provider value={panelLead}>
+    <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
+      {headOffered && !headClaimed ? props.lead : null}
+      {hideStrip || headClaimed ? null : stripNode}
       {/* `null`: the strip selects something its host draws elsewhere (a page's widget area), so no empty panel or gap follows it. */}
       {props.sharedPanel === null ? null : props.sharedPanel !== undefined && selected !== undefined ? (
         <HappierTabPanel
@@ -581,7 +595,7 @@ export function HappierTabs(props: Readonly<{
           onFocusWithinChange={(focused) => { recordFocusWithin(selected.value, focused); }}
           fill={fill}
         >
-          {props.sharedPanel}
+          <HappierScrollHeadContextInternal.Provider value={panelHead}>{props.sharedPanel}</HappierScrollHeadContextInternal.Provider>
         </HappierTabPanel>
       ) : tabs.map((tab, tabIndex) => (mountedPanels.includes(tab.value) ? (
         <HappierTabPanel
@@ -592,7 +606,9 @@ export function HappierTabs(props: Readonly<{
           onFocusWithinChange={(focused) => { recordFocusWithin(tab.value, focused); }}
           fill={fill}
         >
-          {tab.children}
+          <HappierScrollHeadContextInternal.Provider value={tab.value === selectedValue ? panelHead : null}>
+            {tab.children}
+          </HappierScrollHeadContextInternal.Provider>
         </HappierTabPanel>
       ) : null))}
     </View>
