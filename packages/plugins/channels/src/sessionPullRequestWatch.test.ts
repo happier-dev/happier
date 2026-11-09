@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { PluginError, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
-import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
-import { normalizePluginAccountCollectionContractV1 } from '../../../protocol/src/plugins/data/collectionsV1.js';
+import { NormalizedPluginAccountCollectionContractV1Schema, preparePluginAccountCollectionContractV1 } from '../../../protocol/src/plugins/data/collectionsV1.js';
 import { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 import { SessionPullRequestWatchListResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CHANNELS_PLUGIN } from './manifest.js';
@@ -114,10 +114,20 @@ describe('portable Account PR Watch Action', () => {
             } };
     }
     it('retains the exact stored channel-state v19 writer digest', () => {
-        const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'happier.channels',
-            contribution: projectPluginAccountCollectionDeclaration(CHANNEL_STATE_COLLECTION.id, CHANNEL_STATE_COLLECTION) });
+        // Authenticated public Data contracts captured on 2026-10-30; current
+        // declarations can advance without rewriting this retained writer.
+        const retained: unknown = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelContractsV19V5.json', import.meta.url), 'utf8'));
+        if (retained === null || typeof retained !== 'object' || !('contracts' in retained) || !Array.isArray(retained.contracts)) {
+            throw new Error('Missing retained public Collection contracts');
+        }
+        const writer = retained.contracts.map(value => NormalizedPluginAccountCollectionContractV1Schema.parse(value))
+            .find(value => value.collectionId === CHANNEL_STATE_COLLECTION.id);
+        if (!writer) throw new Error('Missing retained channel-state writer');
+        const { pluginId, collectionId: id, contractDigest, ...declaration } = writer;
+        const { normalized: contract } = preparePluginAccountCollectionContractV1({ pluginId,
+            contribution: { ...declaration, id } });
         expect(contract.schemaVersion).toBe(19);
-        expect(contract.contractDigest).toBe('fqhCh_AnrOfyhkJfr_1Ae1d8V06CSWJcWZmmtjFH2p8');
+        expect(contract.contractDigest).toBe(contractDigest);
     });
     it('loads a stored v19 configured Fix fanout failure carrying cause', async () => {
         const f = await configuredFixFixture();

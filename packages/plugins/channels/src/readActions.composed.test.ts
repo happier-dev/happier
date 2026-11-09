@@ -10,7 +10,7 @@ import { ConversationBindingV1Schema, ConversationDeliveryAttentionResultV1Schem
   CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1, ConversationConnectionListResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
-import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
+import { getActionSpec, parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 function connection(connectionId: string) {
@@ -116,7 +116,7 @@ describe('registered Channels Account read Actions', () => {
       const reconnect = getActionSpec('connectedServices.authentication.beginReconnect');
       expect(reconnect.id).toBe('connectedServices.authentication.beginReconnect');
       const recovery = ConversationConnectionListResultV1Schema.parse(result).connections[0]?.recommendedRecovery;
-      expect(reconnect.inputSchema.safeParse(recovery?.input).success).toBe(true);
+      expect(() => parsePluginHostActionInvocation(reconnect.id, recovery?.input)).not.toThrow();
     } finally { await kit.dispose(); }
   });
   it.each<Readonly<{ name: string; payload: Readonly<Record<string, JsonValue>>; action: string; input: JsonValue }>>([

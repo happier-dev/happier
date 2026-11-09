@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
-import type { SessionSendRequest, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionSendRequest, SessionSpawnNewInputV2, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
 import { createScmCapabilities } from '@happier-dev/plugin-sdk/scm';
 import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
@@ -2352,7 +2352,7 @@ describe('Conversation provider observation ingress', () => {
     expect(changed).toBe(true);
     expect(harness.send).toHaveBeenCalledTimes(initiallyAllowed ? 0 : 1);
   });
-  it('posts admitted external text into its bound Discussion through the existing writer with retry identity', async () => {
+  it.each([undefined, 'Support mailbox'])('posts admitted external text with the binding conversation name (%s), never the observation id', async endpointLabel => {
     const harness = createIngressHarness({ execute: async (id, input): Promise<JsonValue> => {
       if (id !== 'discussion.post') throw new Error(`Unexpected host Action ${id}`);
       if (!isChannelStateJsonRecord(input)) throw new Error('Expected the Discussion Action request object.');
@@ -2366,14 +2366,16 @@ describe('Conversation provider observation ingress', () => {
     const row = harness.rows.get('binding-1')!;
     const value = record(row.value);
     harness.rows.set('binding-1', { ...row, value: { ...value, payload: { ...record(value.payload),
+      endpoint: { ...record(record(value.payload).endpoint), ...(endpointLabel ? { label: endpointLabel } : {}) },
       target: { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } } } } });
     const input = observation({ messageRevision: 'discussion-inbound' });
+    Object.assign(fullTextIngress(input).endpoint, { label: '1e218619-4cd0-4497-b2e5-739a9c4caa72' });
     await ingestConversationProviderObservationForInvocation(input, harness.context);
     expect(harness.execute).toHaveBeenCalledWith('discussion.post', expect.objectContaining({
       discussionId: 'discussion-1', localId: expect.any(String),
       content: { v: 1, parts: [{ t: 'text', text: 'Hello from Telegram' }],
         externalSource: { kind: 'channel', providerPluginId: 'happier.channel.telegram',
-          conversationDisplayName: 'External conversation', senderDisplayName: 'Ada' } },
+          conversationDisplayName: endpointLabel ?? 'External conversation', senderDisplayName: 'Ada' } },
     }), { signal: harness.context.signal });
     expect(harness.send).not.toHaveBeenCalled();
     const occurrence = [...harness.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
@@ -2557,7 +2559,8 @@ describe('Conversation provider observation ingress', () => {
       }
       vi.setSystemTime(1_500);
       const connectionReads = vi.spyOn(harness.context.services.storage.account!.collection(CHANNEL_STATE_COLLECTION), 'get');
-      const placementReads = vi.spyOn(harness.context.services.actions!, 'getCurrentExecutionRouting');
+      vi.spyOn(harness.context.services.actions!, 'getCurrentExecutionRouting');
+      const placementReads = vi.mocked(harness.context.services.actions!.getCurrentExecutionRouting!);
       await expect(readNextConversationIngressDueAtForInvocation(harness.context)).resolves.toBe(1_750);
       expect(connectionReads.mock.calls.filter(([id]) => id === 'connection-1' || id === foreignConnection.id)).toHaveLength(2);
       expect(placementReads).toHaveBeenCalledTimes(2);
@@ -3270,7 +3273,8 @@ describe('Conversation provider observation ingress', () => {
       winnerInserted = true;
       const winningValue = { ...preparing.value, payload: { ...record(preparing.value.payload),
         normalizedIngress: winner.entry.observation } };
-      rows.set(String(winningValue.id), stateRow(winningValue));
+      const winningRow = stateRow(winningValue);
+      rows.set(winningRow.rowId, winningRow);
     } });
 
     await expect(ingestConversationProviderObservationForInvocation(original, harness.context)).resolves.toBeUndefined();
@@ -3919,7 +3923,7 @@ describe('Conversation provider observation ingress', () => {
     const checkpointBatches: Array<readonly CollectionMutation[]> = [];
     let pollCount = 0;
     const harness = createIngressHarness({
-      getPollResult: () => ++pollCount === 1
+      getPollResult: (): JsonValue => ++pollCount === 1
         ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
         : { kind: 'batch', observations, checkpointAfterBatch: { cursor: 'batch-end' } },
       afterBatch: ({ operations }) => {
@@ -6720,7 +6724,7 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
     const occurredAt = Date.now();
     const endpoint = { kind: 'githubPullRequest' as const, audience: 'shared' as const,
       id: 'github:repo:77:issue:5', parentId: '77', pullRequest: { repository: 'acme/widgets', number: 5 } };
-    const entries = ['2', '1'].map(id => {
+    const entries = ['2', '1'].map((id): ConversationProviderObservationIngestInputV1['entry'] => {
       const input = observation({ occurrenceId: `automation-pr-${id}`, messageId: id,
         messageRevision: '1', occurredAt, messageText: `Automation original ${id}` });
       const original = fullTextIngress(input);
@@ -7471,7 +7475,7 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
         }
         if (actionId === 'session.transcript.get') return {
-          ok: true, projection: 'externalShareableV1', sessionId: record(input).sessionId ?? null,
+          ok: true, projection: 'externalShareableV1', sessionId: getActionSpec('session.transcript.get').inputSchema.parse(input).sessionId,
           items: [], scannedThroughSeq: 0, hasMore: false,
         };
         throw new Error(`Unexpected Action ${actionId}.`);
@@ -9329,7 +9333,7 @@ describe('Conversation checkpointed-poll ingress', () => {
         if (index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
           && rowIds.some(id => id.startsWith('binding-'))) inventories.push([...rowIds]);
       },
-      pollExecution: () => {
+      pollExecution: (): JsonValue => {
         cycle += 1;
         return cycle === 1
           ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
@@ -9367,7 +9371,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     const receivedCheckpoints: JsonValue[] = [];
     const harness = createIngressHarness({
       getPollExecutionOrigin: () => origin,
-      pollExecution: input => {
+      pollExecution: (input): JsonValue => {
         const poll = ConversationPollInputV1Schema.parse(input);
         receivedCheckpoints.push(poll.checkpoint);
         cycle += 1;
@@ -9399,12 +9403,12 @@ describe('Conversation checkpointed-poll ingress', () => {
   });
   it('refuses an offline worker poll after explicit Delete without advancing its checkpoint', async () => {
     let cycle = 0;
-    const harness = createIngressHarness({ pollExecution: async () => {
+    const harness = createIngressHarness({ pollExecution: async (): Promise<JsonValue> => {
       cycle += 1;
       if (cycle === 1) return { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } };
       const row = harness.rows.get('connection-1');
       if (row === undefined) throw new Error('Expected retained connection.');
-      const current = readConversationConnectionUpdateRow({ row, connectionId: row.rowId });
+      const current = readConversationConnectionUpdateRow({ row: jsonStateRow(row), connectionId: row.rowId });
       await expect(deleteConversationConnectionForInvocation({ connectionId: row.rowId,
         expectedRevision: current.configurationRevision }, harness.context))
         .resolves.toMatchObject({ kind: 'deleteFinalizing', authorityEpoch: 5 });
@@ -9440,7 +9444,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     try {
       let baseline = true;
       const event = observation({ messageRevision: 'debounced-poll', occurredAt: 1_000 });
-      const harness = createIngressHarness({ getPollResult: () => baseline
+      const harness = createIngressHarness({ getPollResult: (): JsonValue => baseline
         ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
         : { kind: 'batch', observations: [event.entry], checkpointAfterBatch: { cursor: 'after-message' } },
       });
@@ -12062,7 +12066,7 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
     try {
     let recovered = false;
     const harness = createIngressHarness({
-      getPollResult: () => recovered ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'recovered' } } : {
+      getPollResult: (): JsonValue => recovered ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'recovered' } } : {
         kind: 'historyGap',
         reason: 'providerHistoryUnavailable',
         diagnostic: 'provider cursor expired',
@@ -12160,7 +12164,7 @@ describe('Conversation history baseline acceptance', () => {
         messageRevision: `skipped-${id}:1`, occurrenceId: `telegram:update:skipped-${id}`, occurredAt: 900_000,
       }).entry);
       const harness = createIngressHarness({
-        getPollResult: () => skip ? { kind: 'batch', observations: entries, checkpointAfterBatch: { cursor: 'after-skipped-range' } }
+        getPollResult: (): JsonValue => skip ? { kind: 'batch', observations: entries, checkpointAfterBatch: { cursor: 'after-skipped-range' } }
           : { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'before-range' } },
         beforeBatch: ({ operations }) => {
           gapWrites += operations.filter(operation => operation.kind === 'put'

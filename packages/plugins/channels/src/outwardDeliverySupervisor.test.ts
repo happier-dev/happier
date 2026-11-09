@@ -3786,7 +3786,7 @@ describe('Channels outward-delivery supervisor', () => {
     if (custody.kind !== 'created') throw new Error('Expected deletion custody.');
     const held = await store.compareAndSwap({ custodyId: custody.record.custodyId, expectedRevision: custody.record.revision,
       custody: blocker === 'delivery'
-        ? { state: 'outcomeUnknown', attemptCount: 1, attemptId: null, providerMessageIds: [] }
+        ? { state: 'outcomeUnknown', attemptCount: 1, providerMessageIds: [] }
         : { state: 'delivered', attemptCount: 1, providerMessageIds: ['settled-before-delete'] } });
     if (held.kind !== 'updated') throw new Error('Expected unresolved delivery custody.');
     const reads = vi.spyOn(state, 'query');

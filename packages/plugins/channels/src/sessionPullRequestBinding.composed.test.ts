@@ -102,7 +102,7 @@ describe('registered Session PR URL attach', () => {
     } } });
     const peer = await createPluginTestkit({ manifest: peerPlugin.manifest, module: peerPlugin });
     const execute = vi.fn(async (actionId: string, input: JsonValue) => {
-      const sessionId = input !== null && typeof input === 'object' && !Array.isArray(input) ? input.sessionId : undefined;
+      const sessionId = input !== null && typeof input === 'object' && 'sessionId' in input ? input.sessionId : undefined;
       if (actionId === 'session.transcript.get') {
         if (input !== null && typeof input === 'object' && 'cursor' in input) {
           baselineReadCount += 1;
@@ -201,9 +201,9 @@ describe('registered Session PR URL attach', () => {
       await expect(core.invokeAction('session-pull-request-binding-v1', { ...input, credentialRef: null }, {
         surface: 'mcp', services,
       })).rejects.toMatchObject({ code: 'channels_pr_link_native_origin_unavailable' });
-      const read = () => core.invokeAction('session-pull-request-binding-v1', {
+      const read = async () => SessionPullRequestBindingResultV1Schema.parse(await core.invokeAction('session-pull-request-binding-v1', {
         kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '77', number: 12 },
-      }, { surface: 'plugin', services });
+      }, { surface: 'plugin', services }));
       const beforeRead = requests.length;
       expect(await read()).toMatchObject({ kind: 'relations', links: [{ bindingId: result.bindingId,
         sessionId: 'session-1', repositoryId: '77', pullRequest: { repository: 'acme/widgets', number: 12 }, linkedAtMs }] });
@@ -368,7 +368,7 @@ describe('registered Session PR URL attach', () => {
           : relation.pullRequest.number === 14 ? 'open' : undefined;
         if (stateName === undefined) continue;
         const row = await state.get(relation.bindingId);
-        if (!row || typeof row.value.payload !== 'object' || row.value.payload === null || Array.isArray(row.value.payload)) throw new Error('Missing bulk binding');
+        if (!row || typeof row.value.payload !== 'object' || row.value.payload === null || !('endpoint' in row.value.payload)) throw new Error('Missing bulk binding');
         const endpoint = row.value.payload.endpoint;
         if (typeof endpoint !== 'object' || endpoint === null || Array.isArray(endpoint)) throw new Error('Missing PR endpoint');
         await state.put({ ...row.value, payload: { ...row.value.payload, endpoint: { ...endpoint,

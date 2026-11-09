@@ -61,7 +61,7 @@ describe('registered GitHub PR source → native Channels relationships', () => 
       await expect(core.invokeAction('session-pull-request-relations-v1', {
         kind: 'unlink', sessionId: 'session-1', bindingId: 'account-binding', expectedRevision: 1,
       }, { surface: 'ui' })).rejects.toMatchObject({ code: 'plugin_action_read_observation_read_only_required' });
-      const invalidated = vi.fn();
+      const invalidated = Object.assign(vi.fn(), { retire: vi.fn() });
       const observation = await core.observeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef, sessionId: 'session-1',
       }, invalidated, { surface: 'ui' });

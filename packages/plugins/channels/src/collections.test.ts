@@ -249,7 +249,11 @@ describe('Channels collection declarations', () => {
       observationActorPrincipalId: 'writer', actor: { principalId: 'writer', repositoryWriteAccess: true } }];
     expect(isValidPluginJsonSchemaValue(validate, association(historical))).toBe(true);
     expect(isValidPluginJsonSchemaValue(validate, association({ ...historical, prEventActors }))).toBe(true);
-    for (const sender of [{ principalId: 'writer', label: 'Private display label' }, { principalId: 'writer', privateKey: 'secret' }]) {
+    const invalidSenders: readonly Readonly<Record<string, JsonValue>>[] = [
+      { principalId: 'writer', label: 'Private display label' },
+      { principalId: 'writer', privateKey: 'secret' },
+    ];
+    for (const sender of invalidSenders) {
       expect(isValidPluginJsonSchemaValue(validate, association({ ...historical, prEventActors: [{ ...prEventActors[0], sender }] }))).toBe(false);
     }
   });

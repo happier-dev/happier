@@ -62,7 +62,9 @@ const slotName = ({ keyword, key }: SubschemaSlot) => key === null ? keyword : `
  * admission read them directly), subschemas holding a `$ref` or named by one
  * (those pointers are absolute), and anything smaller than a reference.
  */
-export function shareRepeatedCollectionSchemas<TSchema extends PluginJsonSchema>(schema: TSchema): TSchema {
+export function shareRepeatedCollectionSchemas<TSchema extends PluginJsonSchema>(
+    schema: TSchema,
+): TSchema & Pick<PluginJsonSchema, '$defs'> {
     const root = schema as unknown as SchemaNode;
     if (root.$defs !== undefined || root.definitions !== undefined) {
         throw new Error('Collection schema definitions are owned by shareRepeatedCollectionSchemas.');

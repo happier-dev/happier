@@ -5203,7 +5203,7 @@ describe('Channels mounted binding editor', () => {
       recentAuthorAccountIds: [], archivedAt: null,
       capabilities: { postMessages: true, rename: true, archive: true, restore: false,
         askAgent: true, sendToSession: true, manageAccess: true, leave: false },
-    } satisfies PluginActionResultById<'discussion.list'>['discussions'][number];
+    } satisfies PluginActionResultById['discussion.list']['discussions'][number];
     const retained = offlineBindingRow();
     const mutationInputs: unknown[] = [];
     const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
@@ -7366,7 +7366,7 @@ describe('Channels connection policy editing across a source change', () => {
       enabled: true,
       digestDigit: 'b',
     });
-    const executeAction = vi.fn(async (_request: Parameters<PluginUiHostApi['executeAction']>[0]) => {
+    const executeAction = vi.fn(async (_request: PluginUiTestkitExecuteActionInput) => {
       current = connectionsResourceAtRevision({
         revision: 2,
         enabled: false,

@@ -1,5 +1,8 @@
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_DELIVERIES_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from '../collections.js';
 import { assertChannelsTestCollectionQueryLimit } from './collectionQueryBound.js';
+import type { PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
+import { comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1 } from '../../../../protocol/src/plugins/data/collectionsV1.js';
+import { pluginCollectionQueryShapeV1 } from '../../../../protocol/src/plugins/data/collectionQueryWireV1.js';
 
 export type StoredRow<TValue extends Record<string, unknown> = Record<string, unknown>> = Readonly<{
   rowId: string;
@@ -12,6 +15,17 @@ type WatchQuery = Readonly<{ kind: 'collection' }> | Readonly<{ kind: 'row'; row
 
 function compareCanonicalText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
+}
+
+function matchesNumericRange(value: unknown, range: PluginCollectionQuery['range']): boolean {
+  if (range === undefined) return true;
+  if (typeof value !== 'number') return false;
+  const encode = (operand: number | string | boolean | null) => encodePluginCollectionIndexTuplePrefixV1({
+    fields: [{ kind: 'finiteNumber', value: operand }],
+  });
+  const key = encode(value);
+  return (range.lower === undefined || comparePluginCollectionIndexSortKeysV1(key, encode(range.lower)) >= 0)
+    && (range.upper === undefined || comparePluginCollectionIndexSortKeysV1(key, encode(range.upper)) <= 0);
 }
 
 /**
@@ -245,15 +259,9 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     return { status: 'updated' as const, results };
   }
 
-  async query(input: Readonly<{
-    index?: string;
-    prefix?: readonly unknown[];
-    cursor?: string;
-    order?: 'asc' | 'desc';
-    range?: Readonly<{ lower?: number; upper?: number }>;
-    limit: number;
-  }>) {
+  async query(input: Partial<PluginCollectionQuery>) {
     assertChannelsTestCollectionQueryLimit(input.limit);
+    const limit = pluginCollectionQueryShapeV1().limit.parse(input.limit);
     assertDeclaredCollectionIndex(input.index);
     const prefix = input.prefix?.[0];
     const bindingPrefix = input.prefix?.[1];
@@ -294,8 +302,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         if (input.index === CHANNEL_STATE_INDEX_ID.byIngressDue) {
           const dueAt = row.value['due-at'];
           return row.value['record-kind'] === prefix
-            && (input.range?.lower === undefined || (typeof dueAt === 'number' && dueAt >= input.range.lower))
-            && (input.range?.upper === undefined || (typeof dueAt === 'number' && dueAt <= input.range.upper));
+            && matchesNumericRange(dueAt, input.range);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1) {
           return row.value['connection-id'] === prefix
@@ -325,8 +332,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         if (input.index === CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt) {
           const updatedAt = row.value['updated-at'];
           return row.value.terminal === prefix
-            && (input.range?.lower === undefined || (typeof updatedAt === 'number' && updatedAt >= input.range.lower))
-            && (input.range?.upper === undefined || (typeof updatedAt === 'number' && updatedAt <= input.range.upper));
+            && matchesNumericRange(updatedAt, input.range);
         }
         if (prefix === CHANNEL_STATE_RECORD_KIND.binding) {
           return row.value['record-kind'] === CHANNEL_STATE_RECORD_KIND.binding;
@@ -342,7 +348,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     const cursorIndex = afterCursor === undefined
       ? input.cursor === undefined ? 0 : Math.max(0, all.findIndex(row => row.rowId === input.cursor) + 1)
       : afterCursor < 0 ? all.length : afterCursor;
-    const rows = all.slice(cursorIndex, cursorIndex + input.limit);
+    const rows = all.slice(cursorIndex, cursorIndex + limit);
     const final = rows.at(-1);
     return {
       rows,

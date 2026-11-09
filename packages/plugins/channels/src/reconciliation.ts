@@ -4,7 +4,7 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting } from '@happier-dev/plugin-sdk/actions';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionQuery, type PluginCollectionRow } from '@happier-dev/plugin-sdk/collections';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
 import type {
   ConversationEndpointAudienceV1,
   ConversationProviderConnectionReadInputV1,
@@ -27,7 +27,7 @@ import {
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import type { ConversationPairingManager } from './pairing.js';
-import { asChannelStateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
+import { asChannelStateRow, readConversationConnectionUpdateRow, type ChannelStateRow } from './accountLocalBindingPolicy.js';
 import {
   getSelfStampedPluginCallerExecutionOrigin,
   getConversationConnectionExecutionRouting,
@@ -127,7 +127,7 @@ export async function hasCurrentConversationExecutionPlacement(
 export async function isConversationConnectionPlacedForInvocation(
   context: Pick<PluginInvocationContext, 'services' | 'signal'>,
   connectionId: string,
-  storedConnection?: PluginCollectionRow,
+  storedConnection?: ChannelStateRow,
 ): Promise<boolean> {
   const stored = storedConnection ?? await requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION)
     .get(connectionId, { signal: context.signal });
