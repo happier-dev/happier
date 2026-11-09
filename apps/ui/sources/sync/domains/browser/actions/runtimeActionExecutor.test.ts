@@ -510,7 +510,7 @@ describe('browser runtime action executor', () => {
                 execute: createBrowserRuntimeActionExecutor({ control, executeOnMachine }) };
         };
         const context = { defaultSessionId: 'session_1', externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } };
-        const open = (platform: 'web' | 'ios', target: BrowserViewTargetV1, openContext: object = context) => ({ actionId: 'browser.view.open', context: openContext, input: {
+        const open = (platform: 'web' | 'ios', target: BrowserViewTargetV1, openContext: RuntimeActionExecuteArgs['context'] = context) => ({ actionId: 'browser.view.open' as const, context: openContext, input: {
             kind: 'openView', commandId: 'web-open', browserSessionId: 'browser_session_1', viewId: 'view_1',
             target, platform, focus: true,
         } });

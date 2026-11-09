@@ -247,11 +247,13 @@ const allowedExternalPolicy = {
 // The daemon includes authoritative opening facts in root-view discovery. Keep this
 // network fixture aligned with controlAdapter.listViews; composed tests exercise that producer.
 function managedDiscoveryOpening(view: Readonly<{ browserSessionId: string; viewId: string }>, platform: BrowserPlatformV1) {
-    return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `opened:${view.viewId}`, occurredAt: 1,
+    const opening = BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `opened:${view.viewId}`, occurredAt: 1,
         ...view, target: externalTarget, platform, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface',
         adapterCapabilities: { adapterKind: 'chromiumSidecar', supportedTargetKinds: ['externalUrl'],
             supportedRenderEngines: ['streamedSurface'], diagnosticsFidelityByFamily: { console: 'cdp', network: 'cdp' } },
     });
+    if (opening.kind !== 'viewOpened') throw new Error('Expected a viewOpened event');
+    return opening;
 }
 
 const enabledBrowserDecision = {
@@ -818,7 +820,7 @@ describe('BrowserSurfaceHost', () => {
             target: { kind: 'externalUrl', url: 'http://localhost:42514/' } }]));
         // Nothing embeds this device's localhost.
         expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById)
-            .some((view: { engineKind: string }) => view.engineKind === 'webIframe')).toBe(false);
+            .some(view => (view as { engineKind: string }).engineKind === 'webIframe')).toBe(false);
     });
 
     it('does not offer the managed Browser for an embedded page without a Session Machine', async () => {
