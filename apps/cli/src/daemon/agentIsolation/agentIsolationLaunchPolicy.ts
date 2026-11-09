@@ -258,7 +258,7 @@ export function selectHostRequesterExecutionIdentity(input: HostRequesterExecuti
     if (binding && input.hostHomeServerIdentityId && binding.serverIdentityId !== input.hostHomeServerIdentityId)
         return unknown('requester_authority_unavailable');
     if (context?.signal?.aborted) return unknown('requester_authority_unavailable');
-    const { agentSource, inheritedAutomation, sessionOrigin } = readHostRequesterInvocationSource(input);
+    const { agentSource, inheritedAutomation } = readHostRequesterInvocationSource(input);
     if (session?.success && (!input.sessionRequesterHomeServerIdentityId
         || home && input.sessionRequesterHomeServerIdentityId !== home)) return unknown('session_requester_unavailable');
     if (!context && session?.success) {
@@ -301,7 +301,6 @@ export function selectHostRequesterExecutionIdentity(input: HostRequesterExecuti
         && (binding.machineId !== custody.machineId || binding.installationId !== custody.installationId
             || binding.custodianAccountId !== custody.custodianAccountId)))
         return unknown('requester_authority_unavailable');
-    if (sessionOrigin && !session?.success) return unknown('session_requester_unavailable');
     const target = input.hostExecutionTarget ?? custody;
     const requester = session?.success ? session.data : {
         serverId: home, accountId: custody.actorAccountId, machineId: target.machineId, installationId: target.installationId,

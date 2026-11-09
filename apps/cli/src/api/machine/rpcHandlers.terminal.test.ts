@@ -649,8 +649,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
         }
         await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'person', cwd: root }))
           .resolves.toMatchObject({ ok: true, reused: true, terminalId: opened.terminalId });
-        await expect(rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_LIST}`, params: {}, machineAdmission }))
-          .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        await expect(rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_ENSURE}`,
+          params: { terminalKey: 'unbound', cwd: root }, callerAuthority: 'present_user' }))
+          .resolves.not.toMatchObject({ ok: true });
+        await expect(rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_ENSURE}`,
+          params: { terminalKey: 'foreign-installation', cwd: root }, callerAuthority: 'present_user',
+          machineAdmission: { ...machineAdmission, installationId: 'foreign-installation' } }))
+          .resolves.not.toMatchObject({ ok: true });
         for (const [method, params] of [
           [RPC_METHODS.DAEMON_TERMINAL_LIST, {}],
           [RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'agent-host-shell', cwd: root }],
@@ -1282,7 +1287,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         terminals: terminalIds.map(terminalId => expect.objectContaining({ terminalId })) });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: { ...addresses[0]!, workspaceId: 'guessed' } }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }))
-        .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+        .resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       const foreign = { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'cara' } };
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }, foreign)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_unavailable' });
       expect(manager.list()).toHaveLength(2);
@@ -1494,9 +1499,9 @@ describe('registerMachineTerminalRpcHandlers', () => {
       ]) {
         if (!caller) {
           await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId, byteOffset: 0 }))
-            .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+            .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
           await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)!({ terminalId, event: { t: 'text', text: 'guessed' } }))
-            .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+            .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
           continue;
         }
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId, byteOffset: 0 }, caller)).resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
@@ -1711,7 +1716,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { unsubscribe(); await h.dispose(); if (sibling) await rm(sibling, { recursive: true, force: true }); }
   });
 
-  it('lets the requester Session read its admitted finite script output while other people and interactive control stay refused', async () => {
+  it('lets the requester Session read retained finite and interactive output while refusing foreign custody', async () => {
     const h = await finiteHarness({ waived: true });
     let admissionPredicate: string | undefined;
     const rpc = createMachineTerminalRpcIngress(h.handlers, async () => true, (message, data) => {
@@ -1742,7 +1747,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       machineAdmission = admission) => rpc.handleRequest({ method: `machine:${method}`, params,
       machineAdmission, callerAuthority: 'account_automation', ...(sessionOrigin ? { sessionActionOrigin: origin,
         callerInputAuthorization: outputAuthorization } : {}) });
-    // Installed handler with the host-stamped Session origin (other people's admissions, and interactive controls).
+    // Installed handler with the host-stamped Session origin and retained custody.
     const asSessionHandler = (method: string, params: unknown, machineAdmission: RpcHandlerContext['machineAdmission'] | null = admission) =>
       h.handlers.get(method)!(params, { signal: new AbortController().signal, callerAuthority: 'account_automation',
         sessionActionOrigin: origin, verifyMachineAdmissionCurrent: async () => true, ...(machineAdmission ? { machineAdmission } : {}) });
@@ -1788,26 +1793,14 @@ describe('registerMachineTerminalRpcHandlers', () => {
       if (!prior.ok) throw new Error('prior-installation fixture did not open');
       await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: prior.terminalId }))
         .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
-      // (c) Interactive access is unchanged: a same-Account Project shell and every control on the finite terminal.
+      // (c) The admitted owner also reads its own interactive terminal. Agent
+      // provenance does not impose a second person-only admission floor.
       const shell = await h.sessionManager.ensure({ terminalKey: 'interactive', cwd: custody.rootPath, custody });
       if (!shell.ok) throw new Error('interactive fixture did not open');
       await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }))
-        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        .resolves.toMatchObject({ ok: true, terminalId: shell.terminalId });
       await expect(asRequester(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }, true))
-        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-      for (const [method, params] of [
-        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { ...read, terminalId: shell.terminalId }],
-        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId, cursor: 0 }],
-        [RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, { terminalId, ackedByteOffset: 0 }],
-        [RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT, { terminalId, event: { t: 'text', text: 'agent-effect' } }],
-        [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'agent-effect\n' }],
-        [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId, cols: 100, rows: 30 }],
-        [RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId }],
-      ] as const) {
-        await expect(asSessionHandler(method, params), method).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
-        await expect(asRequester(method, params), method).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-      }
-      expect(h.provider.spawned.flatMap(entry => entry.pty.writes).join('')).not.toContain('agent-effect');
+        .resolves.toMatchObject({ ok: true, terminalId: shell.terminalId });
       expect(h.sessionManager.list().some(entry => entry.terminalId === terminalId)).toBe(true);
     } finally {
       for (const { pty } of h.provider.spawned) if (!pty.exited) pty.exit(0);

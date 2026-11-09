@@ -549,7 +549,16 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
       expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
         { terminalId: opened.terminalId, data: 'foreign-work\n' }, 'member-b')).not.toMatchObject({ ok: true });
     }
-    expect(f.processes).toHaveLength(2);
+    if (mode === 'linuxUsersV1') {
+      const project = await f.invokeOwnerAgentTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+        { terminalKey: 'owner-agent-project', workspace: f.workspace });
+      expect(project).toMatchObject({ ok: true, terminalId: expect.any(String) });
+      if (!project || typeof project !== 'object' || !('terminalId' in project) || typeof project.terminalId !== 'string')
+        throw new Error('Approved owner-Agent Project terminal did not open');
+      expect(await f.invokeOwnerAgentTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+        { terminalId: project.terminalId, data: 'owner-project-work\n' })).toMatchObject({ ok: true });
+    }
+    expect(f.processes).toHaveLength(mode === 'linuxUsersV1' ? 3 : 2);
     for (const process of f.processes) {
       expect(process.params.file).not.toBe('sudo');
       expect(process.frames).toEqual([]);
@@ -667,7 +676,7 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(manager.getNativeExecutionIdentity?.(terminal.terminalId)).toMatchObject({ digest: f.member.digest, agentUid: 2401 });
   });
 
-  it('keeps fresh member Agent Workflow and automation ensure and restart closed with genuine native preparation available', async () => {
+  it('admits member Agent Workflow and automation shells through their own prepared native identity', async () => {
     const f = await fixture();
     await expect(f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { workspace: f.workspace }))
       .resolves.toMatchObject({ ok: true, terminals: [] });
@@ -685,15 +694,21 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
       for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
         const result = await f.invokeTerminal(method, { terminalKey: `fresh-${source.name}-${method}`, workspace: f.workspace },
           'member-a', source.agent, source.localActionContext);
-        expect.soft(result, `${source.name}:${method}`).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+        expect(result, `${source.name}:${method}`).toMatchObject({ ok: true, terminalId: expect.any(String) });
       }
     }
-    expect(f.processes).toEqual([]);
+    expect(f.processes).toHaveLength(sources.length * 2);
+    for (const process of f.processes) {
+      expect(process.params.file).toBe('sudo');
+      expect(process.frames).toHaveLength(1);
+      expect(process.frames[0]).toMatchObject({ cwd: f.member.workspaceRoot,
+        nativeIdentity: { username: f.member.username, agentUid: 2401, agentGid: 2401, home: f.member.home } });
+    }
     expect(f.preparation.launches).toEqual([]);
     expect(f.preparation.mutations).toEqual([]);
   });
 
-  it('ensures a useful accepted member PTY through default preparation and keeps foreign legacy and Agent controls closed', async () => {
+  it('retains accepted member native custody for person and Agent controls while refusing foreign and legacy PTYs', async () => {
     const f = await fixture();
     // This deliberately bare network control has no admitted Account carrier.
     // Public member Actions supply sealed requester custody before this owner.
@@ -742,9 +757,11 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
       custody: { kind: 'machine', serverId: f.serverId, requesterAccountId: 'member-a', machineId: f.machineId,
         installationId: f.installation.installationId, rootPath: f.member.workspaceRoot } });
     if (!shared.ok) throw new Error('Legacy negative fixture failed');
-    for (const [id, accountId, agent] of [[terminalId, 'member-b', false], [terminalId, 'member-a', true], [shared.terminalId, 'member-a', false]] as const)
+    for (const [id, accountId, agent] of [[terminalId, 'member-b', false], [shared.terminalId, 'member-a', false]] as const)
       expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: id, data: 'foreign\n' }, accountId, agent)).not.toMatchObject({ ok: true });
-    expect(native!.writes).toEqual(['useful-member\n']);
+    expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+      { terminalId, data: 'useful-agent\n' }, 'member-a', true)).toMatchObject({ ok: true });
+    expect(native!.writes).toEqual(['useful-member\n', 'useful-agent\n']);
     const owner = await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'owner', cwd: f.directory }, 'requester', false, undefined, 'manage');
     expect(owner).toMatchObject({ ok: true });
     await expect(f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId })).resolves.toMatchObject({ ok: true });
