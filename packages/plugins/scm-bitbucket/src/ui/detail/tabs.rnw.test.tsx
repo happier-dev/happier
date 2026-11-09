@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -79,6 +79,26 @@ afterEach(async () => {
 });
 
 describe('the mounted Bitbucket pull-request detail tablist', () => {
+  it('settles a lost diff receipt without crashing and recovers on the page refresh', async () => {
+    let reads = 0;
+    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'files' } as unknown as JsonValue, {}, (localId) => {
+      if (localId !== BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff) return undefined;
+      reads += 1;
+      if (reads === 1) throw new PluginError({ code: 'timeout', message: 'The read receipt was lost after dispatch.' });
+      return {
+        kind: 'diff', files: [{ path: 'recovered.ts', status: 'modified', linesAdded: 1, linesRemoved: 0 }],
+        omittedRowCount: 0, projectionTruncated: false,
+      };
+    });
+
+    await expect(detail.getByText('The diff is unavailable')).resolves.toBeDefined();
+    expect(reads).toBe(1);
+    await detail.press(await detail.getByRole('button', { name: 'Refresh page' }));
+    await expect(detail.getByText('recovered.ts')).resolves.toBeDefined();
+    await expect(detail.queryByText('The diff is unavailable')).resolves.toBeUndefined();
+    expect(reads).toBe(2);
+  });
+
   it('reads comments and activity as one chronological stream, each remark once', async () => {
     const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'activity' } as unknown as JsonValue, {
       [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
