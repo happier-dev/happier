@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
-import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -21,19 +21,18 @@ import {
 type Props = Readonly<{
   choices: readonly OfferedPermissionChoice[];
   primaryId: string | null;
-  /** The narrow-column rule `PermissionFooter` already measures: a phone always lists. */
-  narrow: boolean;
   /** Every choice is withheld (answered, pending, unconfirmed). */
   disabled: boolean;
   busyChoiceId: string | null;
+  permissionOwnerLabel?: string;
   onChoose: (choiceId: string) => void;
   primaryRef?: React.Ref<View>;
 }>;
 
 /** The second line of a list row: the producer's own rule preview, else what the offered scope means. */
-function describeOfferedChoice(choice: OfferedPermissionChoice): string | null {
+function describeOfferedChoice(choice: OfferedPermissionChoice, ownerRequiredReason: string): string | null {
   if (!isOfferedPermissionChoiceAvailable(choice))
-    return t('capabilities.session.toolAsk.ownerRequired');
+    return ownerRequiredReason;
   if (choice.rulePreview) return choice.rulePreview;
   if (isRefusingPermissionChoice(choice)) return null;
   if (choice.scope === 'session')
@@ -73,10 +72,12 @@ export const PermissionFooterOfferedChoices = React.memo(
           current === width ? current : width,
         );
     }, []);
+    // The shared narrow-row rule on this view's own column: a phone always lists.
+    const narrow = isHappierPageRowNarrow(containerWidthPx);
     const arranged = arrangeOfferedChoices(props.choices);
     const endEdge = arranged.rowEnd[arranged.rowEnd.length - 1];
     const layout = resolveOfferedChoiceLayout({
-      narrow: props.narrow,
+      narrow,
       primaryLeadsApprovals: props.primaryId === null || endEdge?.id === props.primaryId,
       rowNaturalWidthPx,
       containerWidthPx,
@@ -84,6 +85,7 @@ export const PermissionFooterOfferedChoices = React.memo(
     const unavailable = props.choices.find(
       (choice) => !isOfferedPermissionChoiceAvailable(choice),
     );
+    const ownerRequiredReason = t('capabilities.session.toolAsk.ownerRequired', { owner: props.permissionOwnerLabel });
 
     const renderRowChoice = (
       choice: OfferedPermissionChoice,
@@ -154,7 +156,7 @@ export const PermissionFooterOfferedChoices = React.memo(
       const disabled =
         props.disabled || !isOfferedPermissionChoiceAvailable(choice);
       const busy = props.busyChoiceId === choice.id;
-      const description = describeOfferedChoice(choice);
+      const description = describeOfferedChoice(choice, ownerRequiredReason);
       const hairline =
         arranged.refusalsTrail &&
         refusal &&
@@ -225,7 +227,7 @@ export const PermissionFooterOfferedChoices = React.memo(
     return (
       <View onLayout={onContainerLayout} style={styles.container}>
         {/* The row's natural one-line width, measured out of flow and never seen. */}
-        {props.narrow ? null : (
+        {narrow ? null : (
           <View
             style={styles.measure}
             onLayout={onRowMeasure}
@@ -248,7 +250,7 @@ export const PermissionFooterOfferedChoices = React.memo(
                   color={theme.colors.text.secondary}
                 />
                 <Text variant="meta" style={styles.reasonText}>
-                  {t('capabilities.session.toolAsk.ownerRequired')}
+                  {ownerRequiredReason}
                 </Text>
               </View>
             ) : null}

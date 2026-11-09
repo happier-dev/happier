@@ -111,9 +111,10 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     const isPreviewVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
 
     const origin = props.request.nativeChoices?.origin;
-    const fromSubagent = origin !== undefined && (origin.subagentId !== undefined || origin.sessionId !== props.sessionId);
+    const fromSubagent = origin !== undefined && (origin.subagentLabel !== undefined || origin.subagentId !== undefined || origin.sessionId !== props.sessionId);
     const effectiveSubtitle = React.useMemo(() => {
         const subtitle = (() => {
+            if (mcp) return mcp.serverTitle;
             const base = headerText.subtitle;
             if (!base) return null;
             if (!isPreviewVisible) return base;
@@ -125,13 +126,15 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         })();
         // A subagent's request names the subagent first (lab mb B `mbAppr:child`).
         if (!fromSubagent) return subtitle;
-        return t('capabilities.session.toolAsk.fromSubagent', { subtitle: subtitle ?? '' }).replace(/\s*·\s*$/, '');
-    }, [fromSubagent, headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
+        return t('capabilities.session.toolAsk.fromSubagent', { subtitle: subtitle ?? '', subagent: origin?.subagentLabel }).replace(/\s*·\s*$/, '');
+    }, [fromSubagent, origin?.subagentLabel, mcp?.serverTitle, headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
     // The viewer's availability is the caller-specific projection on the pending request, never re-decided here.
     const nativeChoiceAvailability = props.request.nativeChoiceAvailability;
-    const footerPermission = React.useMemo(() => nativeChoiceAvailability
-        ? { ...model.tool.permission, nativeChoiceAvailability } : model.tool.permission,
-    [model.tool.permission, nativeChoiceAvailability]);
+    const permissionOwnerLabel = props.request.permissionOwnerLabel;
+    const footerPermission = React.useMemo(() => nativeChoiceAvailability || permissionOwnerLabel
+        ? { ...model.tool.permission, ...(nativeChoiceAvailability ? { nativeChoiceAvailability } : {}),
+            ...(permissionOwnerLabel ? { permissionOwnerLabel } : {}) } : model.tool.permission,
+    [model.tool.permission, nativeChoiceAvailability, permissionOwnerLabel]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const chrome = props.chrome ?? 'card';
@@ -144,7 +147,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         <ApprovalPromptChrome
             testID="permission-prompt-card"
             title={mcp ? mcp.title : headerText.title}
-            subtitle={mcp ? mcp.serverTitle : effectiveSubtitle}
+            subtitle={effectiveSubtitle}
             titleNumberOfLines={1}
             subtitleNumberOfLines={2}
             icon="lock"

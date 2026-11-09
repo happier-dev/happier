@@ -54,6 +54,7 @@ type PermissionFooterProps = PromptResponseOrigin & {
         source?: string;
         nativeChoices?: NativePermissionChoicesV1;
         nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
+        permissionOwnerLabel?: string;
         status: "pending" | "approved" | "denied" | "canceled";
         reason?: string;
         mode?: string;
@@ -854,7 +855,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     }
 
     // Offered native choices (lab mb B): every choice the agent offered, in its words and its order.
-    if (nativeChoices) {
+    if (nativeChoices !== undefined) {
         const offeredChoices = choices.filter(isOfferedPermissionChoice);
         const loadingChoiceId = isCurrentRequestLoading ? storedLoadingChoiceId : null;
         const handleChoose = (choiceId: string) => {
@@ -870,8 +871,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 <View style={answerUnconfirmed ? styles.buttonContainerWithheld : null}>
                     <PermissionFooterOfferedChoices
                         choices={offeredChoices}
+                        permissionOwnerLabel={projectedRequest?.permissionOwnerLabel ?? permission.permissionOwnerLabel}
                         primaryId={selectPrimaryOfferedChoice(offeredChoices)}
-                        narrow={stacked}
                         disabled={!isPending || answerUnconfirmed || isCurrentRequestLoading}
                         busyChoiceId={loadingChoiceId}
                         onChoose={handleChoose}

@@ -126,16 +126,15 @@ async function layOut(
   screen: Awaited<ReturnType<typeof renderFooter>>['screen'],
   width: number,
 ) {
-  const container = screen.findAll(
+  // The footer and its choices each measure their own column; a phone column is narrow for both.
+  const columns = screen.findAll(
     (node) =>
-      typeof node.type === 'string' &&
+      node.type === 'View' &&
       typeof node.props.onLayout === 'function',
-  )[0];
-  await act(async () =>
-    container!.props.onLayout({
-      nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } },
-    }),
   );
+  await act(async () => {
+    for (const column of columns) column.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } });
+  });
 }
 
 describe('PermissionFooter offered native choices', () => {
@@ -221,6 +220,17 @@ describe('PermissionFooter offered native choices', () => {
       }),
     );
     expect(commits).toBe(0);
+  });
+});
+
+describe('present but malformed native offer', () => {
+  it('never falls back to the generic allow and deny controls', async () => {
+    const screen = await renderWithSessionTranscriptSource(
+      <PermissionFooter sessionId="s1" toolName="Edit" metadata={{ flavor: 'claude' }} canApprovePermissions
+        permission={{ id: 'edit-2', status: 'pending', nativeChoices: null as never }} />, createSource());
+    const buttons = screen.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function'
+      && typeof node.props.testID === 'string' && node.props.testID.startsWith('permission-footer.'));
+    expect(buttons).toHaveLength(0);
   });
 });
 

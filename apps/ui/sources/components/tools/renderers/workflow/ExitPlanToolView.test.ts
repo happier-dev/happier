@@ -145,6 +145,23 @@ describe('ExitPlanToolView', () => {
         expect(collectHostText(tree)).not.toContain('tools.exitPlanMode.responded');
     });
 
+    it('offers a native occurrence\'s own choices word for word instead of the plan controls', async () => {
+        liveRequests = { perm1: { tool: 'ExitPlanMode', arguments: { plan: 'plan' }, createdAt: 1, nativeChoices: {
+            requirementId: 'plan-7', source: 'native-test', choices: [
+                { id: 'opaque:auto', label: 'Yes, and auto-accept edits', decision: 'approved', scope: 'session', response: { approved: true } },
+                { id: 'opaque:manual', label: 'Yes, and manually approve edits', decision: 'approved', scope: 'once', response: { approved: true } },
+                { id: 'opaque:keep', label: 'No, keep planning', decision: 'denied', scope: 'once', response: { approved: false } },
+            ] } } } as never;
+        const tree = await renderView(makeRunningTool());
+        expect(tree.findAllByTestId('exit-plan-approve')).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-approve-menu')).toHaveLength(0);
+        const text = collectHostText(tree);
+        for (const label of ['Yes, and auto-accept edits', 'Yes, and manually approve edits', 'No, keep planning']) expect(text).toContain(label);
+        await act(async () => { await tree.pressByTestIdAsync('permission-footer.choice.opaque:manual'); });
+        expect(sessionDeny).toHaveBeenCalledWith({ id: 'perm1', nativeChoice: { requirementId: 'plan-7', choiceId: 'opaque:manual' } });
+        expect(sessionAllow).not.toHaveBeenCalled();
+    });
+
     it('approves via permission RPC and does not send a follow-up user message', async () => {
         sessionAllow.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeRunningTool());

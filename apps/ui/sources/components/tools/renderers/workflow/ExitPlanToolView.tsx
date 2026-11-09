@@ -19,6 +19,10 @@ import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/co
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { useToolFindState } from '../core/ToolFindText';
 import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
+import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
+import { PermissionFooterOfferedChoices } from '@/components/tools/shell/permissions/PermissionFooterOfferedChoices';
+import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
 
 function resolvePlan(tool: ToolViewProps['tool']): string {
     const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
@@ -153,6 +157,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
     const [isRejecting, setIsRejecting] = React.useState(false);
     const [isResponded, setIsResponded] = React.useState(false);
     const [isRequestingChanges, setIsRequestingChanges] = React.useState(false);
+    const [nativeBusyChoiceId, setNativeBusyChoiceId] = React.useState<string | null>(null);
     const [changeRequestText, setChangeRequestText] = React.useState('');
     const isSendingChangeRequest = isRequestingChanges && isRejecting;
 
@@ -162,6 +167,10 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
     const canApprovePermissions = actions !== null && sourceInteraction.canApprovePermissions && interaction?.canApprovePermissions !== false;
     const permissionRequestId = resolvePermissionRequestId(tool);
     const activeRequest = permissionRequestId ? agentState?.requests?.[permissionRequestId] : null;
+    const pendingRequest = source.usePendingRequests().permissionRequests.find(request => request.id === permissionRequestId);
+    const nativeChoices = pendingRequest ? pendingRequest.nativeChoices : activeRequest?.nativeChoices;
+    const nativePermissionChoices = resolveSessionPermissionChoices({ toolName: tool.name,
+        nativeChoices, nativeChoiceAvailability: pendingRequest?.nativeChoiceAvailability });
     const hasActivePlanRequest = typeof activeRequest?.tool === 'string'
         && normalizeToolNameForView(activeRequest.tool) === 'ExitPlanMode';
     const canInteract = isRunning && !isResponded && sessionId && canApprovePermissions && hasActivePlanRequest;
@@ -173,7 +182,25 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         resolvePermissionDisabledMessage(interaction?.permissionDisabledReason ?? sourceInteraction.permissionDisabledReason);
     const primaryAnswerRef = usePendingPromptPrimaryFocus(permissionRequestId,
         Boolean(canInteract) && !isApproving && !isRejecting && !isRequestingChanges, messageId);
+    const handleChooseNative = React.useCallback(async (choiceId: string, feedback?: string) => {
+        if (!canInteract || isApproving || isRejecting || !permissionRequestId || !actions || !hasLivePlanRequest()) return;
+        const choice = nativePermissionChoices.find(candidate => candidate.id === choiceId);
+        const answer = choice?.response.nativeChoice;
+        if (!answer) return;
+        setIsApproving(true);
+        try {
+            await answerSessionPermission({ requestId: permissionRequestId,
+                ...(pendingRequest?.turnId ? { turnId: pendingRequest.turnId } : {}),
+                nativeChoice: { ...answer, ...(feedback !== undefined ? { feedback } : {}) },
+                respondToPermission: actions.respondToPermission });
+            markTranscriptPromptAnswered(source, permissionRequestId);
+            setIsResponded(true);
+        } finally {
+            setIsApproving(false);
+        }
+    }, [actions, source, nativePermissionChoices, pendingRequest?.turnId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting]);
     const handleApprove = React.useCallback(async (mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', opts?: { updatedPermissions?: unknown }) => {
+        if (nativeChoices !== undefined) return;
         if (!sessionId || isApproving || isRejecting || !canInteract || !hasLivePlanRequest()) return;
         const permissionId = permissionRequestId;
         if (!permissionId) {
@@ -196,9 +223,10 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         } finally {
             setIsApproving(false);
         }
-    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, nativeChoices]);
 
     const handleApproveOptions = React.useCallback(() => {
+        if (nativeChoices !== undefined) return;
         if (!canInteract || isApproving || isRejecting || !hasLivePlanRequest()) return;
 
         const suggestionsRaw = tool.permission?.suggestions;
@@ -262,9 +290,10 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                 style: 'cancel',
             },
         ]);
-    }, [canInteract, hasLivePlanRequest, isApproving, isRejecting, handleApprove, tool.permission?.suggestions]);
+    }, [canInteract, hasLivePlanRequest, isApproving, isRejecting, handleApprove, tool.permission?.suggestions, nativeChoices]);
 
     const handleReject = React.useCallback(async () => {
+        if (nativeChoices !== undefined) return;
         if (!sessionId || isApproving || isRejecting || !canInteract || !hasLivePlanRequest()) return;
         const permissionId = permissionRequestId;
         if (!permissionId) {
@@ -283,7 +312,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         } finally {
             setIsRejecting(false);
         }
-    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, nativeChoices]);
 
     const handleRequestChanges = React.useCallback(() => {
         if (!canInteract || isApproving || isRejecting || !hasLivePlanRequest()) return;
@@ -297,6 +326,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
     }, [isApproving, isRejecting]);
 
     const handleSendChangeRequest = React.useCallback(async () => {
+        if (nativeChoices !== undefined) return;
         if (!sessionId || isApproving || isRejecting || !canInteract || !hasLivePlanRequest()) return;
         const permissionId = permissionRequestId;
         if (!permissionId) {
@@ -322,7 +352,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         } finally {
             setIsRejecting(false);
         }
-    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, changeRequestText]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, changeRequestText, nativeChoices]);
 
     return (
         <ToolSectionView>
@@ -342,6 +372,19 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                             {t('tools.exitPlanMode.responded')}
                         </Text>
                     </View>
+                ) : canInteract && nativeChoices !== undefined ? (
+                    // A native occurrence offers its own choices, verbatim and in its order (lab mb B).
+                    <PermissionFooterOfferedChoices
+                        choices={nativePermissionChoices.filter(isOfferedPermissionChoice)}
+                        primaryId={selectPrimaryOfferedChoice(nativePermissionChoices.filter(isOfferedPermissionChoice))}
+                        disabled={isApproving || isRejecting}
+                        busyChoiceId={nativeBusyChoiceId}
+                        onChoose={(choiceId) => {
+                            setNativeBusyChoiceId(choiceId);
+                            void handleChooseNative(choiceId).finally(() => setNativeBusyChoiceId(null));
+                        }}
+                        primaryRef={primaryAnswerRef}
+                    />
                 ) : canInteract ? (
                     <>
                         {isRequestingChanges ? (
