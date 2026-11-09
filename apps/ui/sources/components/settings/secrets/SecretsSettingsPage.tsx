@@ -646,6 +646,7 @@ const USED_BY_KINDS: Readonly<Record<AccountSettingsSavedSecretReference['owner'
     remoteHost: { icon: 'hard-drives', route: SETTINGS_ROUTES.remoteHosts },
     notificationChannel: { icon: 'bell', route: SETTINGS_ROUTES.notifications },
     registrySource: { icon: 'books', route: SETTINGS_ROUTES.prompts },
+    deploymentEnvironment: { icon: 'cube', route: null },
     unknown: { icon: 'question', route: null },
 };
 

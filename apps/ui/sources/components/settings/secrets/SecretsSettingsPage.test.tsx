@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { projectSavedSecretUsedByV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -89,6 +90,26 @@ async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, acc
 
 describe('SecretUsedBySection', () => {
     const rowsOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) => node.props.testID === 'used-by:row' && node.props.title !== undefined);
+
+    it('renders the Environment census without a private destination while retaining named Provider navigation', async () => {
+        const { t } = await import('@/text');
+        const onOpen = vi.fn();
+        const usedBy = projectSavedSecretUsedByV1({
+            ref: 'happier:shared-secret:v1:deploy-key',
+            references: [{ owner: 'provider', path: 'p.apiKey', referrer: { kind: 'provider', id: 'pc_work', displayName: 'Studio models' } }],
+            deploymentReferenceState: 'referenced',
+        });
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={usedBy} onOpen={onOpen} />);
+        const rows = rowsOf(screen);
+        expect(rows).toHaveLength(2);
+        const environment = rows.find((row) => row.props.title === t('projects.deployments.review.environment'));
+        expect(environment).toBeDefined();
+        expect(environment!.props.onPress).toBeUndefined();
+        expect(environment!.props.showChevron).toBe(false);
+        expect(screen.getTextContent()).not.toContain('deploymentEnvironments.bindings');
+        await act(async () => { rows.find((row) => row.props.title === 'Studio models')!.props.onPress(); });
+        expect(onOpen).toHaveBeenCalledExactlyOnceWith('/(app)/settings/providers/pc_work');
+    });
 
     it('links a named Provider to its own page and a family without a name to its page', async () => {
         const onOpen = vi.fn();
