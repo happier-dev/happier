@@ -20231,7 +20231,7 @@ const enUsage = {
       ledgerLabel: "Projects by linked work",
       ledgerRowLine: ({ sessions, prs }: { sessions: string | number; prs: string | number }) => `${sessions} ${Number(sessions) === 1 ? 'session' : 'sessions'} · ${prs} linked ${Number(prs) === 1 ? 'PR' : 'PRs'}`,
       notLinkedPart: ({ amount }: { amount: string | number }) => `${amount} not linked to a PR`,
-      unknownProject: "No project recorded",
+      unknownProject: "No project name",
       allProjects: "All projects",
       conservation: ({ allocated, unallocated }: { allocated: string | number; unallocated: string | number }) => `${allocated} linked to PRs · ${unallocated} not linked`,
       reason_missing_turn: "no turn recorded",

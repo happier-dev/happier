@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
@@ -153,6 +154,7 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
     const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
     // The real filter inventory requests accounting only, without Work/Session evidence.
     const slices = [{ ...base, accounting: { v: 1 as const,
+        contributions: [{ ...usageQaAccountingFixture().contributions![0]!, projectKey: keys[2]!, machineId: machines[1]!.id }],
         totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
         breakdowns: { project: [refs[0]!.id, keys[0]!, keys[1]!, keys[2]!, keys[3]!].map(key => ({ key,
@@ -178,6 +180,7 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
         }
         expect(options[0]!.subtitle).not.toBe(options[1]!.subtitle);
         expect(options[2]!.label).toBe('Native project');
+        expect(options[2]!.subtitle).toBe(names.get(machines[1]!.id));
         expect(options[3]!.label).toBe(t('usage.board.work.unknownProject'));
         for (const option of options) expect(`${option.label} ${option.subtitle ?? ''}`).not.toMatch(/[a-f\d]{64}/i);
         expect(hook.getCurrent().selected).toEqual([keys[3]]);
