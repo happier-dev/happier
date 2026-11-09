@@ -1,4 +1,5 @@
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { prepareOhMyPiQualifiedAccounts } from '../auth/services/preparation.js';
 
 type OhMyPiPreflightModelOption = Readonly<{
   id: string;
@@ -53,6 +54,13 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
 }
 
 export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
+    const prepared = await prepareOhMyPiQualifiedAccounts({
+      launchEnvironment: { values: environment, unset: [] },
+    }, { signal, services: { connectedAccounts } });
+    return { environment: prepared.request.launchEnvironment.values,
+      unset: prepared.request.launchEnvironment.unset, dispose: prepared.cleanup };
+  },
   catalogs: Object.freeze({ kind: 'acp' as const, command: OH_MY_PI_ACP_COMMAND }),
   models: Object.freeze({
     command: Object.freeze({ toolId: 'ohmypi-cli', args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS }),

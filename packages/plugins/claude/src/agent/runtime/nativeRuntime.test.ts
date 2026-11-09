@@ -1005,8 +1005,8 @@ describe('createClaudeNativeRuntime', () => {
           getBinding: vi.fn(async () => null),
           materialize: vi.fn(),
           requestSelection: vi.fn(),
-          watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-            queueMicrotask(() => { void listener({ kind: 'resync' }); });
+          watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => unknown) => {
+            queueMicrotask(() => { void listener({ kind: 'resync', authorityChanged: false }); });
             return { dispose() {} };
           }),
         },

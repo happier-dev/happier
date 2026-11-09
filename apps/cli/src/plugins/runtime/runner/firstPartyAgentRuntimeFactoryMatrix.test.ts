@@ -397,11 +397,11 @@ function createAcpBoundaryContext(
             },
             watch: (
                 _purpose: string,
-                listener: (event: Readonly<{ kind: 'resync' }>) =>
+                listener: (event: Readonly<{ kind: 'resync'; authorityChanged: boolean }>) =>
                     void | Promise<void>,
             ) => {
                 queueMicrotask(() => {
-                    void listener({ kind: 'resync' });
+                    void listener({ kind: 'resync', authorityChanged: false });
                 });
                 return { dispose: () => undefined };
             },
@@ -501,7 +501,7 @@ function createAntigravityExecBoundaryContext(input: Readonly<{
                     typeof unavailableServices.connectedAccounts.watch
                 > => {
                     queueMicrotask(() => {
-                        void listener({ kind: 'resync' });
+                        void listener({ kind: 'resync', authorityChanged: false });
                     });
                     return { dispose: () => undefined };
                 },
@@ -643,11 +643,11 @@ function createClaudeExecBoundaryContext(input: Readonly<{
                 }),
                 watch: (
                     _purpose: string,
-                    listener: (event: Readonly<{ kind: 'resync' }>) =>
+                    listener: (event: Readonly<{ kind: 'resync'; authorityChanged: boolean }>) =>
                         void | Promise<void>,
                 ) => {
                     queueMicrotask(() => {
-                        void listener({ kind: 'resync' });
+                        void listener({ kind: 'resync', authorityChanged: false });
                     });
                     return { dispose: () => undefined };
                 },
@@ -905,7 +905,7 @@ function createPiExecBoundaryContext(input: Readonly<{
                     typeof baseContext.services.connectedAccounts.watch
                 > => {
                     queueMicrotask(() => {
-                        void connectedAccountListener({ kind: 'resync' });
+                        void connectedAccountListener({ kind: 'resync', authorityChanged: false });
                     });
                     return { dispose: () => undefined };
                 },

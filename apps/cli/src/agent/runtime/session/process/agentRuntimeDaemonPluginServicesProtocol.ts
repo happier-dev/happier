@@ -1406,6 +1406,7 @@ export const RunnerDaemonPluginServiceSubscriptionEventV1Schema =
             subscriptionId: BoundedIdSchema,
             event: z.strictObject({
                 kind: z.literal('resync'),
+                authorityChanged: z.boolean(),
             }),
         }),
     ]));

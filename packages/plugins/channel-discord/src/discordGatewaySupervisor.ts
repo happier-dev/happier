@@ -857,7 +857,8 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     // Gateway authentication failure is worth another attempt.
     const credentialResync: Disposable = context.services.connectedAccounts.watch(
       DISCORD_BOT_CREDENTIAL_PURPOSE,
-      () => {
+      event => {
+        if (!event.authorityChanged) return;
         for (const [fingerprint, reason] of terminalReasonByFingerprint) {
           if (reason === 'authenticationFailed') terminalReasonByFingerprint.delete(fingerprint);
         }

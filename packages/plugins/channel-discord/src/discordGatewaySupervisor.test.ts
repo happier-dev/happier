@@ -6,6 +6,7 @@ import {
   type ConversationProviderConnectionReconciliationSnapshotV1,
 } from '@happier-dev/channels-protocol/v1';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -1804,32 +1805,22 @@ it('reports the continuity gap of a resumable worker whose runner generation ret
     // inside the same Connected Account changes nothing the core reconciliation
     // snapshot carries, so the connection fingerprint is byte-identical and
     // only the host's credential resync can retire the terminal memo.
-    const workerResults: DiscordGatewayWorkerResult[] = [
-      { kind: 'terminal', reason: 'authenticationFailed' },
-    ];
-    const workerFactory = vi.fn(() => {
-      // Stop a broken immediate-restart loop at its first duplicate attempt;
-      // this is test cancellation, not a production retry or capacity bound.
-      if (workerFactory.mock.calls.length > 2) generation.abort(new Error('unexpected immediate restart'));
-      return { result: Promise.resolve(workerResults.shift() ?? ({ kind: 'stopped' } as const)), stop: vi.fn() };
-    });
-    const supervisor = createDiscordGatewaySupervisor({
-      workerFactory,
-      reconciliationIntervalMs: 3_600_000,
-    });
-    const executeCore = async (action: Readonly<{ localId: string }>) => {
+    const supervisor = createDiscordGatewaySupervisor();
+    const reportedFacts: unknown[] = [];
+    const executeCore = async (action: Readonly<{ localId: string }>, value: unknown) => {
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
         return { 'connection-1': snapshot() };
       }
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
+        reportedFacts.push(value);
         return { kind: 'recorded' };
       }
       throw new Error(`Unexpected core Action ${action.localId}`);
     };
-    const credentialResyncListeners: Array<() => void> = [];
+    const credentialResyncListeners: Array<(event: ConnectedAccountBindingEvent) => void> = [];
     const connectedAccounts = {
       materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
-      watch: vi.fn((purpose: string, listener: () => void) => {
+      watch: vi.fn((purpose: string, listener: (event: ConnectedAccountBindingEvent) => void) => {
         expect(purpose).toBe('discord-bot-credential');
         credentialResyncListeners.push(listener);
         return { dispose: vi.fn() };
@@ -1837,11 +1828,19 @@ it('reports the continuity gap of a resumable worker whose runner generation ret
     };
     const http = {
       request: vi.fn(async (request: Readonly<{ url: string }>) => response(
-        request.url.endsWith('/oauth2/applications/@me')
-          ? { id: 'application-1', flags: 0, flags_new: '0' }
-          : { id: 'bot-1', username: 'Happier Bot', bot: true },
+        request.url.endsWith('/gateway/bot')
+          ? { url: 'wss://gateway.discord.gg/', shards: 1,
+            session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 0, max_concurrency: 16 } }
+          : request.url.endsWith('/oauth2/applications/@me')
+            ? { id: 'application-1', flags: 0, flags_new: '0' }
+            : { id: 'bot-1', username: 'Happier Bot', bot: true },
       )),
-      openWebSocket: vi.fn(),
+      // Discord's HTTP/WebSocket boundary returns the real terminal close;
+      // the Gateway worker and its failure classification stay real.
+      openWebSocket: vi.fn(async (): Promise<PluginWebSocketConnection> => ({
+        ...gatewaySocketUntilStopped(() => {}),
+        async receive() { return { kind: 'closed', close: { kind: 'remote', code: 4004, wasClean: false } }; },
+      })),
     };
     const { background } = supervisorBackgroundHarness({
       supervisor,
@@ -1852,19 +1851,27 @@ it('reports the continuity gap of a resumable worker whose runner generation ret
     });
 
     const running = supervisor.run(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
+    try {
+      await vi.waitFor(() => expect(reportedFacts).toContainEqual(expect.objectContaining({
+        fact: expect.objectContaining({ code: 'providerCredentialInvalid' }),
+      })));
+      // The terminal memo holds through presentation-only resyncs.
+      await supervisor.reconcile(background);
+      expect(http.openWebSocket).toHaveBeenCalledTimes(1);
+      const acquired = connectedAccounts.materialize.mock.calls.length;
+      expect(credentialResyncListeners).toHaveLength(1);
+      for (const listener of credentialResyncListeners) listener({ kind: 'resync', authorityChanged: false });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(http.openWebSocket).toHaveBeenCalledTimes(1);
+      expect(connectedAccounts.materialize).toHaveBeenCalledTimes(acquired);
 
-    // The terminal memo holds while the credential is unchanged.
-    await supervisor.reconcile(background);
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-
-    expect(credentialResyncListeners).toHaveLength(1);
-    for (const listener of credentialResyncListeners) listener();
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
-
-    generation.abort(new Error('Discord plugin generation retired.'));
-    await running;
-    await supervisor.dispose();
+      for (const listener of credentialResyncListeners) listener({ kind: 'resync', authorityChanged: true });
+      await vi.waitFor(() => expect(http.openWebSocket).toHaveBeenCalledTimes(2));
+    } finally {
+      generation.abort(new Error('Discord plugin generation retired.'));
+      await running;
+      await supervisor.dispose();
+    }
   });
 
   it('forgets terminal fingerprints after their credential selection leaves reconciliation', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import { CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1, ConversationProviderConnectionReconciliationSnapshotV1Schema,
   ConversationProviderObservationIngestInputV1Schema, ConversationTransportFactReportInputV1Schema } from '@happier-dev/channels-protocol/v1';
@@ -54,7 +55,7 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   let current = snapshot;
   const unavailable = { list: false, read: input.unreadable ?? false };
   let rateLimitedOnce = input.retryAfterSeconds !== undefined;
-  let resyncCredentials = () => {};
+  let resyncCredentials = (_event: ConnectedAccountBindingEvent) => {};
   let background!: BackgroundServiceContext;
   const execute = vi.fn(async (action: string | Readonly<{ pluginId: string; localId: string }>, value: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
     if (typeof action === 'string') throw new Error('Unexpected host Action.');
@@ -93,7 +94,7 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   const services = {
     actions: { execute },
     connectedAccounts: { async materialize() { return { kind: 'environment', env: { SLACK_BOT_TOKEN: 'xoxb-test', SLACK_APP_TOKEN: 'xapp-test' } }; },
-      watch(_purpose: string, listener: () => void) { resyncCredentials = listener; return { dispose() {} }; } },
+      watch(_purpose: string, listener: (event: ConnectedAccountBindingEvent) => void) { resyncCredentials = listener; return { dispose() {} }; } },
     http: { async openWebSocket() { socketsOpened += 1; return openSocket(socketsOpened === 1 ? frames : [{ type: 'hello', connection_info: { app_id: 'A1' } }]); }, async request({ url }: Readonly<{ url: string }>) {
       if (rateLimitedOnce && url.includes('auth.test')) {
         rateLimitedOnce = false;
@@ -113,7 +114,7 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
     surface: 'background', invokedAtMs: 1700000000000, signal: controller.signal, services };
   return { supervisor, background, admissions, facts, controller, unavailable,
     setSnapshot(value: typeof snapshot) { current = value; },
-    resyncCredentials: () => resyncCredentials(),
+    resyncCredentials: (authorityChanged = true) => resyncCredentials({ kind: 'resync', authorityChanged }),
     get lists() { return lists; }, get reads() { return reads; }, get socketsOpened() { return socketsOpened; },
     get socketsClosed() { return socketsClosed; } };
 }
@@ -200,6 +201,10 @@ describe('Slack socket supervisor through real target worker Action', () => {
       expect(h.lists).toBe(before.lists + 1);
       expect(h.reads).toBe(before.reads + (empty ? 0 : 1));
       expect(h.socketsOpened).toBe(empty ? 0 : 1);
+      for (let arrival = 0; arrival < 100; arrival += 1) h.resyncCredentials(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.lists).toBe(before.lists + 1);
+      expect(h.reads).toBe(before.reads + (empty ? 0 : 1));
       h.resyncCredentials();
       await vi.advanceTimersByTimeAsync(0);
       expect(h.lists).toBe(before.lists + 2);
@@ -239,6 +244,10 @@ describe('Slack socket supervisor through real target worker Action', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       const before = h.lists;
+      expect(h.socketsOpened).toBe(0);
+      h.resyncCredentials(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.lists).toBe(before);
       expect(h.socketsOpened).toBe(0);
       await vi.advanceTimersByTimeAsync(44_999);
       expect(h.lists).toBe(before);

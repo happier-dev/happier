@@ -408,7 +408,7 @@ export function createAcpMcpPolicyFixture(params: Readonly<{
         connectedAccounts: {
           ...unavailableServices.connectedAccounts,
           watch(_purpose, listener) {
-            listener({ kind: 'resync' }); return { dispose() {} };
+            listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} };
           },
           getBinding: async () => null,
         },

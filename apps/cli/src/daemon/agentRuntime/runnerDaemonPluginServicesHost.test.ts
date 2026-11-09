@@ -115,6 +115,70 @@ const fixturePluginMaterialization = createPluginActionCallerMaterializationFixt
     'fixture.plugin',
 );
 
+it('preserves coalesced binding authority changes through the real daemon and runner bridge', async () => {
+    const unavailable = createUnavailablePluginServices();
+    const lifetime = new AbortController();
+    let publish: Parameters<PluginServices['connectedAccounts']['watch']>[1] = () => {};
+    const services = {
+        ...unavailable,
+        connectedAccounts: {
+            ...unavailable.connectedAccounts,
+            watch(_purpose: string, listener: typeof publish) {
+                publish = listener;
+                // Model producer arrivals before the runner begins its next wait.
+                listener({ kind: 'resync', authorityChanged: false });
+                listener({ kind: 'resync', authorityChanged: true });
+                listener({ kind: 'resync', authorityChanged: false });
+                return { dispose() {} };
+            },
+        },
+        availability: (id: PluginServiceId) => id === 'connectedAccounts'
+            ? { status: 'available' as const }
+            : unavailable.availability(id),
+    };
+    const host = createRunnerDaemonPluginServicesHost({ async createInvocation() {
+        return {
+            services,
+            resourceDescriptors: {},
+            subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+            dispose() {},
+            authorizeOperation: () => true,
+            executeCurrentGlobalAction: services.actions.execute,
+            currentGlobalMcp: services.mcp,
+            currentGlobalExternalSessions: services.sessions.external,
+        };
+    } });
+    try {
+        const runnerServices = await prepareRunnerDaemonPluginServices({
+            invocationId: 'binding-authority',
+            signal: lifetime.signal,
+            local: unavailable,
+            readActiveTurnAdmissionWitness: () => witness,
+            dispatch: async (operation, options) => {
+                const response = await host.dispatch({ ...direct,
+                    operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation),
+                    ...options,
+                });
+                return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+            },
+        });
+        const events: Array<{ kind: 'resync'; authorityChanged: boolean }> = [];
+        const subscription = runnerServices.connectedAccounts.watch('upstream', event => events.push(event));
+        await vi.waitFor(() => expect(events).toEqual([
+            { kind: 'resync', authorityChanged: true },
+        ]));
+        publish({ kind: 'resync', authorityChanged: false });
+        await vi.waitFor(() => expect(events).toEqual([
+            { kind: 'resync', authorityChanged: true },
+            { kind: 'resync', authorityChanged: false },
+        ]));
+        subscription.dispose();
+    } finally {
+        lifetime.abort();
+        await host.dispose();
+    }
+});
+
 it('preserves the canonical Provider usage refusal through the real runner and daemon bridge', async () => {
     const unavailable = createUnavailablePluginServices();
     const lifetime = new AbortController();
@@ -2278,7 +2342,11 @@ describe('runner daemon PluginServices host', () => {
                         ]['watch']
                     >[1],
                 ) {
-                    queueMicrotask(() => listener({ kind: 'resync' }));
+                    queueMicrotask(() => {
+                        listener({ kind: 'resync', authorityChanged: false });
+                        listener({ kind: 'resync', authorityChanged: true });
+                        listener({ kind: 'resync', authorityChanged: false });
+                    });
                     return { dispose: vi.fn() };
                 },
             },
@@ -2580,7 +2648,7 @@ describe('runner daemon PluginServices host', () => {
                 'plugin_connected_accounts.watch.event_v1',
             invocationId: 'invocation-1',
             subscriptionId: 'watch-1',
-            event: { kind: 'resync' },
+            event: { kind: 'resync', authorityChanged: true },
         });
 
         const watchCases = [

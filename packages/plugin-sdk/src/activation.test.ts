@@ -213,7 +213,7 @@ describe('plugin activation contract', () => {
         expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('reportFailure');
         expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('refresh');
         expectTypeOf<keyof PluginConnectedAccountBindingSummary>().toEqualTypeOf<
-            'purpose' | 'service' | 'account' | 'target'
+            'purpose' | 'service' | 'account' | 'target' | 'credentialRevision' | 'configurationRevision' | 'group'
         >();
         expectTypeOf<PluginConnectedAccountBindingSummary['account']>()
             .toEqualTypeOf<PluginConnectedAccountRef>();
@@ -228,12 +228,12 @@ describe('plugin activation contract', () => {
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('groupId');
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('generation');
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('revision');
-        expectTypeOf<keyof PluginConnectedAccountBindingEvent>().toEqualTypeOf<'kind'>();
+        expectTypeOf<keyof PluginConnectedAccountBindingEvent>().toEqualTypeOf<'kind' | 'authorityChanged'>();
         expectTypeOf<PluginConnectedAccountBindingEvent['kind']>().toEqualTypeOf<'resync'>();
         expectTypeOf<Parameters<ConnectedAccountsService['getBinding']>[0]>()
             .toEqualTypeOf<string>();
         expectTypeOf<Parameters<ConnectedAccountsService['getBinding']>[1]>()
-            .toEqualTypeOf<Readonly<{ signal?: AbortSignal }> | undefined>();
+            .toEqualTypeOf<Readonly<{ signal?: AbortSignal; observation?: true }> | undefined>();
         expectTypeOf<Parameters<ConnectedAccountsService['requestSelection']>[0]>()
             .toEqualTypeOf<Readonly<{ purpose: string; reason: string }>>();
         expectTypeOf<Parameters<ConnectedAccountsService['requestSelection']>[1]>()

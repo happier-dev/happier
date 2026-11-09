@@ -1233,7 +1233,7 @@ describe('native Agent session host adapter', () => {
                         createInvocationServices: async () => ({ ...baseServices, exec: hostExec,
                             logger: createPluginInvocationLogger({ seed: { plugin: { id: pluginId, version: '0.0.0' }, contribution: { id: agentId, qualifiedId: `${pluginId}/agents/${agentId}` }, occurrenceId: 'selected-optional', correlationId: session.sessionId, surface: 'agent', signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted }, sink: { write(record) { logger.infoFile('Selected optional provider fixture', record); } } }),
                             managedServices: { ...baseServices.managedServices, supervise: async () => managed },
-                            connectedAccounts: { ...baseServices.connectedAccounts, getBinding: async () => null, watch: (_purpose, listener) => { queueMicrotask(() => { void listener({ kind: 'resync' }); }); return { dispose() {} }; } },
+                            connectedAccounts: { ...baseServices.connectedAccounts, getBinding: async () => null, watch: (_purpose, listener) => { queueMicrotask(() => { void listener({ kind: 'resync', authorityChanged: false }); }); return { dispose() {} }; } },
                         }),
                     });
                     const params: HostSessionRuntimeFactoryParams = { directory, metadata: session.getMetadataSnapshot()!, machineId: 'selected-machine', agentTargetKey: `backend:${agentId}`, session, transcriptSession: session,
@@ -6381,6 +6381,11 @@ describe('native Agent session host adapter', () => {
                 providerSessionId: 'provider-session-1',
             }),
         }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        // The probe reads the native store as the Session's own launch identity (a separated member UID).
+        const openedNativeLaunch = (open.mock.calls[0] as unknown as [unknown, { session: { services: { nativeLaunch?: unknown } } }])[1]
+            .session.services.nativeLaunch;
+        expect(openedNativeLaunch).toBeDefined();
+        expect(verify.mock.calls.at(-1)?.[1].session.nativeLaunch).toBe(openedNativeLaunch);
         await created?.operations.resetOrDisposeRuntime();
     });
 
@@ -9663,7 +9668,7 @@ describe('native Agent session host adapter', () => {
                                 ]['watch']
                             > => {
                                 queueMicrotask(() => {
-                                    void listener({ kind: 'resync' });
+                                    void listener({ kind: 'resync', authorityChanged: false });
                                 });
                                 return { dispose: () => undefined };
                             },
@@ -9880,7 +9885,7 @@ describe('native Agent session host adapter', () => {
                         ]['watch']
                     > => {
                         queueMicrotask(() => {
-                            void listener({ kind: 'resync' });
+                            void listener({ kind: 'resync', authorityChanged: false });
                         });
                         return { dispose: () => undefined };
                     },

@@ -992,7 +992,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
                         'plugin_connected_accounts.watch.event_v1',
                     invocationId: 'invocation-1',
                     subscriptionId: 'subscription-1',
-                    event: { kind: 'resync' },
+                    event: { kind: 'resync', authorityChanged: false },
             },
         ]) {
             expect(
@@ -1001,16 +1001,22 @@ describe('runner daemon PluginServices v1 protocol', () => {
                 event.kind,
             ).toBe(true);
         }
-        expect(
-            RunnerDaemonPluginServiceSubscriptionEventV1Schema
-                .safeParse({
-                    kind:
-                        'plugin_connected_accounts.watch.event_v1',
-                    invocationId: 'invocation-1',
-                    subscriptionId: 'subscription-1',
-                    event: { kind: 'edge' },
-                }).success,
-        ).toBe(false);
+        for (const event of [
+            { kind: 'edge', authorityChanged: false },
+            { kind: 'resync' },
+            { kind: 'resync', authorityChanged: 'true' },
+        ]) {
+            expect(
+                RunnerDaemonPluginServiceSubscriptionEventV1Schema
+                    .safeParse({
+                        kind:
+                            'plugin_connected_accounts.watch.event_v1',
+                        invocationId: 'invocation-1',
+                        subscriptionId: 'subscription-1',
+                        event,
+                    }).success,
+            ).toBe(false);
+        }
     });
 
     it('round-trips binary and JSON values without object-tag ambiguity', () => {

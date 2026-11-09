@@ -3404,7 +3404,7 @@ describe('runner daemon PluginServices proxy', () => {
                         invocationId: 'invocation-watch',
                         subscriptionId:
                             operation.subscriptionId,
-                        event: { kind: 'resync' },
+                        event: { kind: 'resync', authorityChanged: openedSubscriptionCount > 1 },
                     };
                 }
                 resolveSecondWaitStarted();
@@ -3446,7 +3446,7 @@ describe('runner daemon PluginServices proxy', () => {
                 targetedContributions: unavailable.targetedContributions,
             },
         });
-        const events: Array<{ kind: 'resync' }> = [];
+        const events: Array<{ kind: 'resync'; authorityChanged: boolean }> = [];
         const subscription = services.connectedAccounts.watch(
             'upstream',
             (event) => {
@@ -3461,8 +3461,8 @@ describe('runner daemon PluginServices proxy', () => {
         await Promise.resolve();
 
         expect(events).toEqual([
-            { kind: 'resync' },
-            { kind: 'resync' },
+            { kind: 'resync', authorityChanged: false },
+            { kind: 'resync', authorityChanged: true },
         ]);
         const opens = operations.filter((operation) =>
             operation.kind
@@ -3619,7 +3619,7 @@ describe('runner daemon PluginServices proxy', () => {
                             invocationId:
                                 'invocation-private-listener-failure',
                             subscriptionId: operation.subscriptionId,
-                            event: { kind: 'resync' },
+                            event: { kind: 'resync', authorityChanged: false },
                         };
                     }
                     return await new Promise<never>((_resolve, reject) => {
@@ -3730,7 +3730,7 @@ describe('runner daemon PluginServices proxy', () => {
                     invocationId:
                         'invocation-watch-first-resync',
                     subscriptionId: operation.subscriptionId,
-                    event: { kind: 'resync' },
+                    event: { kind: 'resync', authorityChanged: false },
                 };
             }
             if (
@@ -3779,7 +3779,7 @@ describe('runner daemon PluginServices proxy', () => {
 
         expect(openCount).toBe(2);
         expect(listener).toHaveBeenCalledOnce();
-        expect(listener).toHaveBeenCalledWith({ kind: 'resync' });
+        expect(listener).toHaveBeenCalledWith({ kind: 'resync', authorityChanged: false });
         expect(operations.filter((operation) =>
             operation.kind
             === 'plugin_connected_accounts.watch.next_v1'

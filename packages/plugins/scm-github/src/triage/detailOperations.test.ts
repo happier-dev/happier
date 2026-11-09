@@ -108,7 +108,7 @@ describe('registered native PR status observation', () => {
     let notify: (() => void) | undefined;
     const watch = vi.fn((purpose: string, listener: Parameters<PluginInvocationContext['services']['connectedAccounts']['watch']>[1]) => {
       expect(purpose).toBe(GITHUB_CONNECTED_ACCOUNT_PURPOSE);
-      notify = () => listener({ kind: 'resync' });
+      notify = () => listener({ kind: 'resync', authorityChanged: true });
       return { dispose: disposed };
     });
     const context: PluginInvocationContext = { ...stub.context, services: { ...stub.context.services,

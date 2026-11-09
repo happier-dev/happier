@@ -1,34 +1,31 @@
 import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { OpenCodeRequestAuthProvider } from './source.js';
+import { OPEN_CODE_REQUEST_AUTH_CONSUMER, OPEN_CODE_REQUEST_AUTH_DESCRIPTORS, type OpenCodeConnectedAccountPurposeId } from '../purposes.js';
 
-export const OPEN_CODE_REQUEST_AUTH_CONSUMER = Object.freeze({
-  pluginId: 'happier.agent.opencode',
-  localId: 'opencode',
-} as const);
-
-export const OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID = 'anthropic-model-request' as const;
-export const OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID = 'openai-codex-model-request' as const;
+export {
+  OPEN_CODE_REQUEST_AUTH_CONSUMER,
+  OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+} from '../purposes.js';
 
 /**
  * The request-auth leaf may only materialize a leased bearer at the origin declared
  * for its corresponding provider contribution.
  */
-export const OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS = Object.freeze({
-  anthropic: 'https://api.anthropic.com',
-  openai: 'https://chatgpt.com',
-} as const satisfies Readonly<Record<OpenCodeRequestAuthProvider, string>>);
+export const OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS = Object.freeze(Object.fromEntries(
+  OPEN_CODE_REQUEST_AUTH_DESCRIPTORS.map(({ provider, requestAuthOrigin }) => [provider, requestAuthOrigin]),
+)) as Readonly<Record<OpenCodeRequestAuthProvider, string>>;
 
-export const OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze({
-  anthropic: Object.freeze({
+export const OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze(Object.fromEntries(
+  OPEN_CODE_REQUEST_AUTH_DESCRIPTORS.map(({ provider, declaration }) => [provider, Object.freeze({
     consumer: OPEN_CODE_REQUEST_AUTH_CONSUMER,
-    purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-  }),
-  openai: Object.freeze({
-    consumer: OPEN_CODE_REQUEST_AUTH_CONSUMER,
-    purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-  }),
-});
+    purpose: declaration.purpose,
+  })]),
+)) as Readonly<Record<OpenCodeRequestAuthProvider, Readonly<{
+  consumer: typeof OPEN_CODE_REQUEST_AUTH_CONSUMER;
+  purpose: OpenCodeConnectedAccountPurposeId;
+}>>>;
 
 export function isDeclaredOpenCodeRequestAuthPurpose(
   provider: OpenCodeRequestAuthProvider,

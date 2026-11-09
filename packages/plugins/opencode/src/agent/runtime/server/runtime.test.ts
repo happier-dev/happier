@@ -293,6 +293,7 @@ async function createStartedRuntime(params?: Readonly<{
   env?: Readonly<Record<string, string>>;
   harness?: AgentSessionRuntimeHarness;
   executionRunId?: string;
+  finiteExecutionRun?: boolean;
   readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null;
   mcpRegistration?: Promise<Readonly<{
     requiredHappier: Readonly<
@@ -307,6 +308,7 @@ async function createStartedRuntime(params?: Readonly<{
     ctx: params?.ctx ?? createContextFixture().ctx,
     directory: '/repo',
     ...(params?.executionRunId ? { executionRunId: params.executionRunId } : { happierSessionId: 'happy-session-1' }),
+    ...(params?.finiteExecutionRun ? { finiteExecutionRun: true } : {}),
     baseUrl: 'http://127.0.0.1:49196',
     client: params?.client ?? createClientFixture(),
     env: params?.env,
@@ -487,6 +489,43 @@ describe('createOpenCodeServerRuntime', () => {
       expect(historyRead).not.toHaveBeenCalled();
     } finally { await runtime.dispose(); }
   });
+  it.each([
+    { finite: true, finish: 'length', terminal: 'run-failed' },
+    { finite: true, finish: 'stop', terminal: 'run-complete' },
+    { finite: false, finish: 'length', terminal: 'turn-complete' },
+  ] as const)('settles native output limits according to the finite contract ($finite, $finish)', async ({ finite, finish, terminal }) => {
+    const client = createClientFixture();
+    let parentID = '';
+    client.sessionPromptImplementation.mockImplementationOnce(async input => { parentID = input.messageId ?? ''; });
+    const operations = await createStartedRuntime({ client, executionRunId: 'output-limit-run', finiteExecutionRun: finite });
+    const conversation = createOpenCodeExecutionRunConversation({
+      operations, executionRunId: 'output-limit-run', disposeOperations: () => operations.resetOrDisposeRuntime(),
+    });
+    const events: Array<AgentExecutionRunEvent | AgentExecutionRunConversationEventV1> = [];
+    const runtime = finite ? await createExecutionRunHostBackendFromConversationRuntime({
+      request: { kind: 'create', runId: 'output-limit-run', cwd: '/repo',
+        profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, input: { text: 'hello' } },
+      openConversation: async () => conversation,
+    }) : conversation;
+    runtime.watch((event: AgentExecutionRunEvent | AgentExecutionRunConversationEventV1) => events.push(event));
+    try {
+      if (!finite) await conversation.send({ inputIds: ['limit-input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'limit-turn' } });
+      await vi.waitFor(() => expect(parentID).not.toBe(''));
+      client.setMessages([
+        { info: { id: parentID, role: 'user', sessionID: 'ses-1', time: { created: Date.now() } }, parts: [{ type: 'text', text: 'hello' }] },
+        { info: { id: 'limit-answer', role: 'assistant', sessionID: 'ses-1', parentID, finish,
+          time: { created: Date.now() + 1, completed: Date.now() + 2 } }, parts: [{ type: 'text', text: 'native partial output' }] },
+      ]);
+      await operations.handleProviderEvent({ type: 'session.idle', properties: { sessionID: 'ses-1' } });
+      await vi.waitFor(() => expect(events.some(event => event.kind === terminal), JSON.stringify(events)).toBe(true));
+      expect(events).toContainEqual(expect.objectContaining({ kind: finite ? 'output-message-committed' : 'transcript-message-committed', text: 'native partial output' }));
+      if (terminal === 'run-failed') {
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'run-failed', diagnostic: expect.objectContaining({ code: 'opencode_provider_session_error' }) }));
+        expect(events.some(event => event.kind === 'run-complete')).toBe(false);
+      }
+    } finally { await runtime.dispose(); }
+  });
+
   it('preserves proven foreground commits and child scope through the detached Run adapter', async () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
@@ -5604,11 +5643,13 @@ describe('createOpenCodeServerRuntime', () => {
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 500, classify: false, proxy: false, resync: false },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: false, proxy: false, resync: true },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: false, scope: 'run' },
+    { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: false, presentation: true },
+    { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: true, scope: 'run' },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: false, wire: 'v1' },
   ] as const)('attributes native HTTP evidence only to the actually materialized direct Account ($purpose, $providerId, $status, proxy=$proxy, resync=$resync)', async row => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
     const binding = { purpose: row.purpose, service: row.service,
       account: { service: row.service, accountId: 'actual-source-account' },
       target: { kind: 'account', displayName: 'Actual source' },
@@ -5622,7 +5663,7 @@ describe('createOpenCodeServerRuntime', () => {
         if (request.kind !== 'environment') throw new Error('Expected the qualified environment contract');
         return { kind: 'environment', env: Object.fromEntries(request.keys.map(key => [key, 'fixture-native-key'])) };
       },
-      watch(purpose, listener) { listeners.set(purpose, listener); listener({ kind: 'resync' }); return { dispose() {} }; },
+      watch(purpose, listener) { listeners.set(purpose, listener); listener({ kind: 'resync', authorityChanged: false }); return { dispose() { listeners.delete(purpose); } }; },
     } satisfies Pick<ConnectedAccountsService, 'getBinding' | 'materialize' | 'watch'>;
     const sourceContext = { signal: new AbortController().signal, services: { connectedAccounts } } as unknown as AgentRuntimeContext;
     const isRun = 'scope' in row && row.scope === 'run';
@@ -5651,7 +5692,8 @@ describe('createOpenCodeServerRuntime', () => {
     try {
       if (!isRun) { beginTestHostTurn(operations); await operations.sendTurnPrompt('hello'); }
       else { await vi.waitFor(() => expect(providerUserMessageId).not.toBe('')); }
-      if (row.resync) { listeners.get(row.purpose)?.({ kind: 'resync' }); await flushMicrotasks(); }
+      if (row.resync) { listeners.get(row.purpose)?.({ kind: 'resync', authorityChanged: true }); await flushMicrotasks(); }
+      if ('presentation' in row) { listeners.get(row.purpose)?.({ kind: 'resync', authorityChanged: false }); await flushMicrotasks(); }
       // V1 v1.2.27 uses Assistant.providerID and APIError.data.statusCode. V2
       // v2.0.15 uses Assistant.model.providerID and SessionError.status.
       client.setMessages('wire' in row && row.wire === 'v1' ? [
@@ -5678,7 +5720,7 @@ describe('createOpenCodeServerRuntime', () => {
         expect(failure?.diagnostic.details ?? {}).not.toHaveProperty('runtimeAuthClassification');
       }
       if (isRun) expect(events.every(event => !('sessionId' in event))).toBe(true);
-      if (row.resync) {
+      if (row.resync && !isRun) {
         expect(prepared.isInvalidated()).toBe(true);
         await expect(native.send({ inputIds: ['late'], input: { text: 'late' }, delivery: { kind: 'newTurn', turnId: 'late' } })).resolves.toMatchObject({ status: 'unavailable' });
       }

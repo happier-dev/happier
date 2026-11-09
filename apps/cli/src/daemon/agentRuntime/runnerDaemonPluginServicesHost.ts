@@ -615,6 +615,17 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         subscription: Subscription,
         event: SubscriptionEvent,
     ): Promise<void> => {
+        const pendingEvent = subscription.queue[0]?.event;
+        if (
+            subscription.queueMode === 'latest'
+            && event.kind === 'plugin_connected_accounts.watch.event_v1'
+            && !event.event.authorityChanged
+            && pendingEvent?.kind === 'plugin_connected_accounts.watch.event_v1'
+            && pendingEvent.event.authorityChanged
+        ) {
+            // Coalescing must retain an authority change until the runner observes it.
+            event = { ...event, event: { ...event.event, authorityChanged: true } };
+        }
         const settlement: SubscriptionDeliverySettlement | null =
             subscription.awaitDeliverySettlement
                 ? (() => {
@@ -2643,7 +2654,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     (publish) =>
                         connectedAccounts.watch(
                             operation.purpose,
-                            () => {
+                            (bindingEvent) => {
                                 const event: SubscriptionEvent = {
                                     kind:
                                         'plugin_connected_accounts.watch.event_v1',
@@ -2651,7 +2662,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                                         operation.invocationId,
                                     subscriptionId:
                                         operation.subscriptionId,
-                                    event: { kind: 'resync' },
+                                    event: bindingEvent,
                                 };
                                 publish(event);
                             },

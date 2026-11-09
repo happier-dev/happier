@@ -405,7 +405,7 @@ describe('stable plugin Connected Accounts host', () => {
         host.retire();
     });
 
-    it.each(['preserved', 'dropped'] as const)('carries real owner authority retirement only when its discriminator is %s', async forwarding => {
+    it('carries real owner authority retirement without invalidating presentation', async () => {
         const { seed, retire } = createSeed();
         const purpose = { consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id }, purpose: scope.purpose };
         const service = scope.serviceRefs[0]!;
@@ -431,12 +431,7 @@ describe('stable plugin Connected Accounts host', () => {
             async projectTargetAccounts() { throw new Error('Authority observation must not enumerate accounts'); },
             async assertTargetAccountMaterializable() { throw new Error('Authority observation must not materialize credentials'); },
         });
-        const host = createStablePluginConnectedAccountsHost(forwarding === 'preserved' ? owner : {
-            ...owner,
-            // Deliberately reproduce the daemon wrapper's lost argument. This
-            // is a wiring-sensitivity case, not an alternative authority owner.
-            watch(input) { return owner.watch({ ...input, listener: () => input.listener() }); },
-        });
+        const host = createStablePluginConnectedAccountsHost(owner);
         let retirements = 0;
         const connectedAccounts = host.bind({ ...seed, retireReadObservation() { retirements++; } }, [scope]);
         const subscription = connectedAccounts.watch(scope.purpose, () => {});
@@ -474,18 +469,16 @@ describe('stable plugin Connected Accounts host', () => {
             await store.update(value => value);
             await settled();
             expect(retirements).toBe(0);
-            expect(delivered).toEqual([{ kind: 'resync', authorityChanged: forwarding === 'dropped' }]);
+            expect(delivered).toEqual([{ kind: 'resync', authorityChanged: false }]);
             delivered.length = 0;
             await owner.requestSelection({ purpose, serviceRefs: [service], assertGenerationCurrent() {},
                 reason: 'Replace the exact observed authority', signal: seed.signal });
             await settled();
-            expect(retirements).toBe(forwarding === 'preserved' ? 1 : 0);
+            expect(retirements).toBe(1);
             expect(delivered).toEqual([{ kind: 'resync', authorityChanged: true }]);
-            if (forwarding === 'preserved') {
-                await expect(watches.next({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority' }))
-                    .resolves.toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource',
-                        subscriptionId: 'exact-authority' } });
-            }
+            await expect(watches.next({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority' }))
+                .resolves.toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource',
+                    subscriptionId: 'exact-authority' } });
         } finally {
             watches.retire();
             publicSubscription.dispose();
@@ -1317,8 +1310,8 @@ describe('stable plugin Connected Accounts host', () => {
         const dispose = vi.fn();
         const owner = createOwner({
             watch: vi.fn((input) => {
-                invalidate = input.listener;
-                input.listener();
+                invalidate = () => input.listener({ account: null, authorityChanged: true });
+                input.listener({ account: null, authorityChanged: true });
                 registered = true;
                 return Object.freeze({ dispose });
             }),
@@ -1355,7 +1348,7 @@ describe('stable plugin Connected Accounts host', () => {
         let invalidate: (() => Promise<void>) | null = null;
         const owner = createOwner({
             watch: vi.fn((input) => {
-                invalidate = input.listener;
+                invalidate = () => input.listener({ account: null, authorityChanged: true });
                 return Object.freeze({ dispose() {} });
             }),
         });
@@ -1382,7 +1375,7 @@ describe('stable plugin Connected Accounts host', () => {
         const owner = createOwner({
             watch: vi.fn((input) => {
                 invalidate = () => {
-                    void input.listener();
+                    void input.listener({ account: null, authorityChanged: true });
                 };
                 return Object.freeze({ dispose() {} });
             }),

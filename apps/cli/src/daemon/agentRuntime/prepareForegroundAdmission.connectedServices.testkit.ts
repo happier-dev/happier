@@ -73,6 +73,7 @@ export function createExternalConnectedAccountForegroundFixture(input: Readonly<
   materializationKinds: readonly ('files' | 'httpHeaders' | 'environment')[];
   launch?: AgentConnectedAccountLaunchContributionV1;
   materializeAccount: ConnectedAccountPurposeBindingOwnerDependencies['materializeAccount'];
+  resolveTarget?: ConnectedAccountPurposeBindingOwnerDependencies['resolveTarget'];
   resolveCredentialRevision?: ConnectedAccountPurposeBindingOwnerDependencies['resolveCredentialRevision'];
 }>) {
   const { owner, store, purpose, binding } = createForegroundPurposeOwnerFixture({

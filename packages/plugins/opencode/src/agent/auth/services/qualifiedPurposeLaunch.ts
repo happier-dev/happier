@@ -16,48 +16,24 @@ import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runt
 
 import { buildOpenCodeQualifiedAuthContent, materializeOpenCodeAuthEnvironment } from './materialize/index.js';
 import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from './requestAuth/env.js';
-import { OPEN_CODE_REQUEST_AUTH_CONSUMER } from './requestAuth/purposes.js';
+import { OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES } from './requestAuth/purposes.js';
 import { buildOpenCodeConfigLaunchEnvironment } from '../../runtime/server/spawnSpec.js';
 import {
   OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS,
+  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS,
+  OPEN_CODE_NATIVE_AUTH_ENV_KEYS,
+  isOpenCodeNativeProvider,
   OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   type OpenCodeConnectedAccountPurposeId,
+  type OpenCodeRequestAuthProvider,
 } from './purposes.js';
 
 type Binding = Awaited<ReturnType<
   AgentRuntimeContext['services']['connectedAccounts']['getBinding']
 >>;
-
-type ExpectedService = Readonly<{ pluginId: string; localId: string }>;
-
-const EXPECTED_SERVICES = Object.freeze({
-  [OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID]: Object.freeze({
-    pluginId: 'happier.agent.claude',
-    localId: 'claude-subscription',
-  }),
-  [OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID]: Object.freeze({
-    pluginId: 'happier.agent.codex',
-    localId: 'openai-codex',
-  }),
-  [OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID]: Object.freeze({
-    pluginId: 'happier.voice.openai',
-    localId: 'openai',
-  }),
-  [OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID]: Object.freeze({
-    pluginId: 'happier.agent.claude',
-    localId: 'anthropic',
-  }),
-} satisfies Readonly<Record<OpenCodeConnectedAccountPurposeId, ExpectedService>>);
-
-const OPEN_CODE_NATIVE_AUTH_ENV_KEYS = Object.freeze([
-  'OPENCODE_AUTH_CONTENT',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
-] as const);
 
 type OpenCodeAccountLaunchRequest = Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding'>;
 type OpenCodeAccountLaunchContext = Readonly<{
@@ -80,7 +56,9 @@ function assertExpectedBinding(
   binding: Binding,
 ): binding is NonNullable<Binding> {
   if (!binding) return false;
-  const expected = EXPECTED_SERVICES[purpose];
+  const expected = OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.find(
+    ({ declaration }) => declaration.purpose === purpose,
+  )!.declaration.service;
   if (
     binding.purpose !== purpose
     || binding.service.pluginId !== expected.pluginId
@@ -192,11 +170,10 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
   const resolveInitial = new Map<OpenCodeConnectedAccountPurposeId, () => void>();
 
   const retirePurposeObservations = (): void => {
-    if (disposed) return;
-    disposed = true;
-    for (const subscription of subscriptions) subscription.dispose();
+    for (const subscription of subscriptions.splice(0)) subscription.dispose();
   };
   const dispose = async (): Promise<void> => {
+    disposed = true;
     retirePurposeObservations();
     const assets = requestAuthAssets;
     requestAuthAssets = undefined;
@@ -213,13 +190,14 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         resolveInitial.set(purpose, resolve);
       }));
       let initial = true;
-      subscriptions.push(context.services.connectedAccounts.watch(purpose, () => {
+      subscriptions.push(context.services.connectedAccounts.watch(purpose, (event) => {
         if (initial) {
           initial = false;
           resolveInitial.get(purpose)?.();
           resolveInitial.delete(purpose);
           return;
         }
+        if (!event.authorityChanged) return;
         return invalidate();
       }));
     }
@@ -230,7 +208,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         purpose,
         await context.services.connectedAccounts.getBinding(
           purpose,
-          { signal: context.signal },
+          { signal: context.signal, observation: true },
         ),
       ] as const),
     );
@@ -246,8 +224,8 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     const anthropicRequestAuthBinding = bindings[OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID];
     const anthropicBinding = bindings[OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID];
 
-    const directAccountCredentials: Partial<Record<'openai' | 'anthropic', Readonly<{ key: string; service: PluginContributionRef }>>> = {};
-    const requiredRequestAuthProviders: Array<'openai' | 'anthropic'> = [];
+    const directAccountCredentials: Partial<Record<OpenCodeRequestAuthProvider, Readonly<{ key: string; service: PluginContributionRef }>>> = {};
+    const requiredRequestAuthProviders: OpenCodeRequestAuthProvider[] = [];
     let usedBinding = false;
 
     if (openAiCodexBinding) {
@@ -326,11 +304,10 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         requestAuth: {
           capabilityPath,
           purposeBindings: requiredRequestAuthProviders.map((provider) => {
-            const purpose = provider === 'openai'
-              ? OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
-              : OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID;
+            const declaredPurpose = OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES[provider];
+            const purpose = declaredPurpose.purpose;
             return {
-              purpose: { consumer: OPEN_CODE_REQUEST_AUTH_CONSUMER, purpose },
+              purpose: declaredPurpose,
               target: { kind: 'account', account: bindings[purpose]!.account },
             };
           }),
@@ -352,13 +329,13 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       : request;
 
     function projectNativeAccountFailure<Event extends AgentSessionRuntimeEvent | AgentExecutionRunEvent>(event: Event): Event {
-      if (invalidated || disposed || context.signal?.aborted || !qualifiedAuth
+      if (disposed || context.signal?.aborted || !qualifiedAuth
         || (event.kind !== 'turn-failed' && event.kind !== 'run-failed')) return event;
       const diagnostic = event.diagnostic;
       if (!diagnostic || !isRecord(diagnostic.details)) return event;
       const evidence = diagnostic.details.nativeProviderFailure;
       if (!isRecord(evidence) || evidence.httpStatus !== 429
-        || (evidence.providerId !== 'openai' && evidence.providerId !== 'anthropic')) return event;
+        || !isOpenCodeNativeProvider(evidence.providerId)) return event;
       const service = qualifiedAuth.nativeAccountServicesByProvider[evidence.providerId];
       if (!service) return event; // Proxy slots already report exact failures at their request-auth leaf.
       const classification = {
@@ -386,6 +363,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
           async dispose(reason) {
             if (sessionDisposed) return;
             sessionDisposed = true;
+            disposed = true;
             retirePurposeObservations();
             try {
               await session.dispose(reason);
@@ -399,6 +377,8 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         return preparedSession;
       },
       bindExecutionRun(runtime) {
+        // The admitted run retains its source and assets until explicit disposal.
+        retirePurposeObservations();
         let runtimeDisposed = false;
         const watch: AgentExecutionRunRuntime['watch'] = listener => runtime.watch(event => listener(projectNativeAccountFailure(event)));
         const preparedRuntime: AgentExecutionRunRuntime = {
@@ -407,6 +387,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
           async dispose() {
             if (runtimeDisposed) return;
             runtimeDisposed = true;
+            disposed = true;
             retirePurposeObservations();
             try {
               await runtime.dispose();
@@ -415,8 +396,6 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
             }
           },
         };
-        invalidationHandler = async () => await preparedRuntime.dispose();
-        if (invalidated) void invalidationHandler();
         return preparedRuntime;
       },
       dispose,

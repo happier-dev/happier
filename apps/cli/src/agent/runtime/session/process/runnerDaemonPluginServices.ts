@@ -2493,10 +2493,12 @@ export async function prepareRunnerDaemonPluginServices(
                         timeoutMs: 1_000,
                     }).catch(() => undefined);
                 };
-                const deliverResync = (): void => {
+                const deliverResync = (
+                    event: Parameters<typeof listener>[0],
+                ): void => {
                     if (controller.signal.aborted) return;
                     try {
-                        listener(Object.freeze({ kind: 'resync' }));
+                        listener(Object.freeze(event));
                     } catch {
                         input.local.logger.warn(
                             'Connected-account watch listener failed',
@@ -2551,6 +2553,8 @@ export async function prepareRunnerDaemonPluginServices(
                                         .safeParse(rawEvent);
                                 if (
                                     !parsed.success
+                                    || parsed.data.kind
+                                        !== 'plugin_connected_accounts.watch.event_v1'
                                     || parsed.data.invocationId
                                         !== input.invocationId
                                     || parsed.data.subscriptionId
@@ -2563,7 +2567,7 @@ export async function prepareRunnerDaemonPluginServices(
                                             'Daemon returned an invalid connected-account subscription event',
                                     });
                                 }
-                                deliverResync();
+                                deliverResync(parsed.data.event);
                             }
                         } catch (error) {
                             if (controller.signal.aborted) return;

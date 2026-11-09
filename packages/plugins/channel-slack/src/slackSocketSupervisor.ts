@@ -269,7 +269,11 @@ export function createSlackSocketSupervisor() {
     const abort = () => { controller.abort(); wake(); };
     context.signal.addEventListener('abort', abort, { once: true });
     if (context.signal.aborted) abort();
-    const credentials = context.services.connectedAccounts.watch(SLACK_CREDENTIAL_PURPOSE, () => { retryAt.clear(); wake(); });
+    const credentials = context.services.connectedAccounts.watch(SLACK_CREDENTIAL_PURPOSE, event => {
+      if (!event.authorityChanged) return;
+      retryAt.clear();
+      wake();
+    });
     running = (async () => {
       try {
         while (!controller.signal.aborted) {
