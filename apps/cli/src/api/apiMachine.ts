@@ -524,6 +524,8 @@ export type ConnectedServicesProjectionNotification = Readonly<{
 }>;
 
 export type ApiMachineClientLifecycleDependencies = Readonly<{
+    /** The operation owner retains Project Open receipts in its existing device-local storage. */
+    projectOpenReceiptPersistence?: Parameters<typeof createHostActionOperationRuntime>[0]['projectOpenReceiptPersistence'];
     /** The authenticated daemon's captured credential owner for admitted deployment children. */
     installedCredentials?: StoredCredentials;
     /** Current daemon control listener port, published only after machine-control readiness. */
@@ -1661,6 +1663,8 @@ export class ApiMachineClient {
             }) === true,
         });
         this.actionOperationRuntime = createHostActionOperationRuntime({
+            ...(this.lifecycleDependencies.projectOpenReceiptPersistence !== undefined
+                ? { projectOpenReceiptPersistence: this.lifecycleDependencies.projectOpenReceiptPersistence } : {}),
             serverId: configuration.activeServerId,
             machineId: this.machine.id,
             ...(operationInstallation ? { custodyBinding: {

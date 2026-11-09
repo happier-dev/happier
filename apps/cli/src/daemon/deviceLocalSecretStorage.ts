@@ -19,7 +19,7 @@ const DEVICE_LOCAL_CIPHERTEXT_PREFIX = 'v1';
 const DeviceLocalKeyFileSchema = z.strictObject({ version: z.literal(1), key: z.string() });
 const DeviceLocalKeyFileStoredReadSchema = createStoredReadSchema(DeviceLocalKeyFileSchema);
 
-export type DeviceLocalSecretPurpose = 'session_respawn_environment' | 'execution_run_worker_update' | 'execution_run_state' | 'usage_accounting_capture' | 'agent_state_request_settlement';
+export type DeviceLocalSecretPurpose = 'session_respawn_environment' | 'execution_run_worker_update' | 'execution_run_state' | 'usage_accounting_capture' | 'agent_state_request_settlement' | 'project_open_receipt';
 export type DeviceLocalOpaqueIdentityPurpose =
   'external_session_transcript_refresh_cursor' | 'usage_accounting_identity';
 export type DeviceLocalDerivedSecretKeyPurpose =

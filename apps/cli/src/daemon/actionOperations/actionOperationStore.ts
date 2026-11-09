@@ -17,6 +17,10 @@ import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUse
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { logger } from '@/ui/logger';
 
 type RetainedTeardownExecution = Readonly<{
   execute: import('./actionOperationTypes').HostActionOperationExecute;
@@ -115,6 +119,8 @@ export function createActionOperationStore(options?: Readonly<{
   settledRetentionLimit?: number;
   settledRetentionMs?: number;
   onSnapshot?: (snapshot: ActionOperationSnapshotV1) => void;
+  /** Undefined is an in-memory host; null means the installed host could not open its receipts. */
+  projectOpenReceiptPersistence?: ProjectOpenReceiptPersistence | null;
 }>) {
   const now = options?.now ?? Date.now;
   // Wall-clock corrections cannot reverse the schema-ordered lifecycle facts.
@@ -123,6 +129,12 @@ export function createActionOperationStore(options?: Readonly<{
   const settledRetentionLimit = options?.settledRetentionLimit ?? SETTLED_RETENTION_LIMIT;
   const settledRetentionMs = options?.settledRetentionMs ?? SETTLED_RETENTION_MS;
   const snapshots = new Map<string, ActionOperationSnapshotV1>();
+  const projectOpenReceiptPersistence = options?.projectOpenReceiptPersistence;
+  const assertReceiptHistoryReadable = (): void => {
+    if (projectOpenReceiptPersistence === null) {
+      throw new RpcError('Project Open receipt storage is unavailable on this Machine', 'action_operation_unavailable');
+    }
+  };
   const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution }>>();
@@ -137,6 +149,7 @@ export function createActionOperationStore(options?: Readonly<{
     if (ids?.size === 0) backupOperationIds.delete(key);
   };
   const removeSnapshot = (operationId: string): void => {
+    if (isProjectWorkspaceSyncOpenActionV1(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
     unindexBackup(operationId);
     snapshots.delete(operationId);
     invocationMetadata.delete(operationId);
@@ -178,6 +191,19 @@ export function createActionOperationStore(options?: Readonly<{
   };
 
   const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+    const metadata = invocationMetadata.get(snapshot.operationId);
+    if (isProjectWorkspaceSyncOpenActionV1(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
+      try {
+        if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
+        projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
+          ...(metadata.deploymentChildIdentity ? { deploymentChildIdentity: metadata.deploymentChildIdentity } : {}),
+          ...(metadata.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: metadata.requesterWorkAttributionV1 } : {}) });
+      } catch {
+        const effectAttempted = snapshot.state !== 'accepted' && previous?.state !== 'accepted';
+        if (!effectAttempted) removeSnapshot(snapshot.operationId);
+        throw new ProjectOpenReceiptPersistenceError(effectAttempted);
+      }
+    }
     const before = previous ? projectLiveWork(previous) : null;
     const after = projectLiveWork(snapshot);
     const settled = (item: LiveWorkItemV1 | null) => item === null || item.state === 'settled';
@@ -243,6 +269,29 @@ export function createActionOperationStore(options?: Readonly<{
     if (isTerminal(next)) prune();
     return next;
   };
+
+  // An Open coordinator cannot resume after host loss. Keep the exact settled
+  // result, or settle its lost coordinator as typed uncertainty, never replay it.
+  for (const receipt of projectOpenReceiptPersistence?.retained ?? []) {
+    const prior = receipt.snapshot;
+    const { observation: _observation, setupReview: _review, result: _result, ...remaining } = prior;
+    const settledAt = Math.max(prior.startedAt ?? prior.createdAt, now());
+    const snapshot = isTerminal(prior) ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
+      ...remaining, revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
+      startedAt: prior.startedAt ?? settledAt, settledAt,
+      error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before Project Open settled',
+        effectAttempted: true, ...(prior.error?.failureCause ? { failureCause: prior.error.failureCause } : {}) },
+    }));
+    snapshots.set(snapshot.operationId, snapshot);
+    retainInvocation(snapshot, { inputIdentity: receipt.inputIdentity,
+      ...(receipt.deploymentChildIdentity ? { deploymentChildIdentity: receipt.deploymentChildIdentity } : {}),
+      ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
+    if (!isTerminal(prior)) {
+      try { projectOpenReceiptPersistence?.save({ ...receipt, snapshot }); }
+      catch { logger.warn('Could not retain the restarted Project Open outcome; new Open requests require a successful receipt write'); }
+    }
+  }
+  prune();
 
   return Object.freeze({
     /** Private daemon read of this owner's real custody, independent of the public Account projection. */
@@ -485,6 +534,7 @@ export function createActionOperationStore(options?: Readonly<{
     get(scope: ActionOperationQueryScope, operationId: string): ActionOperationSnapshotV1 | null {
       prune();
       const snapshot = snapshots.get(operationId);
+      if (!snapshot) assertReceiptHistoryReadable();
       return snapshot && inScope(snapshot, scope) ? snapshot : null;
     },
 
@@ -553,6 +603,7 @@ export function createActionOperationStore(options?: Readonly<{
       nextCursor: string | null;
     }> {
       prune();
+      assertReceiptHistoryReadable();
       const states = input.states ? new Set(input.states) : null;
       const requested = input.requestIdentity
         ? findByRequestIdentity(input, input.requestIdentity.actionId, input.requestIdentity.requestId) : null;

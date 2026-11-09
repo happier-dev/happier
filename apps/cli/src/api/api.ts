@@ -6,6 +6,7 @@ import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/
 import { MachineRegistrationReplacementResultSchema } from '@happier-dev/protocol/machines/identity/machineReplacement';
 import { MachineKeyBasisV1Schema, MachinePublishedRowV1Schema, MachineContentKeyTransitionResultV1Schema, prepareMachineContentKeyV1, MachineContentKeyPreparationErrorV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { join } from 'node:path';
 import { createMachineContentCodec } from './machine/machineStoredContent';
 import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import axios from '@/api/client/credentialAxios';
@@ -1620,12 +1621,22 @@ export class ApiClient {
   ): Promise<ApiMachineClient> {
     // Only the daemon creates Machine clients; session runners must not load this tree.
     const { ApiMachineClient } = await import('./apiMachine');
+    const { prepareProjectOpenReceiptPersistence } = await import('@/daemon/actionOperations/projectOpenReceiptPersistence');
+    const accountId = readAccountIdFromToken(this.credential.token);
+    const projectOpenReceiptPersistence = accountId ? await prepareProjectOpenReceiptPersistence({
+      directory: join(configuration.activeServerDir, 'action-operations'), keyPath: configuration.deviceLocalSecretKeyFile,
+      accountId, machineId: machine.id,
+    }).catch(() => {
+      logger.warn('Project Open receipt storage is unavailable; new Open requests will be refused before execution');
+      return null;
+    }) : null;
     return new ApiMachineClient(
       this.credential.token,
       machine,
       ownershipMetadata,
       {
         ...lifecycleDependencies,
+        projectOpenReceiptPersistence,
         installedCredentials: this.credential,
         getServerFeaturesSnapshot: lifecycleDependencies?.getServerFeaturesSnapshot
           ?? (this.getCachedServerFeaturesSnapshot ? () => this.getCachedServerFeaturesSnapshot?.() : undefined),

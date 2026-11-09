@@ -9849,9 +9849,19 @@ wait for the admitted operation's terminal result without replaying its launch.
 In current 0.3 development source, request-id deduplication holds only while the
 daemon still holds the Account/Machine-scoped Action receipt; changed input is
 rejected with `action_request_input_conflict` while that receipt is retained.
-Receipts are process-local, with settled history limited to 50 entries / 24 h.
-After a daemon restart or receipt eviction, Project commands and prepared
-transfers may run again under the same request id. Finite `projects.prepare`,
+Settled history is limited to 50 entries / 24 h. The installed daemon now retains
+`projects.open` receipts and their request correspondence in device-local encrypted
+files under the existing operation owner. A settled result survives restart;
+an unfinished Open settles once as `action_outcome_unknown` with
+`effectAttempted: true`, and rejoining its request never repeats the effect.
+Unavailable receipt storage refuses a new Open before execution without blocking
+ordinary daemon readiness. This is an unreleased 0.3 development contract; existing
+process-local receipts cannot be recovered retroactively.
+
+Other generic receipts remain process-local.
+After a daemon restart, other process-local Project commands and prepared
+transfers may run again under the same request id; receipt eviction also ends
+request-id deduplication. Finite `projects.prepare`,
 `projects.script.run`, `projects.compute.exec` and prepared filesystem
 copy/upload/download lack a durable request-to-run or request-to-transfer
 settlement record. Re-admitting the same request id after receipt loss can start

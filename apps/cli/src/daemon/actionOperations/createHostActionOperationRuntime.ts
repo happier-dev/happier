@@ -29,6 +29,7 @@ import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploy
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
+import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 
 type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
 
@@ -122,6 +123,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   generateOperationId?: () => string;
   publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void | Promise<void>;
   publishSnapshotAcknowledged?: (snapshot: ActionOperationSnapshotV1) => Promise<boolean>;
+  projectOpenReceiptPersistence?: ProjectOpenReceiptPersistence | null;
   onInspection?: (operation: ActionOperationSnapshotV1) => void;
   supportsCoreCancellation?: (
     actionId: 'session.fork' | 'session.spawn_new' | 'session.handoff' | 'projects.service.relocate',
@@ -130,6 +132,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
 }>) {
   const store = createActionOperationStore({
     ...(deps.publishSnapshot ? { onSnapshot: deps.publishSnapshot } : {}),
+    ...(deps.projectOpenReceiptPersistence !== undefined ? { projectOpenReceiptPersistence: deps.projectOpenReceiptPersistence } : {}),
   });
   const runner = createActionOperationRunner({
     store,
@@ -414,6 +417,10 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         }
         return result;
       },
+    }).catch((error: unknown): ActionExecuteResult => {
+      if (!(error instanceof ProjectOpenReceiptPersistenceError)) throw error;
+      return { ok: false, errorCode: error.effectAttempted ? 'action_outcome_unknown' : 'action_not_admitted',
+        error: error.message, effectAttempted: error.effectAttempted };
     });
     // The keyed Session startup remains daemon-owned after its caller leaves.
     // Detach only this transport waiter; a retry can rejoin the same execution.
