@@ -46,7 +46,7 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
   if (kind === undefined && context?.chatLink) {
     const unavailable = async (): Promise<OpenResourceOutcome> => {
       const [{ Modal }, { t }] = await Promise.all([import('@/modal'), import('@/text')]);
-      Modal.alert(t('common.error'), t('browserSurface.unavailable.generic'));
+      Modal.alert(t('common.error'), t('browserLaunchpad.status.unavailableGeneric'));
       return { status: 'unavailable' };
     };
     const target = resolveExternalUrlTargetFromInput(url);
