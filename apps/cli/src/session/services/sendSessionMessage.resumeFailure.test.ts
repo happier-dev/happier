@@ -423,7 +423,7 @@ it.each(['service', 'action'] as const)('returns a typed startup refusal for a w
   } else {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
       mode: 'plain', ctx: null, machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport } });
-    const outcome = await createActionExecutor(deps)('session.message.send', {
+    const outcome = await createActionExecutor(deps).execute('session.message.send', {
       sessionId, message: 'Keep this prompt for recovery', localId, wait: true, timeoutSeconds: 1,
       requestedAction: { v: 1, kind: 'enqueue' },
     }, { surface: 'ui', authority: 'present_user' });
