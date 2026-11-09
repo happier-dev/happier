@@ -24,11 +24,14 @@ describe('service configuration canonical catalog settlement', () => {
         service, modeId: 'api-key', revision: 'configuration-1', values: { endpoint: 'https://old.example.test' }, secretRefs: {},
       }] } };
       let revision = 4;
+      let acknowledged = false;
+      let postCommitReads = 0;
       setActiveAccountSettingsSnapshot({ source: 'network', scopeKey, settings: accountSettingsParse({}), rawSettings: {},
         settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [],
         connectedConfigurationCatalog: { status: 'ready', revision, record } });
       vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
       vi.spyOn(axios, 'get').mockImplementation(async input => {
+        if (acknowledged) { postCommitReads += 1; throw new Error('Storage unavailable after committed write'); }
         const path = new URL(String(input)).pathname;
         if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -51,6 +54,7 @@ describe('service configuration canonical catalog settlement', () => {
         record = mutation.content.v;
         revision = 5;
         if (outcome === 'outcome_unknown') throw new Error('Response lost after commit');
+        acknowledged = true;
         if (outcome === 'ack-retired') setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'replacement-account',
           settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: 2, settingsSecretsReadKeys: [] });
         return { status: 200, data: { status: 'updated', revision, cursor: 5 } };
@@ -61,13 +65,12 @@ describe('service configuration canonical catalog settlement', () => {
       const result = await owner.configuration.replace({ target: { kind: 'service', service, modeId: 'api-key' },
         occurrenceId: 'configuration-fixture', sourceCustody: { kind: 'development', registeredRootId: 'configuration-fixture' },
         expectedRevision: 'configuration-1', replacement: { values: { endpoint: 'https://new.example.test' }, secretRefs: {} } });
-      expect(result).toMatchObject(outcome === 'updated' ? { status: 'committed', record: { revision: 'configuration-5',
+      expect(result).toMatchObject(outcome === 'updated' || outcome === 'ack-retired' ? { status: 'committed', record: { revision: 'configuration-5',
         values: { endpoint: 'https://new.example.test' }, secretRefs: {} } } : outcome === 'conflict'
         ? { status: 'conflict', code: 'connected_account_configuration_changed' }
-        : outcome === 'ack-retired'
-        ? { status: 'unavailable', code: 'connected_account_configuration_committed_readback_unavailable' }
         : { status: 'unavailable', code: 'connected_account_configuration_outcome_unknown' });
       expect(mutations).toBe(1);
+      expect(postCommitReads).toBe(0);
       expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(7);
       if (outcome === 'ack-retired') {
         expect(revision).toBe(5);
@@ -84,6 +87,8 @@ describe('service configuration canonical catalog settlement', () => {
     const raw = { futurePreference: { retained: true } };
     let record: ConnectedAccountCatalogRecordV1 = { key: 'configurations', value: { v: 1, entries: [] } };
     let revision = 4;
+    let acknowledged = false;
+    let postCommitReads = 0;
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey, settings: accountSettingsParse(raw), rawSettings: raw,
       settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [],
       connectedConfigurationCatalog: { status: 'ready', revision, record } });
@@ -94,6 +99,7 @@ describe('service configuration canonical catalog settlement', () => {
       features: { teams: { enabled: true } }, capabilities: {},
     }))));
     vi.spyOn(axios, 'get').mockImplementation(async input => {
+      if (acknowledged) { postCommitReads += 1; throw new Error('Storage unavailable after committed promotion'); }
       const path = new URL(String(input)).pathname;
       if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -119,7 +125,9 @@ describe('service configuration canonical catalog settlement', () => {
       expect(mutation.content.v.value.entries[0]?.secretRefs.apiKey).toBe(formatSharedSavedSecretRefV1(promotion.resourceId));
       record = mutation.content.v;
       revision += 1;
-      return { status: 200, data: { resourceId: promotion.resourceId, settingsVersion: 9 } };
+      acknowledged = true;
+      return { status: 200, data: { resourceId: promotion.resourceId, settingsVersion: 9,
+        catalogRevisions: { connectedConfigurations: revision } } };
     });
     const owner = createQualifiedConnectedAccountDaemonPersistence({ credentials,
       getAccountEncryptionMode: async () => 'plain',
@@ -132,6 +140,7 @@ describe('service configuration canonical catalog settlement', () => {
     })).resolves.toMatchObject({ status: 'committed', record: { revision: 'configuration-5',
       values: { endpoint: 'https://api.example.test' }, secretRefs: { apiKey: expect.stringContaining(SHARED_SAVED_SECRET_REF_V1_PREFIX) } } });
     expect(record.key === 'configurations' ? record.value.entries : []).toHaveLength(1);
+    expect(postCommitReads).toBe(0);
     expect(getActiveAccountSettingsSnapshot()?.rawSettings).toEqual(raw);
     expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(7);
     expect(getActiveAccountSettingsSnapshot()?.connectedConfigurationCatalog).toMatchObject({ status: 'ready', revision: 5, record });

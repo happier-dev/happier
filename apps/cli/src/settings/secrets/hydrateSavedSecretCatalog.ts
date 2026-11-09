@@ -241,6 +241,19 @@ export type SavedSecretPromotionOperationResultV1 =
   | Readonly<{ status: 'conflict' | 'unavailable' | 'invalid' }>
   | Readonly<{ status: 'outcome_unknown'; resourceObserved?: true }>;
 
+type SavedSecretCatalogPromotionResultV1 =
+  | Exclude<SavedSecretPromotionOperationResultV1, { status: 'applied' }>
+  | (Extract<SavedSecretPromotionOperationResultV1, { status: 'applied' }> & Readonly<{
+    catalogs: SavedSecretReferenceCatalogsV1;
+  }>);
+
+type ConnectedAccountCatalogPromotionResultV1 =
+  | Exclude<SavedSecretPromotionOperationResultV1, { status: 'applied' }>
+  | (Extract<SavedSecretPromotionOperationResultV1, { status: 'applied' }> & Readonly<{
+    record: ConnectedAccountCatalogRecordV1;
+    revision?: number;
+  }>);
+
 type PreparedSavedSecretV1 = Readonly<{ id: string; record: SavedSecret }>;
 type CatalogStorageCaptureV1 = Readonly<{ mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null }>;
 type SavedSecretReferenceProofCaptureV1 = Awaited<ReturnType<typeof captureSavedSecretReferencesForOperation>>;
@@ -257,7 +270,7 @@ export async function promoteSavedSecretWithProviderConnectionsCatalog(input: Re
   if (input.operationContext && !input.operationContext.readSnapshot()) return { status: 'unavailable' };
   const store = input.operationContext ? createCliProviderConnectionsStoreForOperation({ operationContext: input.operationContext, signal: input.signal })
     : createCliProviderConnectionsStore(input);
-  return promotePreparedSavedSecretsWithCatalog({ ...input, preparedSavedSecrets: [input.preparedSavedSecret],
+  const result = await promotePreparedSavedSecretsWithCatalog({ ...input, preparedSavedSecrets: [input.preparedSavedSecret],
     expectedRevision: input.providerConnections.expectedRevision,
     catalogs: { profileRecords: [], providerConnections: input.providerConnections.catalog },
     readStorageContext: store.readStorageContext, assertCurrent: store.assertCurrent,
@@ -278,6 +291,9 @@ export async function promoteSavedSecretWithProviderConnectionsCatalog(input: Re
     },
     census: expectedRevision => ({ providerConnections: expectedRevision }),
   });
+  if (result.status !== 'applied') return result;
+  const { catalogs: _catalogs, ...receipt } = result;
+  return receipt;
 }
 
 /** Connected-account selection is one resource batch plus one typed row CAS. */
@@ -289,14 +305,14 @@ export async function promoteSavedSecretsWithConnectedAccountCatalog(input: Read
   operationContext?: SavedSecretOperationContextV1;
   signal?: AbortSignal;
   authorizeRequest?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
-}>): Promise<SavedSecretPromotionOperationResultV1> {
+}>): Promise<ConnectedAccountCatalogPromotionResultV1> {
   if (input.connectedAccountCatalog.sourceSettingsVersion !== undefined) return { status: 'invalid' };
   if (input.operationContext && !input.operationContext.readSnapshot()) return { status: 'unavailable' };
   const store = createCliConnectedAccountCatalogStore(input);
   const { record } = input.connectedAccountCatalog;
   const catalogs: SavedSecretReferenceCatalogsV1 = record.key === 'configurations'
     ? { profileRecords: [], connectedConfigurations: record.value } : { profileRecords: [], connectedPurposes: record.value };
-  return promotePreparedSavedSecretsWithCatalog({ ...input, catalogs,
+  const result = await promotePreparedSavedSecretsWithCatalog({ ...input, catalogs,
     expectedRevision: input.connectedAccountCatalog.expectedRevision,
     readStorageContext: store.readStorageContext, assertCurrent: store.assertCurrent,
     readRevision: async storage => {
@@ -323,6 +339,14 @@ export async function promoteSavedSecretsWithConnectedAccountCatalog(input: Read
     census: expectedRevision => record.key === 'configurations'
       ? { connectedConfigurations: expectedRevision } : { connectedPurposes: expectedRevision },
   });
+  if (result.status !== 'applied') return result;
+  // These are the exact references sealed into the acknowledged transaction.
+  const committedRecord: ConnectedAccountCatalogRecordV1 = record.key === 'configurations'
+    ? { key: record.key, value: result.catalogs.connectedConfigurations! }
+    : { key: record.key, value: result.catalogs.connectedPurposes! };
+  const revision = result.catalogRevisions?.[record.key === 'configurations' ? 'connectedConfigurations' : 'connectedPurposes'];
+  const { catalogs: _catalogs, ...receipt } = result;
+  return { ...receipt, record: committedRecord, ...(typeof revision === 'number' ? { revision } : {}) };
 }
 
 function assertSharedSavedSecretCatalogReferences(catalogs: SavedSecretReferenceCatalogsV1): void {
@@ -343,7 +367,7 @@ async function promotePreparedSavedSecretsWithCatalog(input: Readonly<{
   sealCatalog(catalogs: SavedSecretReferenceCatalogsV1, storage: CatalogStorageCaptureV1,
     capture: SavedSecretReferenceProofCaptureV1, expectedRevision: number): SavedSecretCatalogMutationsV1;
   census(expectedRevision: number): Partial<SavedSecretDomainReferenceCensusV1>;
-}>): Promise<SavedSecretPromotionOperationResultV1> {
+}>): Promise<SavedSecretCatalogPromotionResultV1> {
   if (input.expectedRevision === 'absent' || input.preparedSavedSecrets.length === 0) return { status: 'invalid' };
   const context = input.operationContext;
   const scopeKey = resolveAccountSettingsScopeKeyForToken(input.credentials.token);
@@ -396,8 +420,9 @@ async function promotePreparedSavedSecretsWithCatalog(input: Readonly<{
     const mutation = SharedSavedSecretPromoteInputV1Schema.parse({ ...resources[0], additionalSavedSecretResources: resources.slice(1),
       nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs', accountMode: admitted.mode, catalogs: input.census(input.expectedRevision) },
       catalogMutations: input.sealCatalog(catalogs, admitted, capture, input.expectedRevision) });
-    return await runWithServerHttpBaseUrl(baseUrl, () => promoteSavedSecretResourceForOperation({ expectedScopeKey: scopeKey,
+    const result = await runWithServerHttpBaseUrl(baseUrl, () => promoteSavedSecretResourceForOperation({ expectedScopeKey: scopeKey,
       input: mutation, operationContext: context, signal: input.signal, authorizeRequest: input.authorizeRequest }));
+    return result.status === 'applied' ? { ...result, catalogs } : result;
   } catch {
     return { status: 'unavailable' };
   }

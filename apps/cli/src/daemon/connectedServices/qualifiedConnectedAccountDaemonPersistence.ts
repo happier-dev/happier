@@ -5,10 +5,10 @@ import {
   randomUUID,
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { createConnectedAccountCredentialSettlement } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountCredentialSettlement, type ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import { promoteConnectedAccountCredentialSecrets } from '@/settings/secrets/promoteConnectedAccountCredentialSecrets';
 
-import { ConnectedConfigurationCatalogV1Schema, openConnectedAccountCatalogContentV1,
+import { ConnectedConfigurationCatalogV1Schema,
   type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { replaceConnectedServiceConfigurationCatalogV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
@@ -300,6 +300,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       credentialRevision: string;
       configurationRevision: string | null;
       accountMode: 'plain' | 'e2ee';
+      completionObservation?: ConnectedAccountCompletionObservation;
     }>) => Promise<void>;
   }>,
 ): ConnectedAccountDaemonPersistence {
@@ -340,7 +341,10 @@ export function createQualifiedConnectedAccountDaemonPersistence(
     const scopeKey = resolveAccountSettingsScopeKey(params.credentials);
     const store = createCliConnectedAccountCatalogStore({ credentials: params.credentials,
       ...(params.operationContext ? { operationContext: params.operationContext } : {}) });
-    let acknowledged = false;
+    let committed: Readonly<{
+      status: 'committed';
+      record: ConfigurationRecord;
+    }> | undefined;
     try {
       const catalog = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl,
         () => readActiveConnectedAccountCatalog({ credentials: params.credentials, key: 'configurations',
@@ -362,7 +366,8 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           encryptedValue: { _isSecretValue: true, value }, createdAt: timestamp, updatedAt: timestamp }) };
       });
       const record = write.record;
-      const replacement = record.value.entries.find(matchesTarget)!;
+      let committedRecord: ConnectedAccountCatalogRecordV1;
+      let committedRevision: number | undefined;
       if (preparedSavedSecrets.length > 0) {
         const result = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl,
           () => promoteSavedSecretsWithConnectedAccountCatalog({ credentials: params.credentials, preparedSavedSecrets,
@@ -372,36 +377,36 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           code: result.status === 'conflict' ? 'connected_account_configuration_changed'
             : result.status === 'outcome_unknown' ? 'connected_account_configuration_outcome_unknown'
               : 'connected_account_configuration_persistence_unavailable' };
+        committedRecord = result.record;
+        committedRevision = result.revision;
       } else {
         const result = await store.writeRecord({ expectedRevision: catalog.revision, record });
         if (result.status !== 'updated') return { status: result.status === 'conflict' ? 'conflict' as const : 'unavailable' as const,
           code: result.status === 'conflict' ? 'connected_account_configuration_changed' : 'connected_account_configuration_persistence_unavailable' };
+        committedRecord = result.record;
+        committedRevision = result.revision;
       }
-      acknowledged = true;
-      // Promotion remaps prepared references at the shared SavedSecret owner.
-      // Only the current canonical row may provide those committed bindings.
-      const storage = await store.readStorageContext();
-      const row = await store.readRow('configurations');
-      if (row.status !== 'present') throw new Error('Committed configuration row unavailable');
-      const opened = openConnectedAccountCatalogContentV1({ key: 'configurations', ...storage, content: row.content });
-      if (opened.status !== 'opened' || opened.record.key !== 'configurations') throw new Error('Committed configuration row unavailable');
-      const entry = opened.record.value.entries.find(candidate => sameService(candidate.service, input.target.service)
-        && candidate.modeId === input.target.modeId);
-      if (!entry || entry.revision !== replacement.revision) throw new Error('Committed configuration changed before readback');
+      // Both writers return the record they committed, including promoted refs.
+      // The selected writer preserves the input catalog key and entry identity.
+      const entry = (committedRecord as Extract<ConnectedAccountCatalogRecordV1, { key: 'configurations' }>)
+        .value.entries.find(matchesTarget)!;
+      committed = { status: 'committed', record: parsePhysicalConfigurationRecord({
+        content: { values: entry.values, secretRefs: entry.secretRefs }, revision: entry.revision, scope: 'service' }) };
+      // Publishing to a retired local Account cannot undo the committed effect.
       store.assertCurrent();
-      const ready = { status: 'ready' as const, revision: row.revision, record: opened.record };
+      if (committedRevision === undefined) return committed;
+      const ready = { status: 'ready' as const, revision: committedRevision, record: committedRecord };
       const published = params.operationContext
         ? await params.operationContext.commitConnectedAccountCatalog({ key: 'configurations', catalog: ready })
         : commitActiveConnectedAccountCatalog({ scopeKey, lifetimeToken, key: 'configurations', catalog: ready });
       store.assertCurrent();
       if (!published) throw new Error('Committed configuration Account retired');
-      return { status: 'committed' as const, record: parsePhysicalConfigurationRecord({
-        content: { values: entry.values, secretRefs: entry.secretRefs }, revision: entry.revision, scope: 'service' }) };
+      return committed;
     } catch (error) {
+      if (committed) return committed;
       return { status: 'unavailable' as const, code: error instanceof Error && 'code' in error && error.code === 'outcome_unknown'
-        ? 'connected_account_configuration_outcome_unknown' : acknowledged
-          ? 'connected_account_configuration_committed_readback_unavailable'
-          : 'connected_account_configuration_persistence_unavailable' };
+        ? 'connected_account_configuration_outcome_unknown'
+        : 'connected_account_configuration_persistence_unavailable' };
     }
   }
 

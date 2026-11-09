@@ -130,8 +130,9 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
       content: sealConnectedAccountCatalogContentV1({ ...storage, record: value.record }),
       ...captured, ...(value.sourceSettingsVersion === undefined ? {} : { sourceSettingsVersion: value.sourceSettingsVersion }),
       ...(value.settingsMutation ? { settingsMutation: value.settingsMutation } : {}) });
-    return ConnectedAccountCatalogRowMutationResponseV1Schema.parse(await request(
+    const result = ConnectedAccountCatalogRowMutationResponseV1Schema.parse(await request(
       `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/${value.record.key}`, mutation));
+    return result.status === 'updated' ? { ...result, record: value.record } : result;
   };
   const readAdmittedCatalog = async (key: ConnectedAccountCatalogKeyV1) => {
     const storage = await readStorageContext('identity');
