@@ -130,6 +130,18 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
         expect(close).toHaveBeenCalledOnce();
     });
 
+    it('names a machine only when the chosen method needs one, not for every catalog target (D21)', async () => {
+        const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
+        const selection = createMachineAdministrationTargetSelectionFixture();
+        const chips = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+            screen.root.findAll(node => typeof node.props.testIDPrefix === 'string' && node.props.testIDPrefix === 'connected-service-setup-target');
+        const screen = await renderScreen(<ConnectedServiceSetupPanel
+            target={{ kind: 'catalog' }} catalog={[tool]} chrome="page" targetSelection={selection}
+            onTargetChange={() => {}} onClose={() => {}} renderServiceFlow={() => null}
+        />);
+        expect(chips(screen)).toHaveLength(0);
+    });
+
     it('leaves the Providers pointer to the open catalog, not to a page locked to one requested purpose', async () => {
         const render = (targetLocked: boolean) => renderScreen(<ConnectedServiceSetupPanel
             target={{ kind: 'catalog' }} catalog={[]} onTargetChange={() => {}} onClose={() => {}}

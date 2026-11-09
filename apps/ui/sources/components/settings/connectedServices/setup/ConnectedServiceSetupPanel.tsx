@@ -219,7 +219,8 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     );
     const targetSelection = props.targetSelection ?? defaultTargetSelection;
     const { target, catalog: liveCatalog, onClose, onTargetChange, onConnected } = props;
-    const showTargetSelector = machineRequired || (target.kind === 'catalog' && props.targetSelection !== undefined);
+    // The chosen method's own demand decides; a catalog or an Account method needs no Machine (D21).
+    const showTargetSelector = machineRequired;
     const scope = props.scope ?? 'all';
     const liveSelected = target.kind === 'catalog'
         ? null

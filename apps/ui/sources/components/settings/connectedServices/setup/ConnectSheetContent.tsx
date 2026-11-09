@@ -246,7 +246,7 @@ function ConnectAccountSheetLeaf(
   // The machine a sign-in runs on: chosen here, so the band can show it beside the title (lab crConnect),
   // and handed to the sign-in below. Read only while the chosen method needs a machine (58c).
   const targetSelection = model.targetSelection;
-  const showTargetSelector = mode === 'new' && (model.machineRequired || model.target.kind === 'catalog');
+  const showTargetSelector = mode === 'new' && model.machineRequired;
   const machineChip = React.useMemo(() => showTargetSelector ? (
     <MachineAdministrationTargetSelector
       selection={targetSelection}

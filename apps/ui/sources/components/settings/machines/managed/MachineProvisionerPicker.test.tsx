@@ -179,6 +179,8 @@ describe('provisioner picker demand', () => {
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={() => {}} />);
     try {
+      // The Account catalog's first read is still loading: no Machine is needed, so the page never says one is (D21).
+      expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
       await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Vercel'));
       expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
       await waitForHomeGovernance(() => {
@@ -1715,10 +1717,34 @@ describe('provisioner picker demand', () => {
     await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
       createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
     ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    await publishNoAccountProvisioners(homeId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
-    expect(screen.findByTestId('managed-picker.no-online-controller')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.no-online-controller')).not.toBeNull());
     await screen.unmount();
+  });
+  it('offers the Account providers with every machine offline, never saying nothing is online (D21)', async () => {
+    await installBundledMachinePlugins();
+    const homeId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://offline-cloud.example', serverIdentityId: 'srv_offline_cloud', accountId: 'owner', currentAccount: true });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(homeId) || homeId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+      createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
+    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} onSelectProvisioner={() => {}} />);
+    try {
+      // Loading, and then settled: an Account provider needs no Machine, so the page never says one must be online.
+      expect(screen.findByTestId('managed-picker.no-online-controller')).toBeNull();
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Vercel'));
+      expect(screen.findByTestId('managed-picker.no-online-controller')).toBeNull();
+    } finally { await screen.unmount(); }
   });
   it('asks for a choice instead of saying nothing is online when a machine is online but none was preselected', async () => {
     const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://unpicked-picker.example', serverIdentityId: 'srv_unpicked_picker', accountId: 'owner', currentAccount: true });

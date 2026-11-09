@@ -245,8 +245,12 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
     const partialRead = !catalog.error && !error && checkFailed && cards.length > 0;
     // The controller's own state, said once under the chip that changes it.
     // A catalog that answered speaks for itself; presence only explains an empty or failed one.
-    const scopeState = !controller ? (scope.hasCandidates ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
-            title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} /> : null)
+    // Account providers need no Machine (plan 58): "none online" is said only once the catalog has nothing else to offer.
+    const nothingWithoutController = !catalog.loading && cards.length === 0;
+    const scopeState = !controller ? (scope.hasCandidates && (scope.hasOnlineCandidate || nothingWithoutController)
+            ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
+            title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} />
+            : catalog.loading && cards.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('managedMachines.providers.loading')} /> : null)
         : (failure || cards.length === 0) && controllerPresence === 'offline' ? <SurfaceStateCard testID="managed-picker.offline" kind="unavailable" size="line"
             title={t('managedMachines.add.controllerOffline', { controller: controllerName })} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
         : failure || cards.length === 0 && controllerPresence === 'unknown' ? <SurfaceStateCard testID="managed-picker.unavailable" kind={controllerPresence === 'unknown' ? 'unavailable' : 'error'} size="line" diagnosticCode={failure ?? undefined}
@@ -280,7 +284,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         {!scope.hasCandidates && !shown && catalog.error ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
             diagnosticDetail={describeManagedProvisionerFailure(catalog.error)} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
-            : !scope.hasCandidates && !shown && scope.machineList === 'loading' ? <SurfaceStateCard testID="managed-picker.machines-loading" kind="loading" size="line"
+            : !scope.hasCandidates && !shown && (scope.machineList === 'loading' || catalog.loading) ? <SurfaceStateCard testID="managed-picker.machines-loading" kind="loading" size="line"
             title={t('managedMachines.providers.loading')} />
             : !scope.hasCandidates && !shown && scope.machineList === 'unavailable' ? <SurfaceStateCard testID="managed-picker.machines-unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} action={{ label: t('common.retry'), onPress: retryMachineList }} />
