@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
+import { logger } from '@/ui/logger';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { checkMachineSetupEffectPlan, nativeCaddyImage, observeNativeCaddyContainer, type MachineSetupNativeCommandResult,
     type NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
@@ -532,6 +533,8 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     const environment = createDeploymentEnvironmentDetailV1();
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const networkConnectFailure = scenario === 'Tunnel running public network failure';
+    // File logging is the diagnostic boundary; keep the real controller/native path.
+    const nativeWarnings = networkConnectFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
     const runningPublic = scenario === 'Tunnel running public Caddy' || networkConnectFailure;
     const retainedSeed = scenario === 'Tunnel retained public seed' || scenario === 'Tunnel foreign seed' || runningPublic;
     const incumbentPublicDomain: CaddyDomainRouteInput = { domainId: 'incumbent-public',
@@ -1277,6 +1280,18 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                             remedy: expect.any(String),
                         },
                     });
+                    expect(nativeWarnings?.mock.calls).toEqual(expect.arrayContaining([
+                        ['[Deployment] Domain native step refused', expect.objectContaining({
+                            phase: 'deployment.domain.native_execution', callSite: expect.stringContaining('ownServerDomainNative'),
+                        })],
+                        ['[Deployment] Domain native operation failed', expect.objectContaining({
+                            kind: 'domain', domainId: children[0]!.input.domainId,
+                            requiredFact: 'caddyAdminConfig',
+                            nativeCommand: { command: 'docker', phase: 'network-connect', exitCode: 1 },
+                        })],
+                    ]));
+                    expect(JSON.stringify(nativeWarnings?.mock.calls)).not.toContain('network attachment failed');
+                    expect(JSON.stringify(nativeWarnings?.mock.calls)).not.toContain(retainedConnector.token);
                 } else expect(result, JSON.stringify({ result, seedChecks, nativeResults })).toMatchObject({ ok: true, domain: { state: 'active' } });
                 if (prepared?.status !== 'ready') throw new Error('Expected Tunnel seed');
                 expect(await readFile('/var/lib/happier/caddy/initial.json', 'utf8')).toBe(runningPublic ? publicSeed : prepared.input.initialConfig);

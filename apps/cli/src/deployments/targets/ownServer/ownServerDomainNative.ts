@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/cli-common/machineSetup';
 import {
     DeploymentDomainMachineTopologyV1Schema, deploymentDomainObservationProofPayloadV1,
-    DeploymentDomainFailureDetailsV1Schema,
+    DeploymentDomainFailureDetailsV1Schema, DeploymentDomainCaddyFailureV1Schema,
     deploymentDomainFailureFactsV1, type DeploymentDomainFailureStepV1, type DeploymentDomainFailureDetailsV1,
     type DeploymentDomainObservationBodyV1,
 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -45,6 +45,7 @@ import { runElevatedMachineSetupIntent,
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { logger } from '@/ui/logger';
 
 /** Captured by the ApiMachine metadata owner, never a synthetic Machine RPC. */
 export type DomainNativeSetupForHost = Readonly<{
@@ -55,17 +56,36 @@ export type DomainNativeSetupForHost = Readonly<{
 }>;
 
 type DomainJob = DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1;
-const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCauseV1): never => { throw Object.assign(new Error(code), {
-    code, ...(details === undefined ? {} : { details }), ...(failureCause ? { failureCause } : {}),
-}); };
+const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCauseV1): never => {
+    // A fresh, fixed-message stack names the producer even when it supplied no
+    // typed diagnostics. Never log the thrown message, arguments or native output.
+    logger.warnLocalFile('[Deployment] Domain native step refused', {
+        phase: 'deployment.domain.native_execution', callSite: new Error('Domain native refusal').stack,
+    });
+    throw Object.assign(new Error(code), {
+        code, ...(details === undefined ? {} : { details }), ...(failureCause ? { failureCause } : {}),
+    });
+};
 const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCause?: ActionFailureCauseV1) => {
     const parsed = DeploymentDomainFailureDetailsV1Schema.safeParse(details);
-    return { ok: false as const, errorCode, error: errorCode,
+    const result = { ok: false as const, errorCode, error: errorCode,
         details: parsed.success && parsed.data.step !== 'native_execution' ? parsed.data : projectDeploymentFailureRecoveryV1({
             ...(parsed.success ? parsed.data : details && typeof details === 'object' && !Array.isArray(details) ? details : {}),
             environmentId: job.input.environmentId, domainId: job.input.domainId, step: 'native_execution' as const,
         }),
         failureCause: failureCause ?? projectActionFailureCauseV1({ code: errorCode }, 'deployment.domain.native_execution') };
+    // The file-log boundary projects only closed native facts, not arbitrary
+    // remedies, provider output, exception codes or other private content.
+    const native = DeploymentDomainCaddyFailureV1Schema.safeParse(result.details && 'failure' in result.details
+        ? result.details.failure : undefined);
+    logger.warnLocalFile('[Deployment] Domain native operation failed', {
+        phase: 'deployment.domain.native_execution', kind: job.kind, actionId: job.actionId,
+        environmentId: job.input.environmentId, domainId: job.input.domainId,
+        ...(native.success ? { requiredFact: native.data.requiredFact, stepId: native.data.stepId,
+            nativeCommand: native.data.nativeCommand, containerExitCode: native.data.containerExitCode,
+            containerError: native.data.containerError, port: native.data.port } : {}),
+    });
+    return result;
 };
 const serviceUnavailable = (job: DomainJob, step: DeploymentDomainFailureStepV1): never => refuse('service_unavailable', {
     environmentId: job.input.environmentId, domainId: job.input.domainId,
