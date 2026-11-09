@@ -1058,6 +1058,9 @@ function createRuntimeOperations(params: Readonly<{
       const changed: string[] = [];
       const modelId = readString(update.model.value);
       if (modelId) {
+        if (params.providerModelId && modelId !== params.providerModelId) {
+          throw new Error('Pi model selection does not match the Session Provider binding');
+        }
         const [provider, ...modelParts] = modelId.split('/');
         await params.rpc.send({
           type: 'set_model',

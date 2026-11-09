@@ -33,6 +33,7 @@ type Capture = {
   initialRecords?: readonly unknown[];
   specs: Extract<PluginProtocolClientSpec, { kind: 'jsonStream' }>[];
   written: unknown[];
+  acceptModelCommands?: boolean;
   availableCommands?: readonly Readonly<{
     name: string;
     description?: string;
@@ -100,6 +101,9 @@ function createRuntimeContext(capture: Capture) {
         return;
       }
       capture.written.push(record);
+      if (capture.acceptModelCommands && isRecord(record) && record.type === 'set_model') {
+        await capture.listener?.({ type: 'response', id: record.id, command: 'set_model', success: true });
+      }
     },
     dispose: async () => undefined,
   };
@@ -342,8 +346,8 @@ describe('createPiRuntimeOperations', () => {
     expect(late[0]!.sequence).toBeLessThan(late[1]!.sequence);
     await runtime.dispose();
   });
-  it('keeps a selected Provider model on its source during initial configuration', async () => {
-    const capture: Capture = { specs: [], written: [] };
+  it('keeps a selected Provider model on its source through updates and the next prompt', async () => {
+    const capture: Capture = { specs: [], written: [], acceptModelCommands: true };
     const runtime = await createPiRuntimeOperations({
       ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {},
       sessionId: 'bound-session', initialSessionId: 'pi-provider-session-1', providerModelId: 'vendor/selected-model',
@@ -351,8 +355,10 @@ describe('createPiRuntimeOperations', () => {
     const update = runtime.updateConfiguration!({ ...configuration({}), model: { value: 'vendor/selected-model', updatedAtMs: 1 } });
     await waitForWrittenCount(capture, 1);
     expect(capture.written[0]).toMatchObject({ type: 'set_model', provider: 'happier-provider', modelId: 'vendor/selected-model' });
-    await ackLastCommand(capture);
     await expect(update).resolves.toMatchObject({ status: 'applied' });
+    await expect(runtime.updateConfiguration!({ ...configuration({}),
+      model: { value: 'openai/ambient-model', updatedAtMs: 2 } }))
+      .resolves.toMatchObject({ status: 'rejected' });
     const prompt = sendPrompt(runtime, 'Use the selected model.');
     await waitForWrittenCount(capture, 2);
     expect(capture.written.map(command => isRecord(command) ? command.type : undefined)).toEqual(['set_model', 'prompt']);
