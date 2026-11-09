@@ -190,15 +190,27 @@ export function matchesMachineSetupCreationSourcesV1(sources: MachineSetupSource
       : source.kind === 'direct' && sameStrictJsonValue(source,
         { kind: 'direct', setup: {} }));
 }
+const accountPresetReference = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('accountPreset'), presetId: id(), presetRevision: revision(),
+}));
+const bundledPresetReference = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('bundledPreset'), ref: z.strictObject({
+    pluginId: MachineRecipeReferenceV1Schema.shape.pluginId,
+    localId: MachineRecipeReferenceV1Schema.shape.recipeId,
+    revision: z.string().check(z.trim(), z.minLength(1)),
+  }),
+}));
+/** Compact attachment identity shared by source copies and public observations. */
+export const MachineSetupPresetReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  accountPresetReference, bundledPresetReference,
+]));
+export type MachineSetupPresetReferenceV1 = z.infer<typeof MachineSetupPresetReferenceV1Schema>;
+
 export const MachineSetupSourceEntryV1Schema: z.ZodMiniType<MachineSetupSourceEntryV1> = lazyZodSchema(() => {
   const copy = { setup: MachineSetupV1Schema };
   return z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('accountPreset'), presetId: id(), presetRevision: revision(), ...copy }),
-    z.strictObject({ kind: z.literal('bundledPreset'), ref: z.strictObject({
-      pluginId: MachineRecipeReferenceV1Schema.shape.pluginId,
-      localId: MachineRecipeReferenceV1Schema.shape.recipeId,
-      revision: z.string().check(z.trim(), z.minLength(1)),
-    }), ...copy }),
+    z.extend(accountPresetReference, copy),
+    z.extend(bundledPresetReference, copy),
     z.strictObject({ kind: z.literal('direct'), ...copy }),
   ]);
 });

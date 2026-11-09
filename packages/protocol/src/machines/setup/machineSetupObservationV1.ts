@@ -3,6 +3,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { MachineRecipeReferenceV1Schema, MachineRecipePackageObservationV1Schema } from './machineRecipeV1.js';
+import { MachineSetupPresetReferenceV1Schema } from './machineSetupSourcesV1.js';
 
 export const MachineSetupObservationStatusV1Schema = lazyZodSchema(() => z.enum([
     'satisfied', 'drifted', 'unsupported', 'unavailable', 'unverifiable',
@@ -27,6 +28,9 @@ export const MachineSetupObservationV1Schema = lazyZodSchema(() => z.strictObjec
     version: z.literal(1), desiredRevision: z.number().check(z.int(), z.nonnegative()),
     status: z.enum(['checking', 'satisfied', 'drifted', 'unsupported', 'unavailable', 'unverifiable']),
     reason: z.optional(MachineSetupObservationReasonV1Schema),
+    /** Attachment order, excluding direct sources. Absent is unpublished; [] is none.
+     * Account names come from the consumer's current catalog, never a snapshot. */
+    attachedPresets: z.optional(z.array(MachineSetupPresetReferenceV1Schema)),
     recipes: z.array(z.strictObject({
         ref: MachineRecipeReferenceV1Schema, status: MachineSetupObservationStatusV1Schema,
         reason: z.optional(MachineSetupObservationReasonV1Schema),

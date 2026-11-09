@@ -31,6 +31,7 @@ import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionMachinePublicationV2Schema,
 import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, PendingResetStartReleaseResponseV1Schema, type PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { createMachineDaemonStatePublication, projectMachineDaemonRunningState } from './machine/machineDaemonStatePublication';
+import { projectMachineSetupUpdatesObservation } from './machine/machineSetupObservation';
 import { projectMachineMetadataChange, publishMachineMetadataOnce, publishMachineMetadataUpdate, readOpenedMachineMetadataSnapshot, type MachineMetadataChange } from './machine/machineMetadataPublication';
 import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
 import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
@@ -2164,7 +2165,6 @@ export class ApiMachineClient {
                     })(context?.requesterSessionBootstrap ? { bootstrap: context.requesterSessionBootstrap } : null, signal);
                     const placement = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
                         prepareAgentIsolationMember: prepareMember,
-                        readAgentIsolationEnabled: () => this.getAgentIsolationSnapshot().enabled,
                         requesterWorkAttributionV1: context?.requesterSessionBootstrap?.attribution, signal,
                         managedDirectory: { directory: request.targetPath, workspaceRoots: this.lifecycleDependencies.agentIsolation?.read()?.workspaceRoots ?? [] },
                     });
@@ -5117,19 +5117,7 @@ export class ApiMachineClient {
     ): Promise<MachinePublicationOutcome> {
         return this.updateDaemonState(state => {
             if (!state) throw new Error('Machine daemon state is unavailable');
-            const previous = state.setup?.updates;
-            const retainLastKnown = updates.status === 'unavailable' || updates.status === 'unverifiable';
-            const published = retainLastKnown ? {
-                ...(previous?.pendingAll !== undefined ? { pendingAll: previous.pendingAll } : {}),
-                ...(previous?.pendingSecurity !== undefined ? { pendingSecurity: previous.pendingSecurity } : {}),
-                ...(previous?.rebootNeeded !== undefined ? { rebootNeeded: previous.rebootNeeded } : {}),
-                ...updates,
-            } : updates;
-            return { ...state, setup: {
-                ...(state.setup ?? { version: 1 as const, desiredRevision: this.machine.metadata?.setup?.revision ?? 0,
-                    status: 'unverifiable' as const, reason: 'required_fact_unavailable' as const, recipes: [] }),
-                updates: published,
-            } };
+            return { ...state, setup: projectMachineSetupUpdatesObservation(state.setup, this.machine.metadata, updates) };
         });
     }
 
