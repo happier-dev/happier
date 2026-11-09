@@ -729,12 +729,23 @@ resolve_shim_name() {
 }
 
 resolve_installed_binary() {
+  local scope="${1:-path}"
+  if [[ "${scope}" == "installation" && "${PRODUCT}" == "cli" ]]; then
+    local payload="${INSTALL_DIR}/$(cli_managed_install_root "${CHANNEL}")/current/happier"
+    if [[ -x "${payload}" ]]; then
+      printf '%s' "${payload}"
+      return 0
+    fi
+  fi
   local exe
   exe="$(resolve_shim_name)"
   local candidate="${INSTALL_DIR}/bin/${exe}"
   if [[ -x "${candidate}" ]]; then
     printf '%s' "${candidate}"
     return 0
+  fi
+  if [[ "${scope}" == "installation" ]]; then
+    return 1
   fi
   local from_path
   from_path="$(command -v "${exe}" 2>/dev/null || true)"
@@ -866,32 +877,76 @@ action_uninstall() {
   fi
 
   local binary=""
-  binary="$(resolve_installed_binary 2>/dev/null || true)"
-  if [[ -n "${binary}" && "${PRODUCT}" == "cli" ]] && ! daemon_service_operations_are_explicitly_disabled; then
-    "${binary}" service uninstall >/dev/null 2>&1 || true
+  binary="$(resolve_installed_binary installation 2>/dev/null || true)"
+  if [[ "${PRODUCT}" == "cli" ]] && ! daemon_service_operations_are_explicitly_disabled; then
+    local service_install_root="${INSTALL_DIR}"
+    if [[ "${PURGE_INSTALL_DIR}" != "1" ]]; then
+      service_install_root="${INSTALL_DIR}/$(cli_managed_install_root "${CHANNEL}")"
+    fi
+    if [[ -z "${binary}" && -d "${service_install_root}" ]]; then
+      warn "The managed CLI is unavailable. Reinstall this channel before removing its background services. Installation kept."
+      return 1
+    fi
+    if [[ -n "${binary}" ]]; then
+      local uninstall_help=""
+      if ! uninstall_help="$(invoke_installer_command_with_daemon_service_context "${binary}" service uninstall --help --json)" \
+        || ! printf '%s' "${uninstall_help}" | grep -Fq '"--install-root"'; then
+        warn "This CLI cannot safely select services belonging to this installation."
+        warn "Update the CLI, or remove its services explicitly before retrying. Installation kept."
+        return 1
+      fi
+      if ! invoke_installer_command_with_daemon_service_context "${binary}" service uninstall --all --install-root "${service_install_root}" --yes; then
+        warn "Background service removal failed. Installation kept so you can repair and retry."
+        return 1
+      fi
+    fi
   fi
 
-  rm -f "${BIN_DIR}/${shim}" "${INSTALL_DIR}/bin/${shim}.new" "${INSTALL_DIR}/bin/${shim}.previous" || true
-  rm -f "${INSTALL_DIR}/bin/${shim}" || true
+  if [[ "${PRODUCT}" != "cli" || "${CHANNEL}" != "stable" ]]; then
+    rm -f "${BIN_DIR}/${shim}" "${INSTALL_DIR}/bin/${shim}.new" "${INSTALL_DIR}/bin/${shim}.previous"
+    rm -f "${INSTALL_DIR}/bin/${shim}"
+  fi
   if [[ "${PRODUCT}" == "cli" ]]; then
-    rm -rf "${cli_install_root}" || true
+    rm -rf "${cli_install_root}"
+    rm -f "${cli_install_root}.desktop-ownership.json"
   elif [[ "${PRODUCT}" == "server" ]]; then
     local root=""
     root="$(server_managed_install_root "${CHANNEL}")" || {
       echo "Unsupported server channel: ${CHANNEL}" >&2
       exit 1
     }
-    rm -rf "${INSTALL_DIR}/${root}" || true
+    rm -rf "${INSTALL_DIR}/${root}"
   elif [[ "${PRODUCT}" == "stack" ]]; then
     local root=""
     root="$(stack_managed_install_root "${CHANNEL}")" || {
       echo "Unsupported stack channel: ${CHANNEL}" >&2
       exit 1
     }
-    rm -rf "${INSTALL_DIR}/${root}" || true
+    rm -rf "${INSTALL_DIR}/${root}"
   fi
+  if [[ "${PRODUCT}" == "cli" ]] && cli_default_channel_matches_selected_channel; then
+    local fallback_channel=""
+    local fallback_root=""
+    local candidate_channel=""
+    for candidate_channel in stable preview publicdev; do
+      local candidate_root=""
+      candidate_root="$(cli_managed_install_root "${candidate_channel}")"
+      if [[ -x "${INSTALL_DIR}/${candidate_root}/current/happier" ]]; then
+        fallback_channel="${candidate_channel}"
+        fallback_root="${candidate_root}"
+        break
+      fi
+    done
+    if [[ -n "${fallback_channel}" ]]; then
+      sync_cli_payload_reversion_shim "happier" "${fallback_root}"
+      write_installer_marker_file_atomic "${INSTALL_DIR}/default-cli-release-channel.json" "{\"releaseChannel\":\"${fallback_channel}\"}"
+    else
+      rm -f "${INSTALL_DIR}/bin/happier" "${BIN_DIR}/happier" "${INSTALL_DIR}/default-cli-release-channel.json"
+    fi
+  fi
+
   if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
-    rm -rf "${INSTALL_DIR}" || true
+    rm -rf "${INSTALL_DIR}"
   fi
   if [[ "${PRODUCT}" == "cli" ]]; then
     release_cli_payload_mutation_lock
@@ -2947,6 +3002,9 @@ if [[ "${PRODUCT}" == "cli" ]]; then
     mv -f "${STAGED_BIN}" "${TARGET_BIN}"
     chmod +x "${TARGET_BIN}"
   fi
+  # An explicit terminal install takes responsibility for this channel, including older payloads
+  # whose internal installer predates Desktop creation tracking.
+  rm -f "${INSTALL_DIR}/${CLI_MANAGED_ROOT}.desktop-ownership.json"
 else
   SHIM_NAME="$(resolve_shim_name)" || {
     echo "Unsupported channel: ${CHANNEL}" >&2

@@ -1,5 +1,546 @@
 {
-  "$comment": "Canonical editorial allowlist for the Happier curated marketplace catalog. It is intentionally empty until a plugin has a public exact npm release and an approved review. Future full snapshot entries must be projected from that release's canonical happier.marketplaceDiscovery and compatibility facts, then augmented here only with curation-owned publisher, review, category, media, link, and update-policy facts; do not hand-copy plugin manifest facts. The generator validates the committed exact snapshot offline and emits apps/website/public/catalog.json for https://marketplace.happier.dev/catalog.json.",
+  "$comment": "Canonical editorial source for happier-catalog. Approved ST-13 discovery copy references existing native items independently of npm release entries. Plugin entries still require an exact public npm release and approved review: project their canonical happier.marketplaceDiscovery and compatibility facts, augmenting only curation-owned publisher/review/category/media/link/update-policy facts; do not hand-copy plugin manifest facts. Pending references are explicit producer/listing gaps kept only here; the generator omits them and their memberships from runtime choices. No production publication is authorized by local generation.",
   "entries": [],
-  "picks": []
+  "picks": [],
+  "discovery": {
+    "items": [
+      {
+        "id": "uptime-kuma",
+        "title": "Uptime Kuma",
+        "description": "Watch the availability of your sites and services.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "app",
+          "sourceId": "builtin:compose-catalog",
+          "itemId": "uptime-kuma"
+        }
+      },
+      {
+        "id": "healthchecks",
+        "title": "Healthchecks",
+        "description": "Notice when a scheduled job stops checking in.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "app",
+          "sourceId": "builtin:compose-catalog",
+          "itemId": "healthchecks"
+        }
+      },
+      {
+        "id": "ntfy",
+        "title": "ntfy",
+        "description": "Run a service for push notifications.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "app",
+          "sourceId": "builtin:compose-catalog",
+          "itemId": "ntfy"
+        }
+      },
+      {
+        "id": "chrome",
+        "title": "Google Chrome",
+        "description": "A browser for testing sites and taking screenshots.",
+        "reference": {
+          "type": "software",
+          "value": {
+            "pluginId": "happier.machine.recipes",
+            "recipeId": "google-chrome",
+            "revision": "1"
+          }
+        }
+      },
+      {
+        "id": "coolify",
+        "title": "Coolify",
+        "description": "Deploy your apps from your own server.",
+        "reference": {
+          "type": "software",
+          "value": {
+            "pluginId": "happier.machine.recipes",
+            "recipeId": "coolify",
+            "revision": "1"
+          }
+        }
+      },
+      {
+        "id": "dokploy",
+        "title": "Dokploy",
+        "description": "Deploy your apps from your own server, with Dokploy.",
+        "reference": {
+          "type": "software",
+          "value": {
+            "pluginId": "happier.machine.recipes",
+            "recipeId": "dokploy",
+            "revision": "1"
+          }
+        }
+      },
+      {
+        "id": "playwright-mcp",
+        "title": "Playwright",
+        "description": "Let an agent click through your site in a real browser.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "mcpServer",
+          "sourceId": "builtin:mcp-registry",
+          "itemId": "io.github.microsoft/playwright-mcp"
+        }
+      },
+      {
+        "id": "webapp-testing",
+        "title": "webapp-testing",
+        "description": "Teach your agent to test local web apps.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "skill",
+          "sourceId": "builtin:skills-sh",
+          "itemId": "anthropics/skills/webapp-testing"
+        }
+      },
+      {
+        "id": "frontend-design",
+        "title": "frontend-design",
+        "description": "Guidance for designing and building distinctive web interfaces.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "skill",
+          "sourceId": "builtin:skills-sh",
+          "itemId": "anthropics/skills/frontend-design"
+        }
+      },
+      {
+        "id": "goose",
+        "title": "Goose",
+        "description": "Try another open-source coding agent.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "agent",
+          "sourceId": "builtin:acp-registry",
+          "itemId": "goose"
+        }
+      },
+      {
+        "id": "mistral-vibe",
+        "title": "Mistral Vibe",
+        "description": "Try Mistral's coding agent.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "agent",
+          "sourceId": "builtin:acp-registry",
+          "itemId": "mistral-vibe"
+        }
+      },
+      {
+        "id": "deepseek-provider",
+        "title": "DeepSeek",
+        "description": "Connect DeepSeek models to a compatible agent.",
+        "reference": {
+          "type": "providerContribution",
+          "contributionKey": "happier.provider.deepseek/deepseek"
+        }
+      },
+      {
+        "id": "ollama-provider",
+        "title": "Ollama",
+        "description": "Connect to models served by Ollama.",
+        "reference": {
+          "type": "providerContribution",
+          "contributionKey": "happier.provider.ollama/ollama"
+        }
+      },
+      {
+        "id": "supabase-mcp",
+        "title": "Supabase",
+        "description": "Give an agent tools for a connected Supabase project.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "mcpServer",
+          "sourceId": "builtin:mcp-registry",
+          "itemId": "com.supabase/mcp"
+        }
+      },
+      {
+        "id": "postgres-best-practices",
+        "title": "supabase-postgres-best-practices",
+        "description": "Postgres schema, security and query guidance maintained by Supabase.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "skill",
+          "sourceId": "builtin:skills-sh",
+          "itemId": "supabase/agent-skills/supabase-postgres-best-practices"
+        }
+      },
+      {
+        "id": "sentry-plugin",
+        "title": "Sentry",
+        "description": "Bring Sentry error issues into Happier's PRs & Issues surface.",
+        "pending": {
+          "reason": "plugin-public-listing",
+          "reference": {
+            "type": "bundledPlugin",
+            "kind": "plugin",
+            "pluginId": "happier.sentry"
+          }
+        }
+      },
+      {
+        "id": "sentry-mcp",
+        "title": "Sentry",
+        "description": "Let an agent look up errors and issues.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "mcpServer",
+          "sourceId": "builtin:mcp-registry",
+          "itemId": "io.github.getsentry/sentry-mcp"
+        }
+      },
+      {
+        "id": "glitchtip",
+        "title": "GlitchTip",
+        "description": "Run an error-tracking app on your server.",
+        "reference": {
+          "type": "registryItem",
+          "kind": "app",
+          "sourceId": "builtin:compose-catalog",
+          "itemId": "glitchtip"
+        }
+      },
+      {
+        "id": "ffmpeg",
+        "title": "FFmpeg",
+        "description": "Record, convert and cut audio and video.",
+        "reference": {
+          "type": "software",
+          "value": {
+            "pluginId": "happier.machine.recipes",
+            "recipeId": "ffmpeg",
+            "revision": "1"
+          }
+        }
+      },
+      {
+        "id": "noto-sans",
+        "title": "Noto Sans",
+        "description": "Fonts for captions and screenshots.",
+        "pending": {
+          "reason": "software-choice-binding, fonts-bundle",
+          "reference": {
+            "type": "softwarePackage",
+            "kind": "software",
+            "sourceBinding": "P20:machines.setup.software.available",
+            "packageCatalog": {
+              "manager": "brew",
+              "tap": "homebrew/cask",
+              "packageKind": "cask",
+              "name": "font-noto-sans"
+            }
+          }
+        }
+      },
+      {
+        "id": "python",
+        "title": "Python",
+        "description": "A Python runtime for your media-processing scripts.",
+        "reference": {
+          "type": "software",
+          "value": {
+            "kind": "toolchain",
+            "adapterId": "mise",
+            "tool": "python"
+          }
+        }
+      }
+    ],
+    "featured": {
+      "item": "uptime-kuma",
+      "reason": "Keep an eye on the apps you run."
+    },
+    "categories": [
+      {
+        "id": "monitoring",
+        "title": "Monitoring",
+        "description": "Know when a site or a scheduled job needs you.",
+        "items": [
+          "uptime-kuma",
+          "healthchecks",
+          "ntfy"
+        ]
+      },
+      {
+        "id": "browser-testing",
+        "title": "Browser testing",
+        "description": "Let agents open, test and screenshot your site.",
+        "items": [
+          "chrome",
+          "playwright-mcp",
+          "webapp-testing"
+        ]
+      },
+      {
+        "id": "coding-agents-models",
+        "title": "Coding agents and models",
+        "description": "More agents, and more models for them to use.",
+        "items": [
+          "goose",
+          "mistral-vibe",
+          "deepseek-provider",
+          "ollama-provider"
+        ]
+      },
+      {
+        "id": "databases",
+        "title": "Databases",
+        "description": "Work with your data and get better schemas and queries from your agent.",
+        "items": [
+          "supabase-mcp",
+          "postgres-best-practices"
+        ]
+      },
+      {
+        "id": "error-tracking",
+        "title": "Error tracking",
+        "description": "See what broke, and let an agent look into it.",
+        "items": [
+          "sentry-plugin",
+          "sentry-mcp",
+          "glitchtip"
+        ]
+      },
+      {
+        "id": "video-tools",
+        "title": "Video tools",
+        "description": "What a Machine needs to record, caption and cut video.",
+        "items": [
+          "ffmpeg",
+          "noto-sans",
+          "python"
+        ]
+      }
+    ],
+    "jobs": [
+      {
+        "id": "down",
+        "title": "Know when my site is down",
+        "description": "Get a ping when something stops responding, and let an agent look into why.",
+        "glyph": "stGauge",
+        "groups": [
+          {
+            "title": "Watch sites and scheduled check-ins",
+            "items": [
+              "uptime-kuma",
+              "healthchecks"
+            ]
+          },
+          {
+            "title": "Run a notification service",
+            "items": [
+              "ntfy"
+            ]
+          },
+          {
+            "title": "Inspect errors during an investigation",
+            "items": [
+              "sentry-mcp"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "browser",
+        "title": "Give agents a real browser",
+        "description": "A browser, an MCP tool and a testing skill for web work.",
+        "glyph": "fcGlobe",
+        "groups": [
+          {
+            "title": "Browser software",
+            "items": [
+              "chrome"
+            ]
+          },
+          {
+            "title": "Let an agent drive the browser",
+            "items": [
+              "playwright-mcp"
+            ]
+          },
+          {
+            "title": "Test a local web app",
+            "items": [
+              "webapp-testing"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "agent",
+        "title": "Try another coding agent",
+        "description": "Add another agent, or connect more models to the ones you use.",
+        "glyph": "stAgent",
+        "groups": [
+          {
+            "title": "Coding agents",
+            "items": [
+              "goose",
+              "mistral-vibe"
+            ]
+          },
+          {
+            "title": "Optional model connections",
+            "description": "Choose only a Provider the selected Agent supports.",
+            "items": [
+              "deepseek-provider",
+              "ollama-provider"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "db",
+        "title": "Run and back up a database",
+        "description": "Run Postgres, connect a Supabase project, and let your agent help with schemas and queries.",
+        "glyph": "stDb",
+        "groups": [
+          {
+            "title": "Run and back up Postgres",
+            "items": []
+          },
+          {
+            "title": "Inspect a connected Supabase project",
+            "items": [
+              "supabase-mcp"
+            ]
+          },
+          {
+            "title": "Design and tune Postgres",
+            "items": [
+              "postgres-best-practices"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "errors",
+        "title": "Track errors in my app",
+        "description": "Bring errors into Happier, let an agent inspect them, or run an error-tracking app.",
+        "glyph": "fcAlert",
+        "groups": [
+          {
+            "title": "Errors in Happier",
+            "items": [
+              "sentry-plugin"
+            ]
+          },
+          {
+            "title": "Errors an agent can inspect",
+            "items": [
+              "sentry-mcp"
+            ]
+          },
+          {
+            "title": "Run an error-tracking app",
+            "items": [
+              "glitchtip"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "media",
+        "title": "Record and edit video",
+        "description": "Everything a Machine needs to record, caption and cut video.",
+        "glyph": "fcPlayO",
+        "groups": [
+          {
+            "title": "Record and edit media",
+            "items": [
+              "ffmpeg"
+            ]
+          },
+          {
+            "title": "Render captions",
+            "items": [
+              "noto-sans"
+            ]
+          },
+          {
+            "title": "Run media-processing scripts",
+            "items": [
+              "python"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "editorialGaps": [
+    {
+      "id": "postgres-app",
+      "job": "db",
+      "labItem": "pg",
+      "status": "no-verified-current-catalog-item",
+      "evidence": "Live chosen app index has neither postgres nor postgresql. P45's first-party Postgres descriptor is planned, not a current source item.",
+      "nextAction": "Owner selects a real admitted P45 database descriptor when delivered, or approves an explicitly verified existing alternative. Do not invent Postgres 17 plus nightly backups from lab copy."
+    },
+    {
+      "id": "legacy-postgres-mcp",
+      "job": "db",
+      "labItem": "pgmcp",
+      "status": "lab-namespace-not-verifiable",
+      "evidence": "Exact current Registry reads for io.modelcontextprotocol/postgres and io.modelcontextprotocol/server-postgres returned HTTP 404. A broad postgres search contains unrelated third-party servers; it does not identify the lab's intended server.",
+      "nextAction": "Owner approves a specific verified replacement after reviewing its actual permissions, or leaves this choice absent. Supabase from the earlier lab is explicitly separate, not a relabelled generic read-only server."
+    },
+    {
+      "id": "database-backup-choice",
+      "job": "db",
+      "status": "missing-current-offering",
+      "evidence": "The lab's Postgres sentence promises nightly backups but provides no separately qualified backup item. The P45 backup recipe/Automation integration is a planned producer, not an existing curated item verified here.",
+      "nextAction": "Flag the job's core outcome for the owner until P45 supplies its real reviewed backup path. Reuse Happier Workflows/Automations where that owner requires them; do not add a competing workflow product or schedule in editorial data."
+    },
+    {
+      "id": "software-choice-binding",
+      "jobs": [
+        "browser",
+        "media"
+      ],
+      "labItems": [
+        "fonts"
+      ],
+      "status": "fonts-choice-binding-unresolved",
+      "evidence": "Chrome and FFmpeg now bind to the existing happier.machine.recipes google-chrome and ffmpeg revision 1 Software choices. Python binds to the existing Mise python toolchain choice, which has no version pin. The native fonts recipe offers DejaVu, not the authored Noto Sans choice or the lab's wider bundle.",
+      "nextAction": "Keep Noto Sans pending until an exact offered native choice exists or the owner approves different font content. Native Software owns Machine/platform qualification and review; editorial references do not promise fleet/platform parity."
+    },
+    {
+      "id": "fonts-bundle",
+      "job": "media",
+      "labItem": "fonts",
+      "status": "lab-bundle-not-current-native-identity",
+      "evidence": "font-noto-sans is a verified concrete package. The lab's all-script plus colour-emoji bundle has no admitted current offering established here.",
+      "nextAction": "Approve the concrete narrower font choice or bind P20's actual broader descriptor when it exists; keep unknown coverage explicit."
+    },
+    {
+      "id": "plugin-public-listing",
+      "job": "errors",
+      "labItem": "sentryp",
+      "status": "bundled-plugin-verified-public-add-not-approved",
+      "evidence": "happier.sentry is a current bundled native declaration. Canonical marketplace entries and picks are empty; no exact public npm release plus approved marketplace review was verified.",
+      "nextAction": "Owner approves a bundled-native management/setup choice resolved by S20's existing locator, or supplies a genuinely approved exact public listing. No plugin trust/distribution entry is fabricated."
+    },
+    {
+      "id": "slack-outage-role",
+      "job": "down",
+      "labItem": "slackp",
+      "status": "existing-plugin-unverified-job-role",
+      "evidence": "happier.channel.slack exists, but its current manifest describes Slack conversations for Happier Channels, not automatic service-outage routing.",
+      "source": "packages/plugins/channel-slack/src/manifest.ts",
+      "nextAction": "Keep it out of this job's active picks until the owner identifies the actual supported alert path or revises its role; do not invent an integration."
+    },
+    {
+      "id": "notification-routing",
+      "job": "down",
+      "status": "not-provided-by-curation",
+      "evidence": "ntfy's catalog existence does not prove a Happier outgoing notification integration or an automatic Kuma-to-ntfy connection.",
+      "nextAction": "Keep the app as an independent deployable choice with honest copy; any supported connection remains its existing configuration/Action owner's work, not a job effect."
+    }
+  ]
 }
