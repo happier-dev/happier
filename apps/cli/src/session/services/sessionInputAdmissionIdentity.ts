@@ -318,6 +318,22 @@ export function buildAgentRuntimeFirstInputAdmissionV1(): Readonly<{
   });
 }
 
+/**
+ * Sole host-caller admission for a person's typed input reaching this host as an Action. The app reaches the
+ * Machine over `rpc`, a transport rather than a modality; there the Home-stamped `present_user` authority on an
+ * original (non-descendant) request is what says a person sent their own words, so it is the Happier app's input.
+ * Unattended Accounts and descendants of another request keep host provenance; settlement still alone decides
+ * the Account relationship from the authenticated receipt.
+ */
+export function buildHostCallerSessionInputAdmissionV1(params: Readonly<{
+  surface?: keyof ActionSurfaces | null;
+  authority?: ActionExecutorContext['authority'];
+  descendant: boolean;
+}>): ReturnType<typeof buildTrustedHostSessionInputAdmissionV1> {
+  return buildTrustedHostSessionInputAdmissionV1(
+    params.surface === 'rpc' && params.authority === 'present_user' && !params.descendant ? 'ui' : params.surface);
+}
+
 /** Host-private admission for a spawn handoff whose durable local id is already sealed. */
 export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Readonly<{
   actionCaller: ActionCaller;
@@ -334,6 +350,10 @@ export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Reado
   }>;
 }> {
   const localId = params.localId;
+  // Only an original human host invocation may establish a new requester.
+  // Descendant input retains its admitted cause, never the host credential.
+  const originalPresentUser = params.actionCaller.kind === 'host' && params.callerAuthority === 'present_user'
+    && !params.actionRequestAttributionV1;
 
   const inputAdmission = params.actionCaller.kind === 'automationRun'
     ? buildAutomationSessionInputAdmissionV1({
@@ -342,13 +362,11 @@ export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Reado
       })
     : params.actionCaller.kind === 'plugin'
       ? buildPluginSessionInputAdmissionV1({ caller: params.actionCaller, surface: params.callerSurface })
-      : buildTrustedHostSessionInputAdmissionV1(params.callerSurface);
+      : buildHostCallerSessionInputAdmissionV1({ surface: params.callerSurface, authority: params.callerAuthority,
+          descendant: !originalPresentUser });
   return Object.freeze({
     localId,
-    // Only an original human host invocation may establish a new requester.
-    // Descendant input retains its admitted cause, never the host credential.
-    ...(params.actionCaller.kind === 'host' && params.callerAuthority === 'present_user'
-      && !params.actionRequestAttributionV1 ? { executionAuthority: 'present_user' as const } : {}),
+    ...(originalPresentUser ? { executionAuthority: 'present_user' as const } : {}),
     inputAdmission: params.actionRequestAttributionV1
       ? { ...inputAdmission, request: { ...inputAdmission.request,
           actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) } }

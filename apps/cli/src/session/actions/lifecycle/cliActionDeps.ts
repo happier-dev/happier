@@ -6,7 +6,6 @@ import { readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/s
 import { isPermissionModeGrantedV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
-import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { buildCausalSessionInputAdmissionV1, buildPluginSessionInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
 import type { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
@@ -204,7 +203,7 @@ export function createCliSessionLifecycleActionDeps(
       }
       const caller = context.actionCaller;
       if (sessionInputSource && caller?.kind !== 'session') return rejectUndispatchedSessionAgentTransition('forbidden');
-      const { buildCausalSessionInputAdmissionV1, buildPluginSessionInputAdmissionV1 } = await import("@/session/services/sessionInputAdmissionIdentity");
+      const { buildCausalSessionInputAdmissionV1, buildHostCallerSessionInputAdmissionV1, buildPluginSessionInputAdmissionV1 } = await import("@/session/services/sessionInputAdmissionIdentity");
       const inputAdmission = sessionInputSource && caller?.kind === 'session'
         ? buildCausalSessionInputAdmissionV1({ ...sessionInputSource, callerDepth: readAgentStartCallerWorkDepthV1(caller),
             ...(context.actionRequestAttributionV1 ? { actionRequestAttributionV1: context.actionRequestAttributionV1 } : {}) })
@@ -212,7 +211,8 @@ export function createCliSessionLifecycleActionDeps(
           ? buildPluginSessionInputAdmissionV1({ caller, surface: context.surface,
               ...(context.actionRequestAttributionV1 ? { actionRequestAttributionV1: context.actionRequestAttributionV1 } : {}) })
           : caller?.kind === 'host' && (context.authority === 'present_user' || context.externalActionCredential)
-            ? buildTrustedHostSessionInputAdmissionV1(context.surface)
+            ? buildHostCallerSessionInputAdmissionV1({ surface: context.surface, authority: context.authority,
+                descendant: context.actionRequestAttributionV1 !== undefined })
             : undefined;
       if (context.authority !== 'present_user' && !inputAdmission) return rejectUndispatchedSessionAgentTransition('forbidden');
       let restrictedAdmission = inputAdmission;

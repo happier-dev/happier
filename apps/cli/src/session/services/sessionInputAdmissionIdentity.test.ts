@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { derivePluginSessionInputLocalIdV1, SessionInputRequestV1Schema, settleSessionInputRequestV1, type ActionCaller } from '@happier-dev/protocol';
+import { settleSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
@@ -386,4 +387,39 @@ describe('derivePluginSessionInputLocalIdV1', () => {
       },
     });
   });
+});
+
+describe('host-caller first input provenance (D15)', () => {
+  const owner = { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'person', sessionRelationship: 'owner' } as const;
+  const machine = { v: 1, issuer: 'authenticatedMachine' } as const;
+  const requester = { requestRef: 'spawn-first-turn:typed', requester: { serverId: 'home', accountId: 'person' },
+    persona: { serverId: 'home', sessionId: 'new-session' }, origin: null };
+  const settle = (
+    admission: ReturnType<typeof buildSessionSpawnInitialInputAdmissionForLocalIdV1>['inputAdmission'],
+    receipt: typeof owner | typeof machine,
+  ) => settleSessionMessageProvenanceV1({ request: admission.request, requestedProvenance: admission.provenance,
+    inputAdmissionReceipt: receipt });
+
+  it('attributes the words a present person typed into a new Session over the app RPC to that person', () => {
+    const first = buildSessionSpawnInitialInputAdmissionForLocalIdV1({ actionCaller: { kind: 'host' },
+      callerSurface: 'rpc', callerAuthority: 'present_user', localId: 'spawn-first-turn:typed' });
+    expect(first.executionAuthority).toBe('present_user');
+    expect(settle(first.inputAdmission, owner)).toEqual({ v: 1, kind: 'happierApp', actor: { kind: 'owner' } });
+    // Encrypted send: Machine receipt plus the requester attribution the sender stamps for present_user.
+    const sealed = { ...first.inputAdmission, request: { ...first.inputAdmission.request, actionRequestAttributionV1: requester } };
+    expect(settle(sealed, machine)).toEqual({ v: 1, kind: 'happierApp', actor: { kind: 'person', accountId: 'person' } });
+  });
+
+  it.each([
+    { name: 'an Agent Action', actionCaller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+      callerSurface: 'agent', callerAuthority: 'account_automation' },
+    { name: 'an unattended Account over RPC', actionCaller: { kind: 'host' }, callerSurface: 'rpc', callerAuthority: 'account_automation' },
+    { name: 'a descendant of another request', actionCaller: { kind: 'host' }, callerSurface: 'rpc', callerAuthority: 'present_user',
+      actionRequestAttributionV1: requester },
+  ] satisfies ReadonlyArray<Parameters<typeof buildSessionSpawnInitialInputAdmissionForLocalIdV1>[0] & { name: string }>)(
+    'keeps host provenance for first input from $name', ({ name: _name, ...params }) => {
+      const first = buildSessionSpawnInitialInputAdmissionForLocalIdV1({ ...params, localId: 'spawn-first-turn:host' });
+      expect(settle(first.inputAdmission, params.actionRequestAttributionV1 ? machine : owner))
+        .toEqual({ v: 1, kind: 'host', producer: 'sessionAction' });
+    });
 });
