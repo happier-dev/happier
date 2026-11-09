@@ -1,4 +1,4 @@
-import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
