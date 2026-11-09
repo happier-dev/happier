@@ -1,20 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
-    ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION,
-    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
-    FeaturesResponseSchema,
-    compilePluginJsonSchema,
-    encodePluginCollectionLogicalValueV1,
-    isValidPluginJsonSchemaValue,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1} from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
+import {
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    compilePluginJsonSchema} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import {
+    encodePluginCollectionLogicalValueV1} from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
+import {
+    isValidPluginJsonSchemaValue} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import {
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
     openPluginCollectionPrivatePayloadV1,
     PluginCollectionMutationRequestV1Schema,
     sealPluginCollectionPrivatePayloadV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/collectionsV1';
 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit';
 import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
@@ -116,7 +124,7 @@ type ClientHarnessOptions = Readonly<{
     currentness?: typeof plainCurrentness | typeof e2eeCurrentness;
     credentials?: typeof e2eeCredentials;
     responseForDataPath?: (path: string, init: RequestInit) => Response;
-    retireDuringDataRequest?: boolean;
+    retireDuringDataRequest?: boolean | string;
     advanceServerGenerationDuringDataRequest?: boolean;
     serverProtocolVersion?: number | null;
 }>;
@@ -148,7 +156,7 @@ async function loadClient(options: ClientHarnessOptions = {}) {
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
-            if (options.retireDuringDataRequest) {
+            if (options.retireDuringDataRequest === true || options.retireDuringDataRequest === path) {
                 current = false;
                 for (const callback of [...retireCallbacks]) callback();
             }
@@ -477,6 +485,110 @@ describe('active Account Collection direct client', () => {
                 contractDigest: contract.contractDigest,
             },
         });
+    });
+
+    it.each(['contract', 'get', 'query', 'mutation-resource-key'] as const)(
+        'keeps a Collection HTTP 503 retryable during %s reads',
+        async (operation) => {
+            const harness = await loadClient({
+                ...(operation === 'mutation-resource-key'
+                    ? { credentials: e2eeCredentials, currentness: e2eeCurrentness } : {}),
+                responseForDataPath: () => new Response(JSON.stringify({ error: 'database_connection_unavailable' }), {
+                    status: 503,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            });
+            const collection = harness.createActivePluginCollectionClient({ contract });
+            const outcome = operation === 'contract'
+                ? harness.createActivePluginCollectionClientForContractRef({ ref: {
+                    pluginId: contract.pluginId,
+                    collectionId: contract.collectionId,
+                    schemaVersion: contract.schemaVersion,
+                    contractDigest: contract.contractDigest,
+                } })
+                : operation === 'get'
+                    ? collection.get('channel-1')
+                    : operation === 'query'
+                        ? collection.query({ indexId: 'by-status', prefix: ['enabled'], order: 'asc' })
+                        : collection.mutate([{
+                            kind: 'put',
+                            expectedRevision: 1,
+                            value: { id: 'channel-1', status: 'enabled', title: 'Ops channel' },
+                        }]);
+            await expect(outcome).resolves.toEqual({ status: 'unavailable', reason: 'transport-unavailable' });
+        },
+    );
+
+    it('prepares an admitted contract schema once per digest and re-prepares a changed schema', async () => {
+        const harness = await loadClient({
+            responseForDataPath: (path) => path === '/v1/plugins/data/contract'
+                ? new Response(JSON.stringify({ access: 'writable', contract }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+        });
+        const ref = {
+            pluginId: contract.pluginId,
+            collectionId: contract.collectionId,
+            schemaVersion: contract.schemaVersion,
+            contractDigest: contract.contractDigest,
+        };
+        // Count every property read of the schema graph while clients are created.
+        let schemaReads = 0;
+        const count = <T extends object>(value: T): T => new Proxy(value, {
+            get(target, key, receiver) {
+                schemaReads++;
+                const field = Reflect.get(target, key, receiver);
+                return field !== null && typeof field === 'object' ? count(field) : field;
+            },
+            ownKeys(target) {
+                schemaReads++;
+                return Reflect.ownKeys(target);
+            },
+            getOwnPropertyDescriptor(target, key) {
+                schemaReads++;
+                const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+                return descriptor && descriptor.value !== null && typeof descriptor.value === 'object'
+                    ? { ...descriptor, value: count(descriptor.value) } : descriptor;
+            },
+        });
+        const counted = { ...contract, schema: count(structuredClone(contract.schema)) };
+        // Creating clients and reading no row (an absent get) never compiles the schema.
+        await harness.createActivePluginCollectionClient({ contract: counted }).get('channel-1');
+        await harness.createActivePluginCollectionClient({ contract: counted }).get('channel-1');
+        const beforeFirstValidation = schemaReads;
+        // A value validation is the first consumer; later clients reuse that preparation.
+        const writer = harness.createActivePluginCollectionClient({ contract: counted });
+        const invalid = { kind: 'put' as const, expectedRevision: 1 as const, value: { id: 'channel-1', status: 'unknown', title: 'x' } };
+        await writer.mutate([invalid as never]);
+        const firstPreparation = schemaReads;
+        await harness.createActivePluginCollectionClient({ contract: counted }).mutate([invalid as never]);
+        await harness.createActivePluginCollectionClient({ contract: counted }).mutate([invalid as never]);
+        expect({ beforeFirstValidation, firstPreparation: firstPreparation > 0, repeatedPreparations: schemaReads - firstPreparation })
+            .toEqual({ beforeFirstValidation: 0, firstPreparation: true, repeatedPreparations: 0 });
+
+        // Each contract read answers with a fresh wire body of equal content.
+        const first = await harness.createActivePluginCollectionClientForContractRef({ ref });
+        const second = await harness.createActivePluginCollectionClientForContractRef({ ref });
+        if (first.status !== 'ready' || second.status !== 'ready') throw new Error('Expected admitted contracts.');
+        // The second equal contract read reuses the first admitted contract.
+        expect(second.contract).toBe(first.contract);
+
+        // Equal digest, changed schema: the changed schema is compiled, never the retained one.
+        const { privateNote: _privateNote, ...narrowedProperties } = contract.schema.properties ?? {};
+        const narrowed = harness.createActivePluginCollectionClient({
+            contract: { ...contract, schema: { ...contract.schema, properties: narrowedProperties } },
+        });
+        await expect(narrowed.mutate([{
+            kind: 'put',
+            expectedRevision: 1,
+            value: { id: 'channel-1', status: 'enabled', title: 'Narrowed', privateNote: 'undeclared' },
+        }])).resolves.toMatchObject({ status: 'rejected', code: 'collection_mutation_invalid' });
+        expect(harness.transport.mock.calls.filter(([path]) => path === '/v1/plugins/data/mutate')).toHaveLength(0);
     });
 
     it('keeps a compatible retained contract read-only', async () => {
@@ -1100,7 +1212,8 @@ describe('active Account Collection direct client', () => {
     it.each(['plain', 'e2ee'] as const)('preserves exact issued mutation settlement after retirement on %s Accounts', async (mode) => {
         const harness = await loadClient({
             ...(mode === 'e2ee' ? { credentials: e2eeCredentials, currentness: e2eeCurrentness } : {}),
-            retireDuringDataRequest: true,
+            // Existing E2EE rows acquire their resource key before issuing the mutation.
+            retireDuringDataRequest: '/v1/plugins/data/mutate',
         });
         await expect(harness.createActivePluginCollectionClient({ contract }).mutate([{
             kind: 'put',

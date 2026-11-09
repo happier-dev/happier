@@ -1,19 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    derivePluginCollectionIdentityTagV1,
-    FeaturesResponseSchema,
+    derivePluginCollectionIdentityTagV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
-    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
-    PluginAccountStorageMutationRequestV1Schema,
-    PluginAccountCollectionContributionV1Schema,
-    PluginCollectionMutationRequestV1Schema,
+    PluginCollectionMutationRequestV1Schema} from '@happier-dev/protocol/plugins/data/collectionsV1';
+import {
+    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1} from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
+import {
+    PluginAccountStorageMutationRequestV1Schema} from '@happier-dev/protocol/plugins/data/accountKvV1';
+import {
+    PluginAccountCollectionContributionV1Schema} from '@happier-dev/protocol/plugins/data/collectionContributionV1';
+import {
     PluginManifestV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/manifest/v2';
 import {
     type JsonValue,
 } from '@happier-dev/plugin-sdk';
-import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import {
     defineAccountCollection,
 } from '@happier-dev/plugin-sdk/collections';
@@ -278,13 +284,16 @@ async function loadClient(options: Readonly<{
             declarationTransport: 'http-header-and-socket-auth-v1',
         },
     });
+    const createClient = () => createPluginUiDataClient({
+        pluginId,
+        accountLifetime: lifetime,
+        readAvailability: options.readAvailability
+            ?? (() => options.availabilityReader ?? createAvailabilityReader()),
+    });
     return {
-        client: createPluginUiDataClient({
-            pluginId,
-            accountLifetime: lifetime,
-            readAvailability: options.readAvailability
-                ?? (() => options.availabilityReader ?? createAvailabilityReader()),
-        }),
+        client: createClient(),
+        /** Another binding of the same loaded module, as a fresh Action invocation gets. */
+        createClient,
         transport,
         accountKvWrites,
         retire: () => {
@@ -295,6 +304,62 @@ async function loadClient(options: Readonly<{
 }
 
 describe('Plugin UI Data client', () => {
+    it('carries one prefix-set query through the public Account Collection adapter', async () => {
+        const { client, transport } = await loadClient();
+        const prefixes = [['open'], ['closed']];
+        await expect(client.collection(collectionDefinition).query({ index: 'by-status', prefixes, order: 'asc' }))
+            .resolves.toMatchObject({ rows: [], changeCursor: 1 });
+        const reads = transport.mock.calls.filter(([path]) => path === '/v1/plugins/data/query');
+        expect(reads).toHaveLength(1);
+        expect(JSON.parse(String(reads[0]?.[1]?.body))).toMatchObject({ indexId: 'by-status', prefixes });
+    });
+    it('normalizes one Collection definition once, however many bindings and operations reach it', async () => {
+        // Channels calls `collection(DEFINITION)` per operation, from a fresh binding per Action
+        // invocation; each normalization digests the whole contract (a 322 KB schema for Channels).
+        let definitionReads = 0;
+        const counted = new Proxy(collectionDefinition, {
+            get(target, key, receiver) { definitionReads++; return Reflect.get(target, key, receiver); },
+            ownKeys(target) { definitionReads++; return Reflect.ownKeys(target); },
+        });
+        const first = await loadClient();
+        first.client.collection(counted);
+        const firstNormalization = definitionReads;
+        first.client.collection(counted);
+        const second = { client: first.createClient() };
+        second.client.collection(counted);
+        second.client.collection(counted);
+        expect({ firstNormalization: firstNormalization > 0, repeatedReads: definitionReads - firstNormalization })
+            .toEqual({ firstNormalization: true, repeatedReads: 0 });
+        // The held normalization still addresses the admitted contract.
+        await expect(second.client.collection(counted).query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
+            .resolves.toMatchObject({ rows: [] });
+        // A different definition object is normalized on its own (and refused when the release does not admit it).
+        expect(() => second.client.collection(forgedCollectionDefinition)).not.toThrow();
+    });
+    it('normalizes an equal Collection declaration once when every bridge message carries a fresh copy', async () => {
+        // The hosted-web bridge parses the declaration out of each message, so no two operations share an object.
+        const harness = await loadClient();
+        const contracts = await import('@happier-dev/protocol/plugins/data/collectionsV1');
+        const normalizations = vi.spyOn(contracts, 'normalizePluginAccountCollectionContractV1');
+        const declared = JSON.stringify(projectPluginAccountCollectionDeclaration(collectionDefinition.id, collectionDefinition));
+        const message = () => JSON.parse(declared) as typeof collectionDefinition;
+        try {
+            // Workload: 1 cold operation, then 10 messages with equal declarations.
+            harness.client.collection(message());
+            const cold = normalizations.mock.calls.length;
+            for (let index = 0; index < 10; index += 1) harness.client.collection(message());
+            expect({ cold, repeated: normalizations.mock.calls.length - cold }).toEqual({ cold: 1, repeated: 0 });
+            await expect(harness.client.collection(message()).query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
+                .resolves.toMatchObject({ rows: [] });
+            // A changed declaration under the same id is judged again, never answered from the held one
+            // (this one lacks its migration, so the release cannot declare it).
+            const changed = { ...message(), schemaVersion: 3, readableSchemaVersions: [1, 2, 3] };
+            expect(() => harness.client.collection(changed as typeof collectionDefinition)).toThrow('not declared');
+            // The entry follows the latest declaration: returning to the original prepares it once more.
+            harness.client.collection(message());
+            expect(normalizations.mock.calls.length - cold).toBe(1);
+        } finally { normalizations.mockRestore(); }
+    });
     it.each(['cancelled', 'retired', 'lost', 'malformed'] as const)('settles issued Account KV transactions without replay when %s', async (settlement) => {
         const cancellation = new AbortController();
         let retire: () => void = () => undefined;
@@ -1065,6 +1130,30 @@ describe('Plugin UI Data client', () => {
         });
         expect(transport.mock.calls.some(([path]) => path === '/v1/plugins/data/mutate')).toBe(false);
     });
+    it.each(['contract', 'rows'] as const)(
+        'keeps a Collection HTTP 503 retryable at the public %s boundary and recovers',
+        async boundary => {
+            let unavailable = true;
+            const outage = () => new Response(JSON.stringify({ error: 'database_connection_unavailable' }), {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const { client } = await loadClient(boundary === 'contract' ? {
+                collectionContractRead: () => unavailable
+                    ? outage() : Response.json({ access: 'writable', contract }),
+            } : {
+                collectionRead: () => unavailable
+                    ? outage() : Response.json({ rows: [], changeCursor: 1 }),
+            });
+            const collection = client.collection(collectionDefinition);
+            await expect(collection.query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
+                .rejects.toMatchObject({ code: 'plugin_account_storage_unavailable', retryable: true });
+            unavailable = false;
+            await expect(collection.query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
+                .resolves.toMatchObject({ rows: [], changeCursor: 1 });
+        },
+    );
+
     it.each([
         'collection_index_not_ready', 'collection_update_required',
         'collection_content_mode_mismatch', 'collection_contract_inconsistent',

@@ -1,13 +1,15 @@
 import {
+    PluginCollectionContractAccessReadResultV1Schema,
     PluginCollectionContractReadResultV1Schema,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionContractReadResultV1,
 } from '@happier-dev/protocol/plugins/data/collectionsV1';
-import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import { createPluginJsonSchemaZodValueAdapter, preparePluginJsonSchema, type PluginJsonSchemaValidator } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 export type PreparedCollectionContractSchema = Readonly<{
-    validate: ReturnType<typeof compilePluginJsonSchema>;
+    validate: PluginJsonSchemaValidator;
     storedReadSchema: ReturnType<typeof createPluginJsonSchemaZodValueAdapter>;
 }>;
 
@@ -41,8 +43,35 @@ function readWireDigest(body: unknown): string | null {
     return typeof digest === 'string' ? digest : null;
 }
 
-/** Parses one contract read answer; an answer equal to an admitted one reuses its contract. */
-export function parseCollectionContractReadResult(body: unknown): PluginCollectionContractReadResultV1 | null {
+/**
+ * The contract a server answer already delivered for this exact ref, if any.
+ * A contract is immutable per digest, so its holder asks the server for
+ * access only (`omitContract`) instead of re-reading and re-comparing it.
+ * Entries prepared from a local contract were never answered and do not count.
+ */
+export function readHeldCollectionContract(
+    ref: PluginCollectionContractRefV1,
+): NormalizedPluginAccountCollectionContractV1 | null {
+    const entry = admittedContracts.get(ref.contractDigest);
+    if (!entry || entry.wire === '') return null;
+    const { contract } = entry;
+    return contract.pluginId === ref.pluginId && contract.collectionId === ref.collectionId
+        && contract.schemaVersion === ref.schemaVersion ? contract : null;
+}
+
+/**
+ * Parses one contract read answer; an answer equal to an admitted one reuses
+ * its contract. An access-only answer is valid only for a read that declared
+ * `held` (the contract returned by `readHeldCollectionContract`).
+ */
+export function parseCollectionContractReadResult(
+    body: unknown,
+    held?: NormalizedPluginAccountCollectionContractV1 | null,
+): PluginCollectionContractReadResultV1 | null {
+    if (held) {
+        const answer = PluginCollectionContractAccessReadResultV1Schema.safeParse(body);
+        if (answer.success) return { access: answer.data.access, contract: held };
+    }
     const digest = readWireDigest(body);
     const wire = digest === null ? null : JSON.stringify((body as { contract: unknown }).contract);
     const existing = digest === null ? undefined : admittedContracts.get(digest);
@@ -77,9 +106,14 @@ export function prepareCollectionContractSchema(
         entry = { wire: '', contract, schemaText: JSON.stringify(contract.schema) };
         admittedContracts.set(contract.contractDigest, entry);
     }
-    entry.prepared ??= Object.freeze({
-        validate: compilePluginJsonSchema(entry.contract.schema),
-        storedReadSchema: createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(entry.contract.schema)),
-    });
+    if (!entry.prepared) {
+        // Admit the answered schema once; the stored reader reuses the
+        // normalizer's own snapshot instead of admitting the wire copy again.
+        const { jsonSchema, validate } = preparePluginJsonSchema(entry.contract.schema);
+        entry.prepared = Object.freeze({
+            validate,
+            storedReadSchema: createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(jsonSchema)),
+        });
+    }
     return entry.prepared;
 }

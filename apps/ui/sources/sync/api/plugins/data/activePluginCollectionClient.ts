@@ -664,9 +664,9 @@ function isLogicalCollectionValue<TValue extends PluginAccountCollectionValue<Pl
     return isValidPluginJsonSchemaValue(validate, value);
 }
 
-function mapReadError(value: unknown): ActivePluginCollectionUnavailableV1 | ActivePluginCollectionRejectedV1 {
+function mapReadError(value: unknown, httpStatus: number): ActivePluginCollectionUnavailableV1 | ActivePluginCollectionRejectedV1 {
     const parsed = PluginCollectionReadErrorV1Schema.safeParse(value);
-    if (!parsed.success) return unavailable('response-invalid');
+    if (!parsed.success) return unavailable(httpStatus >= 500 ? 'transport-unavailable' : 'response-invalid');
     switch (parsed.data.error) {
         case 'collection_unavailable':
             return unavailable('collection-unavailable');
@@ -780,7 +780,7 @@ export async function createActivePluginCollectionClientForContractRef<
             options: input.options,
         });
         if (response.status === 'unavailable') return response;
-        if (!response.ok) return mapReadError(response.body);
+        if (!response.ok) return mapReadError(response.body, response.httpStatus);
         const result = parseCollectionContractReadResult(response.body, held);
         if (!result || !contractMatchesRef(result.contract, request.data.ref)) {
             return unavailable('response-invalid');
@@ -819,7 +819,11 @@ export function createActivePluginCollectionClient<
     assertAdmitted?: () => void;
     signal?: AbortSignal;
 }>): ActivePluginCollectionClientV1<TValue> {
-    const { validate, storedReadSchema } = prepareCollectionContractSchema(params.contract);
+    // Compiled on first use by a row read or a value validation, never at
+    // creation: an operation that materializes no row and validates no value
+    // (an absent get, an empty page, a watch) does not need the schema.
+    let preparedSchema: ReturnType<typeof prepareCollectionContractSchema> | undefined;
+    const contractSchema = () => preparedSchema ??= prepareCollectionContractSchema(params.contract);
     const prepare = async (options?: ActivePluginCollectionOperationOptionsV1, freshPlainIdentity = false) => {
         params.assertAdmitted?.();
         const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal, freshPlainIdentity);
@@ -863,14 +867,14 @@ export function createActivePluginCollectionClient<
                 options,
             });
             if (response.status === 'unavailable') return response;
-            if (!response.ok) return mapReadError(response.body);
+            if (!response.ok) return mapReadError(response.body, response.httpStatus);
             const result = PluginCollectionGetResultV1Schema.safeParse(response.body);
             if (!result.success) return unavailable('response-invalid');
             const row = result.data.row === null
                 ? null
                 : mergeLogicalRow<TValue>({
                     contract: params.contract,
-                    storedReadSchema,
+                    storedReadSchema: contractSchema().storedReadSchema,
                     row: result.data.row,
                     encryptionMode: prepared.operation.encryptionMode,
                     material: prepared.operation.material,
@@ -914,14 +918,14 @@ export function createActivePluginCollectionClient<
                 options,
             });
             if (response.status === 'unavailable') return response;
-            if (!response.ok) return mapReadError(response.body);
+            if (!response.ok) return mapReadError(response.body, response.httpStatus);
             const result = PluginCollectionQueryResultV1Schema.safeParse(response.body);
             if (!result.success) return unavailable('response-invalid');
             const rows: ActivePluginCollectionLogicalRowV1<TValue>[] = [];
             for (const row of result.data.rows) {
                 const materialized = mergeLogicalRow<TValue>({
                     contract: params.contract,
-                    storedReadSchema,
+                    storedReadSchema: contractSchema().storedReadSchema,
                     row,
                     encryptionMode: prepared.operation.encryptionMode,
                     material: prepared.operation.material,
@@ -953,7 +957,7 @@ export function createActivePluginCollectionClient<
         resourceDataKeys?: ReadonlyMap<string, Uint8Array>,
     ) => preparePluginCollectionLogicalMutationRequestV1<TValue>({
         contract: params.contract,
-        isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
+        isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(contractSchema().validate, value),
         operations,
         encryptionMode: operation.encryptionMode,
         material: operation.material,
@@ -977,7 +981,7 @@ export function createActivePluginCollectionClient<
                     readerContext: { pluginId: params.contract.pluginId, collectionId: params.contract.collectionId,
                         schemaVersion: params.contract.schemaVersion, contractDigest: params.contract.contractDigest }, rowId } });
             if (response.status === 'unavailable') return response;
-            if (!response.ok) return mapReadError(response.body);
+            if (!response.ok) return mapReadError(response.body, response.httpStatus);
             const result = PluginCollectionGetResultV1Schema.safeParse(response.body);
             if (!result.success) return unavailable('response-invalid');
             if (result.data.row?.encryptedDataKey) {
@@ -1221,9 +1225,9 @@ export function createActivePluginCollectionClient<
             const client = createPluginCollectionSharingClientV1<TValue>({
                 accountId: operation.lifetime.scope.accountId,
                 contract: params.contract,
-                isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
+                isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(contractSchema().validate, value),
                 parseStoredLogicalValue: value => {
-                    const parsed = storedReadSchema.safeParse(value);
+                    const parsed = contractSchema().storedReadSchema.safeParse(value);
                     return parsed.success && parsed.data !== null && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
                         ? parsed.data as TValue : null;
                 },
