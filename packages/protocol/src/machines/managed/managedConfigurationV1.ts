@@ -6,7 +6,7 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 import {
   createValidatedLaunchSnapshotV1Schema, ManagedControllerV1Schema, RetentionV1Schema,
-  type ManagedControllerV1, type ValidatedLaunchSnapshotV1,
+  type ManagedControllerV1,
 } from './managedMachineV1.js';
 import {
   ProviderPriceV1Schema, BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema,
@@ -70,7 +70,7 @@ export type ManagedConfigurationFactsV1 = z.infer<typeof ManagedConfigurationFac
 /** Call the sole category-policy owner once, then snapshot its concrete output. */
 export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType>(input: Readonly<{
   choicesSchema: Choices;
-  launch: ValidatedLaunchSnapshotV1 & z.infer<ReturnType<typeof createValidatedLaunchSnapshotV1Schema<Choices>>>;
+  launch: z.infer<ReturnType<typeof createValidatedLaunchSnapshotV1Schema<Choices>>> & { choices: z.output<Choices> };
   controller?: ManagedControllerV1; optionStatus: ManagedConfigurationFactsV1['optionStatus'];
   provisioner?: MachineProvisionerContributionV1;
   prerequisites: readonly ManagedPrerequisiteV1[]; billing: BillingCapabilitiesV1;

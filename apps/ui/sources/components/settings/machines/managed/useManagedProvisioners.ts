@@ -129,7 +129,7 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime, accountReader]);
     const boundAccountId = binding?.isCurrent() ? binding.accountId : resolution.kind === 'bound' ? resolution.scope.accountId : null;
     const sameAccount = state.lifetime === lifetime && (boundAccountId !== null ? state.accountId === boundAccountId
-        : resolution.kind === 'resolving' && lifetime?.isCurrent() && retained === state);
+        : resolution.kind === 'resolving' && lifetime?.isCurrent() === true && retained === state);
     // The last answer of this Account stays while a re-read runs: a new controller, or a refreshed credential binding.
     const visible = !enabled ? { provisioners: EMPTY_PROVISIONERS, error: null, loading: false }
         : sameAccount && binding?.isCurrent() && state.binding === binding && state.requestKey === requestKey ? state

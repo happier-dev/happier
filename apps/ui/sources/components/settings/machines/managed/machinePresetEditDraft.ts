@@ -32,7 +32,8 @@ export function machinePresetEditContinuationDraft(continuation: MachinePresetEd
 }
 
 /** Full draft content; absence is not an update-patch instruction to retain old creation. */
-export function machinePresetEditDraftContent(draft: MachinePresetEditDraft) {
+export function machinePresetEditDraftContent(draft: MachinePresetEditDraft): Pick<ManagedMachinePresetV1,
+    'name' | 'launch' | 'controller' | 'controllerPoolId' | 'setup' | 'retention' | 'wakeOnAcceptedMessage' | 'simultaneousLimit'> {
     const creation = draft.creation;
     return {
         name: draft.name,
