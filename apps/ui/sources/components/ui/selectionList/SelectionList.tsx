@@ -661,6 +661,18 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     if (focusedOptionId === null || focusedOptionId !== pointerFocusedOptionIdRef.current) {
         scrollFollowOptionIdRef.current = focusedOptionId;
     }
+    // A disabled selected row cannot take the roving focus, which then seeds on the first enabled row
+    // (in the Machine picker with every Machine offline, the trailing "New machine" actions). Until the
+    // user moves the focus or types, the list opens on the selection, not on that seeded row.
+    const selectedOptionRendersDisabled = React.useMemo(() => (
+        virtualizedOptionSource === undefined && selectedOptionId !== null && renderPlan.some((sectionPlan) => (
+            sectionPlan.options.some((option: SelectionListOption) => option.id === selectedOptionId && option.disabled === true)
+        ))
+    ), [renderPlan, selectedOptionId, virtualizedOptionSource]);
+    const bodyScrollTargetOptionId = props.activeScrollOptionId
+        ?? (selectedOptionRendersDisabled && !focus.hasExplicitRowFocus && inputValue === '' ? selectedOptionId : null)
+        ?? scrollFollowOptionIdRef.current
+        ?? selectedOptionId;
 
     // Phase 2.3 autocomplete + Phase 2.5 advanced keyboard nav.
     const dynamicSectionIds = React.useMemo(() => new Set(dynamicSections.map((s) => s.id)), [dynamicSections]);
@@ -1377,7 +1389,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             virtualizedOptionSource={virtualizedOptionSource}
             focusedOptionId={focusedOptionId}
             focusedOptionIndex={virtualizedOptionSource === undefined ? undefined : focus.focusedIndex}
-            scrollTargetOptionId={props.activeScrollOptionId ?? scrollFollowOptionIdRef.current ?? selectedOptionId}
+            scrollTargetOptionId={bodyScrollTargetOptionId}
             listboxId={listboxId}
             accessibilityLabel={props.listAccessibilityLabel}
             onSelect={props.onSelect}

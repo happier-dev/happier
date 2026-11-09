@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HAPPIER_MENU_ROW_TEXT, HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { CapabilityRow, type CapabilityRowProps } from '@/components/capabilities/row/CapabilityRow';
 import { presentCapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
-import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -543,20 +542,10 @@ function AddRow(
   props: Readonly<{ onPress: () => void; disabled: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
-  const { width } = useWindowDimensions();
-  // The `$` shortcut belongs to a keyboard; a phone sheet shows the row alone.
-  const showShortcut = Platform.OS === 'web' && !isMobileLayoutWidth(width);
   return (
     <Item
       title={t('capabilities.session.sheet.add')}
       icon={<Icon name="plus" size={18} color={theme.colors.text.secondary} />}
-      rightElement={
-        showShortcut ? (
-          <Text variant="meta" style={styles.shortcut}>
-            $
-          </Text>
-        ) : undefined
-      }
       onPress={props.onPress}
       disabled={props.disabled}
       showChevron={false}
@@ -709,10 +698,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s12,
-  },
-  shortcut: {
-    color: theme.colors.text.tertiary,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
   addField: {
     gap: theme.space.s6,

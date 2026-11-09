@@ -271,6 +271,39 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
         expect(scrollToSpy).toHaveBeenCalledWith({ y: 432, animated: false });
     });
 
+    it('opens on a disabled selected row instead of following the seeded focus to the first enabled row', async () => {
+        // QA D7: every Machine was offline (disabled) and the only enabled rows were the trailing
+        // "New machine" actions, so the seeded focus scrolled the picker to its bottom.
+        const options: SelectionListOption[] = makeOptions(30, 'short').map((option, index) => (
+            index < 29 ? { ...option, disabled: true } : option
+        ));
+        const root: SelectionListStep = {
+            id: 'root',
+            inputPlaceholder: 'Search',
+            sections: [{ kind: 'static', id: 'shorty', title: 'SHORTY', options }],
+        };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList {...defaultProps(root, { maxHeight: 200, selectedOptionId: 'short-5' })} />,
+        );
+        const bodyScroll = screen.findByTestId('sl:bodyScroll');
+        const selectedRow = screen.findByTestId('sl:root:option-wrapper:short-5');
+        const lastRow = screen.findByTestId('sl:root:option-wrapper:short-29');
+
+        await act(async () => {
+            bodyScroll?.props?.onLayout?.({ nativeEvent: { layout: { height: 120 } } });
+            bodyScroll?.props?.onContentSizeChange?.(320, 1200);
+            selectedRow?.props?.onLayout?.({ nativeEvent: { layout: { y: 200, height: 40 } } });
+            lastRow?.props?.onLayout?.({ nativeEvent: { layout: { y: 1160, height: 40 } } });
+        });
+        await act(async () => {});
+
+        const lastScroll = scrollToSpy.mock.calls.at(-1)?.[0];
+        expect(lastScroll).toBeDefined();
+        expect(lastScroll!.y).toBeLessThanOrEqual(200);
+        expect(lastScroll!.y + 120).toBeGreaterThanOrEqual(240);
+    });
+
     it('uses section offsets when scrolling selected rows from later sections', async () => {
         const root: SelectionListStep = {
             id: 'root',
