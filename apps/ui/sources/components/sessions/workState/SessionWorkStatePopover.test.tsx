@@ -27,7 +27,8 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).install
     },
 })());
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
     Popover: (props: any) => React.createElement('Popover', props, props.open ? (
         typeof props.children === 'function' ? props.children({ maxHeight: 360 }) : props.children
     ) : null),
@@ -43,17 +44,6 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement('Text', props, props.children),
     TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props, null),
 }));
-
-vi.mock('react-native-svg', () => {
-    const Svg = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Svg', props, props.children);
-    return {
-        default: Svg,
-        Svg,
-        Circle: (props: Record<string, unknown>) => React.createElement('Circle', props, null),
-        Path: (props: Record<string, unknown>) => React.createElement('Path', props, null),
-    };
-});
 
 vi.mock('@/components/sessions/agentInput/components/AgentInputContentPopover', () => ({
     AgentInputContentPopover: (props: Record<string, unknown> & {

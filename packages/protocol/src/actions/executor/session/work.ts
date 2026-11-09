@@ -5,6 +5,7 @@ import { resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult } from '../resultProjection.js';
 import { isAgentCaller } from '../callerContext.js';
 import type { SessionGoalSetRequestV1 } from '../../../sessions/work/state/sessionWorkStateRpc.js';
+import { SessionTriggerListResultV1Schema } from '../../../workflows/triggers/workflowTriggerActionsV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
@@ -83,13 +84,30 @@ export async function dispatchSessionWork(inv: Pick<CoreInvocation, 'actionId' |
         if (actionId === 'session.goal.clear') {
           const sessionId = normalizeId(data.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          if (!deps.sessionGoalClear) {
+          if (!deps.sessionGoalClear || !deps.workflowAction) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.goal.clear' };
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionGoalClear({ sessionId, ...(serverId ? { serverId } : {}),
-            ...(ctx.authority || isAgentCaller(ctx) ? { context: ctx } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
-          return completeActionResult(res);
+          const context = serverId ? { ...ctx, serverId } : ctx;
+          const listed = await deps.workflowAction({ actionId: 'session.trigger.list', input: { sessionId }, context,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          const listResult = completeActionResult(listed);
+          if (!listResult.ok) return listResult;
+          const sets = SessionTriggerListResultV1Schema.parse(listed).sets;
+          const cleared = completeActionResult(await deps.sessionGoalClear({ sessionId, ...(serverId ? { serverId } : {}),
+            ...(ctx.authority || isAgentCaller(ctx) ? { context: ctx } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+          if (!cleared.ok) return cleared;
+          // Preserve a refused Goal mutation's continuation. A later detach failure is
+          // returned honestly; retrying Clear can finish the retained attachment.
+          for (const set of sets) {
+            if (set.target?.kind !== 'workflow' || set.target.ref !== 'builtin:keep-going') continue;
+            for (const trigger of set.triggers) {
+              const removed = completeActionResult(await deps.workflowAction({ actionId: 'session.trigger.remove',
+                input: { sessionId, triggerId: trigger.id }, context, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+              if (!removed.ok) return removed;
+            }
+          }
+          return cleared;
         }
 
         if (actionId === 'session.usageLimit.waitResume.enable') {

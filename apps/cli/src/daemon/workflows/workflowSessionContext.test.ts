@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createProductionWorkflowSessionContextReader } from './workflowSessionContext';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
+import { evaluateWorkflowCondition } from './input';
+import type { WorkflowCondition, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
+import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from './workflowCoordinator.testkit';
 
 const sessionId = 'c123456789012345678901234';
 const credentials = { token: 'token', encryption: null } as const;
@@ -10,6 +13,68 @@ const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
 let goal: Record<string, unknown>;
 
 describe('production workflow session context', () => {
+  it('reads each demanded source once per condition and observes new facts next evaluation', async () => {
+    const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
+    const runtime = { inputs: {}, resolveResult: async () => null,
+      resolveWorkspace: async () => ({ directory: '/', checkoutRootPath: '/' }), ...reader };
+    const usage = { kind: 'session_context_field', field: 'usage.tokensUsed' } as const;
+    const budget = { kind: 'session_context_field', field: 'goal.tokenBudget' } as const;
+    const condition: WorkflowCondition = { kind: 'all', conditions: [
+      { kind: 'exists', value: usage }, { kind: 'exists', value: budget },
+      { kind: 'compare', operator: 'gte', left: usage, right: budget },
+    ] };
+    expect(await evaluateWorkflowCondition(condition, runtime)).toBe(false);
+    const sessionReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+      !String(url).endsWith('/currentness'));
+    expect(sessionReads()).toHaveLength(1);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    goal.tokenBudget = 2;
+    expect(await evaluateWorkflowCondition(condition, runtime)).toBe(true);
+    expect(sessionReads()).toHaveLength(2);
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { v: 1,
+      totals: { eventCount: 1, tokens: { ...tokens, total: 1 }, cost } } });
+    expect(await evaluateWorkflowCondition(condition, runtime)).toBe(false);
+    expect(sessionReads()).toHaveLength(3);
+    expect(axios.post).toHaveBeenCalledTimes(3);
+    vi.mocked(axios.post).mockClear();
+    expect(await evaluateWorkflowCondition({ kind: 'exists', value: budget }, runtime)).toBe(true);
+    expect(axios.post).not.toHaveBeenCalled();
+    vi.mocked(axios.get).mockClear();
+    expect(await evaluateWorkflowCondition({ kind: 'any', conditions: [
+      { kind: 'compare', operator: 'eq', left: { kind: 'literal', value: true }, right: { kind: 'literal', value: true } },
+      condition,
+    ] }, runtime)).toBe(true);
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('shares demanded Session sources across stop arms through the coordinator', async () => {
+    goal.tokenBudget = 2;
+    const budget = { kind: 'session_context_field', field: 'goal.tokenBudget' } as const;
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [],
+      defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+      blocks: [{ kind: 'loop', id: 'rounds', body: [{ kind: 'step', id: 'work',
+        document: { text: 'work', references: [], attachments: [] }, input: [], result: { kind: 'text' },
+        execution: { conversation: { kind: 'fresh' } } }], repetition: { kind: 'until', maxIterations: 2,
+        stopWhen: { kind: 'any', conditions: [
+          { kind: 'compare', operator: 'eq', left: budget, right: { kind: 'literal', value: 0 } },
+          { kind: 'compare', operator: 'gte', left: { kind: 'session_context_field', field: 'usage.tokensUsed' }, right: budget },
+        ] } } }],
+    };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const coordinator = createTestWorkflowCoordinator({ store,
+      sessionContext: createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId }),
+      executeStep: async params => { await params.beforeInputAdmission(); return { kind: 'completed', result: 'worked' }; },
+      resolveWorkspace: async () => ({ ok: true, workspace: { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' } }),
+    });
+    await expect(coordinator.run({ runId: 'session-sources', definition, inputs: {}, originSessionId: sessionId,
+      executionTarget: { kind: 'session' }, authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+    })).resolves.toEqual({ state: 'succeeded' });
+    expect([...store.records.values()].find(row => row.blockId === 'rounds' && !row.frame)?.container?.closing)
+      .toMatchObject({ outcome: { kind: 'stop_condition', arm: 1 } });
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => !String(url).endsWith('/currentness'))).toHaveLength(1);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
   afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.spyOn(axios, 'get');

@@ -44,8 +44,9 @@ function readNumber(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-export function readKeepGoingAttachment(sets: readonly WorkflowTriggerSetV1[]): KeepGoingAttachment | null {
+export function readKeepGoingAttachment(sets: readonly WorkflowTriggerSetV1[], sessionId: string | null): KeepGoingAttachment | null {
     for (const set of sets) {
+        if (set.scopeSessionId !== sessionId) continue;
         if (set.target?.kind !== 'workflow' || set.target.ref !== KEEP_GOING_WORKFLOW_REF) continue;
         const trigger = set.triggers[0];
         if (!trigger) continue;

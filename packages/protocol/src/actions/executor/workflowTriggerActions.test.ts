@@ -218,6 +218,90 @@ function fixture(savedDefinition = definition) {
 }
 
 describe('trigger source display provenance', () => {
+  it.each(['ui', 'mcp'] as const)('clears the Goal and detaches only Keep going through the %s Action', async surface => {
+    const f = fixture();
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const caller = { surface, authority: 'present_user' } as const;
+    const keepGoing = await actions.sessionAdd({ sessionId: 'session-one',
+      target: { kind: 'workflow', ref: 'builtin:keep-going' },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
+    const other = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'workflow', ref: workflow },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
+    let goalPresent = true;
+    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+      sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
+    const cleared = await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller);
+    expect(cleared, JSON.stringify(cleared)).toMatchObject({ ok: true });
+    expect(goalPresent).toBe(false);
+    expect((await actions.sessionList({ sessionId: 'session-one' }, caller)).sets
+      .flatMap(set => set.triggers).some(trigger => trigger.id === keepGoing.triggerId)).toBe(false);
+    expect((await actions.sessionList({ sessionId: 'session-one' }, caller)).sets
+      .flatMap(set => set.triggers).some(trigger => trigger.id === other.triggerId)).toBe(true);
+  });
+  it('reports a refused Keep going detach after clearing the Goal and permits an explicit retry', async () => {
+    const f = fixture();
+    let refuseDetach = false;
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      automations: { ...f.deps.automations, reconcile: async (...args) => {
+        if (refuseDetach) throw Object.assign(new Error('write_conflict'), { code: 'currentness_conflict' });
+        return f.deps.automations.reconcile(...args);
+      } } });
+    const caller = { surface: 'mcp', authority: 'present_user' } as const;
+    const added = await actions.sessionAdd({ sessionId: 'session-one',
+      target: { kind: 'workflow', ref: 'builtin:keep-going' },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
+    let goalPresent = true;
+    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+      sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
+    refuseDetach = true;
+    const refused = await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller);
+    expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'currentness_conflict' });
+    expect(goalPresent).toBe(false);
+    expect(f.rows.get(added.set.automationId)?.triggers).toHaveLength(1);
+    refuseDetach = false;
+    expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller)).toMatchObject({ ok: true });
+    expect(f.rows.get(added.set.automationId)?.triggers).toHaveLength(0);
+  });
+  it('retains Keep going when the native Goal clear refuses the mutation', async () => {
+    const f = fixture();
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const caller = { surface: 'ui', authority: 'present_user' } as const;
+    const added = await actions.sessionAdd({ sessionId: 'session-one',
+      target: { kind: 'workflow', ref: 'builtin:keep-going' },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
+    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+      sessionGoalClear: async () => ({ ok: false, errorCode: 'session_goal_control_unsupported', error: 'session_goal_control_unsupported' }) });
+    expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller))
+      .toMatchObject({ ok: false, errorCode: 'session_goal_control_unsupported' });
+    expect(f.rows.get(added.set.automationId)?.triggers).toHaveLength(1);
+  });
+  it('keeps the Goal when the Workflow owner refuses the prerequisite trigger read', async () => {
+    const f = fixture();
+    let goalPresent = true;
+    const boundary = createActionExecutor({ isActionApprovalRequired: () => false,
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => false,
+        definitions: f.definitions, triggers: f.actions,
+        runs: { execute: async () => { throw new Error('Unexpected Run write'); } } }),
+      sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
+    expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, { surface: 'ui', authority: 'present_user' }))
+      .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(goalPresent).toBe(true);
+  });
+  it('refuses compound Goal clear without a trigger owner before mutating the Goal', async () => {
+    let goalPresent = true;
+    const boundary = createActionExecutor({ isActionApprovalRequired: () => false,
+      sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
+    expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, { surface: 'ui', authority: 'present_user' }))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(goalPresent).toBe(true);
+  });
   it.each(['plain', 'e2ee'] as const)('projects each retained %s receipt Event subject without creating an Environment lifecycle binding', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
@@ -1424,7 +1508,7 @@ describe('workflow trigger Automation composition', () => {
       openContext: async () => { throw new Error('summary_must_not_open_private_context'); } });
     expect(await read.readWorkflowSummaries([workflow])).toEqual(new Map([[workflow, {
       triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
-        triggerId: saved.triggerId }], nextRunAt: null,
+        triggerId: saved.triggerId, nextRunAt: null }], nextRunAt: null,
     }]]));
   });
   it('merges the authorized Team summary into the same library facts without opening another Account context', async () => {
@@ -1438,7 +1522,7 @@ describe('workflow trigger Automation composition', () => {
     } });
     expect((await read.readWorkflowSummaries([workflow])).get(workflow)).toEqual({
       triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
-        triggerId: saved.triggerId }, { kind: 'schedule', schedule: trigger.schedule }], nextRunAt: 1,
+        triggerId: saved.triggerId, nextRunAt: 2 }, { kind: 'schedule', schedule: trigger.schedule }], nextRunAt: 1,
     });
   });
   it('uses the earliest enabled scheduler occurrence across attached sets without recomputing schedules', async () => {

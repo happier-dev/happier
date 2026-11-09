@@ -1,4 +1,8 @@
 import * as React from 'react';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+
+import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
+import { createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL } from '@/sync/store/domains/automations';
 
 import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import {
@@ -6,7 +10,6 @@ import {
     listSessionTriggerSets,
     removeSessionTrigger,
     updateSessionTrigger,
-    type WorkflowTriggerWriteResult,
 } from '@/sync/domains/workflows/workflowTriggerActions';
 
 import {
@@ -36,18 +39,15 @@ export type SessionKeepGoingTrigger = Readonly<{
     error: string | null;
     setOn: (on: boolean) => void;
     setInputs: (patch: Partial<Readonly<{ maxRounds: number | undefined; strikes: number | undefined; secondOpinion: boolean }>>) => void;
-    /** Removes the attached trigger (clearing the goal, R-M9). Resolves false when nothing was removed. */
-    detach: () => Promise<boolean>;
 }>;
 
-function setFromWrite(result: WorkflowTriggerWriteResult): KeepGoingAttachment | null {
-    return readKeepGoingAttachment([result.set]);
-}
+const EMPTY_TRIGGER_SETS: readonly WorkflowTriggerSetV1[] = [];
+const selectNoSets = () => EMPTY_TRIGGER_SETS;
+const selectNoChanges = () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
 
 /**
- * The session's Keep going trigger, read through `session.trigger.list` only while the Goal control is
- * open (`enabled`), and written through `session.trigger.add | update | remove` — each change an
- * immediate call with its own result; a session has no Save (04 §5.5). There is no local trigger store.
+ * The open Goal control consumes the canonical Automation trigger projection and its change signal.
+ * Session-trigger Actions own reads and writes; only unsaved inputs and pending writes stay local.
  */
 export function useSessionKeepGoingTrigger(params: Readonly<{
     target: SessionGoalContinuationTarget | null;
@@ -55,46 +55,68 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
 }>): SessionKeepGoingTrigger {
     const sessionId = params.target?.sessionId ?? null;
     const machineId = params.target?.machineId ?? null;
+    const accountLifetime = useActiveServerAccountScopeLifetime();
+    const selector = React.useMemo(() => createWorkflowTriggerSetSelector(`session:${sessionId}`), [sessionId]);
+    const sets = getStorage()(params.enabled ? selector : selectNoSets);
+    const changeSelector = React.useMemo(() => createWorkflowTriggerChangeSelector(sessionId), [sessionId]);
+    const changeSignal = getStorage()(params.enabled ? changeSelector : selectNoChanges);
+    const attachment = React.useMemo(() => readKeepGoingAttachment(sets, sessionId), [sets, sessionId]);
+    const readAttachment = React.useCallback(() => readKeepGoingAttachment(selector(getStorage().getState()), sessionId), [selector, sessionId]);
     const [phase, setPhase] = React.useState<SessionKeepGoingTrigger['phase']>('idle');
-    const [attachment, setAttachment] = React.useState<KeepGoingAttachment | null>(null);
-    const [inputs, setInputsState] = React.useState<SessionKeepGoingTrigger['inputs']>(KEEP_GOING_DEFAULT_INPUTS);
+    const [draftInputs, setDraftInputs] = React.useState<Partial<SessionKeepGoingTrigger['inputs']> | null>(null);
+    const draftInputsRef = React.useRef<Partial<SessionKeepGoingTrigger['inputs']> | null>(null);
+    const replaceDraft = React.useCallback((draft: Partial<SessionKeepGoingTrigger['inputs']> | null) => {
+        draftInputsRef.current = draft;
+        setDraftInputs(draft);
+    }, []);
+    const inputs = React.useMemo(() => ({ ...(attachment?.inputs ?? KEEP_GOING_DEFAULT_INPUTS), ...draftInputs }), [attachment?.inputs, draftInputs]);
     const [pendingOn, setPendingOn] = React.useState<boolean | null>(null);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
-    const attachmentRef = React.useRef(attachment);
-    attachmentRef.current = attachment;
     // Field writes are serialized: one in flight, and only the newest waiting value follows it.
-    const inputWriteRef = React.useRef<{ inFlight: boolean; next: KeepGoingInputs | null }>({ inFlight: false, next: null });
+    const inputWriteRef = React.useRef({ inFlight: false, queued: false });
 
     const options = React.useMemo(() => ({
+        accountLifetime,
         context: machineId ? { externalActionTarget: { kind: 'machine' as const, machineId } } : {},
-    }), [machineId]);
+    }), [accountLifetime, machineId]);
 
     React.useEffect(() => {
-        if (!params.enabled || !sessionId) return;
+        replaceDraft(null);
+    }, [accountLifetime, params.enabled, replaceDraft, sessionId]);
+
+    React.useEffect(() => {
+        if (!params.enabled || !sessionId || !accountLifetime) return;
         const controller = new AbortController();
-        setPhase('loading');
+        const retirement = accountLifetime.onRetire(() => controller.abort());
+        setPhase(current => current === 'loaded' ? current : 'loading');
         listSessionTriggerSets({ sessionId }, { ...options, signal: controller.signal })
-            .then((sets) => {
-                if (controller.signal.aborted) return;
-                const read = readKeepGoingAttachment(sets);
-                setAttachment(read);
-                setInputsState(read?.inputs ?? KEEP_GOING_DEFAULT_INPUTS);
-                setPhase('loaded');
+            .then(() => {
+                if (!controller.signal.aborted) setPhase('loaded');
             })
             .catch(() => {
                 if (!controller.signal.aborted) setPhase('failed');
             });
-        return () => controller.abort();
-    }, [options, params.enabled, sessionId]);
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [accountLifetime, changeSignal, options, params.enabled, sessionId]);
 
     const fail = React.useCallback((cause: unknown) => {
         setError(resolveWorkflowProblemPresentation(cause).message);
     }, []);
 
+    const acknowledgeInputs = React.useCallback((written: KeepGoingInputs) => {
+        const draft = draftInputsRef.current;
+        if (!draft) return;
+        const remaining = { ...draft };
+        for (const key of Object.keys(draft) as (keyof KeepGoingInputs)[]) {
+            if (Object.is(draft[key], written[key])) delete remaining[key];
+        }
+        replaceDraft(Object.keys(remaining).length ? remaining : null);
+    }, [replaceDraft]);
+
     const setOn = React.useCallback((on: boolean) => {
         if (!sessionId || busy) return;
-        const current = attachmentRef.current;
+        const current = readAttachment();
         const complete = {
             maxRounds: inputs.maxRounds ?? Number.NaN,
             strikes: inputs.strikes ?? Number.NaN,
@@ -105,32 +127,43 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
         setPendingOn(on);
         setBusy(true);
         const write = !on
-            ? (current ? removeSessionTrigger({ sessionId, triggerId: current.triggerId }, options).then(() => null) : Promise.resolve(null))
+            ? (current ? removeSessionTrigger({ sessionId, triggerId: current.triggerId }, options) : Promise.resolve())
             : current
                 ? updateSessionTrigger({
                     sessionId,
                     triggerId: current.triggerId,
                     expectedRevision: current.revision,
                     patch: { enabled: true, inputs: complete },
-                }, options).then(setFromWrite)
-                : addSessionTrigger(buildKeepGoingTriggerAddRequest(sessionId, complete), options).then(setFromWrite);
+                }, options)
+                : addSessionTrigger(buildKeepGoingTriggerAddRequest(sessionId, complete), options);
         void write
-            .then((next) => setAttachment(next))
+            .then(() => {
+                if (on) acknowledgeInputs(complete);
+            })
             .catch(fail)
             .finally(() => {
                 setPendingOn(null);
                 setBusy(false);
             });
-    }, [busy, fail, inputs, options, sessionId]);
+    }, [acknowledgeInputs, busy, fail, inputs, options, readAttachment, sessionId]);
 
-    const writeInputs = React.useCallback((next: KeepGoingInputs) => {
+    const writeInputs = React.useCallback(() => {
         const queue = inputWriteRef.current;
         if (queue.inFlight) {
-            queue.next = next;
+            queue.queued = true;
             return;
         }
-        const current = attachmentRef.current;
-        if (!sessionId || !current?.enabled) return;
+        const current = readAttachment();
+        const draft = draftInputsRef.current;
+        if (!sessionId || !current?.enabled || !draft) return;
+        const inputs = { ...current.inputs, ...draft };
+        const next = {
+            maxRounds: inputs.maxRounds ?? Number.NaN,
+            strikes: inputs.strikes ?? Number.NaN,
+            secondOpinion: inputs.secondOpinion,
+        };
+        // Incomplete fields stay visible as drafts until the person repairs them.
+        if (!areKeepGoingInputsValid(next)) return;
         queue.inFlight = true;
         void updateSessionTrigger({
             sessionId,
@@ -138,48 +171,21 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
             expectedRevision: current.revision,
             patch: { inputs: next },
         }, options)
-            .then((result) => {
-                const written = setFromWrite(result);
-                attachmentRef.current = written;
-                setAttachment(written);
-            })
+            .then(() => acknowledgeInputs(next))
             .catch(fail)
             .finally(() => {
                 queue.inFlight = false;
-                const waiting = queue.next;
-                queue.next = null;
-                if (waiting) writeInputs(waiting);
+                if (queue.queued) {
+                    queue.queued = false;
+                    writeInputs();
+                }
             });
-    }, [fail, options, sessionId]);
+    }, [acknowledgeInputs, fail, options, readAttachment, sessionId]);
 
-    const inputsRef = React.useRef(inputs);
-    inputsRef.current = inputs;
     const setInputs = React.useCallback<SessionKeepGoingTrigger['setInputs']>((patch) => {
-        const next = { ...inputsRef.current, ...patch };
-        inputsRef.current = next;
-        setInputsState(next);
-        const complete = {
-            maxRounds: next.maxRounds ?? Number.NaN,
-            strikes: next.strikes ?? Number.NaN,
-            secondOpinion: next.secondOpinion,
-        };
-        // A field that does not name a whole number yet is shown with its repair and not written.
-        if (areKeepGoingInputsValid(complete)) writeInputs(complete);
-    }, [writeInputs]);
-
-    const detach = React.useCallback(async (): Promise<boolean> => {
-        const current = attachmentRef.current;
-        if (!sessionId || !current) return false;
-        try {
-            await removeSessionTrigger({ sessionId, triggerId: current.triggerId }, options);
-            attachmentRef.current = null;
-            setAttachment(null);
-            return true;
-        } catch (cause) {
-            fail(cause);
-            return false;
-        }
-    }, [fail, options, sessionId]);
+        replaceDraft({ ...draftInputsRef.current, ...patch });
+        writeInputs();
+    }, [replaceDraft, writeInputs]);
 
     return {
         phase,
@@ -190,6 +196,5 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
         error,
         setOn,
         setInputs,
-        detach,
     };
 }

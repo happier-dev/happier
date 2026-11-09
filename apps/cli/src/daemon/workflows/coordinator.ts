@@ -490,7 +490,7 @@ async function readInvocationResult(
   record: WorkflowCoordinatorInvocation | undefined,
   store: WorkflowCoordinatorStore,
   frame: Frame,
-  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'resolveDiscussionContext'>,
+  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'createSessionContextFieldResolver' | 'resolveDiscussionContext'>,
 ): Promise<WorkflowJsonValue> {
   if (record?.lifecycle !== 'completed') throw new WorkflowInputResolutionError('missing_reference');
   const result = record.result !== undefined ? record.result : await store.readContainerResult(record, async (workflow) => {
@@ -520,7 +520,7 @@ async function readInvocationResultPath(
   path: readonly (string | number)[],
   store: WorkflowCoordinatorStore,
   frame: Frame,
-  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'resolveDiscussionContext'>,
+  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'createSessionContextFieldResolver' | 'resolveDiscussionContext'>,
 ): Promise<WorkflowJsonValue> {
   if (record?.lifecycle !== 'completed') throw new WorkflowInputResolutionError('missing_reference');
   if (record.container?.kind === 'loop' && path[0] === 'outcome') {
@@ -535,7 +535,7 @@ function createResolutionRuntime(
   inputs: Readonly<Record<string, WorkflowJsonValue>>,
   frame: Frame,
   store: WorkflowCoordinatorStore,
-  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'resolveDiscussionContext'>,
+  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'createSessionContextFieldResolver' | 'resolveDiscussionContext'>,
 ): WorkflowValueResolutionRuntime {
   const runId = frame.scopeRunId;
   const binding = createWorkflowProducerBinding({ runId, frame, store });
@@ -876,7 +876,7 @@ type WorkflowCoordinatorDependencies = Readonly<{
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   store: WorkflowCoordinatorStore;
   /** Origin-owned context readers. Their content is retained in the existing invocation input. */
-  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'resolveDiscussionContext'>;
+  sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField' | 'createSessionContextFieldResolver' | 'resolveDiscussionContext'>;
   executeStep: WorkflowStepExecutor;
   prepareStep?: WorkflowStepPreparer;
   action?: WorkflowActionExecutor;
@@ -957,6 +957,10 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
                 holds.track(() => deps.sessionContext!.resolveSessionContext!(recentTurns)) } : {}),
               ...(deps.sessionContext.resolveSessionContextField ? { resolveSessionContextField: (field: 'usage.tokensUsed' | 'goal.tokenBudget') =>
                 holds.track(() => deps.sessionContext!.resolveSessionContextField!(field)) } : {}),
+              ...(deps.sessionContext.createSessionContextFieldResolver ? { createSessionContextFieldResolver: () => {
+                const resolve = deps.sessionContext!.createSessionContextFieldResolver!();
+                return (field: 'usage.tokensUsed' | 'goal.tokenBudget') => holds.track(() => resolve(field));
+              } } : {}),
               ...(deps.sessionContext.resolveDiscussionContext ? { resolveDiscussionContext: (scope: 'addressing_message' | 'so_far') =>
                 holds.track(() => deps.sessionContext!.resolveDiscussionContext!(scope)) } : {}),
             } } : {}),

@@ -144,6 +144,8 @@ export type WorkflowValueResolutionRuntime = Readonly<{
   ) => Promise<number>;
   resolveSessionContext?: (recentTurns: number) => Promise<WorkflowSessionContextV1>;
   resolveSessionContextField?: (field: 'usage.tokensUsed' | 'goal.tokenBudget') => Promise<number>;
+  /** Captures only demanded sources for one condition; the next evaluation starts fresh. */
+  createSessionContextFieldResolver?: () => NonNullable<WorkflowValueResolutionRuntime['resolveSessionContextField']>;
   /** C3 supplies authorized content and its frontier; Workflow never reads history itself. */
   resolveDiscussionContext?: (scope: Extract<WorkflowValueReference, { kind: 'discussion_context' }>['scope']) => Promise<WorkflowJsonValue>;
 }>;
@@ -258,6 +260,19 @@ export async function evaluateWorkflowCondition(
   condition: WorkflowCondition,
   runtime: WorkflowValueResolutionRuntime,
 ): Promise<boolean> {
+  return evaluateCapturedWorkflowCondition(condition, captureWorkflowConditionRuntime(runtime));
+}
+
+function captureWorkflowConditionRuntime(runtime: WorkflowValueResolutionRuntime): WorkflowValueResolutionRuntime {
+  return runtime.createSessionContextFieldResolver
+    ? { ...runtime, resolveSessionContextField: runtime.createSessionContextFieldResolver() }
+    : runtime;
+}
+
+async function evaluateCapturedWorkflowCondition(
+  condition: WorkflowCondition,
+  runtime: WorkflowValueResolutionRuntime,
+): Promise<boolean> {
   // Definitions have no nesting limit. Keep traversal off the JavaScript call
   // stack while retaining authored order and all/any short-circuiting.
   const pending: (
@@ -334,9 +349,10 @@ export async function evaluateWorkflowStopCondition(
   condition: WorkflowCondition,
   runtime: WorkflowValueResolutionRuntime,
 ): Promise<Readonly<{ matched: boolean; arm?: number }>> {
-  if (condition.kind !== 'any') return { matched: await evaluateWorkflowCondition(condition, runtime) };
+  const captured = captureWorkflowConditionRuntime(runtime);
+  if (condition.kind !== 'any') return { matched: await evaluateCapturedWorkflowCondition(condition, captured) };
   for (const [arm, child] of condition.conditions.entries()) {
-    if (await evaluateWorkflowCondition(child, runtime)) return { matched: true, arm };
+    if (await evaluateCapturedWorkflowCondition(child, captured)) return { matched: true, arm };
   }
   return { matched: false };
 }
@@ -365,7 +381,7 @@ export async function materializeWorkflowStepInput(params: Readonly<{
   if (retained?.renderedText !== undefined) {
     return {
       text: retained.renderedText, renderedText: retained.renderedText,
-      ...(retained.document.displayText === undefined ? {} : { displayText: retained.document.displayText }),
+      displayText: retained.document.displayText ?? retained.document.text,
       references: retained.document.references.filter(mention => mention.kind !== MENTION_KIND_V1.workflowInput),
       attachments: retained.document.attachments,
       values: retained.input,
@@ -446,7 +462,7 @@ export async function materializeWorkflowStepInput(params: Readonly<{
   }
   return {
     text,
-    ...(params.document.displayText === undefined ? {} : { displayText: params.document.displayText }),
+    displayText: params.document.displayText ?? params.document.text,
     references: params.document.references.filter((mention) => mention.kind !== MENTION_KIND_V1.workflowInput),
     attachments: params.document.attachments,
     values,

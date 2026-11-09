@@ -90,7 +90,6 @@ export function useSessionWorkStateGoalController(params: Readonly<{
         target: continuation ? { sessionId: continuation.sessionId, machineId: continuation.machineId } : null,
         enabled: params.open && continuation !== null && renderGoalControls && goal !== null,
     });
-    const detachKeepGoing = keepGoing.detach;
     const [draftObjective, setDraftObjective] = React.useState(goal?.title ?? '');
     const [busy, setBusy] = React.useState(false);
     // After an acknowledged set, hold a "setting goal…" pending confirmation keyed by the goal
@@ -231,8 +230,6 @@ export function useSessionWorkStateGoalController(params: Readonly<{
                 Modal.alert(presentation.title, presentation.message);
                 return;
             }
-            // Clearing the goal turns Keep going off in the same action (R-M9).
-            await detachKeepGoing();
         } catch (error) {
             if (!lifetime.active) return;
             closeGoalControl();
@@ -244,7 +241,7 @@ export function useSessionWorkStateGoalController(params: Readonly<{
         } finally {
             if (lifetime.active) setBusy(false);
         }
-    }, [closeGoalControl, detachKeepGoing, onClearGoal]);
+    }, [closeGoalControl, onClearGoal]);
 
     const resumeGoal = React.useCallback(async () => {
         if (goal?.statusReason !== 'budgetLimited') {

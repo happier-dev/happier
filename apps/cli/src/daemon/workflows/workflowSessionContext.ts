@@ -48,7 +48,7 @@ async function readUsage(params: ContextReaderParams, sessionId: string, startMs
 
 /** Authorized canonical Session/usage readers, refreshed for each preparation or condition evaluation. */
 export function createProductionWorkflowSessionContextReader(params: ContextReaderParams): Required<Pick<WorkflowValueResolutionRuntime,
-  'resolveSessionContext' | 'resolveSessionContextField'>> {
+  'resolveSessionContext' | 'resolveSessionContextField' | 'createSessionContextFieldResolver'>> {
   const read = async (recentTurns: number, includeUsage = true): Promise<WorkflowSessionContextV1> => {
     try {
       params.signal?.throwIfAborted();
@@ -136,14 +136,31 @@ export function createProductionWorkflowSessionContextReader(params: ContextRead
       throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
     }
   };
+  const createSessionContextFieldResolver: NonNullable<WorkflowValueResolutionRuntime['createSessionContextFieldResolver']> = () => {
+    let session: Promise<WorkflowSessionContextV1> | undefined;
+    let usage: Promise<WorkflowSessionContextV1['usage']> | undefined;
+    return async field => {
+      try {
+        params.signal?.throwIfAborted();
+        const context = await (session ??= read(0, false));
+        let value = context.goal?.tokenBudget;
+        if (field === 'usage.tokensUsed') {
+          // read established this exact origin before any usage disclosure.
+          const accounted = await (usage ??= readUsage(params, params.originSessionId!, context.goal?.startedAt ?? context.goal?.createdAt));
+          value = accounted.kind === 'accounted' ? accounted.tokensUsed : undefined;
+        }
+        params.signal?.throwIfAborted();
+        if (value === undefined || value === null) throw new WorkflowInputResolutionError('missing_reference');
+        return value;
+      } catch (error) {
+        if (params.signal?.aborted || error instanceof WorkflowInputResolutionError) throw error;
+        throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
+      }
+    };
+  };
   return {
     resolveSessionContext: read,
-    resolveSessionContextField: async (field) => {
-      const context = await read(0, field === 'usage.tokensUsed');
-      const value = field === 'goal.tokenBudget' ? context.goal?.tokenBudget
-        : context.usage.kind === 'accounted' ? context.usage.tokensUsed : undefined;
-      if (value === undefined || value === null) throw new WorkflowInputResolutionError('missing_reference');
-      return value;
-    },
+    resolveSessionContextField: field => createSessionContextFieldResolver()(field),
+    createSessionContextFieldResolver,
   };
 }
