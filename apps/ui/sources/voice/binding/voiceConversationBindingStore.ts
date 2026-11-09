@@ -182,6 +182,33 @@ function reconcileBindings(
     return unchanged ? current : next;
 }
 
+function patchBindingSlots(
+    current: BindingsByConversationSessionId,
+    replacements: ReadonlyMap<string, VoiceSessionBinding | null>,
+): BindingsByConversationSessionId {
+    const previousByControl = new Map<string, VoiceSessionBinding>();
+    for (const binding of Object.values(current)) {
+        if (replacements.has(binding.controlSessionId)) previousByControl.set(binding.controlSessionId, binding);
+    }
+    const changes = new Map<string, VoiceSessionBinding | null>();
+    for (const [controlSessionId, binding] of replacements) {
+        const previous = previousByControl.get(controlSessionId);
+        if (previous === binding || (!previous && !binding)
+            || (previous && binding && areVoiceSessionBindingsEqual(previous, binding))) continue;
+        changes.set(controlSessionId, binding);
+    }
+    if (changes.size === 0) return current;
+    const next = { ...current };
+    // Remove every old slot before adding moved carriers, which may reuse an old id.
+    for (const [id, binding] of Object.entries(current)) {
+        if (changes.has(binding.controlSessionId)) delete next[id];
+    }
+    for (const binding of changes.values()) {
+        if (binding) next[binding.conversationSessionId] = binding;
+    }
+    return next;
+}
+
 /**
  * Canonical "which binding wins" comparator. Newest `updatedAt` wins; on an
  * equal-`updatedAt` tie the larger `conversationSessionId` wins. This is the
@@ -246,6 +273,8 @@ export function createVoiceSessionBindingStore() {
     const persistedBySessionId = new Map<string, VoiceSessionBinding>();
     let replacedPersistedBindings: ReadonlyArray<VoiceSessionBinding> | null = null;
     let runtimeBindingAvailabilityChanged = false;
+    // Pending source changes between discovery and replacement; null retains the bulk boundary.
+    let changedControlSessionIds: Set<string> | null = null;
     const mergeAdmittedBindings = (
         runtime: BindingsByConversationSessionId,
         persisted: BindingsByConversationSessionId,
@@ -298,7 +327,38 @@ export function createVoiceSessionBindingStore() {
                 if (bindings === replacedPersistedBindings && !runtimeBindingAvailabilityChanged) return state;
                 const availabilityChanged = runtimeBindingAvailabilityChanged;
                 runtimeBindingAvailabilityChanged = false;
+                const changedControls = bindings === persistedBindings ? changedControlSessionIds : null;
+                changedControlSessionIds = null;
                 replacedPersistedBindings = bindings;
+                if (changedControls) {
+                    const winners = new Map<string, VoiceSessionBinding | null>();
+                    for (const id of changedControls) winners.set(id, null);
+                    for (const binding of persistedBySessionId.values()) {
+                        if (!changedControls.has(binding.controlSessionId)) continue;
+                        winners.set(binding.controlSessionId, pickNewerVoiceBinding(winners.get(binding.controlSessionId) ?? null, binding));
+                    }
+                    const persistedBindingsByConversationSessionId = patchBindingSlots(state.persistedBindingsByConversationSessionId, winners);
+                    const affectedPersisted: BindingsByConversationSessionId = {};
+                    for (const binding of winners.values()) {
+                        if (binding) affectedPersisted[binding.conversationSessionId] = binding;
+                    }
+                    const affectedRuntime: BindingsByConversationSessionId = {};
+                    for (const binding of Object.values(state.runtimeBindingsByConversationSessionId)) {
+                        if ((changedControls.has(binding.controlSessionId) || affectedPersisted[binding.conversationSessionId])
+                            && isVoiceSessionBindingAvailableInState(binding, persistedSource)) {
+                            affectedRuntime[binding.conversationSessionId] = binding;
+                        }
+                    }
+                    const affectedBindings = mergeVoiceConversationBindings(affectedRuntime, affectedPersisted);
+                    for (const id of changedControls) winners.set(id, null);
+                    for (const binding of Object.values(affectedBindings)) {
+                        if (changedControls.has(binding.controlSessionId)) winners.set(binding.controlSessionId, binding);
+                    }
+                    const bindingsByConversationSessionId = patchBindingSlots(state.bindingsByConversationSessionId, winners);
+                    if (persistedBindingsByConversationSessionId === state.persistedBindingsByConversationSessionId
+                        && bindingsByConversationSessionId === state.bindingsByConversationSessionId) return state;
+                    return { ...state, persistedBindingsByConversationSessionId, bindingsByConversationSessionId };
+                }
                 const admitted = bindings === persistedBindings ? bindings : bindings.flatMap(binding => {
                     const normalized = normalizeBinding(binding);
                     return normalized ? [normalized] : [];
@@ -357,6 +417,8 @@ export function createVoiceSessionBindingStore() {
                     && persistedSource.activeServerId === activeServerId
                     && persistedSource.profilesGeneration === profilesGeneration
                     && delta && delta.revision === (previousState.sessionListRenderableDelta?.revision ?? 0) + 1;
+                if (!incremental) changedControlSessionIds = null;
+                else if (replacedPersistedBindings === persistedBindings) changedControlSessionIds = new Set();
                 const ids = incremental
                     ? new Set([...delta.changedSessionIds, ...delta.removedSessionIds, ...(delta.hydratedSessionIds ?? [])])
                     : new Set([...persistedBySessionId.keys(), ...Object.keys(sessions ?? {}), ...Object.keys(get().runtimeBindingsByConversationSessionId)]);
@@ -365,11 +427,18 @@ export function createVoiceSessionBindingStore() {
                     const admitted = get();
                     const runtimeBinding = admitted.runtimeBindingsByConversationSessionId[id];
                     if (runtimeBinding && (admitted.bindingsByConversationSessionId[id] === runtimeBinding)
-                        !== isVoiceSessionBindingAvailableInState(runtimeBinding, state)) runtimeBindingAvailabilityChanged = true;
+                        !== isVoiceSessionBindingAvailableInState(runtimeBinding, state)) {
+                        runtimeBindingAvailabilityChanged = true;
+                        changedControlSessionIds?.add(runtimeBinding.controlSessionId);
+                        const persisted = admitted.persistedBindingsByConversationSessionId[id];
+                        if (persisted) changedControlSessionIds?.add(persisted.controlSessionId);
+                    }
                     const binding = readPersistedBindingFromState(state, id);
                     const previous = persistedBySessionId.get(id);
                     if ((!binding && !previous) || (binding && previous && areVoiceSessionBindingsEqual(previous, binding))) continue;
                     changed = true;
+                    if (previous) changedControlSessionIds?.add(previous.controlSessionId);
+                    if (binding) changedControlSessionIds?.add(binding.controlSessionId);
                     if (binding) persistedBySessionId.set(id, binding);
                     else persistedBySessionId.delete(id);
                 }

@@ -1,5 +1,5 @@
 import type { StorageState } from '@/sync/store/types';
-import type { StorageSubscriptionScope } from './storageSubscriptions';
+import { storageScopePaths, subscribeStoragePaths, type StorageSubscriptionScope } from './storageSubscriptions';
 
 type StorageStateReader = () => StorageState;
 type StorageStateSubscribe = (listener: (state: StorageState, previousState?: StorageState) => void, scope?: StorageSubscriptionScope) => () => void;
@@ -21,8 +21,12 @@ export function registerStorageStateSubscribe(subscribe: StorageStateSubscribe):
     storageStateSubscribe = subscribe;
 }
 
-export function subscribeRegisteredStorageState(listener: (state: StorageState, previousState?: StorageState) => void, scope?: StorageSubscriptionScope): (() => void) | null {
-    return storageStateSubscribe ? storageStateSubscribe(listener, scope) : null;
+export function subscribeRegisteredStorageState(listener: (state: StorageState, previousState?: StorageState) => void, scope?: StorageSubscriptionScope): () => void {
+    if (storageStateSubscribe) return storageStateSubscribe(listener, scope);
+    // The shared publication index exists before the Store's adapter is initialized.
+    return subscribeStoragePaths(storageScopePaths(scope), event => {
+        if (event.kind === 'state') listener(event.state, event.previous);
+    });
 }
 
 export function registerStorageMachineUpdateSubscribe(subscribe: MachineUpdateSubscribe): void {

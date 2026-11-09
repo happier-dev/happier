@@ -63,6 +63,7 @@ import { projectManager } from '../../runtime/orchestration/projectManager';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession, type SessionModelOptionsContext } from '@/sync/domains/models/modelOptions';
+import { readSessionRequestCoverage } from '@/sync/domains/session/pending/readSessionRequestCoverage';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import {
     resolveAgentIdFromSessionMetadata,
@@ -304,7 +305,8 @@ function readReusableRenderableAggregate(
     const aggregate = (sessionMessages as { renderableAggregate?: unknown } | null | undefined)?.renderableAggregate;
     if (!isTranscriptRenderableAggregate(aggregate)) return null;
     const completedRequests = readSessionPresentationCompletedRequests(session);
-    return canReuseTranscriptRenderableAggregateRequestStates(aggregate, completedRequests) ? aggregate : null;
+    const requestCoverage = readSessionRequestCoverage(session);
+    return canReuseTranscriptRenderableAggregateRequestStates(aggregate, completedRequests, requestCoverage) ? aggregate : null;
 }
 
 function readLoadedStoredSessionMessagesForRenderable(sessionMessages: unknown) {
@@ -1317,6 +1319,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             return {
                                 ...s,
                                 sessions: next,
+                                sessionListRenderableDelta: singleSessionDelta(s, sessionId),
                             };
                         });
                     });
@@ -1616,6 +1619,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const updated = applyAgentStateUpdateToSessionMessages({
                         existing: existingSessionMessages,
                         agentState: newSession.agentState,
+                        requestCoverage: readSessionRequestCoverage(newSession),
                         mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[session.id] === true,
                     });
                     if (updated.messageChanges.length > 0) messageChanges.set(session.id, updated.messageChanges);
