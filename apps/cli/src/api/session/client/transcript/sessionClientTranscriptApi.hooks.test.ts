@@ -21,7 +21,6 @@ function createTranscriptApi(params?: Readonly<{
         status: 'in_progress' | 'completed' | 'failed' | 'cancelled';
         observedAt: number;
     }> | null;
-    getActiveLocalTurnProgressAt?: () => number | null;
     onPresence?: (presence: Readonly<{ thinking: boolean; mode: 'local' | 'remote' }>) => void;
     findPersistedSessionUserMessageAdmission?: Parameters<typeof createSessionClientTranscriptApi>[0]['findPersistedSessionUserMessageAdmission'];
     enqueueCommittedTranscriptMessage?: Parameters<typeof createSessionClientTranscriptApi>[0]['enqueueCommittedTranscriptMessage'];
@@ -52,7 +51,6 @@ function createTranscriptApi(params?: Readonly<{
                 : {}),
         }),
         getLatestTurnSnapshot: params?.getLatestTurnSnapshot ?? (() => null),
-        getActiveLocalTurnProgressAt: params?.getActiveLocalTurnProgressAt ?? (() => null),
         onPresence: params?.onPresence,
         getSessionConnectionSupervisor: () => null,
         getMetadataSnapshot: () => null,
@@ -326,6 +324,18 @@ describe('createSessionClientTranscriptApi hook dispatch', () => {
         }));
     });
 
+    it('preserves the user role and history provenance for replayed image input, including unavailable media', async () => {
+        const { api, enqueueCommittedTranscriptMessage } = createTranscriptApi();
+        await api.sendAgentSessionMediaCommitted('opencode', {
+            localId: 'imported-user-image', role: 'input', category: 'attachment', messageText: '',
+            provenanceSource: 'history',
+            media: [{ source: { kind: 'base64', data: 'aGVsbG8=', mimeType: 'image/png' }, origin: { source: 'acp-content' } }],
+        });
+        expect(enqueueCommittedTranscriptMessage).toHaveBeenCalledWith(expect.objectContaining({
+            messageRole: 'user', localId: 'imported-user-image', provenance: { kind: 'non_dependent', source: 'history' },
+        }));
+    });
+
     it('replays the latest turn status and observation time on session presence', () => {
         const { api, socketEmit } = createTranscriptApi({
             connected: true,
@@ -398,67 +408,28 @@ describe('createSessionClientTranscriptApi hook dispatch', () => {
         expect(socketVolatileEmit).not.toHaveBeenCalled();
     });
 
-    it('self-heals terminal thinking after 15 seconds when the active local turn has no recent progress', () => {
-        vi.useFakeTimers();
-        try {
-            vi.setSystemTime(0);
-            const { api, socketEmit } = createTranscriptApi({
-                connected: true,
-                getLatestTurnSnapshot: () => ({ status: 'completed', observedAt: 1 }),
-                getActiveLocalTurnProgressAt: () => 0,
-            });
-
-            api.keepAlive(true, 'remote');
-            vi.setSystemTime(15_001);
-            api.keepAlive(true, 'remote');
-
-            expect(socketEmit).toHaveBeenLastCalledWith('session-alive', expect.objectContaining({ thinking: false }));
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('exposes the guarded local presence used by other terminal projections', () => {
+    it.each(['completed', 'failed', 'cancelled'] as const)('preserves host activity over a stale %s turn snapshot until the host settles it', (status) => {
         vi.useFakeTimers();
         try {
             vi.setSystemTime(0);
             const onPresence = vi.fn();
-            const { api } = createTranscriptApi({
+            const { api, socketEmit } = createTranscriptApi({
+                connected: true,
                 onPresence,
-                getLatestTurnSnapshot: () => ({ status: 'completed', observedAt: 1 }),
-                getActiveLocalTurnProgressAt: () => 0,
+                getLatestTurnSnapshot: () => ({ status, observedAt: 1 }),
             });
+
             api.keepAlive(true, 'remote');
             vi.setSystemTime(15_001);
             api.keepAlive(true, 'remote');
-            expect(onPresence).toHaveBeenLastCalledWith({ thinking: false, mode: 'remote' });
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('extends the terminal thinking guard from the latest local turn progress', () => {
-        vi.useFakeTimers();
-        try {
-            let progressAt = 0;
-            vi.setSystemTime(0);
-            const { api, socketEmit } = createTranscriptApi({
-                connected: true,
-                getLatestTurnSnapshot: () => ({ status: 'completed', observedAt: 1 }),
-                getActiveLocalTurnProgressAt: () => progressAt,
-            });
-
-            api.keepAlive(true, 'remote');
-            progressAt = 10_000;
-            vi.setSystemTime(10_000);
-            api.keepAlive(true, 'remote');
-            vi.setSystemTime(24_999);
-            api.keepAlive(true, 'remote');
             expect(socketEmit).toHaveBeenLastCalledWith('session-alive', expect.objectContaining({ thinking: true }));
+            expect(onPresence).toHaveBeenLastCalledWith({ thinking: true, mode: 'remote' });
 
-            vi.setSystemTime(25_000);
-            api.keepAlive(true, 'remote');
+            api.replayLatestPresence();
+            expect(socketEmit).toHaveBeenLastCalledWith('session-alive', expect.objectContaining({ thinking: true }));
+            api.keepAlive(false, 'remote');
             expect(socketEmit).toHaveBeenLastCalledWith('session-alive', expect.objectContaining({ thinking: false }));
+            expect(onPresence).toHaveBeenLastCalledWith({ thinking: false, mode: 'remote' });
         } finally {
             vi.useRealTimers();
         }

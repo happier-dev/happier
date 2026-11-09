@@ -4,6 +4,7 @@ import { ExternalOAuthFinalizeAuthSuccessResponseSchema, ExternalOAuthParamsResp
 import { KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin, createKeyChallengeV2SigningInput } from '@happier-dev/protocol/auth/keyChallenge';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 import { captureLoopbackOauthRedirect } from '@/cloud/loopbackOauthPkce';
 import { describeBrowserHandoffFallback, openBrowser } from '@/ui/openBrowser';
@@ -66,7 +67,7 @@ function normalizeEndpoint(raw: string): string | null {
 }
 
 function defaultRequest(endpoint: string): NonNullable<AuthDependencies['request']> {
-  return async (path, init) => await fetch(`${endpoint}${path}`, init);
+  return async (path, init) => await fetch(path.startsWith('/') ? `${endpoint}${path}` : path, init);
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -85,6 +86,7 @@ function expectedBinding(service: CliAccountServiceSelection): Omit<CallbackBind
 }
 
 function mapError(error: unknown): CliAccountServiceAuthOutcome {
+  if (error instanceof CredentialRequestRedirectError) throw error;
   if (error instanceof Error && error.name === 'AbortError') return { kind: 'cancelled' };
   if (error instanceof Error && /timeout/iu.test(error.message)) return { kind: 'timed_out' };
   return { kind: 'account_service_unavailable' };
@@ -109,7 +111,14 @@ export async function authenticateCliAccountService(
   const canonicalOrigin = canonicalizeKeyChallengeV2AudienceOrigin(input.service.canonicalServerUrl);
   if (!endpoint || !canonicalOrigin || canonicalOrigin !== input.service.canonicalServerUrl) return { kind: 'destination_mismatch' };
   if (input.signal?.aborted) return { kind: 'cancelled' };
-  const request = deps.request ?? defaultRequest(endpoint);
+  const transport = deps.request ?? defaultRequest(endpoint);
+  const request: NonNullable<AuthDependencies['request']> = async (path, init) =>
+    await fetchWithCredentialRedirectRefusal(`${endpoint}${path}`, init, async (requestUrl, requestInit) => {
+      const url = String(requestUrl);
+      // Keep the injected path transport's contract while giving the shared
+      // redirect owner the absolute URL of every actual HTTP hop.
+      return await transport(url.startsWith(`${endpoint}/`) ? url.slice(endpoint.length) : url, requestInit);
+    });
 
   try {
     if (input.method.kind === 'key') {

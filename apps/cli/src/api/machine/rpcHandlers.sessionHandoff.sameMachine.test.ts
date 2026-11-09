@@ -10,7 +10,6 @@ import { readSessionHandoffRuntimeConfig } from './sessionHandoff/runtimeConfig'
 import { runSessionHandoffPrepareTargetJob } from './sessionHandoff/prepareTargetRunJob';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
-import { createMachineTransferRouteCache } from '@/machines/transfer/transferRouteCache';
 import { readFile } from 'node:fs/promises';
 import { importSessionHandoffAgentBundle } from '@/session/handoff/agentBundle/import';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -44,12 +43,10 @@ describe('same-machine handoff admission', () => {
         request: { handoffId, sourceMachineId: 'local', targetMachineId: 'local', targetPath: `~/${basename(root)}/code/my-app`,
           negotiatedTransportStrategy: 'direct_peer', sourceSessionStorageMode: 'persisted', endpointCandidates: [] },
         actualTransportStrategy: 'direct_peer', pendingStatus: { handoffId, jobId, status: 'pending', phase: 'staging_target', recoveryActions: [] },
-        prepareJobStore, sourceExportStore, prepareTargetJobLeaseOwnerId: `local-home-test:${process.pid}`, prepareTargetJobLeaseTtlMs: 5_000,
+        prepareJobStore, sourceExportStore, prepareTargetJobLeaseOwnerId: `local-home-test:${process.pid}`,
         machineTransferChannel: undefined, directPeerTransfer: undefined,
         importSessionBundle: (bundle, directory, sessionStorageMode) =>
           importSessionHandoffAgentBundle({ bundle, targetPath: directory, sessionStorageMode }),
-        getTransferRouteCache: () => createMachineTransferRouteCache({ serverId: 'local' }),
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
       });
       const preparedJob = await prepareJobStore.read(jobId);
       expect(preparedJob, preparedJob?.lastErrorMessage).toMatchObject({ status: { status: 'ready_for_cutover' }, prepareTargetResult: { resume: { directory: targetPath, resume: 'native-session' } } });

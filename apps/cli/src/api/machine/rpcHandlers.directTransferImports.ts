@@ -3,10 +3,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { DirectTransferImportOpenRequestSchema } from '@/machines/transfer/directTransferImportOpenRequest';
-import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import { readFilesystemTransferErrorCode, type PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
-import type { RpcHandlerRegistrar } from '../rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
+import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 type DirectTransferImportPrepareResponse = Readonly<
   | {
@@ -22,12 +23,13 @@ type DirectTransferImportPrepareResponse = Readonly<
   | {
       success: false;
       error: string;
+      errorCode?: string;
     }
 >;
 
 type DirectTransferImportAbortResponse = Readonly<
   | { success: true; aborted?: boolean }
-  | { success: false; error: string }
+  | { success: false; error: string; errorCode?: string }
 >;
 
 const DIRECT_TRANSFER_IMPORT_UPLOAD_ID_MAX_CHARS = 256;
@@ -35,7 +37,8 @@ const DIRECT_TRANSFER_IMPORT_UPLOAD_ID_MAX_CHARS = 256;
 export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<{
   admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
   rpcHandlerManager: RpcHandlerRegistrar;
-  prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
+  effectAdmission?: FilesystemEffectAdmission;
+  prepareImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, context?: RpcHandlerContext) => Promise<Readonly<{
     uploadId: string;
     destDisplayPath: string;
     expectedSizeBytes: number;
@@ -47,9 +50,12 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
   abortImportSession: (
     input: Readonly<{ uploadId: string }>,
     filesystemScope?: PreparedFilesystemTransferScope | null,
+    context?: RpcHandlerContext,
   ) => Promise<void | Readonly<{ aborted: boolean }>>;
 }>): void {
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE, async (data: unknown) => {
+  const registrar = params.effectAdmission ? createFilesystemEffectRpcRegistrar(params.rpcHandlerManager, params.effectAdmission)
+    : params.rpcHandlerManager;
+  registrar.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE, async (data: unknown, context) => {
     const parsedRequest = DirectTransferImportOpenRequestSchema.safeParse(data);
     if (!parsedRequest.success) {
       return { success: false, error: 'Invalid direct transfer import request' } satisfies DirectTransferImportPrepareResponse;
@@ -61,20 +67,27 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
     }
 
     try {
-      const prepared = await params.prepareImportSession(request);
+      const prepared = context ? await params.prepareImportSession(request, undefined, context)
+        : await params.prepareImportSession(request);
       return {
         success: true,
         ...prepared,
       } satisfies DirectTransferImportPrepareResponse;
     } catch (error) {
+      const errorCode = readFilesystemTransferErrorCode(error, '');
+      if (errorCode === 'filesystem_identity_custody_unavailable') return {
+        success: false, error: 'Direct transfer import is unavailable', errorCode,
+      } satisfies DirectTransferImportPrepareResponse;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Direct transfer import prepare failed',
+        ...(error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string'
+          ? { errorCode: error.errorCode } : {}),
       } satisfies DirectTransferImportPrepareResponse;
     }
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT, async (data: unknown) => {
+  registrar.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT, async (data: unknown, context) => {
     const uploadId = data && typeof data === 'object' && !Array.isArray(data)
       && typeof (data as { uploadId?: unknown }).uploadId === 'string'
       ? (data as { uploadId: string }).uploadId.trim()
@@ -87,15 +100,22 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
     }
 
     try {
-      const result = await params.abortImportSession({ uploadId }, null);
+      const result = context ? await params.abortImportSession({ uploadId }, null, context)
+        : await params.abortImportSession({ uploadId }, null);
       return {
         success: true,
         ...(result ? { aborted: result.aborted } : {}),
       } satisfies DirectTransferImportAbortResponse;
     } catch (error) {
+      const errorCode = readFilesystemTransferErrorCode(error, '');
+      if (errorCode === 'filesystem_identity_custody_unavailable') return {
+        success: false, error: 'Direct transfer import is unavailable', errorCode,
+      } satisfies DirectTransferImportAbortResponse;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Direct transfer import abort failed',
+        ...(error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string'
+          ? { errorCode: error.errorCode } : {}),
       } satisfies DirectTransferImportAbortResponse;
     }
   });

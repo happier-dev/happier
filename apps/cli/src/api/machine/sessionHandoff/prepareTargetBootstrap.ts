@@ -19,7 +19,7 @@ import {
 } from './prepareTargetState';
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
 import {
-  resolvePrepareTargetResponseAfterFastPath,
+  resolvePrepareTargetResponse,
   type SessionHandoffPrepareTargetErrorResponse,
   type SessionHandoffPrepareTargetResponse,
 } from './prepareTargetResponse';
@@ -42,7 +42,6 @@ type SessionHandoffPrepareTargetBootstrapRun = Readonly<{
   kind: 'bootstrap';
   jobId: string;
   pendingStatus: SessionHandoffStatus;
-  runJob: Promise<void>;
 }>;
 
 export type SessionHandoffPrepareTargetBootstrapResult =
@@ -56,15 +55,12 @@ export type ResolvePrepareTargetBootstrapInput = Readonly<{
   sourceExportStore: SessionHandoffSourceExportStore;
   activePrepareJobs: Map<string, Promise<void>>;
   prepareTargetJobLeaseOwnerId: string;
-  prepareTargetJobLeaseTtlMs: number;
   runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: SessionHandoffPrepareTargetJobInput['machineTransferChannel'];
   directPeerTransfer: SessionHandoffPrepareTargetJobInput['directPeerTransfer'];
   importSessionBundle: SessionHandoffPrepareTargetJobInput['importSessionBundle'];
   resolveExistingSessionState?: SessionHandoffPrepareTargetJobInput['resolveExistingSessionState'];
   prepareManagedDirectoryPlacement?: (request: SessionHandoffPrepareTargetRequest) => Promise<SessionHandoffPrepareTargetJobInput['managedDirectoryPayloadPlacement']>;
-  getTransferRouteCache: SessionHandoffPrepareTargetJobInput['getTransferRouteCache'];
-  invalidateDirectPeerRouteCacheForHandoffMachines: SessionHandoffPrepareTargetJobInput['invalidateDirectPeerRouteCacheForHandoffMachines'];
 }>;
 
 export async function resolvePrepareTargetResponseAfterBootstrap(input: Readonly<{
@@ -76,12 +72,11 @@ export async function resolvePrepareTargetResponseAfterBootstrap(input: Readonly
     return input.bootstrap.response;
   }
 
-  return resolvePrepareTargetResponseAfterFastPath({
+  return resolvePrepareTargetResponse({
     handoffId: input.handoffId,
     jobId: input.bootstrap.jobId,
     pendingStatus: input.bootstrap.pendingStatus,
     prepareJobStore: input.prepareJobStore,
-    runJob: input.bootstrap.runJob,
   });
 }
 
@@ -216,14 +211,11 @@ export async function resolvePrepareTargetBootstrap(
       prepareJobStore: input.prepareJobStore,
       sourceExportStore: input.sourceExportStore,
       prepareTargetJobLeaseOwnerId: input.prepareTargetJobLeaseOwnerId,
-      prepareTargetJobLeaseTtlMs: input.prepareTargetJobLeaseTtlMs,
       machineTransferChannel: input.machineTransferChannel,
       directPeerTransfer: input.directPeerTransfer,
       importSessionBundle: input.importSessionBundle,
       ...(input.resolveExistingSessionState ? { resolveExistingSessionState: input.resolveExistingSessionState } : {}),
       ...(managedDirectoryPayloadPlacement ? { managedDirectoryPayloadPlacement } : {}),
-      getTransferRouteCache: input.getTransferRouteCache,
-      invalidateDirectPeerRouteCacheForHandoffMachines: input.invalidateDirectPeerRouteCacheForHandoffMachines,
     }).finally(() => {
       if (input.activePrepareJobs.get(jobId) === runJob) {
         input.activePrepareJobs.delete(jobId);
@@ -237,7 +229,6 @@ export async function resolvePrepareTargetBootstrap(
     kind: 'bootstrap',
     jobId,
     pendingStatus,
-    runJob,
   };
 }
 

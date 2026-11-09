@@ -6,6 +6,17 @@ import { HttpStatusError } from './client/httpStatusError';
 vi.mock('axios');
 
 describe('fetchChanges', () => {
+  it('requests only caller-consumed domains while accepting an older unselected response', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: {
+      changes: [{ cursor: 4, kind: 'feed', entityId: 'legacy-feed', changedAt: 1 }], nextCursor: 4,
+    } });
+    const result = await fetchChanges({ token: fetchChanges.name, after: 3, kinds: ['session', 'share'] });
+    const url = new URL(String(vi.mocked(axios.get).mock.calls.at(-1)?.[0]));
+    expect(url.pathname).toBe('/v2/changes');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ after: '3', limit: '200', kinds: 'session,share' });
+    expect(result).toMatchObject({ status: 'ok', response: { changes: [{ kind: 'feed' }], nextCursor: 4 } });
+  });
+
   it('reads Account identity from the captured Home with its credential', async () => {
     vi.mocked(axios.get).mockImplementation(async (url, options) => {
       if (url !== 'https://workflow-home.test/v1/account/profile'
@@ -98,12 +109,8 @@ describe('fetchChanges', () => {
       sessionAccessSessionId: 'session-current',
     });
 
-    expect(axios.get).toHaveBeenCalledWith(
-      expect.stringContaining('/v2/changes'),
-      expect.objectContaining({
-        params: { after: 0, limit: 200, sessionAccessSessionId: 'session-current' },
-      }),
-    );
+    const url = new URL(String(vi.mocked(axios.get).mock.calls.at(-1)?.[0]));
+    expect(Object.fromEntries(url.searchParams)).toEqual({ after: '0', limit: '200', sessionAccessSessionId: 'session-current' });
     expect(result).toMatchObject({
       status: 'ok',
       response: {

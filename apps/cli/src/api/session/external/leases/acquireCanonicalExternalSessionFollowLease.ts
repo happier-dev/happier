@@ -66,6 +66,7 @@ export async function drainCanonicalExternalSessionTranscriptReadAfter(params: R
         seenCursors.add(cursor);
         if (!result.hasMore) return { outcome: 'advanced' };
     }
+    return;
 }
 
 export function canAttemptCanonicalExternalSessionLiveFollow(params: Readonly<{
@@ -390,6 +391,7 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
             if (result.outcome === 'already_current') return { outcome: 'already_current' };
             if (result.outcome !== 'advanced') return { outcome: result.outcome };
             if (await commitProgress(current, observedProgress, nextCursor)) return { outcome: 'advanced' };
+            return undefined;
         }),
     };
 }

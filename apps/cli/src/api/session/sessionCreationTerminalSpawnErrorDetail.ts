@@ -8,6 +8,8 @@ import {
 } from './sessionCreationInitialAccess';
 import { isSessionCreationPlacementError } from './sessionCreationPlacementError';
 import { SessionCreationInitialTriggerError } from './sessionCreationInitialTriggerError';
+import { AccountEncryptionCurrentnessUnavailableError } from '../client/accountEncryptionCurrentness';
+import { classifyServerEndpointError } from '../client/classifyServerEndpointError';
 
 /**
  * The exact no-effect refusal a Session create-or-load failure carries to a
@@ -19,6 +21,16 @@ import { SessionCreationInitialTriggerError } from './sessionCreationInitialTrig
 export function readSessionCreationTerminalSpawnErrorDetail(
   error: unknown,
 ): SessionCreationTerminalSpawnErrorDetail | null {
+  if (error instanceof AccountEncryptionCurrentnessUnavailableError) {
+    const failure = classifyServerEndpointError(error);
+    return {
+      kind: 'session_creation_currentness_unavailable', code: 'currentness_unavailable',
+      reason: failure.kind === 'timeout' || failure.kind === 'network' ? failure.kind
+        : failure.statusCode !== undefined ? 'http_error' : 'invalid_response',
+      retryable: failure.retryable,
+      ...(failure.statusCode !== undefined ? { statusCode: failure.statusCode } : {}),
+    };
+  }
   if (isSessionCreationPlacementError(error)) {
     return { kind: 'session_creation_organization_invalid', code: 'organization_invalid' };
   }

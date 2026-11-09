@@ -63,7 +63,6 @@ export function initializeSessionClientConnection(
         syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
         shouldSyncSessionSnapshotOnConnect: () => boolean;
         syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
-        flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
         flushDurableSessionMutationsOnReconnect: () => Promise<void>;
         replayLatestSessionPresenceOnReconnect?: () => void;
         reofferAcceptedProviderInputSettlementsAfterConnection?: () => void;
@@ -109,6 +108,24 @@ export function initializeSessionClientConnection(
         serverUrl: params.transport.serverUrl,
         token: params.token,
     });
+    const invalidateSessionConnection = async (): Promise<void> => {
+        publisherReadinessAbortController?.abort();
+        publisherReadinessAbortController = null;
+        const invalidated = serverContractController.invalidate({
+            socket: currentTransportSocket ?? undefined,
+        });
+        // Retire this transport synchronously. Compatibility invalidation can
+        // yield while a new connection publishes and acknowledges its handlers.
+        params.rpcHandlerManager.onSocketDisconnect();
+        try {
+            userSocket?.disconnect();
+        } catch {
+            // ignore
+        }
+        await params.setSessionSyncPendingInputServerContractResult?.(
+            invalidated ? composeInvalidatedSessionClientConnectionContract(invalidated) : null,
+        );
+    };
     const sessionConnectionSupervisor = createManagedConnectionSupervisor({
         ...DEFAULT_MANAGED_CONNECTION_POLICY,
         createTransport: () => {
@@ -256,11 +273,6 @@ export function initializeSessionClientConnection(
             if (params.shouldSyncSessionSnapshotOnConnect()) {
                 void params.syncSessionSnapshotFromServer({ reason: 'connect' });
             }
-            await params.flushQueuedSessionMessagesOnReconnect().catch((error) => {
-                logger.debug('[API] Failed to replay queued session messages on reconnect', {
-                    error: serializeAxiosErrorForLog(error),
-                });
-            });
             if (!flushedDurableMutations) {
                 await params.flushDurableSessionMutationsOnReconnect().catch((error) => {
                     logger.debug('[API] Failed to flush durable session mutations on reconnect', {
@@ -272,37 +284,9 @@ export function initializeSessionClientConnection(
         },
         onDisconnected: async ({ event }) => {
             logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
-            publisherReadinessAbortController?.abort();
-            publisherReadinessAbortController = null;
-            const invalidated = serverContractController.invalidate({
-                socket: currentTransportSocket ?? undefined,
-            });
-            await params.setSessionSyncPendingInputServerContractResult?.(
-                invalidated ? composeInvalidatedSessionClientConnectionContract(invalidated) : null,
-            );
-            params.rpcHandlerManager.onSocketDisconnect();
-            try {
-                userSocket?.disconnect();
-            } catch {
-                // ignore
-            }
+            await invalidateSessionConnection();
         },
-        onAuthFailed: async () => {
-            publisherReadinessAbortController?.abort();
-            publisherReadinessAbortController = null;
-            const invalidated = serverContractController.invalidate({
-                socket: currentTransportSocket ?? undefined,
-            });
-            await params.setSessionSyncPendingInputServerContractResult?.(
-                invalidated ? composeInvalidatedSessionClientConnectionContract(invalidated) : null,
-            );
-            params.rpcHandlerManager.onSocketDisconnect();
-            try {
-                userSocket?.disconnect();
-            } catch {
-                // ignore
-            }
-        },
+        onAuthFailed: invalidateSessionConnection,
     });
 
     return {

@@ -48,7 +48,7 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
     expect(homeReads).toBe(2);
   });
 
-  it('admits only exact release after Home admission and retains fresh peer verification', async () => {
+  it.each(['release', 'inspect'] as const)('admits only exact %s after Home admission and retains fresh peer verification', async phase => {
     const admission = { actorAccountId: 'source-owner', custodianAccountId: 'source-owner',
       machineId: 'source-writer', installationId: 'source-installation', role: 'manage' as const,
       encryptionMode: 'plain' as const };
@@ -57,10 +57,17 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
       source: { v: 1, phase: 'prepare', operationId: 'approved-action', accountServerId: 'home',
         sourceMachineId: admission.machineId, sourceRootPath: '/source', sourceContext: {
           machineAdmission: { ...admission, actorAccountId: 'borrower' }, callerAuthority: 'account_automation', workspaceWrites: 'allow' } },
-      target: { v: 1, phase: 'release', operationId: 'approved-action', accountServerId: 'home',
+      target: { v: 1, phase, operationId: 'approved-action', accountServerId: 'home',
         targetMachineId: 'target-writer', targetRootPath: '/target' } });
-    const request = { method: `target-writer:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`,
-      params: { v: 1, bootstrapOperationId: deriveWorkspaceSyncRelationshipId('approved-action'), targetWorkspaceRefId: 'accepted-target', reason: 'relationship_committed' },
+    const selection = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const preview = { kind: 'preview', workspace: { serverId: 'home', refId: 'source-ref' }, machineId: admission.machineId,
+      targetMachineId: 'target-writer', targetWorkspaceRefId: 'accepted-target', expectedRelationship: {
+        v: 1, relationshipId: deriveWorkspaceSyncRelationshipId('approved-action'), controllerMachineId: admission.machineId,
+        alphaWorkspaceRefId: 'source-ref', betaWorkspaceRefId: 'accepted-target', mode: 'keep_synced', enabled: false,
+        createdAtMs: 1, updatedAtMs: 2, contentPolicy: { ...selection, policyDigest: computeWorkspaceSyncPolicyDigest(selection) },
+      } };
+    const request = { method: `target-writer:${phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`,
+      params: phase === 'inspect' ? preview : { v: 1, bootstrapOperationId: deriveWorkspaceSyncRelationshipId('approved-action'), targetWorkspaceRefId: 'accepted-target', reason: 'relationship_committed' },
       machineAdmission: admission, callerAuthority: 'account_automation' as const, workspaceSyncSourceWriterTargetRouting: routing };
     let current = true;
     let homeReads = 0;
@@ -68,6 +75,13 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
       resolveCustodianAccountId: async () => 'target-owner', resolveHomeServerIdentityId: async () => 'home',
       verifyMachineAdmission: async () => { homeReads++; return current; } };
     expect(await authorizeMachineRpcRequest(request, boundary, 'authenticated_home_socket')).toEqual({ ok: true });
+    expect(homeReads).toBe(0);
+    const manager = new RpcHandlerManager({ scopePrefix: boundary.machineId, localMachineId: boundary.machineId,
+      scopeKind: 'machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: (incoming, source) => authorizeMachineRpcRequest(incoming, boundary, source) });
+    manager.registerHandler(phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+      : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, async () => ({ admitted: true }));
+    expect(await manager.handleRequest(request, undefined, 'authenticated_home_socket')).toEqual({ admitted: true });
     expect(homeReads).toBe(0);
     expect(await authorizeMachineRpcRequest(request, boundary)).toEqual({ ok: true });
     expect(homeReads).toBe(1);
@@ -82,6 +96,37 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
     expect(await authorizeMachineRpcRequest({ ...request,
       method: `target-writer:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`,
     }, boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    if (phase === 'inspect') {
+      for (const params of [
+        { ...preview, expectedRelationship: { ...preview.expectedRelationship, relationshipId: 'foreign-relationship' } },
+        { ...preview, expectedRelationship: { ...preview.expectedRelationship, controllerMachineId: 'foreign-controller' } },
+        { ...preview, targetMachineId: 'foreign-target' },
+        { ...preview, targetWorkspaceRefId: 'foreign-ref' },
+        { ...preview, workspace: { ...preview.workspace, serverId: 'foreign-home' } },
+        { ...preview, workspace: { ...preview.workspace, refId: 'foreign-source' } },
+        { ...preview, rootPath: '/caller-selected-root' },
+        { actionReceiptId: 'receipt', actionInput: {} },
+      ]) expect(await authorizeMachineRpcRequest({ ...request, params }, boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+      expect(await authorizeMachineRpcRequest({ ...request, params: {
+        ...preview, expectedRelationship: { ...preview.expectedRelationship, relationshipId: 'approved-action' },
+      } }, boundary, 'authenticated_home_socket')).toEqual({ ok: true });
+      expect(await authorizeMachineRpcRequest({ ...request,
+        method: `target-writer:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE}`,
+      }, boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+      expect(await authorizeMachineRpcRequest({ ...request, workspaceSyncSourceWriterTargetRouting: undefined,
+        machineAdmission: { ...admission, actorAccountId: 'borrower' },
+      }, boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+      const targetAdmission = { ...admission, machineId: boundary.machineId,
+        installationId: 'target-installation', actorAccountId: 'target-owner', custodianAccountId: 'target-owner' };
+      const workspaceSyncTargetRouting = { ...routing.target, targetContext: {
+        ...routing.source.sourceContext, machineAdmission: targetAdmission,
+      } };
+      expect(await authorizeMachineRpcRequest({ ...request, workspaceSyncTargetRouting }, boundary,
+        'authenticated_home_socket')).toMatchObject({ ok: false });
+      expect(await authorizeMachineRpcRequest({ ...request, workspaceSyncSourceWriterTargetRouting: undefined,
+        workspaceSyncTargetRouting, machineAdmission: targetAdmission,
+      }, boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    }
   });
 
   it('keeps native isolation for a non-release phase on the same signed transport', async () => {

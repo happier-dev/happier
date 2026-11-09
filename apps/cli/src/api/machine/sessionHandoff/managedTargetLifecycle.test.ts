@@ -92,7 +92,7 @@ describe('managed handoff target lifecycle', () => {
       let stopped = false;
       const abort = createSessionHandoffAbortActionHandler({ activeServerDir, prepareJobStore, sourceExportStore,
         directPeerTransfer: undefined, readPersistedPrepareJob, buildPrepareJobRecord, buildStartPendingStatus,
-        buildSourceExportOnlyPrepareJobId, invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined, invalidRequest,
+        buildSourceExportOnlyPrepareJobId, invalidRequest,
         stopSessionForHandoff: async (sessionId: string, options?: Readonly<{ expectedSpawnNonce: string }>) => {
           expect(stopResult).not.toBe('preexisting_unowned');
           expect(sessionId).toBe(binding.sessionId);
@@ -130,7 +130,7 @@ describe('managed handoff target lifecycle', () => {
       const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
       const deps = { activeServerDir, prepareJobStore, sourceExportStore, directPeerTransfer: undefined,
         readPersistedPrepareJob, buildPrepareJobRecord, buildStartPendingStatus, buildSourceExportOnlyPrepareJobId,
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined, invalidRequest,
+        invalidRequest,
       };
       const ready = async (operationId: string, status: 'pending' | 'ready_for_cutover' = 'ready_for_cutover') => {
         const allocated = await owner.allocateForHandoff({ operationId, sessionId: 'session' });

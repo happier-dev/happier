@@ -58,6 +58,7 @@ import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/w
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 /** Owner-row fields whose shared metadata opens under the Session key, so a reseal can prove the key is this Session's. */
 function sessionKeyBoundRowFields(params: Readonly<{ sessionDataKey: Uint8Array; ownerMachineKey: Uint8Array }>) {
@@ -305,7 +306,7 @@ describe('Account API token HTTP adapter', () => {
     const bodies: unknown[] = [];
     const preset = { id: 'preset-a', homeId: 'srv_preset', revision: 1, name: 'Guest',
       owner: { kind: 'account', accountId: 'owner' },
-      recipe: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
+      launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
       controller: { machineId: 'host-a', installationId: 'installation-a' },
     } as const;
     app.post('/v1/machines/presets/list', async (request) => {
@@ -371,7 +372,7 @@ describe('Account API token HTTP adapter', () => {
     expect(current).toBe(false);
   });
 
-  it('executes token access updates and terminal policy changes through the declared Home owners', async () => {
+  it('executes token access updates through the declared Home owner', async () => {
     const requests: unknown[] = [];
     const tokenId = '12345678-1234-4234-8234-123456789abc';
     const grant = { ...API_TOKEN_FULL_GRANT_V1, approve: true };
@@ -383,16 +384,10 @@ describe('Account API token HTTP adapter', () => {
         grant, parentTokenId: null, activeChildCount: 0, embedConfig: null,
       } };
     });
-    app.post('/v1/account/security/terminal-present-user', async (request) => {
-      requests.push(request.body);
-      return { policy: 'disallowed' };
-    });
     const deps = createAccountServerActionDeps({ token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test' });
     const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
     const automationContext = { surface: 'cli' as const, authority: 'account_automation' as const };
     expect(await executor.execute('account.apiTokens.update', { tokenId, label: 'Edited', grant }, automationContext))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(await executor.execute('account.security.terminalPresentUser.set', { policy: 'disallowed' }, automationContext))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(requests).toEqual([]);
     const context = { surface: 'cli' as const, authority: 'present_user' as const };
@@ -401,12 +396,7 @@ describe('Account API token HTTP adapter', () => {
       presentUserConfirmation: { actionId: 'account.apiTokens.update' },
     }))
       .toMatchObject({ ok: true, result: { apiToken: { tokenId, label: 'Edited', grant } } });
-    expect(await executor.execute('account.security.terminalPresentUser.set', { policy: 'disallowed' }, {
-      ...context,
-      presentUserConfirmation: { actionId: 'account.security.terminalPresentUser.set' },
-    }))
-      .toMatchObject({ ok: true, result: { policy: 'disallowed' } });
-    expect(requests).toEqual([{ tokenId, label: 'Edited', grant }, { policy: 'disallowed' }]);
+    expect(requests).toEqual([{ tokenId, label: 'Edited', grant }]);
   });
 
   it('rejects a fixed Home endpoint without its matching Home identity', () => {
@@ -672,11 +662,19 @@ describe('Account API token HTTP adapter', () => {
         capabilities: { serverIdentity: { serverIdentityId: homeId } } }), { status: 200 }));
     }
     app.post('/v1/projects/execution/config/read', async () => ({ status: 'absent' }));
-    app.post('/v1/account/project-rows/list', async () => ({ status: 'listed', coverage: 'complete', rows: [
+    const projectReads: unknown[] = [];
+    app.post('/v1/account/project-rows/list', async request => {
+      projectReads.push(request.body);
+      return projectAccountRowsReadHttpResponse([
       ...[sourceParent, workerParent, ...(kind === 'ordinary' ? [] : [child]), unrelated].map(value => { const key = { kind: 'workspace-ref', serverId: homeId, id: value.id };
         return { key, revision: 1, content: { t: 'plain', v: { key, value } } }; }),
       { key: { kind: 'relationship-graph' }, revision: graphRevision, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: graph } } },
-    ] }));
+      ...Array.from({ length: 1024 }, (_, index) => {
+        const key = { kind: 'project-organization', serverId: homeId, projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+      }),
+    ], '/list', request.body).data;
+    });
     const target = { id: 'actual', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'instance' },
       machineId: worker.machineId, workspaceId: worker.id, workspace: { serverId: homeId, workspaceId: worker.id, machineId: worker.machineId, rootPath: worker.rootPath },
       cwd: worker.rootPath, declaration: { workspaceRefId: worker.id, selection: { kind: 'manifest', name: 'web' } },
@@ -697,7 +695,7 @@ describe('Account API token HTTP adapter', () => {
         reprojectRows = false;
         const before = getActiveProjectAccountRowsSnapshot();
         const after = await runWithServerHttpBaseUrl('https://account.test', () =>
-          readProjectAccountRows({ credentials: { token: 'interactive', encryption: null }, serverId: homeId }));
+          readProjectAccountRows({ credentials: { token: 'interactive', encryption: null }, serverId: homeId, publication: 'installed' }));
         expect(after.scopeKey).toBe(before?.scopeKey);
         expect(after.workspaceRefs).toEqual(before?.workspaceRefs);
         expect(after.relationships).toEqual(before?.relationships);
@@ -712,8 +710,13 @@ describe('Account API token HTTP adapter', () => {
     const get = () => executor.execute('projects.service.placement.get', { workspace: { serverId: homeId, refId: source.id }, serviceName: 'web' },
       { surface: 'cli', serverId: homeId });
     try {
+      await runWithServerHttpBaseUrl('https://account.test', () => readProjectAccountRows({
+        credentials: { token: 'interactive', encryption: null }, serverId: homeId, publication: 'installed',
+      }));
+      projectReads.length = 0;
       expect(await get()).toMatchObject({ ok: true, result: { status: 'ready', provenance: 'default', placement: { runsOn: { kind: 'primary' } },
         actual: { status: 'present', target } } });
+      expect(projectReads).toEqual([{ kinds: ['workspace-ref', 'relationship-graph'] }]);
       reprojectRows = true;
       expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'present', target } } });
       machineReadFails = true;
@@ -840,7 +843,6 @@ describe('Account API token HTTP adapter', () => {
       return { tokens: [] };
     });
     app.post('/v1/auth/api-tokens/update', async () => { requests += 1; return {}; });
-    app.post('/v1/account/security/terminal-present-user', async () => { requests += 1; return {}; });
     const deps = createAccountServerActionDeps({
       token: 'bound-home-token',
       serverId: 'home-a',
@@ -857,10 +859,6 @@ describe('Account API token HTTP adapter', () => {
     });
     await expect(deps.accountApiTokensUpdateAction!({
       input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'Edited' },
-      context: { surface: 'cli', serverId: 'home-b' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
-    await expect(deps.accountSecurityTerminalPresentUserSetAction!({
-      input: { policy: 'disallowed' },
       context: { surface: 'cli', serverId: 'home-b' },
     })).resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     expect(requests).toBe(0);
@@ -1260,6 +1258,71 @@ describe('Account API token HTTP adapter', () => {
       input: {},
       context: { surface: 'cli', serverId: 'home' },
     })).rejects.toThrow();
+  });
+
+  it('reuses one section identity when an ambiguous create retries the same Action request', async () => {
+    const folders = new Map<string, {
+      folderId: string; folderKey: string; parentFolderId: null; parentFolderKey: null; sortKey: string | null;
+      display: { t: 'plain'; v: { name: string; icon: string | null } }; archivedAt: null; createdAt: number; updatedAt: number;
+    }>();
+    let writes = 0;
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    app.get('/v2/session-organization', async () => ({ snapshot: {
+      schemaVersion: 1, version: folders.size, pins: [], folders: [...folders.values()], tags: [],
+      folderAssignments: [], tagAssignments: [], orderEntries: [], labels: [],
+    } }));
+    app.post('/v2/session-organization/folders', async (request, reply) => {
+      const parsed = (await import('@happier-dev/protocol')).CreateOrUpdateSessionOrganizationFolderRequestSchema.parse(request.body);
+      const folder = {
+        folderId: parsed.folderId!, folderKey: parsed.folderKey, parentFolderId: null, parentFolderKey: null,
+        sortKey: parsed.sortKey, display: parsed.display as { t: 'plain'; v: { name: string; icon: string | null } },
+        archivedAt: null, createdAt: 1, updatedAt: 1,
+      };
+      folders.set(folder.folderId, folder);
+      writes += 1;
+      if (writes === 1) return reply.code(503).send({ error: 'database_connection_unavailable' });
+      return { folder };
+    });
+    const executor = createActionExecutor(createAccountServerActionDeps({
+      token: 'plain-token', serverId: 'home', serverHttpBaseUrl: 'http://account.test',
+    }) as Parameters<typeof createActionExecutor>[0]);
+    const context = {
+      surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
+      actionRequestId: 'section-create-attempt-1',
+    };
+
+    expect(await executor.execute('session.sections.create', { name: 'Research' }, context))
+      .toMatchObject({ ok: false, errorCode: 'database_connection_unavailable' });
+    expect(await executor.execute('session.sections.create', { name: 'Research' }, context))
+      .toMatchObject({ ok: true, result: { section: { displayState: { value: { name: 'Research' } } } } });
+    expect(writes).toBe(1);
+    expect([...folders]).toHaveLength(1);
+  });
+
+  it.each(['exact', 'selector'] as const)('sets and clears tag assignments through the real %s Action transport without display keys', async form => {
+    const { SetSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } = await import('@happier-dev/protocol/sessions/organization/mutations');
+    let tagIds: string[] = [];
+    let encryptionReads = 0;
+    app.get('/v1/account/encryption', async () => { encryptionReads += 1; return { mode: 'e2ee', updatedAt: 1 }; });
+    app.put('/v2/session-organization/tag-assignments/:sessionId', async request => {
+      const body = SetSessionTagAssignmentsRequestSchema.parse(request.body);
+      const { sessionId } = request.params as { sessionId: string };
+      tagIds = body.tagIds;
+      return SetSessionTagAssignmentsResponseSchema.parse({ sessionId, tagIds });
+    });
+    // Only HTTP is substituted by the existing Fastify adapter. Catalog input,
+    // SessionTarget preparation, Account transport and acknowledgement stay real.
+    const executor = createActionExecutor(createAccountServerActionDeps({ token: 'interactive',
+      serverId: 'home', serverHttpBaseUrl: 'http://account.test' }) as Parameters<typeof createActionExecutor>[0]);
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home', defaultSessionId: 'session-1' };
+    const sessionId = form === 'exact' ? 'session-1' : { selector: 'self' as const };
+    const assigned = await executor.execute('session.tags.set', { sessionId, tagIds: ['tag-1'] }, context);
+    expect(tagIds).toEqual(['tag-1']);
+    expect(assigned).toEqual({ ok: true, result: { sessionId: 'session-1', tagIds: ['tag-1'] } });
+    expect(await executor.execute('session.tags.set', { sessionId, tagIds: [] }, context))
+      .toEqual({ ok: true, result: { sessionId: 'session-1', tagIds: [] } });
+    expect(tagIds).toEqual([]);
+    expect(encryptionReads).toBe(0);
   });
 
   it('materializes section and tag resource displays for the exact E2EE Home and opens listed labels', async () => {

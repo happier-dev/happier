@@ -47,6 +47,23 @@ export type CommittedTranscriptMessageOptions = Readonly<{
   admission?: CommittedTranscriptAdmission;
   /** Observe the existing outbox ACK without delaying local publication. */
   observeCommitSignal?: AbortSignal;
+  /** What changed since this localId's last Home-acknowledged commit; Home still stores `body`. */
+  append?: CommittedTranscriptAppend;
+}>;
+
+/**
+ * The text appended since the writer's last Home-acknowledged commit of the same localId. Home
+ * relays it to live consumers in place of the whole message when its stored row is that base.
+ */
+export type CommittedTranscriptAppend = Readonly<{
+  /** The full message's record shape carrying only the appended text (and the current meta). */
+  body: ACPMessageData;
+  /** Text length of the acknowledged base commit. */
+  baseLength: number;
+  /** The acknowledged base commit's source `updatedAt` (its segment meta `updatedAtMs`). */
+  baseUpdatedAt: number;
+  /** Text length after the append; sealed with `baseLength` and the localId inside the append. */
+  length: number;
 }>;
 
 export type CommittedTranscriptOriginal = Readonly<{ localId: string; committedSequence: number }>;
@@ -86,6 +103,8 @@ export type TranscriptSessionPort = Readonly<{
       createdAt: number;
       updatedAt?: number;
       meta?: Record<string, unknown>;
+      /** The segment's full current body, observed locally only (never sent). */
+      snapshotBody?: ACPMessageData;
     },
   ) => EphemeralSendResult;
   /**

@@ -45,7 +45,7 @@ describe('ApiSessionClient injected transport', () => {
         vi.unstubAllGlobals();
     });
 
-    it('delivers Pending from the required startup snapshot without a daemon wake', async () => {
+    it.each(['snapshot', 'push'] as const)('delivers Pending from startup %s without a daemon wake', async source => {
         const sessionId = 'startup-pending-session';
         const fields = buildSessionMetadataEnvelopeFields({ credentials: { token: 'startup-token', encryption: null },
             accountEncryptionMode: 'plain', metadata: createTestMetadata(), agentState: null, storedContentMode: 'plain' });
@@ -69,8 +69,10 @@ describe('ApiSessionClient injected transport', () => {
             ? { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
                 metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
                 agentState: fields.agentState, share: null,
-                pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }) } }
-            : { status: 404, data: {} });
+                pendingCount: source === 'snapshot' ? 1 : 0, pendingBlockedCount: 0, pendingVersion: 1 }) } }
+            : String(url).includes(`/v1/sessions/${sessionId}/messages`)
+                ? { status: 200, data: { messages: [] } }
+                : { status: 404, data: {} });
         client = new ApiSessionClient('startup-token', createMockSession({ id: sessionId, encryptionMode: 'plain',
             metadataLayoutVersion: 1, metadata: { v: 1 }, pendingCount: 0, pendingVersion: 0 }), {
             metadataAuthority: { kind: 'shared_editor' }, localMachineId: 'startup-machine',
@@ -83,7 +85,7 @@ describe('ApiSessionClient injected transport', () => {
         await vi.waitFor(() => expect(socket.getHandler('session')).toBeTypeOf('function'));
         await expect(client.claimCurrentSessionPublisherAuthorityForStartup()).resolves.toEqual({ status: 'claimed' });
         await client.refreshSessionSnapshotFromServerRequired({ reason: 'startup-drain' });
-        expect(client.getPendingQueueState()).toMatchObject({ pendingCount: 1, pendingVersion: 1 });
+        expect(client.getPendingQueueState()).toMatchObject({ pendingCount: source === 'snapshot' ? 1 : 0, pendingVersion: 1 });
         await client.activateDurableMutationDelivery();
         const queue = new MessageQueue2<string>(() => 'startup');
         client.onUserMessage(message => { queue.pushImmediate(message.content.text, 'startup'); return true; });
@@ -91,11 +93,69 @@ describe('ApiSessionClient injected transport', () => {
             session: createSessionProviderInputConsumerSessionAdapter(client), reconcileWhenEmpty: 'skip', refreshBeforeQueuedBatch: false });
         const lifetime = new AbortController();
         try {
+            if (source === 'push') {
+                await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.some(([url]) =>
+                    new URL(String(url)).pathname === `/v1/sessions/${sessionId}/messages`)).toBe(true));
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(queue.size()).toBe(0);
+                socket.trigger('update', { id: 'late-pending', seq: 1, createdAt: 1, body: {
+                    t: 'pending-changed', sid: sessionId, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2,
+                } });
+            }
             // No update event or pending-wake RPC is supplied. The first input
             // pass must consume the canonical snapshot before it waits for a wake.
             await expect(consumer.waitForNextInput({ abortSignal: lifetime.signal }))
                 .resolves.toMatchObject({ message: 'retained pending input', mode: 'startup' });
         } finally { lifetime.abort(); }
+    });
+
+    it('delivers a late committed prompt by push after an empty startup catch-up', async () => {
+        const sessionId = 'late-startup-input';
+        const activity = createSessionRuntimeActivityHomeStub({ machineId: 'late-input-machine' });
+        const socket = createApiSessionSocketStub({ connected: true,
+            emitWithAck: (event, payload) => activity.answer(event, payload) ?? { ok: false } });
+        const features = FeaturesResponseSchema.parse({ features: { sharing: { pendingQueueV2: { enabled: true } } },
+            capabilities: { session: { runtimeActivity: { protocolVersion: 2 }, pendingInput: { protocolVersion: 3 },
+                publisherAuthority: { protocolVersion: 1 } } } });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
+        const emptyCatchUp = new Promise<void>(resolve => {
+            vi.mocked(axios.get).mockImplementation(async url => {
+                if (new URL(String(url)).pathname === `/v1/sessions/${sessionId}/messages`) {
+                    resolve();
+                    return { status: 200, data: { messages: [] } };
+                }
+                return { status: 404, data: {} };
+            });
+        });
+        client = new ApiSessionClient('late-input-token', createMockSession({ id: sessionId, encryptionMode: 'plain',
+            metadata: createTestMetadata({ startedBy: 'daemon' }) }), {
+            metadataAuthority: { kind: 'shared_editor' }, localMachineId: 'late-input-machine',
+            durableMutationDeliveryInitiallyActive: false,
+            initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({ sessionId,
+                agentRuntimeApplicability: 'supported' })],
+            transport: { serverId: 'late-input-home', serverUrl: 'https://late-input.example.test',
+                createSessionSocketTransport: () => ({ socket: socket as never, transport: createSocketTransportAdapter(socket as never) }) },
+        });
+        await vi.waitFor(() => expect(socket.getHandler('update')).toBeTypeOf('function'));
+        const delivered: string[] = [];
+        // Committed transcript originals are observations; provider input is
+        // claimed separately through Pending rather than replayed from history.
+        client.on('user-message', message => { delivered.push(message.content.text); });
+        client.onUserMessage(() => true);
+        await emptyCatchUp;
+        await vi.waitFor(() => expect(client?.getServerIdentityId()).not.toBeUndefined());
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(delivered).toEqual([]);
+        const readsBeforePush = vi.mocked(axios.get).mock.calls.length;
+        socket.trigger('update', { id: 'late-update', seq: 1, createdAt: 1, body: {
+            t: 'new-message', sid: sessionId, delivery: 'full', message: {
+                id: 'late-message', seq: 1, localId: 'late-prompt', createdAt: 1,
+                messageRole: 'user', inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' },
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Late committed prompt' } } },
+            },
+        } });
+        await vi.waitFor(() => expect(delivered).toEqual(['Late committed prompt']));
+        expect(vi.mocked(axios.get).mock.calls.length).toBe(readsBeforePush);
     });
 
     it.each(['owner', 'shared_editor'] as const)('keeps an idle input waiter parked across unchanged layout-one snapshot reads (%s)', async authority => {

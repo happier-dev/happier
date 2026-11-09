@@ -1,5 +1,3 @@
-import { type AccountE2eeCustodyHolder } from '@/persistence';
-import { admitCliReportedAccountMode } from './accountModeAdmission';
 import axios from '@/api/client/credentialAxios';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionCurrentnessErrorResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
@@ -8,11 +6,12 @@ import type { AccountEncryptionCurrentnessResponse, AccountEncryptionCurrentness
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, type AccountE2eeCustodyHolder } from '@/persistence';
 import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesServerApiTimeout';
 import { createHttpStatusError } from './httpStatusError';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { classifyServerEndpointError } from './classifyServerEndpointError';
+import { admitCliReportedAccountMode } from './accountModeAdmission';
 
 export class AccountEncryptionCurrentnessUnavailableError extends Error {
   readonly code = 'account_encryption_currentness_unavailable' as const;

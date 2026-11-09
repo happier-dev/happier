@@ -14,12 +14,47 @@ describe('createSessionClientMaterializationRuntime', () => {
 	    });
   }
 
+  it('retains exact Pending custody until settlement without per-input expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createRuntime();
+      const timersBefore = vi.getTimerCount();
+      runtime.markPendingQueueMaterializedLocalId('late-echo');
+      expect(vi.getTimerCount()).toBe(timersBefore);
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(runtime.hasMaterializedLocalId('late-echo')).toBe(true);
+      expect(runtime.shouldKeepUserSocketConnected({
+        hasProviderInputConsumer: false, hasMetadataWaiters: false,
+      })).toBe(true);
+      runtime.deleteMaterializedLocalId('late-echo');
+      expect(runtime.hasMaterializedLocalId('late-echo')).toBe(false);
+      expect(runtime.shouldKeepUserSocketConnected({
+        hasProviderInputConsumer: false, hasMetadataWaiters: false,
+      })).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves active-turn delivery authority with the server Pending owner', () => {
     const runtime = createRuntime({
       initialLatestTurnStatus: 'in_progress',
     });
 
     expect(runtime.shouldAttemptPendingMaterialization()).toBe(true);
+    expect(runtime.getPendingClaimForegroundState(false)).toBe('active_unsteerable');
+    expect(runtime.getPendingClaimForegroundState(true)).toBe('active_steerable');
+  });
+
+  it('projects local turn begin and completion into claim facts without skipping server admission', () => {
+    const runtime = createRuntime({ initialLatestTurnStatus: 'completed' });
+    expect(runtime.getPendingClaimForegroundState(true)).toBe('ready');
+    runtime.observeSessionTurnMutationAction('begin', 100);
+    runtime.applyLatestTurnStatus('completed', 99);
+    expect(runtime.getPendingClaimForegroundState(false)).toBe('active_unsteerable');
+    expect(runtime.shouldAttemptPendingMaterialization()).toBe(true);
+    runtime.observeSessionTurnMutationAction('complete', 200);
+    expect(runtime.getPendingClaimForegroundState(true)).toBe('ready');
   });
 
   it('does not attempt materialization when every queued pending row is blocked', () => {

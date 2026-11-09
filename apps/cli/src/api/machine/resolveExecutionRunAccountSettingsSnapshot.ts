@@ -8,12 +8,16 @@ import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerSto
 import { projectMcpServerCatalogRefreshFailure } from '@/settings/mcp/hydrateMcpServerCatalog';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonly<{
     machineId: string;
     serverHttpBaseUrl: string;
     readCredentials: () => Promise<StoredCredentials | null>;
     isOwnerCurrent: () => boolean;
+    /** Physical host custody only; a Run must still bind its own admitted Account. */
+    readHostAgentExecutionContext?: NonNullable<AccountSettingsSnapshotResolver['readAgentExecutionContext']>;
     onSettings: (settings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'] | null) => void;
 }>) {
     const machineId = input.machineId.trim();
@@ -58,8 +62,10 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
         savedSecretOperationContext: SavedSecretOperationContextV1;
         refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
         isCurrent(signal?: AbortSignal): Promise<boolean>;
+        readAgentExecutionContext?: AccountSettingsSnapshotResolver['readAgentExecutionContext'];
     }>): AccountSettingsSnapshotResolver => {
         const read: AccountSettingsSnapshotResolver = async demand => runWithServerHttpBaseUrl(source.serverHttpBaseUrl, async () => {
+            await source.readAgentExecutionContext?.(demand?.signal);
             if (!await source.isCurrent(demand?.signal) || !await source.refreshAccountSettings(demand?.signal)) throw authorizationChanged();
             const captured = source.savedSecretOperationContext;
             if (!await captured.isCurrent(demand?.signal)) throw authorizationChanged();
@@ -77,17 +83,60 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
             if (!snapshot) throw authorizationChanged();
             return snapshot;
         });
-        return Object.assign(read, { readOperationContext: () => source.savedSecretOperationContext });
+        return Object.assign(read, { readOperationContext: () => source.savedSecretOperationContext,
+            ...(source.readAgentExecutionContext ? { readAgentExecutionContext: source.readAgentExecutionContext } : {}) });
     };
     const forInvocation = (ingress?: RpcHandlerContext): AccountSettingsSnapshotResolver => {
+        const authorization = ingress?.callerInputAuthorization;
+        const requester = readRequesterAccountActionContext(authorization);
         const bootstrap = ingress?.requesterSessionBootstrap;
-        if (!bootstrap) return resolveSnapshot;
-        return createRequesterSnapshotReader({
+        if (bootstrap && !requester) return createRequesterSnapshotReader({
             serverHttpBaseUrl: bootstrap.serverHttpBaseUrl,
             savedSecretOperationContext: bootstrap.savedSecretOperationContext,
             refreshAccountSettings: signal => bootstrap.refreshAccountSettings(undefined, signal),
             isCurrent: async signal => !disposed && input.isOwnerCurrent() && await bootstrap.isCurrent(signal),
         });
+        // Preserve existing non-MCP readers, but do not invent an Agent source
+        // for a historical or unbound invocation. The base reader has none.
+        if (!requester || !ingress?.machineAdmission || !input.readHostAgentExecutionContext) return resolveSnapshot;
+        const admission = ingress.machineAdmission;
+        const isCurrent = async (signal?: AbortSignal) => {
+            signal?.throwIfAborted();
+            const current = !disposed && input.isOwnerCurrent()
+                && readRequesterAccountActionContext(authorization) === requester
+                && await (requester.isCustodyCurrent ?? requester.isCurrent)();
+            signal?.throwIfAborted();
+            return current && !disposed && input.isOwnerCurrent();
+        };
+        const readAgentExecutionContext: NonNullable<AccountSettingsSnapshotResolver['readAgentExecutionContext']> = async signal => {
+            // MCP's SDK graph is needed only after host initialization, not while
+            // installing the Account reader into the Machine transport itself.
+            const { refuseMcpExecutionSource } = await import('@/mcp/runtime/mcpExecutionSource');
+            if (!await isCurrent(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
+            const host = await input.readHostAgentExecutionContext!(signal);
+            const physical = host?.requesterIdentity;
+            const binding = requester.authorization.binding;
+            if (!host || !physical || physical.kind !== 'isolated' || physical.separationRequired || physical.accountAutomation
+                || binding.serverIdentityId !== physical.requester.serverId
+                || admission.actorAccountId !== binding.accountId
+                || binding.machineId !== admission.machineId || binding.installationId !== admission.installationId
+                || binding.custodianAccountId !== admission.custodianAccountId
+                || admission.machineId !== physical.requester.machineId
+                || admission.installationId !== physical.requester.installationId
+                || !await isCurrent(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
+            // The opened Account facet proves the caller, while the separately
+            // qualified host proves custody. Only the identity owner compares them.
+            const requesterIdentity = selectHostRequesterExecutionIdentity({
+                hostHomeServerIdentityId: binding.serverIdentityId,
+                hostAccountAgent: { accountId: binding.accountId, custodianAccountId: physical.requester.accountId,
+                    machineId: admission.machineId, installationId: admission.installationId },
+            });
+            if (requesterIdentity.kind !== 'isolated') return refuseMcpExecutionSource('requester_authority_unavailable');
+            return { requesterIdentity, isolationEnabled: host.isolationEnabled };
+        };
+        return createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            savedSecretOperationContext: requester.savedSecretOperationContext,
+            refreshAccountSettings: signal => requester.refreshAccountSettings(signal), isCurrent, readAgentExecutionContext });
     };
     return Object.assign(resolveSnapshot, {
         forInvocation,

@@ -24,8 +24,6 @@ import {
   type PeerTcpTunnelRelayAuthorizationV2,
   createDirectRouteGrantSigningInputV2,
   createEphemeralPeerRouteProofHandleV2,
-  createPeerMachineRpcRequestHashV1,
-  resolveMachineRpcRoutePolicy,
   type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 import { PEER_MACHINE_RPC_DIRECT_PATH_V2, PeerMachineRpcDirectResponseV2Schema } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
@@ -315,14 +313,9 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
             new TextEncoder().encode(createDirectRouteGrantSigningInputV2(grantPayload)), keys.secretKey,
           )).toString('base64url'),
         } };
-        const requestHash = createPeerMachineRpcRequestHashV1({ method, params,
-          grantId: grantPayload.grantId, endpointFingerprint: 'speech-endpoint', replayKey: method });
         const response = await direct.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2, payload: {
           v: 2, requestId: method, method, params, grant, proof: proofHandle.sign(grant),
           routeKind: 'loopback_direct', flowKind: 'machine_rpc', endpointFingerprint: 'speech-endpoint',
-          ...(resolveMachineRpcRoutePolicy(method).commandReceiptRequired ? { commandReceipt: {
-            v: 1, issuer: 'ui', issuedAtMs: 2000, requestHash, replayKey: method,
-          } } : {}),
         } });
         expect(response.statusCode).toBe(200);
         // This is the same strict consumer used before capture by productionRoute.

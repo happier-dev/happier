@@ -4,7 +4,6 @@ import type { ManagedConnectionTransport } from '@happier-dev/connection-supervi
 import { createHappierSocket } from '@happier-dev/sync-client';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, resolveServerSocketIoTransports } from '../client/serverHttpBaseUrl';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
-import { buildTerminalAuthorityCeiling } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import {
     buildCurrentCliClientCompatibilitySocketAuth,
 } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -25,7 +24,6 @@ export function createSessionScopedSocketConnection(opts: { token: string; sessi
         ...(opts.machineId ? { machineId: opts.machineId } : {}),
         authExtras: {
             ...buildCurrentCliClientCompatibilitySocketAuth('session-runner'),
-            ...buildTerminalAuthorityCeiling({ token: opts.token, serverHttpBaseUrl: serverUrl }),
         },
         ...(transports ? { transports } : null),
         withCredentials: true,
@@ -48,7 +46,6 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
         clientPurpose: opts.clientPurpose,
         authExtras: {
             ...buildCurrentCliClientCompatibilitySocketAuth('session-runner'),
-            ...buildTerminalAuthorityCeiling({ token: opts.token, serverHttpBaseUrl: serverUrl }),
             ...(opts.authorityCeiling === 'account_automation' ? { authorityCeiling: opts.authorityCeiling } : {}),
         },
         ...(transports ? { transports } : null),

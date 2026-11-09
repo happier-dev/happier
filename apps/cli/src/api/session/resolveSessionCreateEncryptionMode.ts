@@ -19,8 +19,8 @@ export type DesiredSessionCreateEncryptionModeResult = Readonly<{
  * The preflight either resolves the Session mode or reports that the Account
  * currentness read could not be served. Client encryption-requirement
  * refusals still throw: they are decisions, not
- * transport outcomes. The caller owns the transport classification (offline
- * mode, stable auth errors) because the same transport serves its own request.
+ * transport outcomes. Callers retain this phase and cause separately from
+ * Session creation while preserving stable authentication refusals.
  */
 export type SessionCreateEncryptionModeResolution =
   | (Readonly<{ status: 'resolved' }> & DesiredSessionCreateEncryptionModeResult)

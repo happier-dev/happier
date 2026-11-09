@@ -1,11 +1,21 @@
 import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
+import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMockSession, createPlainSessionFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
+import { applyStartupMetadataUpdateToSession, buildModelOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 const {
     mockIo,
@@ -92,6 +102,108 @@ describe('ApiSessionClient shared-editor metadata authority', () => {
         clients.add(client);
         return client;
     }
+
+    it('contracts an existing Home Team witness through the actual current-publisher client with V1 intent', async () => {
+        const credentials = { token: 'owner-token', encryption: null };
+        const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'same-model' } as const;
+        const metadata = createTestMetadata({ flavor: 'codex', modelSelectionIntentV1: { v: 1 as const, updatedAt: 10, selection } });
+        const session = createPlainSessionFixture({ id: 'session-team-witness', metadataLayoutVersion: 1,
+            metadataVersion: 4, agentStateVersion: 2, metadata });
+        const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+            metadata, agentState: null, storedContentMode: 'plain' });
+        const acceptedTeamCredentialBinding = sessionModelSelectionV2TeamBindingIntent(SessionModelSelectionV2Schema.parse({
+            v: 2, updatedAt: 10, ref: { source: 'team_resource', teamId: 'team-1', resourceId: 'resource-1',
+                expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId },
+        }));
+        fetchSessionByIdCompatMock.mockResolvedValue({ ...session, metadata: fields.sharedMetadata.ciphertext,
+            ownerMetadata: fields.ownerMetadata, agentState: null, dataEncryptionKey: null, acceptedTeamCredentialBinding });
+        patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+            sharedMetadata: { version: 5 }, agentState: { version: 3 } });
+        const home = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1' });
+        mockIo.mockImplementation(() => createApiSessionSocketStub({ connected: true,
+            emitWithAck: (event, payload) => home.answer(event, payload) ?? { result: 'success' } }));
+        const features = FeaturesResponseSchema.parse({ features: {},
+            capabilities: { session: { publisherAuthority: { protocolVersion: 1 } } } });
+        const client = createTestApiSessionClient(ApiSessionClient, credentials.token, session, {
+            localMachineId: 'machine-1',
+            metadataAuthority: { kind: 'owner', credentials },
+            getAccountEncryptionCurrentness: async () => createAccountEncryptionCurrentnessFixture(),
+            getServerFeaturesSnapshot: () => ({ status: 'ready', features }),
+        });
+        clients.add(client);
+        const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 20 });
+        await client.updateMetadataAsCurrentPublisher(candidate.update);
+        const patch = patchSessionMetadataEnvelopeTupleMock.mock.calls.at(-1)?.[0].patch;
+        expect(patch).toMatchObject({ mode: 'owner_team_credential_binding',
+            publisherPrecondition: { machineId: 'machine-1', publisherGeneration: '1' },
+            teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: null }] });
+        expect(() => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(patch)).not.toThrow();
+    });
+
+    it.each(['unchanged', 'cleared', 'replaced', 'revision_changed'] as const)(
+        'qualifies captured Team startup with the actual client current binding after CAS (%s)', async kind => {
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) {
+                return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            }
+            throw new Error(`Unexpected HTTP request in Team startup fixture: ${url}`);
+        });
+        const credentials = { token: 'owner-token', encryption: null };
+        const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, teamId: 'team-1',
+            resourceId: 'resource-1', expectedResourceRevision: 7, deliveryMode: 'brokered' as const };
+        const modelSelection = { v: 1 as const, updatedAt: 10, ref: {
+            agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'same-model',
+        } };
+        const { teamId: _teamId, ...launchBinding } = binding;
+        const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/repo', options: {
+            directory: '/repo', modelSelection, teamCredentialBindings: [launchBinding],
+        } }));
+        const session = createPlainSessionFixture({ id: 'session-team-startup-cas', metadataLayoutVersion: 1,
+            metadataVersion: 4, agentStateVersion: 2, metadata });
+        const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+            metadata, agentState: null, storedContentMode: 'plain' });
+        const rawSession = { ...session, metadata: fields.sharedMetadata.ciphertext,
+            ownerMetadata: fields.ownerMetadata, agentState: null, dataEncryptionKey: null,
+            acceptedTeamCredentialBinding: binding };
+        fetchSessionByIdCompatMock.mockResolvedValueOnce(rawSession).mockResolvedValue({
+            ...rawSession, metadataVersion: 5, agentStateVersion: 3,
+            acceptedTeamCredentialBinding: kind === 'cleared' ? null
+                : kind === 'replaced' ? { ...binding, resourceId: 'resource-2' }
+                : kind === 'revision_changed' ? { ...binding, expectedResourceRevision: 8 } : binding,
+        });
+        patchSessionMetadataEnvelopeTupleMock.mockResolvedValueOnce({ success: false,
+            error: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+            sharedMetadata: { version: 5 }, agentState: { version: 3 } })
+            .mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+                sharedMetadata: { version: 6 }, agentState: { version: 4 } });
+        const client = createTestApiSessionClient(ApiSessionClient, credentials.token, session, {
+            metadataAuthority: { kind: 'owner', credentials },
+            getAccountEncryptionCurrentness: async () => createAccountEncryptionCurrentnessFixture(),
+        });
+        clients.add(client);
+        await applyStartupMetadataUpdateToSession({ session: client, next: createTestMetadata({ flavor: 'codex', hostPid: 42 }),
+            nowMs: 20, permissionModeOverride: null, modelOverride: buildModelOverride({ modelSelection }),
+            capturedTeamCredentialBinding: binding, mode: 'attach' });
+        const patches = patchSessionMetadataEnvelopeTupleMock.mock.calls.map(([request]) => request.patch);
+        expect(patches).toHaveLength(2);
+        expect(patches[0].ownerMetadata).toMatchObject({ t: 'plain', v: { runtime: {
+            modelSelectionIntentV2: { updatedAt: 10, ref: { source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1' } },
+        } } });
+        if (kind === 'unchanged' || kind === 'revision_changed') {
+            expect(readSessionModelSelectionV2FromMetadata(client.getMetadataSnapshot())).toMatchObject({
+                updatedAt: 10, ref: { source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
+                    expectedResourceRevision: kind === 'revision_changed' ? 8 : 7 },
+            });
+            expect(client.getMetadataSnapshot()).not.toHaveProperty('modelSelectionIntentV1');
+        } else {
+            expect(client.getMetadataSnapshot()?.modelSelectionIntentV1).toEqual({ v: 1, updatedAt: 10, selection: modelSelection.ref });
+            expect(client.getMetadataSnapshot()).not.toHaveProperty('modelSelectionIntentV2');
+        }
+        // Representation repair neither restores a cleared binding nor replaces
+        // another accepted resource. No extra read is introduced by the repair.
+        expect(patches.every(patch => patch.teamCredentialBindings === undefined)).toBe(true);
+        expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(2);
+    });
 
     it('publishes cold layout-1 pending requests and their settlement through the owner tuple', async () => {
         const session = createPlainSessionFixture({

@@ -7,7 +7,7 @@ import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMutationV1Sch
   type SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SessionTranscriptObservationInputSchema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { createApiSessionSocketStub, createSessionTranscriptHomeStub, createSessionRuntimeActivityHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
-import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
 import { ApiSessionClient } from './sessionClient';
@@ -28,15 +28,20 @@ afterEach(async () => {
 });
 
 describe('Session reply publication through the real Action and publisher', () => {
-  it('settles a Discussion pass through its protected current input and the real C2 publisher', async () => {
-    const sessionId = 'discussion-participant';
+  it.each(['bound', 'relay'] as const)('settles an exact pass through its protected current input and the real C2 publisher (%s)', async placement => {
+    const sessionId = 'c' + '1'.repeat(24);
     const discussionAddressing = { discussionId: 'discussion-1', messageId: 'question-1', throughSeq: 3, participantSessionId: sessionId };
     const progress = { v: 1, mode: 'return', acceptedTurnId: 'discussion-turn', disposition: 'observing', discussion: discussionAddressing } as const;
     let originalAvailable = true;
     http.get.mockImplementation(async (url: string) => url.endsWith('/v1/auth/ping') ? { status: 200, data: {} }
+      : url.endsWith('/v1/account/encryption/currentness') ? { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) }
       : url.endsWith('/messages/by-local-id/discussion-input/reply')
       ? { status: 200, data: originalAvailable ? { v: 1, status: 'available', progress } : { v: 1, status: 'none' } }
       : url.endsWith('/messages/reply-capability') ? { status: 200, data: { v: 1, protocolVersions: [1] } }
+      : url.endsWith(`/v2/sessions/${sessionId}`) ? { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'discussion-machine', path: '/repo' }),
+        dataEncryptionKey: null, agentState: null,
+      }) } }
       : { status: 404, data: {} });
     const mutations: unknown[] = [];
     const publications: unknown[] = [];
@@ -62,14 +67,26 @@ describe('Session reply publication through the real Action and publisher', () =
     });
     clients.add(client);
     client.observeHostTurnFacts({ turnId: 'discussion-turn', facts: { initiator: 'user', workDepth: 0 } });
-    const executor = createActionExecutor(createCliActionDeps({ credentials, token: credentials.token, sessionId,
+    const executor = createActionExecutor(createCliActionDeps({ credentials, token: credentials.token,
+      sessionId: placement === 'bound' ? sessionId : 'daemon-global',
       serverId: 'discussion-home', serverHttpBaseUrl: 'https://discussion-home.test',
-      mode: 'plain', ctx: null, sessionMessageReplyPublisher: client }));
+      mode: 'plain', ctx: null,
+      ...(placement === 'bound' ? { sessionMessageReplyPublisher: client } : {
+        // The authenticated RPC transport is the boundary; registration, Action
+        // admission, exact-turn publication and original custody remain real.
+        sessionActionRpcTransport: async request => client.rpcHandlerManager.invokeLocal(request.method, request.input, {
+          rpcContext: { callerAuthority: 'account_automation', sessionActionOrigin: request.origin },
+        }),
+      }) }));
     const source = { sourceSessionId: sessionId, sourceTurnId: 'discussion-turn', sourceInputId: 'discussion-input',
       via: 'action', discussionAddressing } as const;
     const context = { surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId,
-      serverId: 'discussion-home', sessionInputSource: source } as const;
-    const pass = await executor.execute('discussion.pass', { discussionId: discussionAddressing.discussionId }, context);
+      serverId: 'discussion-home', sessionInputSource: source, actionRequestId: 'reply-action',
+      ...(placement === 'relay' ? { actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } } : {}) } as const;
+    const executePass = (invocationContext: Parameters<typeof executor.execute>[2] = context) => placement === 'bound'
+      ? executor.execute('discussion.pass', { discussionId: discussionAddressing.discussionId }, invocationContext)
+      : executor.execute('session.message.reply', { sessionId, requestLocalId: source.sourceInputId, reply: { kind: 'pass' } }, invocationContext);
+    const pass = await executePass();
     expect(pass.ok, JSON.stringify({ result: pass, socketConnected: socket.connected,
       connection: Reflect.get(client, 'currentConnectionState') })).toBe(true);
     expect(pass)
@@ -77,7 +94,7 @@ describe('Session reply publication through the real Action and publisher', () =
     expect(mutations).toEqual([{ v: 1, sessionId, requestSessionId: sessionId, requestLocalId: source.sourceInputId,
       operation: { kind: 'fulfill', turnId: source.sourceTurnId, outcome: { kind: 'pass' } } }]);
     expect(publications).toEqual([]);
-    for (const [input, rejectedContext] of [
+    if (placement === 'bound') for (const [input, rejectedContext] of [
       [{ discussionId: 'another-discussion' }, context],
       [{ discussionId: discussionAddressing.discussionId }, { ...context, sessionInputSource: undefined }],
       [{ discussionId: discussionAddressing.discussionId }, { ...context, sessionInputSource: { ...source, sourceInputId: undefined } }],
@@ -87,11 +104,11 @@ describe('Session reply publication through the real Action and publisher', () =
       [{ discussionId: discussionAddressing.discussionId, requestLocalId: 'authored-other-input' }, context],
     ] as const) expect(await executor.execute('discussion.pass', input, rejectedContext)).toMatchObject({ ok: false });
     expect(mutations).toHaveLength(1);
-    expect(await executor.execute('discussion.pass', { discussionId: discussionAddressing.discussionId }, {
+    expect(await executePass({
       ...context, sessionInputSource: { ...source, sourceTurnId: 'unrelated-turn' },
     })).toMatchObject({ result: { ok: false, error: 'conflict' } });
     originalAvailable = false;
-    expect(await executor.execute('discussion.pass', { discussionId: discussionAddressing.discussionId }, context))
+    expect(await executePass())
       .toMatchObject({ result: { ok: false, error: 'unavailable' } });
     expect(mutations).toHaveLength(1);
     expect(publications).toEqual([]);

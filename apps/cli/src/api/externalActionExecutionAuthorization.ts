@@ -907,10 +907,11 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     } catch { return fail('content_unavailable'); }
   }
   const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
+  const requestId = input.requestId;
   const binding = mode.mode === 'e2ee' && material ? { serverIdentityId: input.serverIdentityId!, accountId,
     ...(workflowBinding && !('authentication' in workflowBinding) ? { credentialId: workflowBinding.credentialId }
       : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
-    actionId, requestId: input.requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
+    actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
   const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: input.input, randomBytes,
     ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.input !== null && typeof input.input === 'object'
@@ -919,7 +920,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         SessionSpawnNewActionInputV2Schema.parse(input.input))),
     } : {}),
   })
-    : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: input.requestId, target: input.target, input: input.input,
+    : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: input.input,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
   let body: unknown = envelope;
   const access = machine?.access;
@@ -931,9 +932,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     const execution = createExternalActionSourceMachineRpcExecution({ authorization,
       target: authorization.binding.target, sourceMachineId: spawnChild.machineId,
       sourceInstallationId: spawnChild.installationId, effectActionId: input.actionId,
-      method, requestId: envelope.requestId, params, managedAdmission, privateKey: spawnChild.privateKey });
+      method, requestId, params, managedAdmission, privateKey: spawnChild.privateKey });
     return execution && spawnChild.context.originalActionEnvelope ? { externalActionExecution: execution,
-      method, requestId: envelope.requestId, params, originalActionEnvelope: spawnChild.context.originalActionEnvelope } : null;
+      method, requestId, params, originalActionEnvelope: spawnChild.context.originalActionEnvelope } : null;
   })() : undefined;
   if (spawnChild && !nativeCredentialSpawnChild) return fail('admission_unavailable');
   if (workflow && workflowActionOrigin) {
@@ -1810,7 +1811,7 @@ export function readAdmittedBotTemplateParentActionIdV1(context: ActionExecutorC
   const parent = readHostAdmittedReviewedRootV1(context);
   const actionId = context?.externalActionExecutionAuthorization?.binding.actionId;
   return parent && parent.actionId === actionId
-    && BOT_TEMPLATE_ACTION_IDS_V1.some(candidate => candidate === parent.actionId) ? parent.actionId : null;
+    && BOT_TEMPLATE_ACTION_IDS_V1.some(candidate => candidate === actionId) ? parent.actionId : null;
 }
 
 export function resolveExternalActionServerRequestHeaders(input: Readonly<{

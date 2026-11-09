@@ -1,4 +1,6 @@
 import type { SessionBroadcast, SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
+import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryMachineResultUpdateSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { z } from 'zod/mini';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execution/runs/activityV1';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
@@ -43,6 +45,7 @@ export interface ServerToDaemonEvents {
 }
 
 export interface DaemonToServerEvents {
+  [SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT]: (data: z.infer<typeof ScmDiffSummaryMachineResultUpdateSchema>) => void;
   [DISCUSSION_AGENT_POST_EVENT_V1]: (data: DiscussionAgentApprovedReplayPublicationV1,
     cb: (answer: DiscussionAgentApprovedReplayResponseV1) => void) => void;
   [SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1]: (data: SessionMessageReplyMachineMutationV1,

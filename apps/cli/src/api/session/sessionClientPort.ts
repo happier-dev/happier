@@ -159,6 +159,7 @@ export interface SessionClientPort {
   keepAlive(thinking: boolean, mode: 'local' | 'remote'): void;
 
   getMetadataSnapshot(): Metadata | null;
+  getPendingMessageEditHoldIds?(): readonly string[] | null;
   getCommittedUserMessageSeq?(localId: string): number | null;
   subscribeCommittedUserMessageSeq?(listener: CommittedUserMessageSeqListener): () => void;
   subscribePendingProviderInputRetirement?(listener: (localId: string) => void): () => void;

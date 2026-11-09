@@ -1660,6 +1660,53 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(target.readReceived()).toBeUndefined();
   });
 
+  it.each(['plain', 'e2ee'] as const)('delivers a fresh cross-Account Stop from JSON CLI without disclosing a sign-in (%s)', async mode => {
+    const events: string[] = [];
+    const actionId = 'localServices.actions.stopManaged' as const;
+    const approval = { kind: 'approval_request_created' as const, artifactId: 'stop-approval', actionId };
+    const target = await home(mode, events, { originalOwnAction: actionId, ownExecution: { ok: true, result: approval } });
+    const input = { requestId: 'stop-request', action: 'stop_managed', target: {
+      kind: 'managed_service', managedServiceId: 'moved-instance', machineId: 'alice-machine',
+      workspaceId: 'worker-ref', cwd: '/worker/project', declaration: {
+        workspaceRefId: 'worker-ref', selection: { kind: 'manifest', name: 'web' },
+      },
+    }, force: false, confirmationNonce: 'stop-confirmation' };
+    const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null
+      : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
+    terminal.interactive = false;
+    const output = captureConsoleText();
+    try {
+      await handleActionsCommand(['invoke', actionId, '--machine-id', 'alice-machine', '--request-id', 'request-1',
+        '--input-json', JSON.stringify(input), '--yes', '--json'], {
+        readCredentialsFn: async () => credentials,
+        createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+            actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } }),
+            getAccountSettings: () => ({ actionsSettingsV1: { v: 1,
+              actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } }) } }),
+      });
+      const emitted: unknown = JSON.parse(output.text());
+      expect(emitted, JSON.stringify(emitted)).toMatchObject({ ok: true, data: approval });
+      const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      expect(received.executionAuthorization?.binding).toMatchObject({ actionId, accountId: 'bob',
+        custodianAccountId: 'alice', machineId: 'alice-machine' });
+      const opening = { authorization: received.executionAuthorization, machineId: 'alice-machine',
+        installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
+      const codec = openManagedControllerActionCodecV1(opening);
+      expect(codec).not.toBeNull();
+      expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
+      if (received.envelope.v === 2 && codec) expect(openExternalActionRequestV2({
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: received.envelope,
+        binding: received.executionAuthorization!.binding, material: codec,
+      })?.input).toEqual(input);
+      else expect(received.envelope).toMatchObject({ v: 1, input });
+      expect(terminal.prompts).toEqual([]);
+      expect(events).toEqual(['home-authorized', 'dispatch']);
+      expect(JSON.stringify(received)).not.toContain(credentials.token);
+    } finally { output.restore(); }
+  });
+
   it.each(['yes', 'no', 'noninteractive', 'json'] as const)('requires actual CLI confidentiality consent before private delivery (%s)', async answer => {
     const events: string[] = [];
     const target = await home('plain', events);

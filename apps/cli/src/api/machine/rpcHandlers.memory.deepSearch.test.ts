@@ -52,6 +52,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
 
       const memoryWorker = {
         stop: () => {},
+        waitForReady: async () => {},
         reloadSettings: async () => {},
         clearIndex: async () => {},
         ensureUpToDate: async () => {},
@@ -193,6 +194,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
 
       const memoryWorker = {
         stop: () => {},
+        waitForReady: async () => {},
         reloadSettings: async () => {},
         clearIndex: async () => {},
         ensureUpToDate: async () => {},

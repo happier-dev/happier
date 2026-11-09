@@ -318,7 +318,7 @@ async function fetchSessionRecordWithEncryptionMode(params: Readonly<{
           : { deadlineAtMs: params.deadlineAtMs }),
       }),
       fetchAccountEncryptionCurrentness({
-        token: params.credentials.token,
+        credentials: params.credentials, token: params.credentials.token,
         ...(params.signal ? { signal: params.signal } : {}),
       }),
     ]);

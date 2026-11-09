@@ -1,8 +1,8 @@
 import type { Credentials, StoredCredentials } from '@/persistence';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { createMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { getRandomBytes } from '../encryption';
+import { decodeBase64, getRandomBytes } from '../encryption';
 
 export type EncryptionContext = {
   encryptionKey: Uint8Array;
@@ -28,30 +28,16 @@ export function requireAccountEncryptionCredentials(
   return credential;
 }
 
-export function resolveSessionEncryptionContext(credential: StoredCredentials): EncryptionContext {
+export async function resolveSessionEncryptionContext(credential: StoredCredentials): Promise<EncryptionContext> {
   const keyedCredential = requireAccountEncryptionCredentials(credential);
-  // Resolve encryption key
-  let dataEncryptionKey: Uint8Array | null = null;
-  let encryptionKey: Uint8Array;
-  let encryptionVariant: 'legacy' | 'dataKey';
+  const resourceKey = await createResourceDataKey({ credentials: keyedCredential, mode: 'e2ee' });
+  if (resourceKey.mode !== 'e2ee') throw new AccountEncryptionMaterialUnavailableError();
 
-  if (keyedCredential.encryption.type === 'dataKey') {
-    // Use a per-session key for session message encryption (AES-256-GCM).
-    encryptionKey = getRandomBytes(32);
-    encryptionVariant = 'dataKey';
-
-    // Publish the per-session key encrypted for the account's content keypair public key.
-    dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({
-      dataKey: encryptionKey,
-      recipientPublicKey: keyedCredential.encryption.publicKey,
-      randomBytes: getRandomBytes,
-    });
-  } else {
-    encryptionKey = keyedCredential.encryption.secret;
-    encryptionVariant = 'legacy';
-  }
-
-  return { encryptionKey, encryptionVariant, dataEncryptionKey };
+  return {
+    encryptionKey: resourceKey.dataKey,
+    encryptionVariant: 'dataKey',
+    dataEncryptionKey: decodeBase64(resourceKey.dataEncryptionKey),
+  };
 }
 
 export function resolveMachineEncryptionContext(credential: StoredCredentials): EncryptionContext {

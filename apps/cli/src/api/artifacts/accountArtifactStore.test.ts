@@ -1,4 +1,3 @@
-import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -18,6 +17,11 @@ import { createCliInboxReadAction } from '@/session/actions/inboxActions';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readDeploymentAuthorizationFailure } from '@/deployments/deploymentAuthorizationFailure';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor, type ArtifactRequestAuthorizationHeaders } from './accountArtifactStore';
 import { readCarrierMutation } from './accountArtifactStore.testkit';
@@ -25,11 +29,11 @@ import { buildHomeHubArtifactIdV1, createHomeHubArtifactPortV1 } from '@happier-
 import { buildWidgetDefinitionArtifactHeaderV1, createWidgetDefinitionArtifactPortV1, createWidgetSurfaceArtifactPortV1, flattenWidgetLayoutWidgetsV1,
   readWidgetDefinitionArtifactSummaryV1, WidgetDefinitionV1Schema, type WidgetDefinitionDraftV1 } from '@happier-dev/protocol/widgets';
 import { readArtifactPublicNetworkPolicyV1 } from '@happier-dev/protocol/sharing/public-viewer';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor, type V2SessionRecord } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
-import { createRoleSourceReaderV1, assertAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { createRoleSourceReaderV1, prepareAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptTransportInputV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -38,22 +42,31 @@ import { readHttpStatus } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { readSettings, writeSettings } from '@/persistence';
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import { configuration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema, ServiceHealthNoticeSourceV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { createStablePluginNotificationsService } from '@/plugins/runtime/invocation/services/notifications';
+import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1,
+  SessionMetadataOwnerPatchV1Schema }
+  from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 // The ordinary-Artifact Home fixtures below expose Account "owner" with no legacy Role settings.
 // Keep the real Role deletion policy even when a scenario only reads or restores an Artifact.
 function fixtureArtifactDeletionGuard(store: Parameters<typeof createCliArtifactActions>[0]['store']) {
   return async ({ artifactId, signal }: Parameters<Parameters<typeof createCliArtifactActions>[0]['beforeDelete']>[0]) => {
     signal?.throwIfAborted();
-    await assertAccountRoleArtifactDeletionV1({ artifactId, accountId: 'owner', rawSettings: {},
+    await prepareAccountRoleArtifactDeletionV1({ artifactId, accountId: 'owner', rawSettings: {},
       readTargetArtifactKind: async () => {
         const artifact = await store.read(artifactId, { signal, includeSharedAudience: false });
         signal?.throwIfAborted();
@@ -63,14 +76,18 @@ function fixtureArtifactDeletionGuard(store: Parameters<typeof createCliArtifact
   };
 }
 
-const { mockDelete, mockGet, mockPost, mockPut } = vi.hoisted(() => ({
+const { mockDelete, mockGet, mockPatch, mockPost, mockPut } = vi.hoisted(() => ({
   mockDelete: vi.fn(),
   mockGet: vi.fn(),
+  mockPatch: vi.fn(),
   mockPost: vi.fn(),
   mockPut: vi.fn(),
 }));
 
-vi.mock('axios', () => ({ default: { delete: mockDelete, get: mockGet, post: mockPost, put: mockPut } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), actual.default, { delete: mockDelete, get: mockGet, patch: mockPatch, post: mockPost, put: mockPut }) };
+});
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
   // Preserve the harness-owned temporary Account paths for real Action composition.
@@ -78,6 +95,108 @@ vi.mock('@/configuration', async (importOriginal) => {
 });
 
 describe('createAccountArtifactStore', () => {
+  it('admits a private template draft through the real CLI transport and refuses its grant-reachable copy', async () => {
+    let artifactId = '';
+    const sourceSessionRef = { serverId: 'home', sessionId: 'source-bot' };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const metadata = {};
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    if (!owner.ok) throw new Error('Expected a supported private template draft reference');
+    let session: V2SessionRecord = { ...createSessionNotificationContextFixture(sourceSessionRef.sessionId), encryptionMode: 'plain',
+      metadataLayoutVersion: 1, metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata) };
+    const rows = new Map<string, Record<string, unknown>>();
+    const writes: string[] = [];
+    let shared = false;
+    let preparationUnavailable = false;
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (path === '/v1/features') return { status: 200, data: FeaturesResponseSchema.parse({}) };
+      if (path === `/v2/sessions/${sourceSessionRef.sessionId}`) return { status: 200, data: { session } };
+      if (/^\/v1\/artifacts\/[^/]+$/.test(path)) {
+        const id = path.split('/').at(-1)!;
+        if (id !== artifactId && preparationUnavailable) return { status: 503, data: { error: 'artifact_access_unavailable' } };
+        const row = rows.get(id);
+        return { status: row ? 200 : 404, data: row ?? { error: 'not_found' } };
+      }
+      if (/^\/v1\/artifacts\/[^/]+\/access\/grants$/.test(path)) return { status: 200, data: { artifactId: path.split('/')[3],
+        ownerAccountId: 'owner', access: 'owner', grants: shared && path.split('/')[3] === artifactId ? [{ principal: { kind: 'account', accountId: 'recipient' },
+          accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1, display: { name: null } }] : [] } };
+      if (path === '/v1/public-shares') return { status: 200, data: { publicShares: [] } };
+      throw new Error(`Unexpected template HTTP read: ${path}`);
+    });
+    mockPatch.mockImplementation(async (url: string, wire: unknown) => {
+      expect(new URL(url).pathname).toBe(`/v2/sessions/${sourceSessionRef.sessionId}`);
+      const patch = SessionMetadataOwnerPatchV1Schema.parse(wire);
+      expect(patch.expectedOwnerMetadata).toEqual(session.ownerMetadata);
+      expect(patch.sharedMetadata.expectedVersion).toBe(session.metadataVersion);
+      expect(patch.agentState.expectedVersion).toBe(session.agentStateVersion);
+      session = { ...session, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+        agentState: patch.agentState.ciphertext, metadataVersion: session.metadataVersion + 1,
+        agentStateVersion: session.agentStateVersion + 1 };
+      writes.push('source-pointer');
+      return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: session.metadataVersion }, agentState: { version: session.agentStateVersion } } };
+    });
+    mockPost.mockImplementation(async (url: string, wire: unknown) => {
+      expect(new URL(url).pathname).toBe('/v1/artifacts');
+      const input = readCarrierMutation(wire);
+      if (typeof input.id !== 'string') throw new Error('Expected Artifact create identity');
+      artifactId ||= input.id;
+      writes.push('artifact-create');
+      const stored = { ...input, ownerAccountId: 'owner', ownerDisplayName: 'Maya Rowan', access: 'owner', encryptionMode: 'plain',
+        publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      rows.set(input.id, stored);
+      return { status: 200, data: stored };
+    });
+    mockPut.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      expect(path).toMatch(/^\/v1\/artifacts\/[^/]+\/access\/grants$/);
+      preparationUnavailable = true;
+      return { status: 200, data: { artifactId: path.split('/')[3], ownerAccountId: 'owner', access: 'owner', grants: [], changed: true } };
+    });
+    const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'cli-global',
+      mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'http://127.0.0.1:24599' }));
+    const context = { surface: 'cli' as const, serverId: 'home', authority: 'present_user' as const, bypassApprovals: true };
+    const content = { v: 1 as const, identity: { name: 'Helper', description: 'Reusable helper' }, instructions: { markdown: 'Help with work.' },
+      memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };
+    const drafted = await executor.execute('template.draft', { sourceSessionRef, content }, { ...context, surface: 'agent', authority: 'account_automation' });
+    if (!drafted.ok) throw new Error(JSON.stringify(drafted));
+    expect(drafted).toMatchObject({ ok: true,
+      result: { draftArtifactId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, sourceSessionRef } });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(session.ownerMetadata).toMatchObject({ t: 'plain', v: { work: {
+      templateDraftRef: { serverId: 'home', artifactId },
+    } } });
+    expect(writes).toEqual(['source-pointer', 'artifact-create']);
+    const provenance = rows.get(artifactId)?.provenance;
+    if (typeof provenance !== 'string') throw new Error('Expected private draft author attribution');
+    expect(decodePlainArtifactStoredContent(provenance)).toMatchObject({ provenance: {
+      savedBy: { kind: 'agent', accountId: 'owner', sessionId: 'cli-global' },
+    } });
+    // The existing Artifact audience owner admits the next authoring request.
+    shared = true;
+    expect(await executor.execute('template.draft', { sourceSessionRef, content, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_access_forbidden' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(await executor.execute('template.open', { sourceSessionRef, draftArtifactId: artifactId }, context))
+      .toMatchObject({ ok: false, errorCode: 'surface_unavailable' });
+    shared = false;
+    expect(await executor.execute('template.release', { draftArtifactId: artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      version: '1.0.0', changelog: 'Reviewed' }, context)).toMatchObject({ ok: true });
+    expect(rows.size).toBe(2);
+    expect([...rows.values()].find(row => row.id !== artifactId)).not.toHaveProperty('provenance');
+    const released = [...rows.values()].find(row => row.id !== artifactId)!;
+    expect(await executor.execute('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: released.id } }, context))
+      .toMatchObject({ ok: true, result: { presentation: { ownerDisplayName: 'Maya Rowan', shared: false } } });
+    expect(await executor.execute('template.release', { draftArtifactId: artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      version: '1.0.0', changelog: 'Reviewed', share: { recipients: [{ kind: 'account', accountId: 'recipient' }] } }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_encryption_material_unavailable' });
+  });
 
   it.each(['plain', 'e2ee'] as const)('retains private skill creator through %s edits and restore, and lists it without opening bodies', async mode => {
     const secret = randomBytes(32);
@@ -123,6 +242,291 @@ describe('createAccountArtifactStore', () => {
       expectedRevision: { headerVersion: 4, bodyVersion: 4 } })).resolves.toMatchObject({ ok: true });
     expect((await store.read(created.artifactId))?.provenance).toEqual({ savedBy: editor, skillCreator: creator, restoredFromBodyVersion: 1 });
   });
+  it.each(['plain', 'e2ee'] as const)('preserves a health notice and recovery choices across conversion from %s', async fromMode => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const machineKey = new Uint8Array(randomBytes(32));
+    const encrypted = { token, encryption: { type: 'dataKey' as const, machineKey, publicKey: x25519.getPublicKey(machineKey) } };
+    const credentials = (mode: 'plain' | 'e2ee') => mode === 'plain' ? { token, encryption: null } : encrypted;
+    let mode = fromMode;
+    const rows = new Map<string, Record<string, unknown>>();
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...rows.values()]) };
+      const artifactId = path.split('/')[3]!;
+      const row = rows.get(artifactId);
+      if (!row) return { status: 404, data: {} };
+      return { status: 200, data: path.endsWith('/recipients') ? {
+        artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
+      } : row };
+    });
+    mockPost.mockImplementation(async (url: string, input: unknown) => {
+      const mutation = readCarrierMutation(input);
+      const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
+      const previous = rows.get(id);
+      const version = Number(previous?.bodyVersion ?? 0) + 1;
+      rows.set(id, { ...previous, ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+        encryptionMode: mode, headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version });
+      return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
+    });
+    const source = { kind: 'host' as const, topic: 'service_health' as const,
+      subject: { kind: 'environment' as const, environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' as const } };
+    const rollback = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'recover-deploy',
+      targetLinkId: 'runtime', expectedTargetLinkRevision: 1, deploymentId: 'previous-deployment',
+      contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const choices = (artifactId: string) => [
+      { actionId: 'deployments.rollback' as const, input: { ...rollback, restoreBackupId: 'pre-migration-backup' }, label: 'Restore backup and roll back code' },
+      { actionId: 'deployments.rollback' as const, input: rollback, label: 'Roll back code only' },
+      { actionId: 'inbox.notice.dismiss' as const, input: { artifactId }, label: 'Keep and fix forward' },
+    ];
+    const input = { accountId: 'owner', source, title: 'Target needs attention', type: 'update' as const,
+      resolved: false, healthPhase: 'open' as const, body: 'Failure evidence',
+      recoveryChoices: ({ artifactId }: { artifactId: string }) => choices(artifactId),
+      page: { kind: 'host' as const, page: 'environment' as const, targetLinkId: 'runtime',
+        environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } } };
+    const original = createAccountArtifactStore({ credentials: credentials(mode), getAccountEncryptionMode: async () => mode });
+    const created = await original.writeNotice(input);
+    const opened = await original.read(created.artifactId, { includeSharedAudience: false });
+    expect(opened).not.toBeNull();
+    if (!opened) throw new Error('Expected the acknowledged original notice');
+    expect(opened.header).toMatchObject({ recoveryChoices: choices(created.artifactId) });
+    expect(JSON.parse(opened.body as string)).toMatchObject({ recoveryChoices: choices(created.artifactId) });
+    const content = JSON.parse(opened.body as string);
+    for (const recoveryChoices of [[], [...choices(created.artifactId), choices(created.artifactId)[0]],
+      [{ ...choices(created.artifactId)[0], actionId: 'unknown.action' }],
+      [{ ...choices(created.artifactId)[0], input: { ...rollback, bypassApprovals: true } }],
+      [{ ...choices(created.artifactId)[0], input: { ...rollback, environmentId: 'foreign' } }],
+      [{ ...choices(created.artifactId)[2], input: { artifactId: created.artifactId, authority: 'present_user' } }],
+    ]) expect(AccountNoticeArtifactBodyV1Schema.safeParse({ ...content, recoveryChoices }).success).toBe(false);
+    mode = fromMode === 'plain' ? 'e2ee' : 'plain';
+    const key = await createResourceDataKey({ credentials: credentials(mode), mode });
+    const encode = (value: unknown) => key.mode === 'plain'
+      ? encodePlainArtifactStoredContent(value) : encodeBase64(encryptWithDataKey(value, key.dataKey), 'base64');
+    // Provenance-equivalent converted storage boundary: the canonical UI
+    // buildAccountEncryptionMigrationStorageDirectives.ts#buildArtifactDirective
+    // retains row.id in both mode arms (lines 500/541), re-encoding the same
+    // raw header/body under the target mode and advancing their revisions.
+    rows.set(created.artifactId, { ...rows.get(created.artifactId),
+      header: encode(opened.header), body: encode({ body: opened.body }),
+      dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
+      encryptionMode: mode, headerVersion: opened.revision.headerVersion + 1, bodyVersion: opened.revision.bodyVersion + 1 });
+    const converted = createAccountArtifactStore({ credentials: credentials(mode), getAccountEncryptionMode: async () => mode });
+    expect(await converted.read(created.artifactId, { includeSharedAudience: false })).toMatchObject({
+      ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', header: opened.header, body: opened.body,
+    });
+    const writes = mockPost.mock.calls.length;
+    await expect(converted.writeNotice({ ...input, recoveryChoices: [
+      { actionId: 'inbox.notice.dismiss', input: { artifactId: 'another-owned-notice' }, label: 'Keep' },
+    ] })).rejects.toMatchObject({ code: 'notice_recovery_target_mismatch' });
+    expect(mockPost).toHaveBeenCalledTimes(writes);
+    expect(await converted.writeNotice(input)).toMatchObject({ artifactId: created.artifactId, changed: false, opened: false });
+    expect(mockPost).toHaveBeenCalledTimes(writes);
+    expect(await converted.writeNotice({ ...input, body: 'New evidence' }))
+      .toMatchObject({ artifactId: created.artifactId, changed: true, opened: false });
+    expect(rows.size).toBe(1);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      appShellAction: createCliInboxReadAction({ store: converted, accountId: 'owner', serverId: 'home' }) });
+    const context = { surface: 'cli', authority: 'account_automation', serverId: 'home',
+      runtimeAccountId: 'owner', expectedAccountId: 'owner' } as const;
+    const current = await converted.read(created.artifactId, { includeSharedAudience: false });
+    if (!current) throw new Error('Missing current notice');
+    const beforeForeign = mockPost.mock.calls.length;
+    expect(await executor.execute('inbox.notice.dismiss', { artifactId: created.artifactId },
+      { ...context, expectedAccountId: 'foreign' })).toMatchObject({ ok: false });
+    expect(mockPost).toHaveBeenCalledTimes(beforeForeign);
+    expect(await executor.execute('inbox.notice.dismiss', { artifactId: created.artifactId,
+      expectedRevision: opened.revision }, context)).toMatchObject({ ok: false, errorCode: 'usage_notice_changed' });
+    expect(mockPost).toHaveBeenCalledTimes(beforeForeign);
+    expect(await executor.execute('inbox.notice.dismiss', { artifactId: created.artifactId,
+      expectedRevision: current.revision }, context)).toMatchObject({ ok: true,
+      result: { artifactId: created.artifactId, status: 'dismissed' } });
+    expect(await converted.read(created.artifactId, { includeSharedAudience: false }))
+      .toMatchObject({ header: { status: 'dismissed', healthPhase: 'open', resolved: false } });
+    const afterDismiss = mockPost.mock.calls.length;
+    expect(await executor.execute('inbox.notice.dismiss', { artifactId: created.artifactId }, context))
+      .toMatchObject({ ok: true, result: { status: 'unchanged' } });
+    expect(mockPost).toHaveBeenCalledTimes(afterDismiss);
+  });
+
+  it.each(['host', 'pluginHealth', 'pluginLegacy'] as const)('acknowledges only newly committed openings through the %s notice owner', async kind => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const rows = new Map<string, Record<string, unknown>>();
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...rows.values()]) };
+      const row = rows.get(path.split('/').at(-1)!);
+      return row ? { status: 200, data: row } : { status: 404, data: {} };
+    });
+    mockPost.mockImplementation(async (url: string, input: unknown) => {
+      const mutation = readCarrierMutation(input);
+      const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
+      const previous = rows.get(id);
+      const version = previous ? Number(previous.headerVersion) + 1 : 1;
+      rows.set(id, { ...previous, ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+        encryptionMode: 'plain', headerVersion: version, bodyVersion: version, seq: 1, createdAt: 1, updatedAt: version });
+      return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
+    });
+    const store = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const service = createStablePluginNotificationsService({ plugin: { id: 'qa.health', version: '1' },
+      contribution: { id: 'observer', qualifiedId: 'qa.health/backgroundServices/observer' }, occurrenceId: '1',
+      correlationId: 'observation', surface: 'cli', signal: new AbortController().signal, isOccurrenceCurrent: () => true }, {
+      categories: [{ pluginId: 'qa.health',
+        definition: { id: 'health', kind: 'plugin', title: 'Health', eventIds: ['health'] } }], channels: [],
+      activateChannel: async () => {}, readChannel: () => null,
+      resolveNoticeArtifacts: async () => ({ accountId: 'owner', store }),
+    });
+    const subject = { kind: 'platformTarget' as const, environmentId: 'environment', targetLinkId: 'runtime' };
+    const page = { kind: 'host' as const, page: 'environment' as const, targetLinkId: 'runtime',
+      environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } };
+    let request = 0;
+    const investigation = { kind: 'alertEntry', entry: {
+      entryRef: { source: { pluginId: 'qa.health', localId: 'issues' }, kindId: 'issue', collisionScope: 'project', entryId: '42' },
+      sourceInstanceId: '11111111-1111-4111-8111-111111111111',
+    } } as const;
+    const write = async (phase: 'open' | 'recovered', body = 'Evidence', replay = false) => {
+      if (kind === 'host') return store.writeNotice({ accountId: 'owner', source: { kind: 'host', topic: 'service_health', subject },
+        page, title: 'Condition', type: 'update', resolved: false, healthPhase: phase, body });
+      if (!replay) request += 1;
+      const result = await service.send({ clientRequestId: String(request), categoryId: 'health', itemId: 'source:issue',
+        title: 'Condition', type: 'update', resolved: kind === 'pluginLegacy' && phase === 'recovered', body,
+        ...(kind === 'pluginHealth' ? { healthPhase: phase, investigation } : {}) });
+      return result.notice;
+    };
+    const missingRecovery = await write('recovered');
+    if (kind === 'host') expect(missingRecovery).toMatchObject({ changed: false, opened: false });
+    else expect(missingRecovery).toBeUndefined();
+    expect(rows.size).toBe(0);
+    const opened = await write('open');
+    expect(opened).toMatchObject({ changed: true, opened: true, artifactId: expect.any(String) });
+    if (kind === 'pluginHealth' && opened) {
+      const committed = await store.read(opened.artifactId, { includeSharedAudience: false });
+      expect(committed?.header).toMatchObject({ investigation });
+      if (typeof committed?.body !== 'string') throw new Error('Expected inline notice content');
+      expect(JSON.parse(committed.body)).toMatchObject({ investigation });
+      await expect(service.send({ clientRequestId: String(request), categoryId: 'health', itemId: 'source:issue',
+        title: 'Condition', type: 'update', resolved: false, body: 'Evidence', healthPhase: 'open',
+        investigation: { ...investigation, entry: { ...investigation.entry, sourceInstanceId: '22222222-2222-4222-8222-222222222222' } },
+      })).rejects.toMatchObject({ code: 'plugin_notification_request_conflict' });
+    }
+    if (kind !== 'host') expect(await write('open', 'Evidence', true))
+      .toMatchObject({ artifactId: opened?.artifactId, changed: false, opened: false });
+    const writes = mockPost.mock.calls.length;
+    expect(await write('open')).toMatchObject({ artifactId: opened?.artifactId, changed: false, opened: false });
+    expect(mockPost).toHaveBeenCalledTimes(writes);
+    expect(await write('open', 'New evidence')).toMatchObject({ artifactId: opened?.artifactId, changed: true, opened: false });
+    expect(await write('recovered')).toMatchObject({ artifactId: opened?.artifactId, changed: true, opened: false });
+    expect(await write('recovered')).toMatchObject({ artifactId: opened?.artifactId, changed: false, opened: false });
+    expect(await write('open')).toMatchObject({ artifactId: opened?.artifactId, changed: true, opened: true });
+    expect(rows.size).toBe(1);
+    mockPost.mockResolvedValueOnce({ status: 403, data: { error: 'forbidden' } });
+    await expect(write('recovered', 'Failed commit')).rejects.toBeDefined();
+  });
+
+  it.each(['plain', 'e2ee'] as const)('isolates stable non-service condition identities in %s private notices', async mode => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const machineKey = new Uint8Array(randomBytes(32));
+    const credentials = { token, encryption: mode === 'plain' ? null
+      : { type: 'dataKey' as const, machineKey, publicKey: x25519.getPublicKey(machineKey) } };
+    const rows = new Map<string, Record<string, unknown>>();
+    let noticeLists = 0;
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/artifacts') {
+        noticeLists++;
+        const query = new URL(url).searchParams;
+        expect(query.has('includeBody')).toBe(false);
+        expect(JSON.parse(query.get('kinds') ?? 'null')).toEqual(['account_notice.v1', 'usage_notice.v1']);
+        expect(query.get('ownerAccountId')).toBe('owner');
+        return { status: 200, data: artifactListResponse(url, [...rows.values()]) };
+      }
+      if (path.endsWith('/access/recipients')) {
+        const artifactId = path.split('/').at(-3)!;
+        const row = rows.get(artifactId);
+        return row ? { status: 200, data: { artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+          dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [] } }
+          : { status: 404, data: {} };
+      }
+      const row = rows.get(path.split('/').at(-1)!);
+      return row ? { status: 200, data: row } : { status: 404, data: {} };
+    });
+    mockPost.mockImplementation(async (url: string, input: unknown) => {
+      const mutation = readCarrierMutation(input);
+      const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
+      const previous = rows.get(id);
+      const version = previous ? Number(previous.headerVersion) + 1 : 1;
+      rows.set(id, { ...previous, ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+        encryptionMode: mode, headerVersion: version, bodyVersion: version, seq: 1, createdAt: 1, updatedAt: version });
+      return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
+    });
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { artifacts: { queryHints: { enabled: true } } }, capabilities: {},
+      }) }) });
+    const page = { kind: 'host' as const, page: 'environment' as const, targetLinkId: 'runtime',
+      environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } };
+    const aggregate = DeploymentEnvironmentHealthAggregateV1Schema.parse({ v: 1, environmentId: 'environment',
+      targetLinkId: 'runtime', protection: 'production', status: 'down', n: 1, down: 1, degraded: 0, unknown: 0,
+      members: [{ machineId: 'runtime-machine', roles: ['runtime'], status: 'down',
+        evidence: [{ role: 'runtime', status: 'down', source: 'native' }] }],
+      affectedMachineIds: ['runtime-machine'], edgeUnreachable: false, authoritativeRecovery: false });
+    const inputs = [
+      { kind: 'platformTarget' as const, environmentId: 'environment', targetLinkId: 'runtime' },
+      { kind: 'platformTarget' as const, environmentId: 'environment', targetLinkId: 'other-runtime' },
+      { kind: 'environment' as const, environmentId: 'environment', targetLinkId: 'runtime', condition: 'health' as const },
+      { kind: 'environment' as const, environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' as const },
+      ...(['run', 'verify', 'prune', 'restore'] as const).map(check => ({ kind: 'backup' as const, environmentId: 'environment', check })),
+      ...(['domain_probe_failed', 'certificate_renewal_failed'] as const).map(condition => ({ kind: 'domain' as const,
+        environmentId: 'environment', targetLinkId: 'runtime', domainId: 'domain', condition })),
+      { kind: 'domain' as const, environmentId: 'environment', targetLinkId: 'runtime', domainId: 'other-domain', condition: 'domain_probe_failed' as const },
+      { kind: 'healthCheck' as const, subject: { kind: 'environment' as const, environmentId: 'environment' }, checkId: 'http' },
+      { kind: 'healthCheck' as const, subject: { kind: 'environment' as const, environmentId: 'environment' }, checkId: 'other-http' },
+      ...(['machine-a', 'machine-b'] as const).map(machineId => ({ kind: 'healthCheck' as const,
+        subject: { kind: 'machineService' as const, machineId, serviceId: 'instance/db' }, checkId: 'http' })),
+    ];
+    const ids = new Set<string>();
+    for (const subject of inputs) {
+      const target = subject.kind === 'healthCheck' && subject.subject.kind === 'machineService'
+        ? { kind: 'host' as const, page: 'machine_service' as const,
+          machine: { serverId: 'home', machineId: subject.subject.machineId },
+          service: { kind: 'deployment' as const, machineId: subject.subject.machineId,
+            environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' } }
+        : { ...page, targetLinkId: 'targetLinkId' in subject ? subject.targetLinkId ?? page.targetLinkId : page.targetLinkId };
+      const input = { accountId: 'owner', source: { kind: 'host' as const, topic: 'service_health' as const, subject }, page: target,
+        type: 'update' as const, title: 'Condition failed', body: 'Evidence A', resolved: false, healthPhase: 'open' as const,
+        ...(subject.kind === 'environment' && subject.condition === 'health' ? { environmentHealth: aggregate } : {}) };
+      const listsBeforeCreate = noticeLists;
+      const created = await store.writeNotice(input);
+      expect(noticeLists, 'an identity miss must consult retained notices across Account mode conversion').toBeGreaterThan(listsBeforeCreate);
+      ids.add(created.artifactId);
+      const writes = mockPost.mock.calls.length;
+      const listsAfterCreate = noticeLists;
+      const reordered = Object.fromEntries(Object.entries(subject).reverse());
+      await expect(store.writeNotice({ ...input, source: ServiceHealthNoticeSourceV1Schema.parse({ ...input.source, subject: reordered }) }))
+        .resolves.toMatchObject({ artifactId: created.artifactId, changed: false });
+      expect(mockPost).toHaveBeenCalledTimes(writes);
+      expect(noticeLists, 'an exact identity hit must not repeat retained discovery').toBe(listsAfterCreate);
+      const opened = await store.read(created.artifactId);
+      expect(opened).toMatchObject({ ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+        header: { source: input.source, healthPhase: 'open' } });
+      if (input.environmentHealth) {
+        expect(opened?.header.environmentHealth).toEqual(aggregate);
+        if (typeof opened?.body !== 'string') throw new Error('Expected inline health notice content');
+        expect(JSON.parse(opened.body)).toMatchObject({ environmentHealth: aggregate });
+        const evidenceChange = { ...input, environmentHealth: { ...aggregate, members: [{ ...aggregate.members[0]!,
+          evidence: [{ role: 'runtime' as const, status: 'down' as const, source: 'native' as const, reason: 'not_ready' }] }] } };
+        expect(await store.writeNotice(evidenceChange)).toMatchObject({ artifactId: created.artifactId, changed: true });
+        const afterEvidence = mockPost.mock.calls.length;
+        for (let repeat = 0; repeat < 20; repeat++) expect(await store.writeNotice(evidenceChange)).toMatchObject({ changed: false });
+        expect(mockPost).toHaveBeenCalledTimes(afterEvidence);
+      }
+      await expect(store.writeNotice({ ...input, healthPhase: 'recovered', body: 'Recovered',
+        title: 'Condition recovered', environmentHealth: undefined })).resolves.toMatchObject({ artifactId: created.artifactId, changed: true });
+      expect(noticeLists).toBe(listsAfterCreate);
+    }
+    expect(ids.size).toBe(inputs.length);
+    expect(rows.size).toBe(inputs.length);
+  });
+
   it('keeps explicit requester transport on candidate creation and domain-owned update preparation', async () => {
     const store = createAccountArtifactStore({ credentials: { token: 'custodian', encryption: null },
       getAccountEncryptionMode: async () => { throw new Error('Requester operations must not borrow custodian transport'); } });
@@ -151,6 +555,80 @@ describe('createAccountArtifactStore', () => {
       .toEqual({ 'x-requester-proof': 'reviewed-root' });
   });
 
+  it.each(['plain', 'e2ee'] as const)('keeps signed requester authority through a %s logical list and selected body batch', async mode => {
+    const machineKey = new Uint8Array(randomBytes(32));
+    const credentials = mode === 'plain' ? { token: 'custodian', encryption: null }
+      : { token: 'custodian', encryption: { type: 'dataKey' as const, machineKey,
+        publicKey: x25519.getPublicKey(machineKey) } };
+    const resource = await createResourceDataKey({ credentials, mode });
+    const seal = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+    const getAccountEncryptionMode = vi.fn(async () => { throw new Error('Must retain requester Account mode'); });
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode });
+    const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request => ({
+      'x-happier-action-execution-authorization': `signed:${request.method}:${request.path}`,
+      [requesterAccountEncryptionMode]: mode,
+    });
+    const row = { id: 'requester-workflow', ownerAccountId: 'requester', access: 'owner', encryptionMode: mode,
+      dataEncryptionKey: resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: seal({ kind: 'workflow-definition.v1', title: 'Requester workflow' }), body: seal({ body: 'requester content' }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    mockGet.mockImplementation(async (url: string) => ({ status: 200,
+      data: artifactListResponse(url, [{ ...row, body: undefined }]) }));
+    mockPost.mockImplementation(async (_url: string, input: unknown) => artifactReadResponse(input, id => id === row.id ? row : null));
+    await expect(store.list({ kind: 'workflow-definition.v1', includeBody: true }, async () => mode, authorizationHeaders))
+      .resolves.toMatchObject({ coverage: 'complete', items: [{ artifactId: row.id, body: 'requester content' }] });
+    expect(getAccountEncryptionMode).not.toHaveBeenCalled();
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockGet.mock.calls[0]?.[1].headers).toMatchObject({
+      'x-happier-action-execution-authorization': 'signed:GET:/v1/artifacts',
+    });
+    expect(mockPost.mock.calls[0]?.[2].headers).toMatchObject({
+      'x-happier-action-execution-authorization': 'signed:POST:/v1/artifacts/read',
+    });
+    expect(mockGet.mock.calls[0]?.[1].headers).not.toHaveProperty('Authorization');
+    expect(mockPost.mock.calls[0]?.[2].headers).not.toHaveProperty('Authorization');
+  });
+
+  it.each(['plain', 'e2ee'] as const)('keeps signed requester authority through a %s read-for-update CAS write', async mode => {
+    const machineKey = new Uint8Array(randomBytes(32));
+    const credentials = mode === 'plain' ? { token: 'custodian', encryption: null }
+      : { token: 'custodian', encryption: { type: 'dataKey' as const, machineKey,
+        publicKey: x25519.getPublicKey(machineKey) } };
+    const resource = await createResourceDataKey({ credentials, mode });
+    const seal = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+    const getAccountEncryptionMode = vi.fn(async () => mode);
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode });
+    const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request => ({
+      'x-happier-action-execution-authorization': `signed:${request.method}:${request.path}`,
+      [requesterAccountEncryptionMode]: mode,
+    });
+    mockGet.mockResolvedValue({ status: 200, data: { id: 'approval', ownerAccountId: 'requester', access: 'owner',
+      encryptionMode: mode, dataEncryptionKey: resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: seal({ kind: 'deployment.receipt.v1' }), body: seal({ body: 'pending' }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
+    mockPost.mockImplementation(async (url: string, _body: unknown, config: { headers: Record<string, string> }) => {
+      const path = new URL(url).pathname;
+      const signed = config.headers['x-happier-action-execution-authorization'] === `signed:POST:${path}`
+        && config.headers.Authorization === undefined;
+      return signed
+        ? { status: 200, data: { success: true, id: 'approval', headerVersion: 2, bodyVersion: 2 } }
+        : { status: 401, data: { error: 'invalid_token' } };
+    });
+    const opened = await store.readForUpdate('approval', { authorizationHeaders, prepareRecipients: false,
+      includeSharedAudience: false });
+    expect(opened).not.toBeNull();
+    const result = await opened!.update({ header: { kind: 'deployment.receipt.v1' }, body: 'approved' });
+    expect(result).toMatchObject({ ok: true, revision: { headerVersion: 2, bodyVersion: 2 } });
+    expect(mockPost.mock.calls[0]?.[2].headers).toMatchObject({
+      'x-happier-action-execution-authorization': 'signed:POST:/v1/artifacts/approval',
+    });
+    expect(mockPost.mock.calls[0]?.[2].headers).not.toHaveProperty('Authorization');
+    expect(getAccountEncryptionMode).not.toHaveBeenCalled();
+  });
+
   it('fails closed when signed Artifact authority has no admitted requester mode', async () => {
     const store = createAccountArtifactStore({ credentials: { token: 'custodian', encryption: null },
       getAccountEncryptionMode: async () => 'plain' });
@@ -176,6 +654,137 @@ describe('createAccountArtifactStore', () => {
     else await expect(store.update({ ...input, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }))
       .resolves.toMatchObject({ ok: false, errorCode: 'artifact_account_mode_mismatch' });
     expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not promote mutation-only authority into Artifact read authority', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'custodian', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const mutationAuthorizationHeaders = vi.fn<ArtifactRequestAuthorizationHeaders>(async request => {
+      if (request.method !== 'POST') throw new Error('Mutation authority cannot select a read envelope');
+      return { 'x-requester-proof': 'mutation-only' };
+    });
+    mockGet.mockResolvedValue({ status: 200, data: { id: 'candidate', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      header: encodePlainArtifactStoredContent({ kind: 'deployment.receipt.v1' }), body: encodePlainArtifactStoredContent({ body: 'candidate' }),
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
+    mockPost.mockResolvedValue({ status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } });
+    await expect(store.update({ artifactId: 'candidate', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      header: { kind: 'deployment.receipt.v1' }, body: 'settled', mutationAuthorizationHeaders })).resolves.toMatchObject({ ok: true });
+    for (const [, config] of mockGet.mock.calls) expect(config.headers).toMatchObject({ Authorization: 'Bearer custodian' });
+    expect(mockPost.mock.calls[0]?.[2].headers).toEqual({ 'x-requester-proof': 'mutation-only' });
+    expect(mutationAuthorizationHeaders).toHaveBeenCalledWith({ method: 'POST', path: '/v1/artifacts/candidate',
+      body: mockPost.mock.calls[0]?.[1] });
+  });
+
+  it('updates, recovers and reopens one service health notice without rewriting equal evidence', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const service = { kind: 'deployment' as const, machineId: 'machine', environmentId: 'environment',
+      environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' };
+    const source = { kind: 'host' as const, topic: 'service_health' as const, subject: service };
+    const page = { kind: 'host' as const, page: 'machine_service' as const,
+      machine: { serverId: 'home', machineId: 'machine' }, service,
+      environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' } };
+    const content = { v: 1, source, page, type: 'update', resolved: false, healthPhase: 'open', body: 'Unavailable' };
+    const identityBytes = createHash('sha1').update(JSON.stringify(['happier:service-health-notice:v1', 'owner',
+      ['deployment', 'machine', 'environment', 'instance', 'db', 'instance/db']])).digest().subarray(0, 16);
+    identityBytes[6] = (identityBytes[6]! & 0x0f) | 0x50;
+    identityBytes[8] = (identityBytes[8]! & 0x3f) | 0x80;
+    const hex = identityBytes.toString('hex');
+    const artifactId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    const stored = { id: artifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+      encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent({ ...content, kind: 'account_notice.v1', title: 'db', status: 'open', readAt: 123 }),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+      headerVersion: 3, bodyVersion: 3, seq: 1, createdAt: 1, updatedAt: 1 };
+    mockGet.mockImplementation(async (url: string) => new URL(url).pathname === '/v1/artifacts'
+      ? { status: 200, data: artifactListResponse(url, [stored]) }
+      : url.endsWith(`/${artifactId}`) ? { status: 200, data: stored } : { status: 404, data: {} });
+    mockPost.mockImplementation(async (_url: string, value: { header: string; body: string }) => {
+      stored.header = value.header;
+      stored.body = value.body;
+      stored.headerVersion++;
+      stored.bodyVersion++;
+      return { status: 200, data: { success: true, headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion } };
+    });
+    const store = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const input = { accountId: 'owner', source, page, type: 'update' as const, title: 'db', resolved: false,
+      healthPhase: 'open' as const, body: 'Unavailable' };
+    expect(await store.writeNotice(input)).toMatchObject({ artifactId, changed: false });
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(await store.writeNotice({ ...input, body: 'Connection refused' })).toMatchObject({ artifactId, changed: true });
+    expect(decodePlainArtifactStoredContent(stored.header)).toMatchObject({ readAt: 123 });
+    expect(await store.writeNotice({ ...input, healthPhase: 'recovered', body: 'Healthy' })).toMatchObject({ artifactId, changed: true });
+    const recovered = AccountNoticeArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(stored.header));
+    expect(recovered).toMatchObject({ healthPhase: 'recovered', type: 'update', resolved: false, status: 'open' });
+    expect(recovered).not.toHaveProperty('readAt');
+    expect(decodePlainArtifactStoredContent(stored.body)).toMatchObject({ body: expect.stringContaining('"healthPhase":"recovered"') });
+    const writes = mockPost.mock.calls.length;
+    expect(await store.writeNotice({ ...input, healthPhase: 'recovered', body: 'Healthy' })).toMatchObject({ changed: false });
+    expect(mockPost).toHaveBeenCalledTimes(writes);
+    stored.header = encodePlainArtifactStoredContent({ ...recovered, resolved: true, status: 'dismissed', readAt: 456 });
+    stored.body = encodePlainArtifactStoredContent({ body: JSON.stringify({ ...content, healthPhase: 'recovered', body: 'Healthy', resolved: true }) });
+    await store.writeNotice({ ...input, healthPhase: 'recovered', body: 'Healthy with new native evidence' });
+    expect(decodePlainArtifactStoredContent(stored.header)).toMatchObject({ healthPhase: 'recovered', resolved: true,
+      status: 'dismissed', readAt: 456 });
+    expect(await store.writeNotice(input)).toMatchObject({ artifactId, changed: true });
+    expect(decodePlainArtifactStoredContent(stored.header)).toMatchObject({ healthPhase: 'open', resolved: false, status: 'open' });
+    expect(decodePlainArtifactStoredContent(stored.header)).not.toHaveProperty('readAt');
+  });
+
+  it('keeps a semantic notice retry quiet and preserves its personal read state', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const source = { kind: 'plugin' as const, pluginId: 'qa.notice', itemId: 'stable' };
+    const content = { v: 1, source, type: 'update', resolved: false, body: 'Service unavailable' };
+    const header = AccountNoticeArtifactHeaderV1Schema.parse({ ...content,
+      kind: 'account_notice.v1', title: 'Service health', status: 'open', readAt: 123 });
+    const stored = { id: 'retained-notice', ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+      encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+      headerVersion: 3, bodyVersion: 3, seq: 1, createdAt: 1, updatedAt: 1 };
+    mockGet.mockImplementation(async (url: string) => new URL(url).pathname === '/v1/artifacts'
+      ? { status: 200, data: [stored] }
+      : url.endsWith('/retained-notice') ? { status: 200, data: stored } : { status: 404, data: {} });
+    mockPost.mockResolvedValue({ status: 200, data: { success: true, headerVersion: 4, bodyVersion: 4 } });
+    const store = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const retry = await store.writeNotice({ accountId: 'owner', source, type: 'update', title: 'Service health',
+      resolved: false, body: 'Service unavailable' });
+    expect(mockPost, 'equal semantic evidence must not write a revision or wake downstream delivery').not.toHaveBeenCalled();
+    expect(retry).toMatchObject({ artifactId: 'retained-notice', changed: false });
+    await store.writeNotice({ accountId: 'owner', source, type: 'update', title: 'Service health',
+      resolved: false, body: 'Connection refused' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    const written = mockPost.mock.calls[0]?.[1];
+    expect(decodePlainArtifactStoredContent(written.header)).toMatchObject({ body: 'Connection refused', readAt: 123 });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('prepares a %s domain mutation from one admitted Artifact load and checks mode at commit', async mode => {
+    const machineKey = new Uint8Array(randomBytes(32));
+    const credentials = mode === 'plain' ? { token: 'token', encryption: null }
+      : { token: 'token', encryption: { type: 'dataKey' as const, machineKey, publicKey: x25519.getPublicKey(machineKey) } };
+    const resource = await createResourceDataKey({ credentials, mode });
+    const seal = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+    let currentMode: 'plain' | 'e2ee' = mode;
+    const controller = new AbortController();
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => currentMode });
+    mockGet.mockResolvedValue({ status: 200, data: { id: 'candidate', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      dataEncryptionKey: resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: seal({ kind: 'deployment.receipt.v1', title: 'Deployment' }), body: seal({ body: 'original' }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
+    const loaded = await store.readForUpdate('candidate', { signal: controller.signal,
+      prepareRecipients: false, includeSharedAudience: false });
+    if (!loaded) throw new Error('Missing candidate fixture');
+    const prepared = await loaded.prepareJsonUpdate({ header: loaded.artifact.header, body: 'settled' });
+    expect(prepared).toMatchObject({ ok: true });
+    expect(mockGet.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts/candidate')),
+      'one resource load for the domain mutation').toHaveLength(1);
+    if (!prepared.ok) throw new Error(prepared.errorCode);
+    await expect(prepared.assertCurrent()).resolves.toBeUndefined();
+    currentMode = mode === 'plain' ? 'e2ee' : 'plain';
+    await expect(prepared.assertCurrent()).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+    currentMode = mode;
+    controller.abort(new Error('cancelled'));
+    await expect(prepared.assertCurrent()).rejects.toMatchObject({ message: 'cancelled' });
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it('keeps read-for-update cancellation before the write', async () => {
@@ -226,6 +835,7 @@ describe('createAccountArtifactStore', () => {
   it.each([
     { status: 503, serverError: 'database_transaction_conflict_exhausted', code: 'database_transaction_conflict_exhausted' },
     { status: 503, serverError: 'database_connection_unavailable', code: 'database_connection_unavailable' },
+    { status: 503, serverError: 'database_transaction_timeout', code: 'database_transaction_timeout' },
     { status: 403, serverError: 'PRIVATE_RESPONSE', code: 'create_failed' },
     { status: 500, serverError: 'PRIVATE_RESPONSE', code: 'create_failed' },
     { status: 409, serverError: 'PRIVATE_RESPONSE', code: 'conflict' },
@@ -237,6 +847,59 @@ describe('createAccountArtifactStore', () => {
     expect(readHttpStatus(failure)).toBe(status);
     expect(JSON.stringify(failure)).not.toContain('PRIVATE_RESPONSE');
     expect(JSON.stringify(failure)).not.toContain('synthetic-token');
+  });
+
+  it.each(['create', 'update'] as const)('retains the signed publication refusal through Artifact %s to its deployment consumer', async operation => {
+    mockGet.mockResolvedValue({ status: 200, data: { id: 'receipt', ownerAccountId: 'owner', access: 'owner',
+      encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1' }),
+      body: encodePlainArtifactStoredContent({ body: 'original' }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
+    mockPost.mockResolvedValue({ status: 401, data: { error: 'invalid_token',
+      authorizationRefusal: 'deployment_publication_purpose' } });
+    const store = createAccountArtifactStore({ credentials: { token: 'synthetic-token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const input = { artifactId: 'receipt', header: { kind: 'deployment-receipt.v1' }, body: 'private content',
+      authorizationHeaders: async () => ({ 'x-happier-action-execution-authorization': 'signed-proof',
+        [requesterAccountEncryptionMode]: 'plain' as const }) };
+    const failure: unknown = await (operation === 'create' ? store.create(input)
+      : store.update({ ...input, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }))
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'action_forbidden', cause: { ok: false, errorCode: 'action_forbidden',
+      error: 'action_forbidden (home_signed_authorization_rejected:deployment_publication_purpose)' } });
+    expect(readHttpStatus(failure)).toBe(401);
+    expect(readDeploymentAuthorizationFailure(failure)).toMatchObject({ errorCode: 'action_forbidden',
+      error: 'action_forbidden (home_signed_authorization_rejected:deployment_publication_purpose)' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(failure)).not.toContain('signed-proof');
+    expect(JSON.stringify(failure)).not.toContain('private content');
+  });
+
+  it.each([401, 403, 503])('retains Artifact read refusal causes through deployment and public CLI output (%s)', async status => {
+    const store = createAccountArtifactStore({ credentials: { token: 'synthetic-token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const response = { status, data: status === 503 ? { error: 'PRIVATE_RESPONSE' }
+      : ExternalActionHttpErrorSchema.parse({ error: status === 401 ? 'invalid_token' : 'credential_scope_denied',
+        authorizationRefusal: 'deployment_child_http' }) };
+    mockGet.mockResolvedValue(response);
+    mockPost.mockResolvedValue(response);
+    const options = { prepareRecipients: false, authorizationHeaders: async () => ({
+      'x-happier-action-execution-authorization': 'signed-proof', [requesterAccountEncryptionMode]: 'plain' as const }) };
+    for (const { read, signed } of [
+      { read: () => store.read('candidate', options), signed: true },
+      { read: () => store.readForUpdate('candidate', options), signed: true },
+      { read: () => store.readHeader('candidate', { prepareRecipients: false }), signed: false },
+    ]) {
+      const error: unknown = await read().catch((error: unknown) => error);
+      const code = signed && status !== 503 ? 'action_forbidden' : 'artifact_read_unavailable';
+      expect(error).toMatchObject({ code });
+      const failure = normalizeActionExecuteResult(projectDeploymentFailure(code, error));
+      if (failure.ok) throw new Error('Failed Artifact read cannot become success');
+      const output = projectCliActionFailure(failure);
+      expect(output).toMatchObject({ code, failureCause: { errorClass: 'HttpStatusError', httpStatus: status,
+        phase: signed && status !== 503 ? 'home.authorization.deployment_child_http' : 'artifacts.read' } });
+      expect(JSON.stringify(output)).not.toMatch(/signed-proof|synthetic-token|PRIVATE_RESPONSE/u);
+    }
   });
 
   it.each([503, 403])('preserves typed HTTP status without response secrets on Artifact list, header and body failures (%s)', async status => {
@@ -258,6 +921,7 @@ describe('createAccountArtifactStore', () => {
   beforeEach(() => {
     mockDelete.mockReset();
     mockGet.mockReset();
+    mockPatch.mockReset();
     mockPost.mockReset();
     mockPut.mockReset();
     resetServerFeaturesClientForTests();
@@ -557,8 +1221,7 @@ describe('createAccountArtifactStore', () => {
         const items = listAudience === 'empty' ? [] : candidates.slice(start, start + Number(url.searchParams.get('limit') ?? 500)).map(({ body, ...row }) =>
           ({ ...row, ...(listAudience === 'shared' ? { ownerAccountId: 'foreign-owner', access: 'view' } : {}),
             ...(url.searchParams.get('includeBody') ? { body } : {}) }));
-        result = url.searchParams.has('kind') || url.searchParams.has('kinds') || url.searchParams.has('unclassified')
-          ? { items, hasUnclassified: false } : items;
+        result = artifactListResponse(url.toString(), items);
       } else if (request.method === 'POST' && url.pathname === '/v1/artifacts/read') {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -734,6 +1397,77 @@ describe('createAccountArtifactStore', () => {
     await expect(request).rejects.toMatchObject({ code: 'artifact_read_unavailable', status: 500 });
   });
 
+  it.each(['plain', 'e2ee'] as const)('lists server-selected %s approval headers without acquiring bodies', async mode => {
+    const secret = randomBytes(32);
+    const credentials = { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey' as const, publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } };
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode });
+    const request = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+        serverId: 'home', accountId: 'owner', sessionId: 'session-1', machineId: 'machine-1',
+        runId: 'run-1', runOccurrenceId: 'occurrence-1', actionId: 'session.title.set', requestId: 'request-1' },
+      actionId: 'session.title.set', actionArgs: { sessionId: 'session-1', title: 'Approved' }, summary: 'Review',
+    });
+    const header = buildApprovalRequestArtifactHeaderV1(request);
+    let wire: Record<string, unknown> = {};
+    mockPost.mockImplementationOnce(async (_url: string, input: unknown) => {
+      wire = readCarrierMutation(input);
+      return { status: 200, data: { id: 'selected', headerVersion: 1, bodyVersion: 1 } };
+    });
+    await store.create({ artifactId: 'selected', header, body: JSON.stringify(request) });
+    mockPost.mockClear();
+    // Reuse the actual writer's envelopes at the HTTP boundary. The list
+    // projection carries no body even when the retained body is unreadable.
+    const rows = Array.from({ length: 704 }, (_, index) => ({
+      id: `approval-${index}`, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: mode,
+      header: wire.header, dataEncryptionKey: wire.dataEncryptionKey, headerVersion: 1, bodyVersion: 1,
+      kind: 'other', kindHint: 'approval_request.v1', approvalState: 'open', approvalSessionId: 'session-1',
+      seq: index, createdAt: 1, updatedAt: 704 - index,
+    }));
+    const reads: URL[] = [];
+    mockGet.mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      reads.push(parsed);
+      expect(parsed.pathname).toBe('/v1/artifacts');
+      expect(parsed.searchParams.has('includeBody')).toBe(false);
+      if (parsed.searchParams.has('approvalStates')) expect(JSON.parse(parsed.searchParams.get('approvalStates')!)).toEqual(['open']);
+      return { status: 200, data: artifactListResponse(url,
+        parsed.searchParams.has('cursor') ? rows.slice(500) : rows.slice(0, 500)) };
+    });
+    const page = await store.list({ kinds: ['approval_request.v1'], approvalStates: ['open'], limit: 704 });
+    expect(page.coverage).toBe('complete');
+    expect(page.items).toHaveLength(704);
+    expect(page.items[0]).toMatchObject({ header: { kind: 'approval_request.v1', actionId: 'session.title.set',
+      approvalStatus: 'open', sessionId: 'session-1', machineId: 'machine-1', runId: 'run-1' }, createdAt: 1, updatedAt: 704 });
+    expect(page.items.every(item => !Object.hasOwn(item, 'body'))).toBe(true);
+    expect(reads).toHaveLength(2);
+    expect(mockPost).not.toHaveBeenCalled();
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      artifactAction: createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null,
+        authorizationHeaders: () => async () => ({}) }),
+    });
+    const context = { surface: 'cli', serverId: 'home', authority: 'present_user', runtimeAccountId: 'owner', expectedAccountId: 'owner' } as const;
+    for (const selection of [{ kind: 'approval_request.v1' },
+      { kinds: ['approval_request.v1', 'target_action_approval.v1', 'execution_run_host_action_approval.v1'], approvalStates: ['open'] }]) {
+      const result = await executor.execute('artifact.list', { ...selection, limit: 704 }, context);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.errorCode);
+      expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(result.result).items).toHaveLength(704);
+    }
+    expect(await executor.execute('artifact.list', { limit: 704 }, context)).toMatchObject({ ok: true, result: { items: [] } });
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(await executor.execute('artifact.list', { kind: 'approval_request.v1', limit: 704 }, { ...context,
+      externalActionCredential: { accountId: 'owner', principalId: 'api', credentialId: 'credential',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['artifact.list'] } } },
+    })).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    const mismatch = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode === 'plain' ? 'e2ee' : 'plain' });
+    await expect(mismatch.list({ kinds: ['approval_request.v1'], approvalStates: ['open'], limit: 704 }))
+      .rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('acquires an exact %s header without requesting an unreadable body', async mode => {
     const secret = randomBytes(32);
     const dataKey = randomBytes(32);
@@ -875,6 +1609,15 @@ describe('createAccountArtifactStore', () => {
     await expect(store.readHeader('selected')).rejects.toMatchObject({ code: 'artifact_encryption_material_unavailable' });
   });
 
+  it('reports an older Home signed-in route as unavailable without an anonymous fallback', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 404, data: { error: 'route_not_found' } });
+    await expect(store.joinSignedInLink({ input: { lookupId: 'lookup' } }, {
+      consumeSecret: async () => 'a'.repeat(43), onOpened: () => { throw new Error('must not open'); },
+    })).rejects.toMatchObject({ code: 'artifact_access_unavailable', status: 404 });
+    expect(mockGet.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/artifact-signed-in-links/lookup/join']);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
   it.each([
     { error: 'public_share_isolation_unavailable', expected: 'public_share_isolation_unavailable' },
     { error: 'untrusted_server_detail', expected: 'public_share_request_failed' },
@@ -898,16 +1641,16 @@ describe('createAccountArtifactStore', () => {
       expect.objectContaining({ subject: { kind: 'artifact', id: 'document' } }), expect.objectContaining({ validateStatus: expect.any(Function) }));
   });
 
-  it('projects current widget sharing and header-only revision from the actual Artifact access boundary', async () => {
+  it.each(['widget-area-layout.v1', 'bot_template.v1'])('projects current %s sharing and header-only revision from the actual Artifact access boundary', async kind => {
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
     let access: 'owner' | 'view' | 'edit' = 'owner';
     let grants: unknown[] = [];
     const id = '11111111-1111-4111-8111-111111111111';
     const row = () => ({ id, ownerAccountId: 'owner', access, publicAudience: 'none', encryptionMode: 'plain',
-      header: encodePlainArtifactStoredContent({ kind: 'widget-area-layout.v1', v: 1, title: 'Dashboard' }),
+      header: encodePlainArtifactStoredContent({ kind, v: 1, title: 'Dashboard' }),
       body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       headerVersion: 2, bodyVersion: 3, seq: 3, createdAt: 1, updatedAt: 3 });
-    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === '/v1/artifacts' ? [row()]
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === '/v1/artifacts' ? artifactListResponse(url, [row()])
       : url.endsWith('/access/grants') ? { artifactId: id, ownerAccountId: 'owner', access, grants } : row() }));
     const transport = createAcknowledgedAccountArtifactTransport(store);
     expect(await transport.read(id)).toMatchObject({ ownerAccountId: 'owner', access: 'owner', shared: false });
@@ -918,8 +1661,7 @@ describe('createAccountArtifactStore', () => {
     expect(await store.list({ includeBody: false })).toMatchObject({ items: [{ artifactId: id, headerVersion: 2, bodyVersion: 3 }] });
     const ordinaryActions = createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null });
     const ordinaryPage = ArtifactActionOutputSchemasV1['artifact.list'].parse(await ordinaryActions({ actionId: 'artifact.list', input: {}, context: { surface: 'cli' } }));
-    expect(ordinaryPage.items[0]).toMatchObject({ artifactId: id, headerVersion: 2, access: 'view', publicAudience: 'none' });
-    expect(ordinaryPage.items[0]).not.toHaveProperty('bodyVersion');
+    expect(ordinaryPage.items).toEqual([]);
     expect(await store.list({ includeBody: false })).toMatchObject({ items: [{ artifactId: id, bodyVersion: 3 }] });
   });
 
@@ -1100,7 +1842,7 @@ describe('createAccountArtifactStore', () => {
       const artifactId = typeof input.id === 'string' ? input.id : new URL(url).pathname.split('/')[3]!;
       const before = rows.get(artifactId);
       const version = Number(before?.bodyVersion ?? 0) + 1;
-      const row = { ...before, ...input, id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      const row = { ...before, ...input, id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode, publicAudience: 'none',
         headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
       rows.set(artifactId, row);
       return { status: 200, data: { ...row, success: true } };
@@ -1527,7 +2269,7 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     expect(result).toEqual({ artifactId: 'artifact-1', revision: { headerVersion: 1, bodyVersion: 1 } });
     expect(created?.dataEncryptionKey).toBe(ARTIFACT_PLAIN_DATA_KEY_MARKER);
 
-    mockGet.mockResolvedValueOnce({ status: 200, data: {
+    mockGet.mockResolvedValue({ status: 200, data: {
       id: 'artifact-1', header: created?.header, headerVersion: 3,
       body: created?.body, bodyVersion: 4, dataEncryptionKey: created?.dataEncryptionKey,
       seq: 9, createdAt: 1, updatedAt: 2,
@@ -1548,7 +2290,18 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     await expect(store.update({
       artifactId: 'artifact-1', expectedRevision: { headerVersion: 3, bodyVersion: 4 },
       header: { kind: 'example.v1' }, body: 'changed',
-    })).resolves.toEqual({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' });
+    })).resolves.toEqual({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch', writeCommitted: false });
+
+    mockPost.mockResolvedValueOnce({ status: 500, data: { error: 'acknowledgement_lost' } })
+      .mockResolvedValueOnce({ status: 200, data: { success: false, error: 'version-mismatch' } });
+    const attemptsBefore = mockPost.mock.calls.length;
+    const uncertain = await store.update({
+      artifactId: 'artifact-1', expectedRevision: { headerVersion: 3, bodyVersion: 4 },
+      header: { kind: 'example.v1' }, body: 'changed',
+    });
+    expect(uncertain).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+    expect(uncertain).not.toHaveProperty('writeCommitted');
+    expect(mockPost.mock.calls.length - attemptsBefore).toBe(2);
 
     mockDelete.mockResolvedValueOnce({ status: 200, data: {} });
     await expect(store.delete('artifact-1')).resolves.toEqual({ ok: true });
@@ -1644,9 +2397,8 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     });
     const first = Array.from({ length: 500 }, (_, i) => row(`other-${i}`, 'Other', 'published.v1', 1000 - i));
     const second = [row('z', 'Private zebra', 'published.v1', 2), row('a', 'Private alpha', 'published.v1', 1)];
-    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: {
-      items: new URL(url).searchParams.has('cursor') ? second : first, hasUnclassified: false,
-    } }));
+    mockGet.mockImplementation(async (url: string) => ({ status: 200,
+      data: artifactListResponse(url, new URL(url).searchParams.has('cursor') ? second : first) }));
     const options = { search: 'PRIVATE', kind: 'published.v1', sort: 'title_asc' as const, limit: 1 };
     const page = await store.list(options);
     expect(page.items.map((item) => item.artifactId)).toEqual(['a']);
@@ -1756,6 +2508,59 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       await pendingCancellation;
       await writeSettings(previousSettings);
     }
+  });
+
+  it('pages public Action membership before decoding unrelated internal inventory', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const row = (id: string, kind: string | undefined, updatedAt: number, indexed = true) => ({
+      id, header: encodePlainArtifactStoredContent({ title: id, ...(kind === undefined ? {} : { kind }) }),
+      kind: indexed ? 'other' : null, kindHint: indexed ? kind : undefined,
+      headerVersion: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 1, createdAt: 1, updatedAt,
+      ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+    });
+    // ROOTACT-DIAG observed 495 internal approvals in a 500-header page.
+    // Several such pages must not contribute any public-list decoding work.
+    const internal = Array.from({ length: 495 * 3 }, (_, index) => row(`approval-${index}`, 'approval_request.v1', 2000 - index));
+    const publicRows = [row('future', 'future.document.v3', 3), row('untyped', undefined, 2), row('legacy', 'document', 1, false)];
+    const legacyInternal = row('legacy-approval', 'approval_request.v1', 4, false);
+    const rows = [...internal, legacyInternal, ...publicRows];
+    const delivered: string[] = [];
+    mockGet.mockImplementation(async (url: string) => {
+      const query = new URL(url).searchParams;
+      const candidates = query.get('browserListed') === 'true'
+        ? [legacyInternal, ...publicRows] : rows;
+      const cursor = query.get('cursor');
+      const start = cursor ? candidates.findIndex(item => encodeAccountArtifactListCursor({ artifactId: item.id, updatedAt: item.updatedAt }) === cursor) + 1 : 0;
+      const selected = candidates.slice(start, start + Number(query.get('limit') ?? 500));
+      delivered.push(...selected.map(item => item.id));
+      return { status: 200, data: query.get('browserListed') === 'true'
+        ? { items: selected, hasUnclassified: true, coverage: { status: 'partial', unclassifiedCount: 2, reason: 'unclassified_legacy_rows' } }
+        : artifactListResponse(url, selected) };
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      artifactAction: createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null,
+        authorizationHeaders: () => async () => ({}) }),
+    });
+    const context = { surface: 'cli', serverId: 'home', authority: 'present_user', runtimeAccountId: 'owner', expectedAccountId: 'owner' } as const;
+    const list = async (input: Record<string, unknown>) => {
+      const result = await executor.execute('artifact.list', input, context);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.errorCode);
+      return ArtifactActionOutputSchemasV1['artifact.list'].parse(result.result);
+    };
+    expect((await list({})).items.map(item => item.artifactId)).toEqual(['future', 'untyped', 'legacy']);
+    expect(delivered).toHaveLength(publicRows.length + 1); // Only unclassified internal candidates need opening.
+    delivered.length = 0;
+    const first = await list({ limit: 1 });
+    expect(first.items.map(item => item.artifactId)).toEqual(['future']);
+    expect(first.nextCursor).toBeDefined();
+    expect((await list({ cursor: first.nextCursor })).items.map(item => item.artifactId)).toEqual(['untyped', 'legacy']);
+    delivered.length = 0;
+    expect((await list({ kind: 'home-hub-layout.v1' })).items).toEqual([]);
+    expect(delivered).toHaveLength(0);
+    expect((await list({ kinds: ['approval_request.v1', 'future.document.v3'] })).items.map(item => item.artifactId))
+      .toEqual([...internal.map(item => item.id), 'legacy-approval', 'future']);
   });
 
   it('returns an updated-desc page without opening later transport pages before the caller requests them', async () => {
@@ -2335,7 +3140,7 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       revision: { headerVersion: 2, bodyVersion: 2 } });
   });
 
-  it('prepares a late Team recipient on a key-holding editor open through the fenced envelope writer', async () => {
+  it.each(['credentialed', 'signed content-only'] as const)('prepares a late Team recipient through the fenced envelope writer (%s)', async custody => {
     const viewerSecret = randomBytes(32);
     const viewerPublic = x25519.getPublicKey(viewerSecret);
     const recipientSecret = randomBytes(32);
@@ -2346,7 +3151,9 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     const callerEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: viewerPublic, randomBytes }));
     const ownerEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: recipientPublic, randomBytes }));
     const fingerprint = computeContentPublicKeyFingerprint(recipientPublic);
-    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: viewerPublic, machineKey: viewerSecret } },
+    const encryption = { type: 'dataKey' as const, publicKey: viewerPublic, machineKey: viewerSecret };
+    const store = createAccountArtifactStore({ ...(custody === 'credentialed' ? { credentials: { token: 'token', encryption } }
+      : { accountContent: { accountId: 'viewer', encryption } }),
       getAccountEncryptionMode: async () => 'e2ee' });
     mockGet.mockImplementation(async (url: string) => url.endsWith('/recipients') ? { status: 200, data: {
       artifactId: 'shared-1', ownerAccountId: 'owner', access: 'edit', encryptionMode: 'e2ee', dataEncryptionKey: ownerEnvelope,
@@ -2359,6 +3166,10 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       dataEncryptionKey: callerEnvelope, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } });
     mockPost.mockResolvedValue({ status: 200, data: { appliedRecipientAccountIds: ['late-member'], skippedRecipientAccountIds: [] } });
     const authorizationHeaders = vi.fn<ArtifactRequestAuthorizationHeaders>(async () => ({ 'x-invocation-proof': 'captured-proof' }));
+    if (custody === 'signed content-only') {
+      await expect(store.read('shared-1')).rejects.toMatchObject({ code: 'artifact_authorization_required' });
+      expect(mockGet).not.toHaveBeenCalled();
+    }
     await expect(store.read('shared-1', { authorizationHeaders })).resolves.toMatchObject({ body: 'role', access: 'edit' });
     for (const [, config] of mockGet.mock.calls) expect(config.headers).toEqual({ 'x-invocation-proof': 'captured-proof' });
     expect(mockPost.mock.calls[0]?.[2].headers).toEqual({ 'x-invocation-proof': 'captured-proof' });
@@ -2369,6 +3180,8 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     expect(request.recipientKeyEnvelopes).toHaveLength(1);
     expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(request.recipientKeyEnvelopes[0].encryptedDataKey), recipientSecretKeyOrSeed: recipientSecret })).toEqual(new Uint8Array(dataKey));
 
+    if (custody === 'signed content-only') return; // This invocation owns current signed reads, not the separate history API.
+
     // A key-holder opening history must deliver the same key to a late member,
     // even when it does not open the current Artifact through read().
     const readCurrent = mockGet.getMockImplementation();
@@ -2377,7 +3190,8 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       revisions: [{ bodyVersion: 1, body: encodeBase64(encryptWithDataKey({ body: 'prior role' }, dataKey)), createdAt: 1, sizeBytes: 20 }], retentionCount: 10,
     } } : readCurrent(url));
     mockPost.mockClear();
-    await expect(store.revisions.list({ artifactId: 'shared-1' })).resolves.toMatchObject({ revisions: [{ body: 'prior role' }] });
+    await expect(store.revisions.list({ artifactId: 'shared-1' }))
+      .resolves.toMatchObject({ revisions: [{ body: 'prior role' }] });
     const revisionRecipient = mockPost.mock.calls[0]?.[1]?.recipientKeyEnvelopes?.[0];
     expect(revisionRecipient).toMatchObject({ recipientAccountId: 'late-member' });
     expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(revisionRecipient.encryptedDataKey), recipientSecretKeyOrSeed: recipientSecret }))

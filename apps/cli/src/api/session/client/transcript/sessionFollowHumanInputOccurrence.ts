@@ -1,51 +1,16 @@
-import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1,
+    isPotentialSessionFollowHumanInputV1 as isPotentialHumanInput,
+    readVerifiedSessionFollowHumanInputOriginalV1 as readVerifiedSessionFollowHumanInputOriginal,
+    type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { SessionInputRequest, SessionMessageProvenance } from '@happier-dev/protocol';
-import { assertSessionInputAdmissionReceiptForAuthorityV1, readSessionInputAuthorityV1, readSessionMessageProvenanceV1,
-    settleSessionMessageProvenanceV1, SessionInputRequestV1Schema, SessionMessageProvenanceV1Schema,
-    type SessionInputRequestV1, type SessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { isAuthoritativeHumanSessionFollowMessageV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1';
+import { settleSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isDeepStrictEqual } from 'node:util';
 import type { TranscriptLookupOutcome } from '../../transcriptMessageLookup';
 import type { CommittedUserMessageSeqTracker } from '../../committedUserMessageSeqTracker';
 import { openSessionMessageContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
-import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 
 export type HumanInputAdmission = Readonly<{ request: SessionInputRequest; provenance: SessionMessageProvenance }>;
-
-function isPotentialHumanInput(admission: HumanInputAdmission): boolean {
-    const request = SessionInputRequestV1Schema.safeParse(admission.request);
-    const provenance = SessionMessageProvenanceV1Schema.safeParse(admission.provenance);
-    return request.success && provenance.success && !request.data.returnedAnswer
-        && !request.data.followDeliveryV1 && !request.data.sourceSession && !request.data.automation
-        && (request.data.producer === 'happierApp'
-            || isAuthoritativeHumanSessionFollowMessageV1({ provenance: provenance.data }));
-}
-
-/** Stored original proof only; neither an encryption key nor authored metadata grants input authority. */
-export function readVerifiedSessionFollowHumanInputOriginal(input: Readonly<{
-    sessionId: string;
-    ownerAccountId: string;
-    row: Readonly<{ sidechainId?: string | null; messageRole?: SessionMessageRole | null; inputAdmissionReceipt?: unknown }>;
-    meta: unknown;
-}>): Readonly<{ request: SessionInputRequestV1; provenance: SessionMessageProvenanceV1; authorAccountId?: string }> | null {
-    if ((input.row.sidechainId !== undefined && input.row.sidechainId !== null) || input.row.messageRole !== 'user') return null;
-    const authority = readSessionInputAuthorityV1(input.meta, 'stored');
-    const provenance = readSessionMessageProvenanceV1(input.meta, 'stored');
-    if (!authority || !provenance || !isAuthoritativeHumanSessionFollowMessageV1({ provenance })) return null;
-    try {
-        const receipt = assertSessionInputAdmissionReceiptForAuthorityV1({ authority, inputAdmissionReceipt: input.row.inputAdmissionReceipt });
-        if (receipt.admittedTarget && (receipt.admittedTarget.sessionId !== input.sessionId
-            || receipt.admittedTarget.accountId !== input.ownerAccountId)) return null;
-        const { admittedPermissionCeiling: _ceiling, ...permission } = authority.permission;
-        const request = SessionInputRequestV1Schema.parse({ ...authority, permission });
-        if (!isPotentialHumanInput({ request, provenance }) || !isDeepStrictEqual(provenance,
-            settleSessionMessageProvenanceV1({ request, requestedProvenance: provenance, inputAdmissionReceipt: receipt }))) return null;
-        const authorAccountId = deriveSessionMessageAuthorAccountIdV1({ messageRole: input.row.messageRole,
-            inputAdmissionReceipt: input.row.inputAdmissionReceipt }, 'stored');
-        return { request, provenance, ...(authorAccountId ? { authorAccountId } : {}) };
-    } catch { return null; }
-}
+export { readVerifiedSessionFollowHumanInputOriginal };
 
 export function observeSessionFollowHumanInputCommit(input: Readonly<{
     localId: string;

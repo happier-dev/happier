@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 
 import { MemorySearchQueryV1Schema, MemorySearchScopeSchema, resolveMemorySearchCorporaV1 } from '@happier-dev/protocol/memory/memorySearch';
@@ -18,9 +19,9 @@ import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { getSqliteFootprintBytes } from '@/daemon/memory/sqliteFootprint';
 import { logger } from '@/ui/logger';
 
-const EnsureUpToDateParamsSchema = z.looseObject({
+const EnsureUpToDateParamsSchema = lazyZodSchema(() => z.looseObject({
     sessionId: z.optional(z.string().check(z.minLength(1))),
-  });
+  }));
 
 function disabledResult(): MemorySearchResultV1 {
   return { v: 1, ok: false, errorCode: 'memory_disabled', error: 'memory_disabled' };

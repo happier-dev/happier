@@ -13,7 +13,7 @@ import {
   resolveInitialCheckpointDelayMs,
   resolveCheckpointIntervalMs,
   resolveCheckpointMinChars,
-  resolveLiveCheckpointIntervalMs,
+  resolveLiveDeltasEnabled,
   resolveLiveSnapshotIntervalMs,
   resolveLiveSnapshotMinChars,
 } from './env';
@@ -104,7 +104,7 @@ export function createStreamedTranscriptWriter(params: {
   checkpointMinChars?: number | null;
   liveSnapshotIntervalMs?: number | null;
   liveSnapshotMinChars?: number | null;
-  liveCheckpointIntervalMs?: number | null;
+  liveDeltas?: boolean;
   durableCommitsRequireExplicitEnable?: boolean;
 }): StreamedTranscriptWriter {
   const provider = params.provider;
@@ -117,7 +117,7 @@ export function createStreamedTranscriptWriter(params: {
   const checkpointMinChars = resolveCheckpointMinChars(params.checkpointMinChars);
   const liveSnapshotIntervalMs = resolveLiveSnapshotIntervalMs(params.liveSnapshotIntervalMs);
   const liveSnapshotMinChars = resolveLiveSnapshotMinChars(params.liveSnapshotMinChars);
-  const liveCheckpointIntervalMs = resolveLiveCheckpointIntervalMs(params.liveCheckpointIntervalMs);
+  const liveDeltas = resolveLiveDeltasEnabled(params.liveDeltas);
 
   const segments = new Set<SegmentRuntime>();
   let scheduleDurableCheckpoint: (segment: SegmentRuntime) => void;
@@ -149,7 +149,7 @@ export function createStreamedTranscriptWriter(params: {
     });
   };
 
-  const getOrCreateSegment = (kind: SegmentKind, sidechainId: string | null): SegmentRuntime => {
+  const getOrCreateSegment = (kind: SegmentKind, sidechainId: string | null, meta?: Readonly<Record<string, unknown>>): SegmentRuntime => {
     const key = buildStreamedTranscriptSegmentKey(kind, sidechainId);
     const existing = findAppendableSegment(key);
     if (existing) return existing;
@@ -160,9 +160,11 @@ export function createStreamedTranscriptWriter(params: {
       kind,
       sidechainId,
       segmentLocalId: makeLocalId(),
+      ...(meta ? { meta: { ...meta } } : {}),
       startedAtMs: nowMs,
       accumulatedText: '',
       textVersion: 0,
+      textGeneration: 0,
       didWriteDurable: false,
       appendOnlySinceLastDurableSnapshot: true,
       lastDurableText: '',
@@ -279,10 +281,8 @@ export function createStreamedTranscriptWriter(params: {
     const attemptedEpoch = getLiveConnectionEpoch();
     const accepted = segment.liveDelivery.locallyAccepted;
     const emitAsDelta = shouldPublishLiveDelta(segment.liveDelivery, {
-      state: intent.state,
-      nowMs,
       epoch: attemptedEpoch,
-      liveCheckpointIntervalMs,
+      liveDeltas,
       supportsDelta: typeof session.sendAgentMessageEphemeralDelta === 'function',
     });
     const text = segment.accumulatedText;
@@ -307,6 +307,7 @@ export function createStreamedTranscriptWriter(params: {
             meta,
             createdAt: segment.startedAtMs,
             updatedAt: nowMs,
+            snapshotBody: buildStreamedTranscriptSegmentSnapshotBody(segment),
           },
         )
         : await sendSnapshot(
@@ -339,7 +340,6 @@ export function createStreamedTranscriptWriter(params: {
       tick,
       epoch: outcome.epoch,
       acceptedAtMs: nowMs,
-      wasCheckpoint: !emitAsDelta,
     });
     const recovered = takeLiveDeliveryFailureSummary(segment.liveDelivery);
     if (recovered) {
@@ -464,10 +464,10 @@ export function createStreamedTranscriptWriter(params: {
     scheduleDurableCheckpoint(segment);
   };
 
-  const appendDelta = (kind: SegmentKind, deltaText: string, sidechainId: string | null) => {
+  const appendDelta = (kind: SegmentKind, deltaText: string, sidechainId: string | null, meta?: Readonly<Record<string, unknown>>) => {
     if (!deltaText) return;
 
-    const segment = getOrCreateSegment(kind, sidechainId);
+    const segment = getOrCreateSegment(kind, sidechainId, meta);
     segment.accumulatedText += deltaText;
     segment.textVersion += 1;
     if (kind === 'assistant' && sidechainId === null) {
@@ -487,6 +487,7 @@ export function createStreamedTranscriptWriter(params: {
     const segment = getExistingSegment(kind, sidechainId);
     if (!segment) return false;
     if (segment.accumulatedText === text) return true;
+    if (!text.startsWith(segment.accumulatedText)) segment.textGeneration += 1;
     segment.accumulatedText = text;
     segment.textVersion += 1;
     segment.appendOnlySinceLastDurableSnapshot = false;
@@ -578,7 +579,7 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   return {
-    appendAssistantDelta: (deltaText, opts) => appendDelta('assistant', deltaText, normalizeSidechainId(opts?.sidechainId)),
+    appendAssistantDelta: (deltaText, opts) => appendDelta('assistant', deltaText, normalizeSidechainId(opts?.sidechainId), opts?.meta),
     appendThinkingDelta: (deltaText, opts) => appendDelta('thinking', deltaText, normalizeSidechainId(opts?.sidechainId)),
     overrideAssistantText: (text, opts) => overrideSegmentText('assistant', text, normalizeSidechainId(opts?.sidechainId)),
     overrideThinkingText: (text, opts) => overrideSegmentText('thinking', text, normalizeSidechainId(opts?.sidechainId)),

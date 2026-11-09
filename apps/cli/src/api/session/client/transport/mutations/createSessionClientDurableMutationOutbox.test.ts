@@ -2926,4 +2926,39 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
             else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = previousJitterMs;
         }
     });
+
+    it('sends a transcript append only on the first attempt, so a refused oversized frame retries as the plain full body', async () => {
+        const keys = ['HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS', 'HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS', 'HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS'];
+        const saved = keys.map((key) => [key, process.env[key]] as const);
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '1';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS = '1';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+        const normal = createConnectedSocket();
+        const attempts: boolean[] = [];
+        const socket = { ...normal, emitWithAck: async (event: string, payload: unknown) => {
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 && payload && typeof payload === 'object') {
+                attempts.push('append' in payload);
+                // The first frame is refused the way an over-budget socket frame is (transport error).
+                if (attempts.length === 1) throw new Error('socket closed: max buffer size exceeded');
+            }
+            return normal.emitWithAck(event, payload);
+        } };
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
+            flushOnReady: false, getSocket: () => socket, requestReconnect: () => undefined });
+        try {
+            await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+            const mutation = { ...createTranscriptMutation({ localId: 'append-retry', sidechainId: null, text: 'Hello world' }),
+                append: { content: { t: 'plain' as const, v: { role: 'agent', content: { type: 'text', text: ' world' } } }, baseLength: 5, baseUpdatedAt: 1 } };
+            // The first attempt settles as not delivered (kept for retry); the retry carries no append.
+            await outbox.enqueueTranscriptMessage(mutation);
+            await vi.waitFor(() => expect(attempts.length).toBeGreaterThanOrEqual(2), { timeout: 10_000 });
+            expect(attempts.slice(0, 2)).toEqual([true, false]);
+        } finally {
+            await outbox.close().catch(() => undefined);
+            for (const [key, value] of saved) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
+        }
+    });
 });

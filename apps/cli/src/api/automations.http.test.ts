@@ -1,10 +1,22 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { deleteAutomationDefinition, runAutomationNowReceipt } from './automations';
+import { deleteAutomationDefinition, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { runWithServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
 describe('Automation HTTP transport', () => {
+  it('retains a confirmed transaction rollback instead of reporting an uncertain definition write', async () => {
+    const server = Fastify();
+    server.put('/v3/automations/:id', async (_request, reply) => reply.code(503).send({
+      error: 'database_transaction_conflict_exhausted', statusCode: 503,
+    }));
+    const address = await server.listen({ host: '127.0.0.1', port: 0 });
+    try {
+      await expect(runWithServerHttpBaseUrl(address, () => reconcileAutomationDefinition({ token: 'test-token', automationId: 'team-schedule',
+        input: { expectedTemplateVersion: 8, name: 'Team schedule', description: null, enabled: true,
+          assignments: [], triggers: [], removedTriggers: [] } }))).rejects.toMatchObject({ code: 'database_transaction_conflict_exhausted' });
+    } finally { await server.close(); }
+  });
   it('retains an unresolved receipt after a real HTTP handler admits an occurrence then fails its response', async () => {
     const server = Fastify();
     const admitted = new Set<string>();

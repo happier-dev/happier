@@ -12,6 +12,7 @@ import {
   prepareCommittedAgentMessageViaPort,
   prepareCommittedUserTextMessageViaPort,
 } from './commitMessages';
+import { buildOutboundSessionMessagePayload } from '../transport/outboundSessionMessagePayload';
 
 function createTranscriptSendPort(): SessionClientTranscriptSendPort {
   return {
@@ -34,6 +35,15 @@ function createTranscriptSendPort(): SessionClientTranscriptSendPort {
 }
 
 describe('commitMessages', () => {
+  it('retains a per-record empty timing proof before encrypting ordinary user content', () => {
+    const port = { ...createTranscriptSendPort(), buildOutboundSessionMessagePayload: (content: unknown) =>
+      buildOutboundSessionMessagePayload({ mode: 'e2ee', ctx: { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' } }, content) };
+    const prepared = prepareCommittedUserTextMessageViaPort(port, 'Private user content', { localId: 'timed-input' });
+    expect(typeof prepared.payload).toBe('string');
+    expect(Reflect.get(prepared, 'usageTimingV1')).toEqual({ v: 1, minMs: null, maxMs: null });
+    expect(JSON.stringify(Reflect.get(prepared, 'usageTimingV1'))).not.toContain('Private');
+  });
+
   it('reuses a capability notice identity across runner retries while keeping distinct failures', () => {
     const items: SessionCapabilityNoticeV1['items'] = [
       { kind: 'mcp_server', itemId: 'mcp-1', name: 'Tracker', code: 'mcp_unavailable', detail: 'catalog_unavailable' },
@@ -46,6 +56,11 @@ describe('commitMessages', () => {
     const retried = prepare([...items].reverse());
     expect(retried.localId).toBe(first.localId);
     expect(prepare([{ ...items[0], detail: 'permission_denied' }, items[1]]).localId).not.toBe(first.localId);
+    const transition = prepareSessionEventMessageViaPort(createTranscriptSendPort(), {
+      type: 'message', message: 'Capability preparation failed',
+      [SESSION_CAPABILITY_NOTICE_SIDECAR_KEY]: { v: 1, items },
+    }, 'capability-transition-after-recovery');
+    expect(transition.localId).toBe('capability-transition-after-recovery');
     expect(prepareSessionEventMessageViaPort(createTranscriptSendPort(), { type: 'message', message: 'Ordinary event' }).localId)
       .not.toBe(prepareSessionEventMessageViaPort(createTranscriptSendPort(), { type: 'message', message: 'Ordinary event' }).localId);
   });
@@ -90,7 +105,7 @@ describe('commitMessages', () => {
   });
 
   it.each(['goal-changed', 'worker-report'] as const)('keeps the original %s category readable to Home policy without opening its encrypted body', type => {
-    const prepared = prepareSessionEventMessageViaPort({ buildOutboundSessionMessagePayload: () => 'sealed-original' },
+    const prepared = prepareSessionEventMessageViaPort({ sessionId: 'session-1', buildOutboundSessionMessagePayload: () => 'sealed-original' },
       type === 'goal-changed' ? { type } : { type, summary: 'Private published result' }, 'original-id');
     expect(prepared.localId).toMatch(new RegExp(`^${type}:`));
     expect(prepared.payload).toBe('sealed-original');
@@ -151,6 +166,33 @@ describe('commitMessages', () => {
       ...body, output: { ...body.output, serverId: 'other-home' },
     }, { localId: 'foreign' });
     expect(foreign).not.toHaveProperty('surfaceItemReference');
+  });
+
+  it('binds a visual approval receipt to its exact native result row without publishing pending content', async () => {
+    for (const scenario of [
+      { actionId: 'session.board.item.upsert', isError: false, linked: true },
+      { actionId: 'session.board.item.upsert', isError: true, linked: false },
+      { actionId: 'session.rename', isError: false, linked: false },
+    ]) {
+      const port = { ...createTranscriptSendPort(), serverId: 'home-a',
+        buildOutboundSessionMessagePayload: () => 'sealed-receipt' };
+      await prepareCommittedAgentMessageViaPort(port, 'codex', {
+        type: 'tool-call', callId: 'asked-visual-call', id: 'call', name: 'session_board_item_upsert',
+        input: { itemId: 'visual', expectedItemRevision: null, destination: 'transcript',
+          item: { v: 1, title: 'Result', frame: 'frameless', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Result' } } } } },
+      }, { localId: 'native-call' });
+      const receipt = { kind: 'approval_request_created', artifactId: 'visual-approval', actionId: scenario.actionId };
+      const prepared = await prepareCommittedAgentMessageViaPort(port, 'codex', {
+        type: 'tool-result', callId: 'asked-visual-call', id: 'result', output: receipt, isError: scenario.isError,
+      }, { localId: 'native-result' });
+      expect(prepared.localId).toBe('native-result');
+      expect(prepared.payload).toBe('sealed-receipt');
+      expect(prepared.normalizedBody).toMatchObject({ type: 'tool-result', output: receipt });
+      expect(prepared).not.toHaveProperty('surfaceItemReference');
+      expect(Reflect.get(prepared, 'approvalRequestArtifactId'), JSON.stringify(scenario))
+        .toBe(scenario.linked ? 'visual-approval' : undefined);
+    }
   });
 
   it('recognizes only the typed first-party shell bridge acknowledgement through the real normalizer', async () => {

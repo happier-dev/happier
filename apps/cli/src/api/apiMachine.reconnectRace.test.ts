@@ -1,811 +1,294 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { Machine } from '@/api/types';
-import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
+import { FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { socketRpcCodec } from '@happier-dev/sync-client';
 
-const {
-    configurationMock,
-    createLoopbackReadinessProbeMock,
-    createMachineSocketTransportMock,
-    createManagedConnectionSupervisorMock,
-    rpcHandleRequestMock,
-    harness,
-} = vi.hoisted(() => {
-	    const configurationMock = {
-	        activeServerDir: '/tmp/happier-api-machine-reconnect-race/server',
-	        activeServerId: 'server-test',
-	        apiServerUrl: 'http://localhost:3005',
-	        happyHomeDir: '/tmp/happier-api-machine-reconnect-race',
-	        socketIoTransports: ['polling', 'websocket'] as string[],
-	    };
+import { bindApiSessionSocketSequenceMock, createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { logger } from '@/ui/logger';
+import { ApiMachineClient } from './apiMachine';
+import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 
-    type State = {
-        phase: 'idle' | 'connecting' | 'online' | 'offline' | 'auth_failed' | 'shutting_down';
-        reason: string | null;
-        attempt: number;
-        nextRetryAt: number | null;
-        lastConnectedAt: number | null;
-        lastDisconnectedAt: number | null;
-        lastErrorMessage: string | null;
-    };
+const ioMock = vi.hoisted(() => vi.fn());
+const probeReadiness = vi.hoisted(() => vi.fn(async () => ({ status: 'ready' as const })));
 
-    type SocketHandler = (...args: any[]) => void;
-    type DisconnectListener = (event: { intentional?: boolean; reason?: string | null; error?: unknown }) => void;
+// Only network, environment and logging boundaries are replaced. Both the
+// connection supervisor and RPC manager execute their production lifecycle.
+vi.mock('socket.io-client', () => ({ io: ioMock }));
+vi.mock('@/configuration', () => ({ configuration: {
+    serverUrl: 'https://example.test', apiServerUrl: 'https://example.test',
+    activeServerId: 'reconnect-race-home', currentCliVersion: '0.0.0-test',
+    socketForceWebsocketOnly: false, socketIoTransports: ['polling', 'websocket'],
+    activeServerDir: '/private/tmp/happier-api-machine-reconnect-race/server',
+    happyHomeDir: '/private/tmp/happier-api-machine-reconnect-race',
+    executionRunsMaxConcurrentPerSession: null, oneShotTasksMaxConcurrentPerSession: null,
+} }));
+vi.mock('@/utils/proxy/socketIoProxy', () => ({ getSocketIoProxyOptions: () => ({}) }));
+vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({ createLoopbackReadinessProbe: () => probeReadiness }));
+vi.mock('@/ui/logger', () => ({ logger: {
+    debug: vi.fn(), info: vi.fn(), infoFile: vi.fn(), warn: vi.fn(), warnLocalFile: vi.fn(), debugLargeJson: vi.fn(),
+} }));
 
-    const initialState = (): State => ({
-        phase: 'idle',
-        reason: null,
-        attempt: 0,
-        nextRetryAt: null,
-        lastConnectedAt: null,
-        lastDisconnectedAt: null,
-        lastErrorMessage: null,
-    });
+const clients: ApiMachineClient[] = [];
+const states = new WeakMap<ApiMachineClient, ManagedConnectionState>();
 
-    let supervisorConfig: any = null;
-    let currentState: State = initialState();
-    const socketHarnesses: Array<{
-        socket: ApiSessionSocketStub;
-        triggerSocketEvent: (event: string, ...args: unknown[]) => void;
-        transport: {
-            connect: ReturnType<typeof vi.fn>;
-            disconnect: ReturnType<typeof vi.fn>;
-            destroy: ReturnType<typeof vi.fn>;
-            isConnected: () => boolean;
-            onConnected: (listener: () => void) => () => boolean;
-            onDisconnected: (listener: DisconnectListener) => () => boolean;
-            onError: (listener: (error: unknown) => void) => () => boolean;
-        };
-    }> = [];
+function readState(client: ApiMachineClient): ManagedConnectionState {
+    const state = states.get(client);
+    if (!state) throw new Error('Expected an observed connection state');
+    return state;
+}
 
-    function createSocketHarness() {
-        const transportDisconnectListeners = new Set<DisconnectListener>();
-        const transportConnectedListeners = new Set<() => void>();
-        const transportErrorListeners = new Set<(error: unknown) => void>();
-
-        const socket = createApiSessionSocketStub({
-            emitWithAckResult: { result: 'success', version: 1 },
-        });
-
-        const triggerSocketEvent = (event: string, ...args: unknown[]) => {
-            socket.trigger(event, ...args);
-            if (event === 'connect') {
-                socket.connected = true;
-                for (const listener of transportConnectedListeners) {
-                    listener();
-                }
+function createSocket(id: string): ApiSessionSocketStub {
+    return createApiSessionSocketStub({
+        id, disconnectReason: 'transport close',
+        emitWithAck: (event, payload) => {
+            if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 1 };
+            if (event === 'machine-update-state') {
+                const update = payload as { expectedVersion: number; daemonState: string };
+                return { result: 'success', version: update.expectedVersion + 1, daemonState: update.daemonState };
             }
-            if (event === 'disconnect') {
-                socket.connected = false;
-                const reason = typeof args[0] === 'string' ? args[0] : null;
-                for (const listener of transportDisconnectListeners) {
-                    listener({ reason });
-                }
-            }
-            if (event === 'connect_error') {
-                for (const listener of transportErrorListeners) {
-                    listener(args[0]);
-                }
-            }
-        };
-
-        socket.connect.mockImplementation(() => {
-            triggerSocketEvent('connect');
-            return socket;
-        });
-        socket.disconnect.mockImplementation(() => {
-            triggerSocketEvent('disconnect', 'io client disconnect');
-            return socket;
-        });
-        socket.close.mockImplementation(() => {
-            triggerSocketEvent('disconnect', 'io client disconnect');
-            return socket;
-        });
-
-        const transport = {
-            connect: vi.fn(async () => {}),
-            disconnect: vi.fn(async () => {}),
-            destroy: vi.fn(async () => {}),
-            isConnected: () => socket.connected,
-            onConnected: (listener: () => void) => {
-                transportConnectedListeners.add(listener);
-                return () => transportConnectedListeners.delete(listener);
-            },
-            onDisconnected: (listener: DisconnectListener) => {
-                transportDisconnectListeners.add(listener);
-                return () => transportDisconnectListeners.delete(listener);
-            },
-            onError: (listener: (error: unknown) => void) => {
-                transportErrorListeners.add(listener);
-                return () => transportErrorListeners.delete(listener);
-            },
-        };
-
-        return { socket, transport, triggerSocketEvent };
-    }
-
-    function publishState(next: Partial<State>): void {
-        currentState = {
-            ...currentState,
-            ...next,
-        };
-        supervisorConfig?.onStateChange?.(currentState);
-    }
-
-    function attachTransportToSupervisor(transport: {
-        onDisconnected: (listener: DisconnectListener) => () => boolean;
-        onError: (listener: (error: unknown) => void) => () => boolean;
-    }) {
-        transport.onDisconnected((event) => {
-            void supervisorConfig?.onDisconnected?.({ state: currentState, event });
-        });
-        transport.onError((error) => {
-            const probe = supervisorConfig?.classifyTransportErrorToProbeResult?.(error);
-            if (probe?.status !== 'auth_failed') {
-                return;
-            }
-            publishState({
-                phase: 'auth_failed',
-                reason: 'auth_invalid',
-                nextRetryAt: null,
-                lastErrorMessage: probe.errorMessage ?? null,
-            });
-            void supervisorConfig?.onAuthFailed?.({ state: currentState, probe });
-        });
-    }
-
-    const createMachineSocketTransportMock = vi.fn(() => {
-        const socketHarness = createSocketHarness();
-        socketHarnesses.push(socketHarness);
-        return {
-            socket: socketHarness.socket,
-            transport: socketHarness.transport,
-        };
-    });
-
-    const createManagedConnectionSupervisorMock = vi.fn((config: any) => {
-        supervisorConfig = config;
-        currentState = initialState();
-        return {
-            start: vi.fn(async () => {
-                const transport = supervisorConfig.createTransport();
-                attachTransportToSupervisor(transport);
-            }),
-            stop: vi.fn(async () => {}),
-            getState: vi.fn(() => currentState),
-        };
-    });
-
-    const createLoopbackReadinessProbeMock = vi.fn(() => async () => ({ status: 'ready' as const }));
-    const rpcHandleRequestMock = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
-
-    return {
-        configurationMock,
-        createLoopbackReadinessProbeMock,
-        createMachineSocketTransportMock,
-        createManagedConnectionSupervisorMock,
-        rpcHandleRequestMock,
-        harness: {
-            reset() {
-                currentState = initialState();
-                supervisorConfig = null;
-                socketHarnesses.length = 0;
-                createMachineSocketTransportMock.mockClear();
-                createManagedConnectionSupervisorMock.mockClear();
-                createLoopbackReadinessProbeMock.mockClear();
-            },
-            publishState,
-            establishReconnectTransport() {
-                const transport = supervisorConfig.createTransport();
-                attachTransportToSupervisor(transport);
-            },
-            getSocket(index: number) {
-                const next = socketHarnesses[index];
-                if (!next) {
-                    throw new Error(`missing socket harness at index ${index}`);
-                }
-                return next.socket;
-            },
-            triggerSocketEvent(index: number, event: string, ...args: unknown[]) {
-                const next = socketHarnesses[index];
-                if (!next) {
-                    throw new Error(`missing socket harness at index ${index}`);
-                }
-                next.triggerSocketEvent(event, ...args);
-            },
-            async emitAuthFailedFromStaleAttempt() {
-                await supervisorConfig?.onAuthFailed?.({
-                    state: {
-                        ...currentState,
-                        phase: 'auth_failed',
-                        reason: 'auth_invalid',
-                    },
-                    probe: { status: 'auth_failed' as const, statusCode: 401, errorMessage: 'expired token' },
-                });
-            },
+            return { result: 'success', version: 1 };
         },
-    };
-});
+    });
+}
 
-vi.mock('@/configuration', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/configuration')>();
-    return { ...actual, configuration: { ...actual.configuration, ...configurationMock } };
-});
+function createClient() {
+    const client = new ApiMachineClient('token', {
+        id: 'machine-1', encryptionMode: 'plain',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    }, {
+        runtimeId: 'runtime-dev', cliVersion: '0.2.4-dev', publicReleaseChannel: 'dev',
+        startupSource: 'manual', serviceManaged: false,
+    });
+    clients.push(client);
+    client.onConnectionStateChange(state => states.set(client, state));
+    return client;
+}
 
-vi.mock('@/ui/logger', () => ({
-    logger: {
-        debug: vi.fn(),
-        warn: vi.fn(),
-        debugLargeJson: vi.fn(),
-    },
-}));
+function sendTransfer(client: ApiMachineClient) {
+    client.sendMachineTransferEnvelope({ targetMachineId: 'machine-2', envelope: {
+        transferId: 'transfer-1', kind: 'chunk', sequence: 1, payloadBase64: 'YQ==',
+    } });
+}
 
-vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({ registerSessionHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/scm', () => ({ registerScmHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: vi.fn(() => ({
-    transferSessionStore: {},
-})) }));
-vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', () => ({ registerMachineFileBrowserHandlers: vi.fn() }));
-vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
-vi.mock('./rpc/RpcHandlerManager', () => ({
-    RpcHandlerManager: class {
-        registerHandler() {}
-        onSocketConnect() {}
-        onSocketDisconnect() {}
-        async handleRequest(...args: unknown[]) {
-            return await rpcHandleRequestMock(...args);
-        }
-        async invokeLocal() {
-            return { ok: true };
-        }
-        hasHandler() {
-            return false;
-        }
-        async waitForIdle() {}
-    },
-}));
-vi.mock('./changes', () => ({ fetchChanges: vi.fn() }));
-vi.mock('@/persistence', () => ({ readAccountChangesCursor: vi.fn(async () => 0), writeAccountChangesCursor: vi.fn(async () => {}) }));
-vi.mock('./client/loopbackUrl', () => ({ resolveLoopbackHttpUrl: (value: string) => value }));
-vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
-    createLoopbackReadinessProbe: createLoopbackReadinessProbeMock,
-}));
-vi.mock('@/api/machine/connection/createMachineSocketTransport', () => ({
-    createMachineSocketTransport: createMachineSocketTransportMock,
-}));
-vi.mock('@happier-dev/connection-supervisor', () => ({
-    DEFAULT_MANAGED_CONNECTION_POLICY: {
-        initialFastRetryDelayMs: 0,
-        maxFastRetries: 0,
-        backoffMinMs: 0,
-        backoffMaxMs: 0,
-        jitterRatio: 0,
-    },
-    createManagedConnectionSupervisor: createManagedConnectionSupervisorMock,
-}));
+function expectTransfer(socket: ApiSessionSocketStub) {
+    expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, expect.objectContaining({ targetMachineId: 'machine-2' }));
+}
+
+async function connectPair() {
+    const first = createSocket('first');
+    const second = createSocket('second');
+    bindApiSessionSocketSequenceMock(ioMock, [first, second]);
+    const client = createClient();
+    const onConnect = vi.fn();
+    const ownershipConflict = vi.fn();
+    client.connect({ onConnect, onOwnershipConflict: ownershipConflict });
+    await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(1));
+    return { client, first, second, onConnect, ownershipConflict };
+}
+
+async function reconnect(pair: Awaited<ReturnType<typeof connectPair>>) {
+    pair.first.disconnect();
+    await vi.waitFor(() => expect(pair.onConnect).toHaveBeenCalledTimes(2));
+    expect(pair.second.connected).toBe(true);
+}
 
 describe('ApiMachineClient reconnect race handling', () => {
     beforeEach(() => {
-        vi.resetModules();
-        harness.reset();
-        rpcHandleRequestMock.mockClear();
+        vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({})), {
+            status: 200, headers: { 'content-type': 'application/json' },
+        })));
     });
 
-    it('does not let a stale disconnect callback clear a newer transport socket', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-
-        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
-        harness.establishReconnectTransport();
-        harness.publishState({ phase: 'online', reason: 'transport_disconnect', attempt: 1 });
-
-        const firstSocket = harness.getSocket(0);
-        const secondSocket = harness.getSocket(1);
-
-        firstSocket.trigger('disconnect', 'transport closed');
-
-        client.sendMachineTransferEnvelope({
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-1',
-                kind: 'chunk',
-                sequence: 1,
-                payloadBase64: 'YQ==',
-            },
-        });
-
-        expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-1',
-                kind: 'chunk',
-                sequence: 1,
-                payloadBase64: 'YQ==',
-            },
-        });
+    afterEach(async () => {
+        for (const client of clients.splice(0)) await client.shutdown();
+        ioMock.mockReset();
+        probeReadiness.mockClear();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+        vi.useRealTimers();
     });
 
-    it('does not dispatch an RPC request received by a stale transport generation', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-
-        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
-        harness.establishReconnectTransport();
-        harness.publishState({ phase: 'online', reason: 'transport_disconnect', attempt: 1 });
-
-        const firstSocket = harness.getSocket(0);
-        const response = vi.fn();
-        firstSocket.trigger(
-            SOCKET_RPC_EVENTS.REQUEST,
-            { method: 'machine-1:stale.request', params: {} },
-            response,
-        );
-        await Promise.resolve();
-
-        expect(rpcHandleRequestMock).not.toHaveBeenCalled();
-        expect(response).not.toHaveBeenCalled();
+    it('does not let a queued stale disconnect callback clear a newer transport socket', async () => {
+        const pair = await connectPair();
+        // Capture native callbacks before retirement, as an event already queued by Socket.IO.
+        const queued = pair.first.getHandlers('disconnect');
+        await reconnect(pair);
+        for (const callback of queued) callback('transport close');
+        sendTransfer(pair.client);
+        expectTransfer(pair.second);
     });
 
-    it('still clears the active socket when the current transport disconnects', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-
-        const firstSocket = harness.getSocket(0);
-        firstSocket.trigger('disconnect', 'transport closed');
-
-        client.sendMachineTransferEnvelope({
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-3',
-                kind: 'chunk',
-                sequence: 3,
-                payloadBase64: 'Yw==',
-            },
-        });
-
-        expect(firstSocket.emit).not.toHaveBeenCalled();
+    it('does not dispatch a stale RPC and dispatches once through the current transport', async () => {
+        const pair = await connectPair();
+        const manager = Reflect.get(pair.client, 'rpcHandlerManager') as RpcHandlerManager;
+        const effect = vi.fn(async () => ({ ok: true }));
+        manager.registerHandler('neutral.reconnect', effect);
+        const queuedRequest = pair.first.getHandler(SOCKET_RPC_EVENTS.REQUEST);
+        expect(queuedRequest).toBeDefined();
+        const callId = '0123456789abcdef0123456789abcdef';
+        const params = await socketRpcCodec.encodeParams({ mode: 'plain' }, {}, { method: 'machine-1:neutral.reconnect', callId });
+        const request = { method: 'machine-1:neutral.reconnect', params, requestId: 'rpc_23b2ed82-2ef7-4e4e-af0f-f64d599a08c6' };
+        await reconnect(pair);
+        const staleAck = vi.fn();
+        queuedRequest!(request, staleAck);
+        expect(staleAck).not.toHaveBeenCalled();
+        expect(effect).not.toHaveBeenCalled();
+        expect(logger.warnLocalFile).toHaveBeenCalledWith('[API MACHINE] RPC transport retired before acknowledgement', expect.objectContaining({
+            method: 'neutral.reconnect', requestId: request.requestId, phase: 'before-handler', sameSocket: false,
+        }));
+        const currentAck = vi.fn();
+        pair.second.trigger(SOCKET_RPC_EVENTS.REQUEST, request, currentAck);
+        await vi.waitFor(() => expect(currentAck).toHaveBeenCalledTimes(1));
+        const response = await socketRpcCodec.decodeResult({ mode: 'plain' }, { ok: true, result: currentAck.mock.calls[0][0] }, callId);
+        // This neutral test-only handler has no protected Action/Session route.
+        // Its successful reply proves the real current dispatch path is live.
+        expect(response).toEqual({ ok: true });
+        expect(effect).toHaveBeenCalledTimes(1);
     });
 
-    it('does not let a stale auth-failed callback clear a newer transport socket', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
+    it('clears the active send route immediately when the current transport disconnects', async () => {
+        const pair = await connectPair();
+        pair.first.emit.mockClear();
+        pair.first.disconnect();
+        sendTransfer(pair.client);
+        expect(pair.first.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, expect.anything());
+    });
 
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-
-        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
-        harness.establishReconnectTransport();
-        harness.publishState({ phase: 'online', reason: 'transport_disconnect', attempt: 1 });
-
-        const secondSocket = harness.getSocket(1);
-
-        await harness.emitAuthFailedFromStaleAttempt();
-
-        client.sendMachineTransferEnvelope({
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-2',
-                kind: 'chunk',
-                sequence: 2,
-                payloadBase64: 'Yg==',
-            },
-        });
-
-        expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-2',
-                kind: 'chunk',
-                sequence: 2,
-                payloadBase64: 'Yg==',
-            },
-        });
+    it('does not let queued auth failure callbacks from an older transport clear the current socket', async () => {
+        const pair = await connectPair();
+        const queued = pair.first.getHandlers('connect_error');
+        await reconnect(pair);
+        for (const callback of queued) callback(Object.assign(new Error('expired token'), { data: { statusCode: 401 } }));
+        sendTransfer(pair.client);
+        expectTransfer(pair.second);
+        expect(readState(pair.client).phase).toBe('online');
     });
 
     it('stops reconnecting and reports a relay ownership conflict from connect_error', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine, {
-            runtimeId: 'runtime-dev',
-            cliVersion: '0.2.4-dev',
-            publicReleaseChannel: 'dev',
-            startupSource: 'manual',
-            serviceManaged: false,
-        });
+        const socket = createSocket('conflict');
+        bindApiSessionSocketSequenceMock(ioMock, [socket]);
+        const client = createClient();
         const ownershipConflict = vi.fn();
-
-        client.connect({ onOwnershipConflict: ownershipConflict });
-
-        expect(createMachineSocketTransportMock).toHaveBeenCalledWith(expect.objectContaining({
-            runtimeId: 'runtime-dev',
-            cliVersion: '0.2.4-dev',
-            publicReleaseChannel: 'dev',
-            startupSource: 'manual',
-            serviceManaged: false,
-        }));
-
-        harness.getSocket(0).trigger('connect_error', {
-            message: 'machine-owner-conflict',
-            data: {
-                error: 'machine-owner-conflict',
-                statusCode: 409,
-                owner: {
-                    cliVersion: '0.2.0',
-                    publicReleaseChannel: 'stable',
-                    startupSource: 'background-service',
-                    serviceManaged: true,
-                    serviceLabel: 'com.happier.cli.daemon.default',
-                },
-            },
-        });
-
-        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
-        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
-        expect(ownershipConflict).toHaveBeenCalledWith({
-            owner: {
-                cliVersion: '0.2.0',
-                publicReleaseChannel: 'stable',
-                startupSource: 'background-service',
-                serviceManaged: true,
-                serviceLabel: 'com.happier.cli.daemon.default',
-            },
-        });
+        const onConnect = vi.fn();
+        client.connect({ onOwnershipConflict: ownershipConflict, onConnect });
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+        expect(ioMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ auth: expect.objectContaining({
+            runtimeId: 'runtime-dev', cliVersion: '0.2.4-dev', publicReleaseChannel: 'dev', startupSource: 'manual', serviceManaged: false,
+        }) }));
+        const owner = { cliVersion: '0.2.0', publicReleaseChannel: 'stable', startupSource: 'background-service', serviceManaged: true,
+            serviceLabel: 'com.happier.cli.daemon.default' };
+        socket.trigger('connect_error', { message: 'machine-owner-conflict', data: { error: 'machine-owner-conflict', statusCode: 409, owner } });
+        await vi.waitFor(() => expect(readState(client).phase).toBe('shutting_down'));
+        expect(ownershipConflict).toHaveBeenCalledWith({ owner });
+        expect(socket.connected).toBe(false);
     });
 
-    it('logs active non-ownership connect_error diagnostics without stopping the supervisor', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-        const { logger } = await import('@/ui/logger');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-
-        harness.getSocket(0).trigger('connect_error', {
-            message: 'transport rejected',
-            name: 'Error',
-            code: 'ERR_BAD_REQUEST',
-            data: {
-                error: 'transport-not-ready',
-                statusCode: 503,
-                secret: 'must-not-log',
-            },
-        });
-
-        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
-        expect(supervisor?.stop).not.toHaveBeenCalled();
+    it('redacts active non-ownership connect errors without stopping a usable transport', async () => {
+        const pair = await connectPair();
+        pair.first.trigger('connect_error', { message: 'transport rejected', name: 'Error', code: 'ERR_BAD_REQUEST',
+            data: { error: 'transport-not-ready', statusCode: 503, secret: 'must-not-log' } });
         expect(logger.warn).toHaveBeenCalledWith('[API MACHINE] Machine socket connect error', {
-            message: 'transport rejected',
-            name: 'Error',
-            code: 'ERR_BAD_REQUEST',
-            statusCode: 503,
+            message: 'transport rejected', name: 'Error', code: 'ERR_BAD_REQUEST', statusCode: 503,
         });
         expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('must-not-log');
+        expect(readState(pair.client).phase).toBe('online');
+        sendTransfer(pair.client);
+        expectTransfer(pair.first);
     });
 
     it('does not classify an account-storage result as a connection-wide upgrade rejection', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        const states: Array<{ phase: string; nextRetryAt: number | null; lastErrorMessage: string | null }> = [];
-        client.onConnectionStateChange((state) => {
-            states.push(state);
-        });
-        client.connect();
-
-        harness.triggerSocketEvent(0, 'connect_error', {
-            message: 'client-upgrade-required',
-            data: {
-                error: 'client-upgrade-required',
-                requirement: {
-                    v: 1,
-                    kind: 'account-stored-content',
-                    minimumProtocolVersion: 2,
-                },
-            },
-        });
-
-        expect(states.at(-1)?.phase).not.toBe('auth_failed');
+        const pair = await connectPair();
+        pair.first.trigger('connect_error', { message: 'client-upgrade-required', data: { error: 'client-upgrade-required',
+            requirement: { v: 1, kind: 'account-stored-content', minimumProtocolVersion: 2 } } });
+        expect(readState(pair.client).phase).toBe('online');
+        sendTransfer(pair.client);
+        expectTransfer(pair.first);
     });
 
     it('stops reconnecting and reports a replaced machine from connect_error', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
+        const socket = createSocket('replaced');
+        bindApiSessionSocketSequenceMock(ioMock, [socket]);
+        const client = createClient();
         const machineReplaced = vi.fn();
-        client.connect({ onMachineReplaced: machineReplaced });
-
-        harness.getSocket(0).trigger('connect_error', {
-            message: 'machine-replaced',
-            data: {
-                error: 'machine-replaced',
-                statusCode: 410,
-            },
-        });
-
-        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
-        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
+        const onConnect = vi.fn();
+        client.connect({ onMachineReplaced: machineReplaced, onConnect });
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+        socket.trigger('connect_error', { message: 'machine-replaced', data: { error: 'machine-replaced', statusCode: 410 } });
+        await vi.waitFor(() => expect(readState(client).phase).toBe('shutting_down'));
         expect(machineReplaced).toHaveBeenCalledWith({ machineId: 'machine-1' });
+        expect(socket.connected).toBe(false);
     });
 
     it('stops a displaced installation and reports the existing revoked reason', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
+        const socket = createSocket('displaced');
+        bindApiSessionSocketSequenceMock(ioMock, [socket]);
+        const client = createClient();
         const machineReplaced = vi.fn();
-        client.connect({ onMachineReplaced: machineReplaced });
-
-        harness.getSocket(0).trigger('connect_error', {
-            message: 'machine_revoked',
-            data: { error: 'machine_revoked', statusCode: 410 },
-        });
-
-        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
-        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
+        const onConnect = vi.fn();
+        client.connect({ onMachineReplaced: machineReplaced, onConnect });
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+        socket.trigger('connect_error', { message: 'machine_revoked', data: { error: 'machine_revoked', statusCode: 410 } });
+        await vi.waitFor(() => expect(readState(client).phase).toBe('shutting_down'));
         expect(machineReplaced).toHaveBeenCalledWith({ machineId: 'machine-1', reason: 'revoked' });
+        expect(socket.connected).toBe(false);
     });
 
-    it('ignores a stale connect_error ownership conflict from an older transport socket', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine, {
-            runtimeId: 'runtime-dev',
-            cliVersion: '0.2.4-dev',
-            publicReleaseChannel: 'dev',
-            startupSource: 'manual',
-            serviceManaged: false,
-        });
-        const ownershipConflict = vi.fn();
-
-        client.connect({ onOwnershipConflict: ownershipConflict });
-        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
-        harness.establishReconnectTransport();
-        harness.publishState({ phase: 'online', reason: 'transport_disconnect', attempt: 1 });
-
-        const firstSocket = harness.getSocket(0);
-        const secondSocket = harness.getSocket(1);
-        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
-
-        firstSocket.trigger('connect_error', {
-            message: 'machine-owner-conflict',
-            data: {
-                error: 'machine-owner-conflict',
-                statusCode: 409,
-                owner: {
-                    cliVersion: '0.2.0',
-                    publicReleaseChannel: 'stable',
-                    startupSource: 'background-service',
-                    serviceManaged: true,
-                    serviceLabel: 'com.happier.cli.daemon.default',
-                },
-            },
-        });
-
-        client.sendMachineTransferEnvelope({
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-stale-connect-error',
-                kind: 'chunk',
-                sequence: 4,
-                payloadBase64: 'ZA==',
-            },
-        });
-
-        expect(supervisor?.stop).not.toHaveBeenCalled();
-        expect(ownershipConflict).not.toHaveBeenCalled();
-        expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
-            targetMachineId: 'machine-2',
-            envelope: {
-                transferId: 'transfer-stale-connect-error',
-                kind: 'chunk',
-                sequence: 4,
-                payloadBase64: 'ZA==',
-            },
-        });
+    it('ignores queued ownership conflicts from an older socket', async () => {
+        const pair = await connectPair();
+        const queued = pair.first.getHandlers('connect_error');
+        await reconnect(pair);
+        for (const callback of queued) callback({ message: 'machine-owner-conflict', data: {
+            error: 'machine-owner-conflict', statusCode: 409, owner: { cliVersion: '0.2.0' },
+        } });
+        expect(pair.ownershipConflict).not.toHaveBeenCalled();
+        expect(readState(pair.client).phase).toBe('online');
+        sendTransfer(pair.client);
+        expectTransfer(pair.second);
     });
 
-    it('keeps takeover on retry attempts until the first successful machine connection', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine, {
-            runtimeId: 'runtime-dev',
-            cliVersion: '0.2.4-dev',
-            publicReleaseChannel: 'dev',
-            startupSource: 'manual',
-            serviceManaged: false,
+    it('keeps takeover on failed attempts and clears it only after a successful connection', async () => {
+        vi.useFakeTimers();
+        const first = createSocket('failed');
+        const second = createSocket('connected');
+        const third = createSocket('reconnected');
+        first.connect.mockImplementation(() => {
+            first.trigger('connect_error', new Error('connection refused'));
+            return first;
         });
-
-        client.connect({ takeover: true });
-
-        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            takeover: true,
-        }));
-
-        harness.establishReconnectTransport();
-
-        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            takeover: true,
-        }));
-
-        await (createManagedConnectionSupervisorMock.mock.calls[0]?.[0] as { onConnected?: () => Promise<void> | void } | undefined)?.onConnected?.();
-        harness.publishState({ phase: 'online', reason: 'initial_connect', attempt: 0 });
-        harness.establishReconnectTransport();
-
-        expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            takeover: false,
-        }));
+        bindApiSessionSocketSequenceMock(ioMock, [first, second, third]);
+        const client = createClient();
+        const onConnect = vi.fn();
+        client.connect({ takeover: true, onConnect });
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+        expect(ioMock.mock.calls.slice(0, 2).map(([, options]) => options.auth.takeover)).toEqual([true, true]);
+        second.disconnect();
+        await vi.waitFor(() => expect(readState(client).nextRetryAt).not.toBeNull());
+        const retryAt = readState(client).nextRetryAt;
+        if (retryAt === null) throw new Error('Expected a scheduled reconnect');
+        await vi.advanceTimersByTimeAsync(Math.max(0, retryAt - Date.now()));
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
+        expect(ioMock.mock.calls[2][1].auth).not.toHaveProperty('takeover');
     });
 
-    it('tracks connected client RPC availability only from active machine-prefixed server events', async () => {
-        const { ApiMachineClient } = await import('./apiMachine');
-
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        const client = new ApiMachineClient('token', machine);
-        client.connect();
-        const firstSocket = harness.getSocket(0);
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
-
-        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-            method: RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
-        });
-        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-            method: `other-machine:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
-        });
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
-
-        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
-        });
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(true);
-
-        harness.establishReconnectTransport();
-        const secondSocket = harness.getSocket(1);
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
-
-        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
-        });
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
-
-        secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
-        });
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(true);
-
-        secondSocket.trigger(SOCKET_RPC_EVENTS.UNREGISTERED, {
-            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
-        });
-
-        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
+    it('tracks connected client RPC availability only from current machine-prefixed events', async () => {
+        const pair = await connectPair();
+        const method = RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME;
+        const queued = pair.first.getHandlers(SOCKET_RPC_EVENTS.REGISTERED);
+        for (const invalid of [method, `other-machine:${method}`]) pair.first.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: invalid });
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(false);
+        pair.first.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(true);
+        await reconnect(pair);
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(false);
+        for (const callback of queued) callback({ method: `machine-1:${method}` });
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(false);
+        pair.second.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(true);
+        pair.second.trigger(SOCKET_RPC_EVENTS.UNREGISTERED, { method: `machine-1:${method}` });
+        expect(pair.client.hasConnectedClientRpcHandler(method)).toBe(false);
     });
 });

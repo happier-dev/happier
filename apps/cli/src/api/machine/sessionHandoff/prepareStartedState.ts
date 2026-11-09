@@ -16,7 +16,7 @@ import type { SessionHandoffAgentBundleTransferPublication } from '../../../sess
 import type { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
-import type { DeferredDirectPeerPreExportedAgentBundle } from './startDeferredDirectPeer';
+import type { PreparedSessionHandoffAgentBundleExport } from '@/session/handoff/agentBundle/export';
 
 export type PrepareStartedStateCallInput = Readonly<{
   handoffId: string;
@@ -24,7 +24,7 @@ export type PrepareStartedStateCallInput = Readonly<{
   metadata: Record<string, unknown>;
   sourceStopState: 'stopped' | 'already_inactive';
   onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
-  preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
+  exportSessionBundle?: PreparedSessionHandoffAgentBundleExport;
 }>;
 
 export type StoredHandoffState = Readonly<{
@@ -78,10 +78,8 @@ export async function prepareStartedState(input: Readonly<{
       sourceMachineId: callInput.request.sourceMachineId, targetMachineId: callInput.request.targetMachineId,
     } };
   }
-  let agentBundlePayloadSource: TransferPayloadSource | null =
-    callInput.preExportedAgentBundle?.agentBundlePayloadSource ?? null;
-  let agentBundleTransferPublication: SessionHandoffAgentBundleTransferPublication | null =
-    callInput.preExportedAgentBundle?.agentBundleTransferPublication ?? null;
+  let agentBundlePayloadSource: TransferPayloadSource | null = null;
+  let agentBundleTransferPublication: SessionHandoffAgentBundleTransferPublication | null = null;
   let workspaceSeed: Awaited<ReturnType<typeof input.sourceExportStore.writeWorkspaceSeedFiles>> | undefined;
   let managedSeedStarted = false;
 
@@ -120,12 +118,7 @@ export async function prepareStartedState(input: Readonly<{
         workspaceSeed = { ...workspaceSeed, endpointCandidates };
       }
     }
-    const exported = callInput.preExportedAgentBundle
-      ? {
-          agentBundle: callInput.preExportedAgentBundle.agentBundle,
-          targetPath: callInput.preExportedAgentBundle.targetPath,
-        }
-      : await input.exportSessionBundle(callInput.metadata);
+    const exported = await (callInput.exportSessionBundle?.() ?? input.exportSessionBundle(callInput.metadata));
 
     const persistedAgentBundle = await input.sourceExportStore.writeAgentBundleFile({
       handoffId: callInput.handoffId,
@@ -133,23 +126,7 @@ export async function prepareStartedState(input: Readonly<{
       ...(callInput.onProgress ? { onProgress: callInput.onProgress } : {}),
     });
 
-    await input.sourceExportStore.save({
-      handoffId: callInput.handoffId,
-      sessionId: callInput.request.sessionId,
-      sourceMachineId: callInput.request.sourceMachineId,
-      targetMachineId: callInput.request.targetMachineId,
-      exportedAtMs: Date.now(),
-      agentBundle: {
-        ...persistedAgentBundle,
-        ...(callInput.preExportedAgentBundle?.agentBundleTransferPublication?.endpointCandidates?.length
-          ? { endpointCandidates: [...callInput.preExportedAgentBundle.agentBundleTransferPublication.endpointCandidates] }
-          : {}),
-      },
-      ...(workspaceSeed ? { workspaceSeed } : {}),
-    });
-
-    agentBundlePayloadSource =
-      agentBundlePayloadSource ?? createFileTransferPayloadSource({
+    agentBundlePayloadSource = createFileTransferPayloadSource({
         filePath: persistedAgentBundle.filePath,
         sizeBytes: persistedAgentBundle.sizeBytes,
         manifestHash: persistedAgentBundle.manifestHash,
@@ -157,15 +134,11 @@ export async function prepareStartedState(input: Readonly<{
 
     const agentBundleEndpointCandidates: TransferEndpointCandidate[] =
       callInput.request.negotiatedTransportStrategy === 'direct_peer' && input.directPeerTransfer
-        ? (
-            agentBundleTransferPublication?.endpointCandidates?.length
-              ? [...agentBundleTransferPublication.endpointCandidates]
-              : [...await input.directPeerTransfer.publishTransfer({
+        ? [...await input.directPeerTransfer.publishTransfer({
                   transferId: persistedAgentBundle.transferId,
                   payload: {},
                   payloadSource: agentBundlePayloadSource,
                 })]
-          )
         : [];
 
     agentBundleTransferPublication = {

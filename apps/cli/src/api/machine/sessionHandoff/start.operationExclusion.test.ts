@@ -1,11 +1,15 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
-import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
+import { createExternalSessionOperationExclusion, type ExternalSessionOperationClaim } from '@/session/external/operationExclusion';
+import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { buildPrepareJobRecord, buildStartPendingStatus, buildStartRecoveryStatus, invalidRequest } from './prepareTargetState';
 import { createSessionHandoffStartActionHandler } from './start';
 
 
@@ -30,6 +34,44 @@ const enabledServerFeaturesSnapshot = {
 describe('session handoff start operation exclusion', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('releases its process claim when source publication fails before Stop', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-source-publication-failure-'));
+    const owner = createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'source-publication-test' });
+    const sessionId = `c${'a'.repeat(24)}`;
+    let retained: ExternalSessionOperationClaim | undefined;
+    const stop = vi.fn(async () => 'stopped' as const);
+    try {
+      // A real filesystem obstruction makes the durable source publisher fail.
+      await writeFile(join(activeServerDir, 'session-handoff'), 'not a directory');
+      const handler = createSessionHandoffStartActionHandler({ activeServerDir, createUuid: () => 'source-publication',
+        loadSessionMetadata: async () => ({ path: '/source' }), machineTransferChannelPresent: true,
+        directPeerTransfer: { publishTransfer: () => [], clearPublishedTransfer: () => undefined },
+        resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot, stopSessionForHandoff: stop,
+        sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir }),
+        prepareJobStore: createSessionHandoffPrepareTargetJobStore({ activeServerDir }),
+        prepareStartedState: async () => { throw new Error('Source publication must settle before preparation'); },
+        exportSessionBundle: async () => { throw new Error('Source publication must settle before export'); },
+        buildPrepareJobRecord, buildStartPendingStatus, buildStartRecoveryStatus, invalidRequest,
+        sessionOperationExclusion: owner, retainSessionOperationClaim: (_id, claim) => { retained = claim; },
+        releaseSessionOperationClaim: async () => { await retained?.release(); },
+      });
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+        accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+        machineId: 'source', custodianAccountId: 'owner', installationId: 'source-installation',
+        actionId: 'session.handoff', requestId: 'source-publication', requestEnvelopeDigest: 'a'.repeat(43),
+        target: { kind: 'session', sessionId }, handoffAdmission: { sessionId, sourceMachineId: 'source', targetMachineId: 'target',
+          sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      } });
+      await expect(handler({ sessionId, sourceMachineId: 'source', targetMachineId: 'target',
+        sessionStorageMode: 'persisted', preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+        negotiatedTransportStrategy: 'direct_peer' }, { signal: new AbortController().signal, callerInputAuthorization: authorization })).rejects.toThrow();
+      expect(stop).not.toHaveBeenCalled();
+      const next = await owner.acquire({ kind: 'materialize', sessionId, requestId: 'next', sourceIdentity: 'source', sourceGeneration: 'one' });
+      expect(next.status).toBe('acquired');
+      if (next.status === 'acquired') await next.claim.release();
+    } finally { await retained?.release(); await rm(activeServerDir, { recursive: true, force: true }); }
   });
 
   it('replaces an unavailable negotiated transport with the first available preference before source preparation', async () => {
@@ -61,8 +103,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: prepareStartedState as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -71,7 +111,6 @@ describe('session handoff start operation exclusion', () => {
         acquire: vi.fn(async () => ({
           status: 'acquired' as const,
           claim: {
-            renew: vi.fn(async () => true),
             release: vi.fn(async () => undefined),
             record: { claimId: 'transport-negotiation-claim' },
           },
@@ -115,8 +154,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: prepareStartedState as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -149,7 +186,7 @@ describe('session handoff start operation exclusion', () => {
     const sessionOperationExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'handoff-start-barrier-cancel',
-      claimMutationLockAcquisitionTimeoutMs: 10_000,
+
     });
     let signalRepairStarted!: () => void;
     const repairStarted = new Promise<void>((resolve) => {
@@ -181,8 +218,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: prepareStartedState as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -264,8 +299,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: prepareStartedState as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -304,105 +337,6 @@ describe('session handoff start operation exclusion', () => {
     }));
   });
 
-  it.each([
-    ['lost ownership', async (): Promise<boolean> => false],
-    ['renewal error', async (): Promise<boolean> => {
-      throw new Error('claim storage unavailable');
-    }],
-  ] as const)(
-    'stops active source work and persists awaiting_user_resume when renewal reports %s',
-    async (_case, renew) => {
-      vi.useFakeTimers();
-      const prepareJobStoreWrite = vi.fn(async () => undefined);
-      const stopSessionForHandoff = vi.fn(
-        async () => await new Promise<'already_inactive'>((resolve) => {
-          setTimeout(() => resolve('already_inactive'), 20_000);
-        }),
-      );
-      const prepareStartedState = vi.fn(async () => ({
-        nextState: {
-          status: {
-            handoffId: 'handoff_handoff-operation-claim-loss',
-            status: 'pending' as const,
-            phase: 'preparing' as const,
-            recoveryActions: [],
-          },
-        },
-        endpointCandidates: [],
-        targetPath: '/tmp/project',
-      }));
-      const release = vi.fn(async () => undefined);
-      const handler = createSessionHandoffStartActionHandler({
-        activeServerDir: '/tmp/happier-handoff-operation-claim-loss-test',
-        createUuid: () => 'handoff-operation-claim-loss',
-        loadSessionMetadata: async () => ({ path: '/tmp/project' }),
-        machineTransferChannelPresent: true,
-        directPeerTransfer: undefined,
-        resolveServerFeaturesSnapshot: async () => enabledServerFeaturesSnapshot,
-        stopSessionForHandoff,
-        prepareJobStore: { write: prepareJobStoreWrite },
-        sourceExportStore: {
-          save: vi.fn(async () => undefined),
-          writeAgentBundleFile: vi.fn(),
-        } as never,
-        prepareStartedState: prepareStartedState as never,
-        exportSessionBundle: vi.fn() as never,
-        waitForPersistedSourceExport: vi.fn() as never,
-        invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
-        buildStartPendingStatus: vi.fn() as never,
-        buildStartRecoveryStatus: (handoffId) => ({
-          handoffId,
-          status: 'awaiting_recovery',
-          phase: 'preparing',
-          recoveryActions: ['restart_on_source', 'keep_stopped'],
-        }),
-        buildPrepareJobRecord: (input) => input as never,
-        invalidRequest: () => ({ ok: false, errorCode: 'invalid_request' }),
-        sessionOperationExclusion: {
-          acquire: async () => ({
-            status: 'acquired',
-            claim: {
-              renew: vi.fn(renew),
-              release,
-              record: { claimId: 'handoff-claim-1' },
-            },
-          }),
-        } as never,
-        retainSessionOperationClaim: vi.fn(),
-        releaseSessionOperationClaim: vi.fn(async () => {
-          await release();
-        }),
-      });
-
-      const resultPromise = handler({
-        sessionId: 'session-1',
-        sourceMachineId: 'machine-source',
-        targetMachineId: 'machine-target',
-        sessionStorageMode: 'persisted',
-        preferredTransportStrategies: ['server_routed_stream'],
-        negotiatedTransportStrategy: 'server_routed_stream',
-      });
-      await vi.advanceTimersByTimeAsync(20_000);
-
-      await expect(resultPromise).resolves.toMatchObject({
-        ok: false,
-        errorCode: 'session_operation_claim_lost',
-        handoffId: 'handoff_handoff-operation-claim-loss',
-        status: {
-          status: 'awaiting_user_resume',
-        },
-      });
-      expect(prepareStartedState).not.toHaveBeenCalled();
-      expect(prepareJobStoreWrite).toHaveBeenCalledWith(expect.objectContaining({
-        handoffId: 'handoff_handoff-operation-claim-loss',
-        status: expect.objectContaining({
-          status: 'awaiting_user_resume',
-        }),
-      }));
-      expect(release).toHaveBeenCalledOnce();
-    },
-  );
-
   it('rejects handoff before source metadata when the daemon snapshot disables session handoff', async () => {
     const loadSessionMetadata = vi.fn(async () => ({ path: '/tmp/project' }));
     const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);
@@ -435,8 +369,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: vi.fn() as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -495,8 +427,6 @@ describe('session handoff start operation exclusion', () => {
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: vi.fn() as never,
       exportSessionBundle: vi.fn() as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,

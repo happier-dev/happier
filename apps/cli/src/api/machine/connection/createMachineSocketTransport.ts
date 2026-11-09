@@ -8,7 +8,6 @@ import type { MachineInstallationProofV1 } from '@happier-dev/protocol';
 import type { DaemonToServerEvents, ServerToDaemonEvents } from '@/api/machine/socketTypes';
 import { buildCurrentCliClientCompatibilitySocketAuth } from '@/api/clientCompatibility/cliClientCompatibility';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
-import { buildTerminalAuthorityCeiling, refreshTerminalPresentUserPolicy } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 
 export function createMachineSocketTransport(params: Readonly<{
   serverUrl: string;
@@ -40,7 +39,6 @@ export function createMachineSocketTransport(params: Readonly<{
     authExtras: {
       ...buildMachineScopedSocketAuth(params),
       ...buildCurrentCliClientCompatibilitySocketAuth('daemon'),
-      ...buildTerminalAuthorityCeiling({ token: params.token, serverHttpBaseUrl: params.serverUrl }),
     },
     withCredentials: true,
     engineOptions: getSocketIoProxyOptions({ targetUrl: params.serverUrl, env: params.env }),
@@ -48,17 +46,6 @@ export function createMachineSocketTransport(params: Readonly<{
 
   return {
     socket: socket as Socket<ServerToDaemonEvents, DaemonToServerEvents>,
-    transport: {
-      ...transport,
-      async connect() {
-        await refreshTerminalPresentUserPolicy({ token: params.token, serverHttpBaseUrl: params.serverUrl });
-        const auth = typeof socket.auth === 'object' ? socket.auth : {};
-        const { authorityCeiling: _previousCeiling, ...currentAuth } = auth;
-        socket.auth = { ...currentAuth, ...buildTerminalAuthorityCeiling({
-          token: params.token, serverHttpBaseUrl: params.serverUrl,
-        }) };
-        await transport.connect();
-      },
-    },
+    transport,
   };
 }

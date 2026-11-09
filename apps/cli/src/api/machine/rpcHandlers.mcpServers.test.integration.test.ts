@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -6,9 +6,81 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
 
 describe('rpcHandlers.mcpServers (test)', () => {
-  it('lists tools for a draft stdio server on a machine', async () => {
+  it.each(['draft', 'byId'] as const)('admits custodian Account automation to the existing %s credential source', async t => {
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const readCredentials = vi.fn(async () => null);
+    registerMachineMcpServersRpcHandlers({
+      rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
+      deps: { readCredentials, hostHomeServerIdentityId: MCP_TEST_HOME_ID },
+    });
+    const context: RpcHandlerContext = { ...createMcpOwnerRpcContext(), callerAuthority: 'account_automation' };
+    const request = t === 'byId'
+      ? { t, machineId: 'm1', directory: process.cwd(), serverId: 'owner-server' }
+      : { t, machineId: 'm1', directory: process.cwd(), binding: null, server: {
+        id: 'owner-server', name: 'owner-server', transport: 'stdio',
+        stdio: { command: process.execPath, args: ['-e', 'throw new Error("unexpected child")'] },
+        env: {}, createdAt: 1, updatedAt: 1,
+      } };
+    const result = await handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST)!(request, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'missing_credentials' });
+    expect(readCredentials).toHaveBeenCalledTimes(1);
+  });
+  it.each(['draft', 'byId'] as const)('refuses member %s before borrowing the custodian catalog or launching stdio', async t => {
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const readCredentials = vi.fn(async () => null);
+    registerMachineMcpServersRpcHandlers({
+      rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
+      deps: { readCredentials, hostHomeServerIdentityId: MCP_TEST_HOME_ID },
+    });
+    const context: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'm1',
+        installationId: 'install', encryptionMode: 'plain', role: 'manage' },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    const request = t === 'byId'
+      ? { t, machineId: 'm1', directory: process.cwd(), serverId: 'custodian-only-server' }
+      : { t, machineId: 'm1', directory: process.cwd(), binding: null, server: {
+        id: 'member-server', name: 'member-server', transport: 'stdio',
+        stdio: { command: process.execPath, args: ['-e', 'throw new Error("unexpected child")'] },
+        env: {}, createdAt: 1, updatedAt: 1,
+      } };
+    const result = await Promise.resolve(handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST)!(request, context)).catch(error => error);
+    expect(readCredentials).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+  });
+
+  it.each(['member-use', 'member-manage', 'session-origin', 'copied-local-session', 'retired'] as const)(
+    'does not confuse protected requester custody with owned Account automation (%s)', async kind => {
+      const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+      const readCredentials = vi.fn(async () => null);
+      registerMachineMcpServersRpcHandlers({
+        rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
+        deps: { readCredentials, hostHomeServerIdentityId: MCP_TEST_HOME_ID },
+      });
+      const caller = { kind: 'session' as const, sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 };
+      const context: RpcHandlerContext = { ...createMcpOwnerRpcContext(), callerAuthority: 'account_automation',
+        ...(kind.startsWith('member-') ? { machineAdmission: {
+          actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'm1', installationId: 'install',
+          encryptionMode: 'plain' as const, role: kind === 'member-use' ? 'use' as const : 'manage' as const,
+        } } : {}),
+        ...(kind === 'session-origin' ? { sessionActionOrigin: { v: 1, caller,
+          sourceTurnId: 'agent-turn', callerPermissionMode: null, requestId: 'agent-request' } } : {}),
+        ...(kind === 'copied-local-session' ? { localActionContext: { actionCaller: caller } } : {}),
+        ...(kind === 'retired' ? { verifyMachineAdmissionCurrent: async () => false } : {}),
+      };
+      await expect(handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST)!({ t: 'byId', machineId: 'm1',
+        directory: process.cwd(), serverId: 'owner-server' }, context))
+        .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+      expect(readCredentials).not.toHaveBeenCalled();
+    });
+
+  it.each(['present_user', 'account_automation'] as const)('lists draft stdio tools for the Machine custodian (%s)', async callerAuthority => {
     const baseDir = join(process.cwd(), '.project', 'tmp');
     await mkdir(baseDir, { recursive: true });
     const root = await mkdtemp(join(baseDir, 'happier-mcp-test-rpc-'));
@@ -31,9 +103,9 @@ describe('rpcHandlers.mcpServers (test)', () => {
         'utf8',
       );
 
-      const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
+      const handlers = new Map<string, RpcHandler<unknown, unknown>>();
       const rpcHandlerManager = {
-        registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
+        registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => {
           handlers.set(method, handler);
         },
       } as any;
@@ -46,6 +118,7 @@ describe('rpcHandlers.mcpServers (test)', () => {
       registerMachineMcpServersRpcHandlers({
         rpcHandlerManager,
         deps: {
+          hostHomeServerIdentityId: MCP_TEST_HOME_ID,
           readCredentials: async () => credentials as any,
           bootstrapAccountSettingsContext: async () => ({
             source: 'none',
@@ -74,7 +147,7 @@ describe('rpcHandlers.mcpServers (test)', () => {
           updatedAt: Date.now(),
         },
         binding: null,
-      })) as any;
+      }, { ...createMcpOwnerRpcContext(), callerAuthority })) as any;
 
       expect(out.ok).toBe(true);
       expect(out.toolCount).toBeGreaterThan(0);

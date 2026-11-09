@@ -1,12 +1,6 @@
-import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time';
-import { emitSocketWithAck, SocketAckError } from '@/session/transport/shared/socketAck';
-import type { AgentState, Metadata } from '../types';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
-import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
-import { projectSessionMetadataAgentVocabularyWriteCompatibilityV1, readSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
-import { projectSessionMetadataForWire, normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema, type SessionRuntimeActivitySnapshotAck } from '@happier-dev/protocol/sessions/runtime/activity/transport';
 
 type AckableSocket = {
     emitWithAck(event: string, ...args: unknown[]): Promise<unknown>;
@@ -19,274 +13,21 @@ type SessionStateUpdateError = Error & {
     retryable: boolean;
 };
 
-type SessionStateUpdateCryptoContext =
-    | Readonly<{
-        sessionEncryptionMode: 'plain';
-        encryptionKey?: never;
-        encryptionVariant?: never;
-    }>
-    | Readonly<{
-        sessionEncryptionMode: 'e2ee';
-        encryptionKey: Uint8Array;
-        encryptionVariant: 'legacy' | 'dataKey';
-    }>;
+export class SessionRuntimeActivitySnapshotRejectedError extends Error {
+    readonly code = 'runtime_activity_update_failed';
+    readonly retryable = false;
+
+    constructor(readonly reason: Extract<SessionRuntimeActivitySnapshotAck, { status: 'rejected' }>['reason']) {
+        super(`runtime activity update failed: ${reason}`);
+        this.name = 'SessionRuntimeActivitySnapshotRejectedError';
+    }
+}
 
 function createSessionStateUpdateError(message: string, code: string, retryable: boolean): SessionStateUpdateError {
     const error = new Error(message) as SessionStateUpdateError;
     error.code = code;
     error.retryable = retryable;
     return error;
-}
-
-function describeAckFailure(answer: any): string {
-    const reason = typeof answer?.error === 'string'
-        ? answer.error
-        : typeof answer?.message === 'string'
-            ? answer.message
-            : typeof answer?.result === 'string'
-                ? answer.result
-                : 'unknown result';
-    return reason;
-}
-
-function readLoggedCurrentModeId(metadata: Record<string, unknown> | null | undefined): string | null {
-    return readSessionModesMetadata(metadata)?.currentModeId ?? null;
-}
-
-export async function updateSessionMetadataWithAck(opts: {
-    socket: AckableSocket;
-    getSocket?: () => AckableSocket;
-    signal?: AbortSignal;
-    sessionId: string;
-    getMetadata: () => Metadata | null;
-    setMetadata: (metadata: Metadata | null) => void;
-    getMetadataVersion: () => number;
-    setMetadataVersion: (version: number) => void;
-    syncSessionSnapshotFromServer: () => Promise<void>;
-    handler: (metadata: Metadata) => Metadata;
-} & SessionStateUpdateCryptoContext): Promise<Readonly<{
-    metadata: Metadata;
-    version: number;
-    ciphertext: string;
-}>> {
-    let attempt: { metadata: Metadata; payload: string; expectedVersion: number; uncertain: boolean } | undefined;
-    return await backoff(async () => {
-        if (opts.getMetadataVersion() < 0) {
-            await opts.syncSessionSnapshotFromServer();
-            if (opts.getMetadataVersion() < 0) {
-                throw createSessionStateUpdateError(
-                    'metadataVersion is still unknown after session snapshot sync',
-                    'metadata_version_unknown',
-                    false,
-                );
-            }
-        }
-
-        const current = opts.getMetadata() ?? ({} as Metadata);
-        const updated = attempt?.metadata ?? opts.handler(current);
-        const wireMetadata =
-            projectSessionMetadataForWire(projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
-                updated,
-            ));
-        logger.debug('[API] updateMetadata attempting', {
-            expectedVersion: opts.getMetadataVersion(),
-            hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
-            hasModelOverride: Boolean((updated as Record<string, unknown> | null)?.modelOverrideV1),
-            hasOpenCodeSessionId: typeof (updated as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-            currentModeId: readLoggedCurrentModeId(updated as Record<string, unknown> | null),
-        });
-        const metadataPayload = attempt?.payload ?? (
-            opts.sessionEncryptionMode === 'plain'
-                ? JSON.stringify(wireMetadata)
-                : encodeBase64(encrypt(
-                    opts.encryptionKey,
-                    opts.encryptionVariant,
-                    wireMetadata,
-                )));
-        const submittedAttempt = attempt ??= { metadata: updated, payload: metadataPayload, expectedVersion: opts.getMetadataVersion(), uncertain: false };
-        const answer = await emitSocketWithAck<any>({
-            socket: opts.getSocket ? opts.getSocket() : opts.socket,
-            event: 'update-metadata',
-            timeoutMs: null,
-            signal: opts.signal,
-            payload: {
-                sid: opts.sessionId,
-                expectedVersion: submittedAttempt.expectedVersion,
-                metadata: metadataPayload,
-            },
-        }).catch((error: unknown) => {
-            if (!(error instanceof SocketAckError && error.code === 'socket_not_connected')) submittedAttempt.uncertain = true;
-            throw error;
-        });
-
-        if (answer.result === 'success' || (answer.result === 'version-mismatch'
-            && submittedAttempt.uncertain && answer.version === submittedAttempt.expectedVersion + 1 && answer.metadata === metadataPayload)) {
-            logger.debug('[API] updateMetadata success', {
-                version: answer.version,
-                hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
-                hasModelOverride: Boolean((updated as Record<string, unknown> | null)?.modelOverrideV1),
-                hasOpenCodeSessionId: typeof (updated as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-                currentModeId: readLoggedCurrentModeId(updated as Record<string, unknown> | null),
-            });
-            opts.setMetadata(updated);
-            opts.setMetadataVersion(answer.version);
-            return {
-                metadata: updated,
-                version: answer.version,
-                ciphertext: String(answer.metadata),
-            };
-        }
-
-        if (answer.result === 'version-mismatch') {
-            attempt = undefined;
-            if (answer.version > opts.getMetadataVersion()) {
-                opts.setMetadataVersion(answer.version);
-                const decoded: Metadata | null = opts.sessionEncryptionMode === 'plain'
-                        ? JSON.parse(String(answer.metadata ?? 'null'))
-                        : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata));
-                const next = normalizeSessionMetadataForRead(decoded);
-                logger.debug('[API] updateMetadata version-mismatch', {
-                    version: answer.version,
-                    hasModeOverride: Boolean((next as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
-                    hasModelOverride: Boolean((next as Record<string, unknown> | null)?.modelOverrideV1),
-                    hasOpenCodeSessionId: typeof (next as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-                    currentModeId: readLoggedCurrentModeId(next as Record<string, unknown> | null),
-                });
-                opts.setMetadata(next);
-            }
-            throw new Error('Metadata version mismatch');
-        }
-
-        if (answer.result === 'publisher-superseded') {
-            throw createSessionStateUpdateError(
-                'metadata update refused because this session publisher was superseded',
-                'session_publisher_authority_lost',
-                false,
-            );
-        }
-
-        throw createSessionStateUpdateError(
-            `metadata update failed: ${describeAckFailure(answer)}`,
-            'metadata_update_failed',
-            false,
-        );
-    }).catch((error: unknown) => {
-        logger.infoFile('[API] session_metadata_update_failed', {
-            phase: 'terminal_failure',
-            operation: 'update-metadata',
-            sessionId: opts.sessionId,
-        });
-        throw error;
-    });
-}
-
-export async function updateSessionAgentStateWithAck(opts: {
-    socket: AckableSocket;
-    getSocket?: () => AckableSocket;
-    signal?: AbortSignal;
-    sessionId: string;
-    ownerActivityDelivery?: 'rich_sender' | 'home_required';
-    getAgentState: () => AgentState | null;
-    setAgentState: (agentState: AgentState | null) => void;
-    getAgentStateVersion: () => number;
-    setAgentStateVersion: (version: number) => void;
-    syncSessionSnapshotFromServer: () => Promise<void>;
-    handler: (agentState: AgentState) => AgentState;
-} & SessionStateUpdateCryptoContext): Promise<Readonly<{
-    agentState: AgentState | null;
-    version: number;
-    ciphertext: string | null;
-}>> {
-    let attempt: { agentState: AgentState; payload: string | null; expectedVersion: number; uncertain: boolean } | undefined;
-    return await backoff(async () => {
-        if (opts.getAgentStateVersion() < 0) {
-            await opts.syncSessionSnapshotFromServer();
-            if (opts.getAgentStateVersion() < 0) {
-                throw createSessionStateUpdateError(
-                    'agentStateVersion is still unknown after session snapshot sync',
-                    'agent_state_version_unknown',
-                    false,
-                );
-            }
-        }
-
-        const previous = opts.getAgentState() || {};
-        const updated = attempt?.agentState ?? opts.handler(previous);
-        const agentStatePayload = attempt ? attempt.payload : (
-            opts.sessionEncryptionMode === 'plain'
-                ? JSON.stringify(updated)
-                : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null));
-        const submittedAttempt = attempt ??= { agentState: updated, payload: agentStatePayload, expectedVersion: opts.getAgentStateVersion(), uncertain: false };
-        const activitySummaryV1 = {
-            ...deriveActivitySummaryFromAgentState(updated, previous),
-            ...(opts.ownerActivityDelivery
-                ? { ownerActivityDelivery: opts.ownerActivityDelivery }
-                : {}),
-        };
-        const answer = await emitSocketWithAck<any>({
-            socket: opts.getSocket ? opts.getSocket() : opts.socket,
-            event: 'update-state',
-            timeoutMs: null,
-            signal: opts.signal,
-            payload: {
-                sid: opts.sessionId,
-                expectedVersion: submittedAttempt.expectedVersion,
-                agentState: agentStatePayload,
-                activitySummaryV1,
-            },
-        }).catch((error: unknown) => {
-            if (!(error instanceof SocketAckError && error.code === 'socket_not_connected')) submittedAttempt.uncertain = true;
-            throw error;
-        });
-
-        if (answer.result === 'success' || (answer.result === 'version-mismatch'
-            && submittedAttempt.uncertain && answer.version === submittedAttempt.expectedVersion + 1 && answer.agentState === agentStatePayload)) {
-            const next =
-                !answer.agentState
-                    ? null
-                    : opts.sessionEncryptionMode === 'plain'
-                        ? JSON.parse(String(answer.agentState))
-                        : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState));
-            opts.setAgentState(next);
-            opts.setAgentStateVersion(answer.version);
-            logger.debug('Agent state updated', opts.getAgentState());
-            return {
-                agentState: next,
-                version: answer.version,
-                ciphertext: typeof answer.agentState === 'string'
-                    ? answer.agentState
-                    : null,
-            };
-        }
-
-        if (answer.result === 'version-mismatch') {
-            attempt = undefined;
-            if (answer.version > opts.getAgentStateVersion()) {
-                opts.setAgentStateVersion(answer.version);
-                const next =
-                    !answer.agentState
-                        ? null
-                        : opts.sessionEncryptionMode === 'plain'
-                            ? JSON.parse(String(answer.agentState))
-                            : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState));
-                opts.setAgentState(next);
-            }
-            throw new Error('Agent state version mismatch');
-        }
-
-        throw createSessionStateUpdateError(
-            `agent state update failed: ${describeAckFailure(answer)}`,
-            'agent_state_update_failed',
-            false,
-        );
-    }).catch((error: unknown) => {
-        logger.infoFile('[API] session_agent_state_update_failed', {
-            phase: 'terminal_failure',
-            operation: 'update-state',
-            sessionId: opts.sessionId,
-        });
-        throw error;
-    });
 }
 
 export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
@@ -331,6 +72,13 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
             );
         }
         const answer = parsedAnswer.data;
+
+        if (answer.status === 'rejected' && (
+            answer.reason === 'invalid_request'
+            || (answer.sessionId === opts.sessionId && answer.mutationId === opts.mutationId)
+        )) {
+            throw new SessionRuntimeActivitySnapshotRejectedError(answer.reason);
+        }
 
         if (
             (answer.status === 'applied' || answer.status === 'unchanged')

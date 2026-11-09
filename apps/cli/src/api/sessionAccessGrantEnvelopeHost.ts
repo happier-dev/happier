@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { SessionAccessGrantSetActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -9,7 +9,7 @@ import type { SessionAccessErrorCodeV1, SetSessionAccessGrantRequestV1 } from '@
 import { getRandomBytes } from '@/api/encryption';
 import { openSessionDataEncryptionKeyForReseal } from '@/api/client/openSessionDataEncryptionKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
@@ -84,7 +84,7 @@ export async function recordSessionTeamShareStatement(params: Readonly<{
   try {
     const session = await fetchSessionById({
       reason: 'session-control',
-        token: params.token,
+      token: params.token,
       serverUrl: params.serverHttpBaseUrl,
       sessionId: params.sessionId,
       ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
@@ -133,7 +133,7 @@ export async function prepareSessionRecipientEnvelopes(params: Readonly<{
     resolveSessionDataKey: async () => {
       const session = await fetchSessionById({
         reason: 'session-control',
-            token: params.credentials.token,
+        token: params.credentials.token,
         serverUrl: params.serverHttpBaseUrl,
         sessionId: params.sessionId,
         signal: params.signal,

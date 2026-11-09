@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { configuration, reloadConfiguration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
@@ -66,6 +67,73 @@ describe('ApiSessionClient exact request settlement recovery', () => {
   const clients: ApiSessionClient[] = [];
   const connectGates: ReturnType<typeof createDeferred>[] = [];
 
+  it.each(['direct', 'deferred', 'deferred-attach-retry'] as const)('republishes an offline request through the %s Session tuple owner after reconnect', async adapter => {
+    const session = createOwnerSession({ id: 'offline-request-publication' });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const commit = vi.mocked(axios.patch).getMockImplementation()!;
+    const socket = createSocket({ disconnectReason: 'transport close' });
+    const connect = createDeferred();
+    const client = createClient(session, [socket], {}, connect);
+    const deferred = new DeferredApiSessionClient({ placeholderSessionId: session.id, limits: { maxEntries: 10, maxBytes: 10_000 } });
+    const store = new AgentStateRequestStore({ session: adapter === 'direct' ? client : deferred, logPrefix: '[OfflinePublication]' });
+    if (adapter === 'deferred') await deferred.attach(client);
+    client.bindAgentStateRequestStore(store);
+    const publication = { requestId: 'offline', toolName: 'Bash', toolInput: { command: 'pwd' }, createdAt: 10, turnId: 'turn-offline' };
+    const failed = vi.spyOn(logger, 'infoFile');
+    try {
+      expect(socket.connected).toBe(false);
+      vi.mocked(axios.patch).mockRejectedValue(new Error('Home unavailable'));
+      store.publishRequest(publication);
+      if (adapter === 'deferred-attach-retry') {
+        await expect(deferred.attach(client, {
+          beforeBufferedDrain: async () => { throw new Error('authority preparation rejected'); },
+        })).rejects.toThrow('authority preparation rejected');
+        expect(JSON.parse(row.agentState ?? '{}').requests?.offline).toBeUndefined();
+        await deferred.attach(client);
+      }
+      await vi.waitFor(() => expect(axios.patch).toHaveBeenCalled());
+      await client.updateAgentState(state => state).catch(() => undefined);
+      expect(JSON.parse(row.agentState ?? '{}').requests?.offline).toBeUndefined();
+      vi.mocked(axios.patch).mockImplementation(commit);
+      connect.resolve();
+      await vi.waitFor(() => expect(JSON.parse(row.agentState ?? '{}').requests?.offline).toMatchObject({
+        tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 10, turnId: 'turn-offline',
+      }));
+      expect(failed).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ operation: 'publish_request' }));
+    } finally { store.dispose(); failed.mockRestore(); }
+  });
+
+  it.each(['retained', 'unsubscribe', 'cancel'] as const)('preserves the %s connection listener lifetime after attach rollback', async retirement => {
+    const session = createOwnerSession({ id: 'retired-deferred-listener' });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const socket = createSocket({ disconnectReason: 'transport close' });
+    const connect = createDeferred();
+    const client = createClient(session, [socket], {}, connect);
+    const deferred = new DeferredApiSessionClient({ placeholderSessionId: session.id, limits: { maxEntries: 10, maxBytes: 10_000 } });
+    const listener = vi.fn<(state: Readonly<{ phase: string }>) => void>();
+    const connectionState = vi.fn();
+    const unsubscribeControl = client.subscribeToSessionConnectionState(connectionState);
+    const unsubscribe = deferred.subscribeToSessionConnectionState(listener);
+    await expect(deferred.attach(client, {
+      beforeBufferedDrain: async () => { throw new Error('authority preparation rejected'); },
+    })).rejects.toThrow('authority preparation rejected');
+    if (retirement === 'unsubscribe') unsubscribe();
+    else if (retirement === 'cancel') deferred.cancel();
+    await deferred.attach(client);
+    listener.mockClear();
+    connect.resolve();
+    await vi.waitFor(() => expect(connectionState).toHaveBeenCalledWith(expect.objectContaining({ phase: 'online' })));
+    unsubscribeControl();
+    if (retirement === 'retained') {
+      expect(listener.mock.calls.filter(([state]) => state.phase === 'online')).toHaveLength(1);
+    } else {
+      expect(listener).not.toHaveBeenCalled();
+    }
+    unsubscribe();
+  });
+
   it.each(['AgentState', 'metadata'] as const)('overlaps %s currentness and Session reads without committing before both are admitted', async operation => {
     const session = createOwnerSession({ id: 'withdrawal-read-overlap' });
     const row = createOwnerRow(session);
@@ -103,6 +171,42 @@ describe('ApiSessionClient exact request settlement recovery', () => {
       await mutation;
     }
     expect(readValue()).toBe(true);
+  });
+
+  it('retires an unacknowledged publication through the existing cancellation journal when its ACK was lost', async () => {
+    vi.stubEnv('HAPPIER_HOME_DIR', await mkdtemp(join(tmpdir(), 'happier-unacknowledged-request-')));
+    reloadConfiguration();
+    const session = createOwnerSession({ id: 'lost-request-publication-ack' });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const commit = vi.mocked(axios.patch).getMockImplementation()!;
+    let saved = false;
+    vi.mocked(axios.patch).mockImplementation(async (url, body, options) => {
+      const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+      if (!saved && patch.mode === 'owner' && patch.agentState && patch.agentState.ciphertext !== null
+        && JSON.parse(patch.agentState.ciphertext).requests?.lost) {
+        saved = true;
+        await commit(url, body, options);
+      }
+      throw new Error('Home response lost');
+    });
+    const connect = createDeferred();
+    const client = createClient(session, [createSocket()], {}, connect);
+    const store = new AgentStateRequestStore({ session: client, logPrefix: '[LostPublicationAck]' });
+    const owner = { kind: 'plugin' as const, pluginId: 'lost-ack-owner' };
+    client.bindAgentStateRequestStore(store);
+    const failed = vi.spyOn(logger, 'infoFile');
+    try {
+      store.publishRequest({ requestId: 'lost', toolName: 'Bash', toolInput: { command: 'pwd' }, createdAt: 10, owner });
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ operation: 'publish_request' })));
+      expect(JSON.parse(row.agentState ?? '{}').requests?.lost).toBeDefined();
+      expect(client.getAgentStateSnapshot()?.requests?.lost).toBeUndefined();
+      await store.cancelRequestsByOwner({ owner, observedRetirement: true, reason: 'Plugin retired', requestIds: [] }).catch(() => undefined);
+      vi.mocked(axios.patch).mockImplementation(commit);
+      connect.resolve();
+      await vi.waitFor(() => expect(JSON.parse(row.agentState ?? '{}').completedRequests?.lost).toMatchObject({ status: 'canceled' }));
+      expect(JSON.parse(row.agentState ?? '{}').requests?.lost).toBeUndefined();
+    } finally { vi.mocked(axios.patch).mockImplementation(commit); connect.resolve(); store.dispose(); failed.mockRestore(); }
   });
 
   function createSocket(options: Parameters<typeof createApiSessionSocketStub>[0] = {}) {

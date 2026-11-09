@@ -10,6 +10,9 @@ import { createProjectWorkerAdmission, type ProjectWorkerReservationOutcome } fr
 import type { TrackedSession } from '@/daemon/types';
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import { registerMachineWorkSummaryRpcHandlers } from './rpcHandlers.machineWorkSummary';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
 const custodian = { accountId: 'alice', displayName: 'Alice' };
@@ -41,26 +44,39 @@ describe('current Machine work summary ingress', () => {
             serverHttpBaseUrl: 'http://work-summary.test' });
         const operations = createActionOperationStore();
         const activity = createManagedActivityInventory({ producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }] });
-        const handlers = new Map<string, RpcHandler>();
-        registerMachineWorkSummaryRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+        let admissions = 0;
+        const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, encryptionMode: 'plain', logger: () => {},
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                machineId: target.machineId, resolveCustodianAccountId: async () => custodian.accountId,
+                resolveInstallationId: () => target.installationId,
+                // Current Home admission is the network boundary; retain the
+                // real parser, installed target checks and summary owner.
+                verifyMachineAdmission: async () => { admissions++; return true; },
+            }, source) });
+        registerMachineWorkSummaryRpcHandlers({ rpcHandlerManager: rpc,
             target, custodianAccountId: custodian.accountId, activity,
             readAccess: signal => access.machineAccessAction!({ actionId: 'machines.access.grants.list',
                 input: { serverId: target.serverId, machineId: target.machineId },
                 context: { surface: 'cli', serverId: target.serverId }, signal }),
         });
-        const owner: RpcHandlerContext = { signal: new AbortController().signal,
-            machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: target.machineId,
-                installationId: target.installationId, role: 'manage', encryptionMode: 'plain' },
-            verifyMachineAdmissionCurrent: async () => true };
+        const machineAdmission = { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: target.machineId,
+            installationId: target.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
+        const request = { method: `${target.machineId}:machines.work.summary.get`,
+            params: { serverId: 'browser-profile-for-home', machineId: target.machineId }, machineAdmission };
         try {
-            const call = () => handlers.get('machines.work.summary.get')!({ serverId: 'browser-profile-for-home', machineId: target.machineId }, owner);
+            const call = () => rpc.handleRequest(request, undefined, 'authenticated_home_socket');
             expect(await call()).toEqual({ kind: 'current', requesters: [], finiteLoad: { kind: 'unknown' } });
+            // Authenticated Home transport has already admitted this request.
+            expect(admissions).toBe(0);
             readiness = 'key_pending';
             expect(await call()).toEqual({ kind: 'unavailable' });
             readiness = 'ready';
             expect(await call()).toEqual({ kind: 'current', requesters: [], finiteLoad: { kind: 'unknown' } });
-            expect(await handlers.get('machines.work.summary.get')!({ serverId: 'browser-profile-for-home', machineId: 'another-machine' }, owner))
-                .toEqual({ kind: 'refused', code: 'access_denied' });
+            expect(await rpc.handleRequest({ ...request,
+                machineAdmission: { ...machineAdmission, actorAccountId: 'viewer', role: 'use' },
+            }, undefined, 'authenticated_home_socket')).toEqual({ kind: 'refused', code: 'access_denied' });
+            expect(await rpc.handleRequest({ ...request, params: { ...request.params, machineId: 'another-machine' } },
+                undefined, 'authenticated_home_socket')).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
         } finally {
             activity.dispose();
         }
@@ -112,6 +128,9 @@ describe('current Machine work summary ingress', () => {
                 finiteLoad: { kind: 'known', running: 1, queued: 0, accepting: true, runAtMost: 1 },
             });
             retireDuringFiniteRead = true;
+            expect(await call()).toEqual({ kind: 'unavailable',
+                finiteLoad: { kind: 'known', running: 1, queued: 0, accepting: true, runAtMost: 1 },
+            });
             expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });
             current = true;
             retireDuringFiniteRead = false;
@@ -201,6 +220,7 @@ describe('current Machine work summary ingress', () => {
             expect(started).toEqual(['held']);
             policyAvailable = true;
             retireDuringFiniteRead = true;
+            expect(await call()).toMatchObject({ kind: 'current', finiteLoad: { kind: 'known', running: 1, queued: 1 } });
             expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });
             current = true;
             retireDuringFiniteRead = false;
@@ -214,13 +234,15 @@ describe('current Machine work summary ingress', () => {
         }
     });
 
-    it('projects the real shared activity owner for custodian/Manage only and rechecks access before disclosure', async () => {
+    it('admits one summary for custodian/Manage and refuses the next request after withdrawal', async () => {
         const operations = createActionOperationStore();
         let current = true;
         let trackedSessions: TrackedSession[] = [];
         const sessions = createSessionLiveWorkProducer({ readSessions: () => trackedSessions,
             // The live Session RPC boundary retires admission while the real inventory awaits it.
-            readActivity: async () => { current = false; return { session: 'settled', input: 'settled' }; },
+            readActivity: async () => { current = false; return {
+                session: 'settled', input: 'settled', agents: 'settled', attention: 'settled',
+            }; },
         });
         const activity = createManagedActivityInventory({ producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }, sessions] });
         operations.create({ operationId: 'private-operation', actionId: 'projects.script.run', title: 'Private command',
@@ -238,15 +260,17 @@ describe('current Machine work summary ingress', () => {
                 canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
                 currentRequesterDisplayIdentities: [{ accountId: 'bob', displayName: 'Bob' }] };
         } });
+        let admissions = 0;
         const context: RpcHandlerContext = { signal: new AbortController().signal,
             machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: target.machineId,
                 installationId: target.installationId, role: 'manage', encryptionMode: 'plain' },
-            verifyMachineAdmissionCurrent: async () => current };
+            verifyMachineAdmissionCurrent: async () => { admissions++; return current; } };
         const call = (ctx: RpcHandlerContext | undefined = context, input: unknown = { serverId: target.serverId, machineId: target.machineId }) =>
             handlers.get('machines.work.summary.get')!(input, ctx);
         const expected = { kind: 'current', requesters: [{ accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 }],
             finiteLoad: { kind: 'unknown' } };
         expect(await call()).toEqual(expected);
+        expect(admissions).toBe(1);
         expect(await call({ ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'manager' } })).toEqual(expected);
         expect(await call({ ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'bob', role: 'use' } }))
             .toEqual({ kind: 'refused', code: 'access_denied' });
@@ -255,11 +279,13 @@ describe('current Machine work summary ingress', () => {
         expect(await call(context, { serverId: target.serverId, machineId: 'other-machine' }))
             .toEqual({ kind: 'refused', code: 'access_denied' });
         retireDuringRead = true;
+        expect(await call()).toEqual(expected);
         expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });
         current = true;
         retireDuringRead = false;
         trackedSessions = [{ pid: 1, startedBy: 'daemon', happySessionId: 'private-session',
             requesterWorkAttributionV1: { ...target, accountId: 'bob' } }];
+        expect(await call()).toMatchObject({ kind: 'current', requesters: [{ accountId: 'bob', sessions: 1, tasks: 1 }] });
         expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });
         current = true;
         trackedSessions = [];

@@ -1751,7 +1751,7 @@ export async function authorizeMachineRpcRequest(
         !targetRouting &&
         !writerTargetRouting &&
         !seedRouting;
-      const nativePersonTerminal = nativeRequesterControl && nativeTerminalMethods.includes(rpcMethod);
+      const nativeTerminal = nativeRequesterControl && nativeTerminalMethods.includes(rpcMethod);
       const nativePersonalComputer = nativeRequesterControl && (rpcMethod === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
         || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
         || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START);
@@ -1785,10 +1785,9 @@ export async function authorizeMachineRpcRequest(
         !nativeEffectOwner &&
         // The scoped computer owner selects and verifies the requester's desktop.
         !nativePersonalComputer &&
-        // Byte reads acquire no execution identity: the registered terminal
-        // owner distinguishes finite output and enforces retained custody.
-        // Keep the route flag for Session admission and older-receiver floors.
-        !(nativePersonTerminal && rpcMethod === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) &&
+        // The registered terminal owner selects native placement at creation
+        // and enforces retained requester custody on every later terminal call.
+        !nativeTerminal &&
         (workspaceTargetPhase && (!privateTargetRouting
           || privateTargetBody && privateTargetBody.bootstrapOperationId !== privateTargetRouting.operationId)
           || resolveMachineRpcRoutePolicy(rpcMethod)
@@ -1844,17 +1843,7 @@ export async function authorizeMachineRpcRequest(
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
         // Home-admitted Manage on this physical receiver permits raw work.
-        // Otherwise retain owner custody and identity-bound terminal protection.
-        if (
-          !receivingManager && !isHostRequesterUnrestrictedOwner(identity) &&
-          !(
-            nativePersonTerminal &&
-            identity.kind === 'isolated' &&
-            (identity.presentPerson === true ||
-              (rpcMethod === RPC_METHODS.DAEMON_TERMINAL_ENSURE &&
-                !identity.separationRequired))
-          )
-        ) {
+        if (!receivingManager && !isHostRequesterUnrestrictedOwner(identity)) {
           return {
             ok: false,
             errorCode: 'agent_isolation_unavailable',

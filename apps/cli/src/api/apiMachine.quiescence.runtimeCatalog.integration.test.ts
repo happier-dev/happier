@@ -280,6 +280,20 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             .toEqual({ ok: true, result: { status: 'applied' }, answeringClientId: 'app-b' });
     });
 
+    it('preserves strictly admitted candidate clients from an ambiguous relay ACK', async () => {
+        const answeringClients = [{ id: 'app-a', deviceLabel: null,
+            state: { computer: true, focused: false, lastFocusedAt: 10 } }, { id: 'app-b', deviceLabel: null }];
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: () => ({
+            ok: false, error: 'Choose a client', errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients,
+        }) });
+        const client = new ApiMachineClient('token', createPlainMachine());
+        Reflect.set(client, 'socket', socket);
+        expect(await client.callConnectedClientRpc(RPC_METHODS.UI_ACTION_EXECUTE, {},
+            { answeringClient: { requireSingle: true } })).toMatchObject({
+            ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients,
+        });
+    });
+
     it('forwards invoking cancellation to the issued connected-client RPC', async () => {
         let issued!: () => void;
         const sent = new Promise<void>(resolve => { issued = resolve; });

@@ -19,7 +19,7 @@ import {
   bindExternalSessionStatusDemand,
   type ExternalSessionStatusDemandChannel,
 } from '@/daemon/machine/externalSessionStatusDemandBinding';
-import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { RpcActionExecutor, RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import {
@@ -73,7 +73,6 @@ import type {
 import {
   publishExternalSessionOperationProgress,
   repairExternalSessionOperationProgressProjections,
-  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
 } from '@/session/actions/externalSessions/operationProgressPublisher';
 import {
   createDefaultExternalSessionTakeoverStartActionExecutor,
@@ -92,6 +91,8 @@ import type { PersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedT
 import {
   abandonExternalSessionOperationsForDeletedSession,
   readExternalSessionOperationRecord,
+  captureExternalSessionOperationAccountAdmission,
+  type ExternalSessionOperationAccountAdmission,
   type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import type { ExternalSessionMaterializeActionExecutor, ExternalSessionMaterializeContinuationContext } from '@/session/actions/externalSessions/materializeAction';
@@ -175,6 +176,7 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
   externalLinkedTakeoverPhaseRunner:
     ExternalSessionExternalLinkedTakeoverPhaseRunner | null;
   takeoverAdmission: ExternalSessionTakeoverAdmissionActionExecutor | null;
+  accountAdmission?: ExternalSessionOperationAccountAdmission;
 }>): Promise<ActionExecuteResult> {
   // Import continuations outlive their RPC, just like materialize Start. Only
   // the executor's committed running revision acknowledges admission; early
@@ -186,7 +188,7 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
     return {
       ok: true,
       result: await acknowledgeExternalSessionOperationAdmission(
-        (onAdmitted) => execute({ onAdmitted }), 'operation.continue',
+        (onAdmitted) => execute({ onAdmitted, ...(input.accountAdmission ? { accountAdmission: input.accountAdmission } : {}) }), 'operation.continue',
       ),
     };
   };
@@ -198,15 +200,15 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
       return {
         ok: true,
         result: input.actionId === 'sessions.external.operation.retry'
-          ? await input.externalLinkedTakeoverPhaseRunner.retry(input.raw)
+          ? await input.externalLinkedTakeoverPhaseRunner.retry(input.raw, input.accountAdmission)
           : input.actionId === 'sessions.external.operation.cancel'
-            ? await input.externalLinkedTakeoverPhaseRunner.cancel(input.raw)
-            : await input.externalLinkedTakeoverPhaseRunner.resume(input.raw),
+            ? await input.externalLinkedTakeoverPhaseRunner.cancel(input.raw, input.accountAdmission)
+            : await input.externalLinkedTakeoverPhaseRunner.resume(input.raw, input.accountAdmission),
       };
     }
     if (input.actionId === 'sessions.external.operation.cancel') {
       return input.materialize
-        ? { ok: true, result: await input.materialize.cancel(input.raw) }
+        ? { ok: true, result: await input.materialize.cancel(input.raw, input.accountAdmission ? { accountAdmission: input.accountAdmission } : undefined) }
         : unsupportedExternalSessionAction(input.actionId);
     }
     if (
@@ -216,8 +218,8 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
       return {
         ok: true,
         result: input.actionId === 'sessions.external.operation.retry'
-          ? await input.takeoverAdmission.retry(input.raw)
-          : await input.takeoverAdmission.resume(input.raw),
+          ? await input.takeoverAdmission.retry(input.raw, input.accountAdmission)
+          : await input.takeoverAdmission.resume(input.raw, input.accountAdmission),
       };
     }
     if (input.actionId === 'sessions.external.operation.resume') {
@@ -243,7 +245,7 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
   }
   const materialize = input.materialize;
   if (input.actionId === 'sessions.external.operation.cancel') {
-    return { ok: true, result: await materialize.cancel(input.raw) };
+    return { ok: true, result: await materialize.cancel(input.raw, input.accountAdmission ? { accountAdmission: input.accountAdmission } : undefined) };
   }
   return await continueImport((context) =>
     input.actionId === 'sessions.external.operation.resume'
@@ -270,6 +272,25 @@ export function resolveExternalSessionOperationRequiredPublicationFenceVersion(
     : undefined;
 }
 
+async function captureExternalSessionOperationExecutionContext(
+  actionId: ActionId,
+  context?: RpcActionExecutorContext,
+): Promise<RpcActionExecutorContext | undefined> {
+  if (context?.externalSessionOperationAdmission) return context;
+  switch (actionId) {
+    case 'sessions.external.takeover.start':
+    case 'sessions.external.materialize.start':
+    case 'sessions.external.operation.resume':
+    case 'sessions.external.operation.retry':
+    case 'sessions.external.operation.cancel':
+    case 'sessions.external.operation.discard': {
+      const admission = await captureExternalSessionOperationAccountAdmission(configuration.activeServerDir);
+      return admission ? { ...context, externalSessionOperationAdmission: admission } : context;
+    }
+    default: return context;
+  }
+}
+
 export function createExternalSessionRpcActionExecutor(
   context: ExternalSessionActionContext,
   materialize: ExternalSessionMaterializeActionExecutor | null,
@@ -281,18 +302,21 @@ export function createExternalSessionRpcActionExecutor(
   takeoverAdmission: ExternalSessionTakeoverAdmissionActionExecutor | null,
   sessionHooks: PluginSessionHookManagementActionExecutor | null,
 ): RpcActionExecutor {
-  const readTakeoverOperation = async (input: unknown) => {
+  const readTakeoverOperation = async (input: unknown, admission?: ExternalSessionOperationAccountAdmission) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const operationId = (input as Readonly<Record<string, unknown>>).operationId;
     if (typeof operationId !== 'string' || !operationId.trim()) return false;
     const record = await readExternalSessionOperationRecord(
-      configuration.activeServerDir,
+      admission?.accountScope?.activeServerDir ?? configuration.activeServerDir,
       operationId,
+      admission?.accountScope,
     );
     return record?.request.plan === 'takeover' ? record : null;
   };
   return {
     execute: async (actionId, input, executionContext) => {
+      executionContext = await captureExternalSessionOperationExecutionContext(actionId, executionContext);
+      const accountAdmission = executionContext?.externalSessionOperationAdmission;
       switch (actionId) {
         case 'sessions.external.follow':
           return { ok: true, result: await executeExternalSessionAttachAction(input, context) };
@@ -345,8 +369,8 @@ export function createExternalSessionRpcActionExecutor(
             ok: true,
             result: await takeoverStart.start(
               input,
-              executionContext?.signal
-                ? { signal: executionContext.signal }
+              executionContext?.signal || accountAdmission
+                ? { ...(accountAdmission ?? {}), ...(executionContext?.signal ? { signal: executionContext.signal } : {}) }
                 : undefined,
             ),
           };
@@ -356,8 +380,8 @@ export function createExternalSessionRpcActionExecutor(
               ok: true,
               result: await materializeStart.start(
                 input,
-                executionContext?.signal
-                  ? { signal: executionContext.signal }
+                executionContext?.signal || accountAdmission
+                  ? { ...(accountAdmission ? { accountAdmission } : {}), ...(executionContext?.signal ? { signal: executionContext.signal } : {}) }
                   : undefined,
               ),
             }
@@ -370,7 +394,8 @@ export function createExternalSessionRpcActionExecutor(
           return await executeExternalSessionOperationContinuation({
             actionId,
             raw: input,
-            record: await readTakeoverOperation(input) || null,
+            record: await readTakeoverOperation(input, accountAdmission) || null,
+            accountAdmission,
             materialize,
             takeoverPhaseRunner,
             externalLinkedTakeoverPhaseRunner,
@@ -380,7 +405,8 @@ export function createExternalSessionRpcActionExecutor(
           return await executeExternalSessionOperationContinuation({
             actionId,
             raw: input,
-            record: await readTakeoverOperation(input) || null,
+            record: await readTakeoverOperation(input, accountAdmission) || null,
+            accountAdmission,
             materialize,
             takeoverPhaseRunner,
             externalLinkedTakeoverPhaseRunner,
@@ -390,7 +416,8 @@ export function createExternalSessionRpcActionExecutor(
           return await executeExternalSessionOperationContinuation({
             actionId,
             raw: input,
-            record: await readTakeoverOperation(input) || null,
+            record: await readTakeoverOperation(input, accountAdmission) || null,
+            accountAdmission,
             materialize,
             takeoverPhaseRunner,
             externalLinkedTakeoverPhaseRunner,
@@ -398,7 +425,7 @@ export function createExternalSessionRpcActionExecutor(
           });
         case 'sessions.external.operation.discard':
           return materialize
-            ? { ok: true, result: await materialize.discard(input) }
+            ? { ok: true, result: await materialize.discard(input, accountAdmission ? { accountAdmission } : undefined) }
             : unsupportedExternalSessionAction(actionId);
         case 'plugins.sessionHooks.status.get':
         case 'plugins.sessionHooks.install':
@@ -646,8 +673,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     ?? createExternalSessionOperationExclusion({
       activeServerDir: configuration.activeServerDir,
       ownerId: `cli-daemon:${process.pid}:external-session-operations:${randomUUID()}`,
-      claimMutationLockAcquisitionTimeoutMs:
-        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
     });
   const resolveSessionHookFeatureDecision = () => resolveCliFeatureDecision({
     featureId: PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID,
@@ -1097,6 +1122,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     );
   const publicationFenceAwareActionExecutor: RpcActionExecutor = {
     execute: async (actionId, input, context) => {
+      context = await captureExternalSessionOperationExecutionContext(actionId, context);
       let requiredPublicationFenceVersion: number | undefined;
       if (
         actionId === 'sessions.external.operation.resume'
@@ -1110,8 +1136,9 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
           : null;
         const record = operationId
           ? await readExternalSessionOperationRecord(
-            configuration.activeServerDir,
+            context?.externalSessionOperationAdmission?.accountScope?.activeServerDir ?? configuration.activeServerDir,
             operationId,
+            context?.externalSessionOperationAdmission?.accountScope,
           )
           : null;
         requiredPublicationFenceVersion =

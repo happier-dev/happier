@@ -1,14 +1,61 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createCliAccountKvJsonTransport } from './accountKvJsonTransport';
+import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from './accountKvJsonTransport';
 import { deriveAccountMachineKeyFromRecoverySecret, createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { legacyAccountKvVectors } from '../../../../../packages/protocol/src/crypto/fixtures/accountKvLegacyV0';
 import { decryptResult, decodeBase64, encrypt, encodeBase64 } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
 import tweetnacl from 'tweetnacl';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 afterEach(() => vi.restoreAllMocks());
+it.each(['fresh-authority', 'identity'] as const)('admits %s storage using in-hand requester custody rather than same-token disk keys', async usage => {
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_API_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
+    try {
+        await withTempDir('storage-requester-custody-', async home => {
+            env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_API_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined });
+            vi.resetModules();
+            const persistence = await import('@/persistence');
+            const { configuration } = await import('@/configuration');
+            const { resolveCliAccountStorageContext: resolveStorage } = await import('./accountKvJsonTransport');
+            const network = (await import('axios')).default;
+            // HTTP is redirected; real persistence and Account mode admission remain in the path.
+            vi.spyOn(network, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', version: 2,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 2 } });
+            const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester', usage })).toString('base64url')}.sig`;
+            const active: StoredCredentials = { token, encryption: { type: 'legacy', secret: new Uint8Array(32).fill(17) } };
+            const plain: StoredCredentials = { token, encryption: null };
+            await persistence.writeStoredCredentialsForServerId(configuration.activeServerId, active);
+            await expect(resolveStorage({ credentials: plain, serverBaseUrl: 'https://requester-storage.test', usage }))
+                .resolves.toEqual({ mode: 'plain', material: null });
+            await persistence.writeStoredCredentialsForServerId(configuration.activeServerId, plain);
+            await expect(resolveStorage({ credentials: active, serverBaseUrl: 'https://requester-storage.test', usage }))
+                .rejects.toMatchObject({ code: 'account_mode_downgrade_unverified', canTryAgain: false });
+        });
+    } finally {
+        env.restore();
+        vi.resetModules();
+    }
+});
+it('settles invalid Account material as the existing storage refusal without masking currentness transport errors', async () => {
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1,
+        signingKeyFingerprint: 'signing-current', contentKeyFingerprint: 'current', updatedAt: 1 } });
+    const machineKey = new Uint8Array(32).fill(11);
+    for (const encryption of [
+        { type: 'legacy' as const, secret: new Uint8Array(31) },
+        { type: 'dataKey' as const, machineKey, publicKey: new Uint8Array(32) },
+    ]) {
+        await expect(resolveCliAccountStorageContext({ credentials: { token: 'token', encryption },
+            serverBaseUrl: 'https://material-home.test', authorizationHeaders: { 'x-admitted-root': 'fixture' } }))
+            .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable' });
+    }
+    get.mockRejectedValue(Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }));
+    await expect(resolveCliAccountStorageContext({ credentials: { token: 'token', encryption: null },
+        serverBaseUrl: 'https://material-home.test', authorizationHeaders: { 'x-admitted-root': 'fixture' } }))
+        .rejects.toMatchObject({ code: 'account_encryption_currentness_unavailable' });
+});
 it('authorizes the exact encoded CAS body, not an empty-body signature', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,

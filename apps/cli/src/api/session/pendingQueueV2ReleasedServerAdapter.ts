@@ -9,13 +9,12 @@ import type {
 } from './sessionClientPort';
 import { materializeNextPendingQueueV2MessageViaReleasedServerSocket } from './pendingQueueV2Transport';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
-import { delayUnref } from '@/utils/time';
+import { delayUnrefAbortable } from '@/utils/time';
+import { configuration } from '@/configuration';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { openSessionMessageContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 type SessionSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
-
-const RELEASED_SERVER_EXACT_LOOKUP_MAX_ATTEMPTS = 2;
-const RELEASED_SERVER_EXACT_LOOKUP_RETRY_DELAY_MS = 100;
 
 // Compatibility seam provenance: immutable server-v0.2.1 commit 4913c1e.
 // Pending owns this request-scoped exact ACK + transcript-lookup adapter; it grants no passive replay.
@@ -57,51 +56,57 @@ export async function runPendingQueueV2ReleasedServerAdapter(params: Readonly<{
     reportDiagnosticPhase?: (phase: PendingMaterializationDiagnosticPhase) => void;
 }> & SessionStoredContentCryptoContext): Promise<MaterializeNextPendingResult> {
     const contractSocket = params.contractResult.socket as SessionSocket;
+    const signal = params.signal ?? AbortSignal.any([]);
     const hasCurrentAuthority = (): boolean => (
         params.contractResult.pendingInput === 'released_server_v0_2_1'
         && params.getContractResult() === params.contractResult
         && params.getSessionConnectionEpoch() === params.contractResult.sessionConnectionEpoch
         && params.getSocket() === contractSocket
         && contractSocket.connected === true
+        && !signal.aborted
         && params.isRuntimeAuthorityCurrent()
     );
 
-    if (!hasCurrentAuthority()) return { type: 'no_pending' };
+    if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
 
-    let materialized;
-    try {
-        params.reportDiagnosticPhase?.('materialize.server_claim');
-        materialized = await materializeNextPendingQueueV2MessageViaReleasedServerSocket({
-            signal: params.signal,
-            socket: contractSocket,
-            sessionId: params.sessionId,
-        });
-    } catch {
-        return { type: 'no_pending' };
-    }
-    if (!hasCurrentAuthority()) return { type: 'no_pending' };
+    params.reportDiagnosticPhase?.('materialize.server_claim');
+    const materialized = await materializeNextPendingQueueV2MessageViaReleasedServerSocket({
+        signal,
+        socket: contractSocket,
+        sessionId: params.sessionId,
+    });
+    if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
     if (materialized.type === 'no_pending') return { type: 'no_pending' };
-    if (materialized.type === 'error') return { type: 'no_pending' };
+    if (materialized.type === 'error') {
+        if (materialized.error === 'forbidden') {
+            throw createHttpStatusError(403, materialized.error, materialized.error);
+        }
+        throw new Error(materialized.error);
+    }
     if (!materialized.didWrite) return { type: 'no_pending' };
 
     const acknowledged = materialized.message;
     let lookup: Awaited<ReturnType<typeof findTranscriptEncryptedMessageByLocalIdV2>>;
-    for (let attempt = 0; ; attempt += 1) {
+    for (;;) {
         params.reportDiagnosticPhase?.('materialize.compatibility_transcript_lookup');
         lookup = await findTranscriptEncryptedMessageByLocalIdV2({
             token: params.token,
             serverUrl: params.serverUrl,
             sessionId: params.sessionId,
             localId: acknowledged.localId,
+            signal,
         });
-        if (!hasCurrentAuthority()) return { type: 'no_pending' };
-        if (lookup.type !== 'unhealthy' || attempt + 1 >= RELEASED_SERVER_EXACT_LOOKUP_MAX_ATTEMPTS) break;
-        await delayUnref(RELEASED_SERVER_EXACT_LOOKUP_RETRY_DELAY_MS);
-        if (!hasCurrentAuthority()) return { type: 'no_pending' };
+        if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
+        if (lookup.type !== 'unhealthy') break;
+        // Keep the popped ACK in this operation until exact observation settles. The
+        // transcript transport owns pacing; the containing caller owns cancellation.
+        await delayUnrefAbortable(configuration.transcriptLookupErrorBackoffBaseMs, signal);
+        if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
     }
-    if (!hasCurrentAuthority()) return { type: 'no_pending' };
+    if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
     if (lookup.type === 'auth_failed') return { type: 'auth_failure' };
-    if (lookup.type !== 'found') return { type: 'no_pending' };
+    if (lookup.type === 'protocol_error') throw lookup.error;
+    if (lookup.type !== 'found') return { type: 'retryable_transport' };
 
     const message = lookup.message;
     if (
@@ -116,24 +121,20 @@ export async function runPendingQueueV2ReleasedServerAdapter(params: Readonly<{
         || !Number.isSafeInteger(message.updatedAt)
         || message.updatedAt < 0
     ) {
-        return { type: 'no_pending' };
+        throw new Error('Released Pending transcript identity mismatch');
     }
 
-    let body: unknown;
-    try {
-        body = openSessionMessageContent({ ...params, content: message.content });
-    } catch {
-        return { type: 'no_pending' };
-    }
+    const body = openSessionMessageContent({ ...params, content: message.content });
     const userMessage = readCanonicalUserTextMessage({
         body,
         localId: acknowledged.localId,
         createdAt: message.createdAt,
     });
-    if (!userMessage || !hasCurrentAuthority()) return { type: 'no_pending' };
+    if (!userMessage) throw new Error('Invalid released Pending user message');
+    if (!hasCurrentAuthority()) return { type: 'retryable_transport' };
 
     const delivered = params.deliverMaterializedUserMessageToAgentQueue(userMessage, 'send');
-    if (delivered === false) return { type: 'no_pending' };
+    if (delivered === false) return { type: 'retryable_transport' };
     return {
         type: 'materialized',
         localId: acknowledged.localId,

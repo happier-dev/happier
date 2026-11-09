@@ -58,12 +58,16 @@ async function trySocketTranscriptMutation(params: Readonly<{
                 sidechainId: params.mutation.sidechainId ?? null,
                 ...(params.mutation.messageRole ? { messageRole: params.mutation.messageRole } : {}),
                 content: params.mutation.content,
+                ...(params.mutation.usageTimingV1 === undefined ? {} : { usageTimingV1: params.mutation.usageTimingV1 }),
                 createdAt: params.mutation.createdAt,
                 updatedAt: params.mutation.updatedAt,
                 provenance: params.mutation.provenance,
                 ...(params.version === 2 && params.mutation.surfaceItemReference !== undefined
                     ? { surfaceItemReference: params.mutation.surfaceItemReference } : {}),
+                ...(params.version === 2 && params.mutation.approvalRequestArtifactId !== undefined
+                    ? { approvalRequestArtifactId: params.mutation.approvalRequestArtifactId } : {}),
                 ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
+                ...(params.mutation.append ? { append: params.mutation.append } : {}),
             },
         }));
         const parsed = SessionTranscriptObservationAckV1Schema.safeParse(raw);
@@ -113,6 +117,7 @@ async function tryReleasedServerV021TranscriptMutation(params: Readonly<{
             payload: {
                 sid: params.mutation.sessionId,
                 message: params.mutation.content,
+                ...(params.mutation.usageTimingV1 === undefined ? {} : { usageTimingV1: params.mutation.usageTimingV1 }),
                 localId: params.mutation.localId,
                 echoToSender: true,
                 sidechainId: params.mutation.sidechainId ?? null,

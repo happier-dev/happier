@@ -21,12 +21,9 @@ vi.mock('axios', async (importOriginal) => {
 });
 
 describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => {
-  let retryIndex: number;
-
   beforeEach(() => {
     vi.useFakeTimers();
     axiosGetMock.mockReset();
-    retryIndex = 0;
   });
 
   afterEach(() => {
@@ -35,9 +32,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
   });
 
   function createRuntime(params: Readonly<{
-    initialAfterSeq?: number;
     lastObservedSeq?: number;
-    delays?: readonly number[];
     handleUpdate?: (update: Update) => void;
     accountChangesEnabled?: boolean;
     reconcilePendingExecutionRunTarget?: (runId: string) => Promise<void>;
@@ -45,30 +40,11 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     return createSessionClientRecoveryRuntime({
       mode: 'plain',
       ctx: null,
-      startupMessageCatchUpRetryDelaysMs: params.delays ?? [300, 1_200],
       token: 'token',
       sessionId: 's1',
       accountChangesEnabled: params.accountChangesEnabled ?? true,
       getClosed: () => false,
       getSessionConnectionSupervisor: () => null,
-      getCurrentConnectionState: () => ({
-        phase: 'online',
-        reason: null,
-        attempt: 0,
-        nextRetryAt: null,
-        lastConnectedAt: Date.now(),
-        lastDisconnectedAt: null,
-        lastErrorMessage: null,
-      }),
-      getStartedByDaemonProcess: () => true,
-      getMetadataStartedBy: () => null,
-      getMetadataStartedFromDaemon: () => false,
-      getStartupMessageCatchUpRetryIndex: () => retryIndex,
-      setStartupMessageCatchUpRetryIndex: (value) => {
-        retryIndex = value;
-      },
-      getStartupMessageCatchUpInitialAfterSeq: () => params.initialAfterSeq ?? 0,
-      getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => true,
       getLastObservedMessageSeq: () => params.lastObservedSeq ?? 0,
       handleUpdate: params.handleUpdate ?? (() => {}),
       syncSessionSnapshotFromServer: async () => true,
@@ -77,44 +53,32 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     });
   }
 
-  it('uses the initial catch-up cursor through the bounded retry window after success', async () => {
-    axiosGetMock.mockResolvedValue({ data: { messages: [] } });
-    const runtime = createRuntime({ initialAfterSeq: 3, lastObservedSeq: 99 });
-
-    runtime.scheduleNextStartupMessageCatchUpRetry();
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(1_200);
-
-    expect(axiosGetMock).toHaveBeenCalledTimes(2);
-    expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['3', '3']);
-  });
-
-  it('stops retrying after terminal authentication failure', async () => {
+  it('propagates terminal authentication failure without scheduling a startup retry', async () => {
     axiosGetMock.mockRejectedValue(new HttpStatusError(401, 'expired token'));
     const runtime = createRuntime();
 
-    runtime.scheduleNextStartupMessageCatchUpRetry();
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(1_200);
+    await expect(runtime.catchUpSessionMessages({ afterSeq: 0 })).rejects.toBeInstanceOf(HttpStatusError);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
 
     expect(axiosGetMock).toHaveBeenCalledTimes(1);
   });
 
-  it('retries non-authentication failures from the same initial cursor', async () => {
+  it('leaves failure recovery to the next explicit catch-up instead of a timer', async () => {
     axiosGetMock
       .mockRejectedValueOnce(new Error('temporary server failure'))
       .mockResolvedValueOnce({ data: { messages: [] } });
-    const runtime = createRuntime({ initialAfterSeq: 4, lastObservedSeq: 101 });
+    const runtime = createRuntime({ lastObservedSeq: 101 });
 
-    runtime.scheduleNextStartupMessageCatchUpRetry();
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(1_200);
+    await expect(runtime.catchUpSessionMessages({ afterSeq: 4 })).rejects.toBeInstanceOf(Error);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+    await runtime.catchUpSessionMessages({ afterSeq: 4 });
 
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
     expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['4', '4']);
   });
 
-  it('retries a corrupt transcript page from the original cursor without applying its valid neighbors', async () => {
+  it('rejects a corrupt transcript page without applying its valid neighbors or advancing recovery', async () => {
     axiosGetMock
       .mockResolvedValueOnce({
         status: 200,
@@ -129,11 +93,10 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
       })
       .mockResolvedValueOnce({ data: { messages: [] } });
     const handleUpdate = vi.fn();
-    const runtime = createRuntime({ initialAfterSeq: 4, handleUpdate });
+    const runtime = createRuntime({ handleUpdate });
 
-    runtime.scheduleNextStartupMessageCatchUpRetry();
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(1_200);
+    await expect(runtime.catchUpSessionMessages({ afterSeq: 4 })).rejects.toBeInstanceOf(Error);
+    await runtime.catchUpSessionMessages({ afterSeq: 4 });
 
     expect(handleUpdate).not.toHaveBeenCalled();
     expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['4', '4']);
@@ -141,10 +104,10 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
 
   it('reconciles changes once per connect or reconnect and never from elapsed time', async () => {
     axiosGetMock.mockImplementation(async (url: string) => {
-      if (url.endsWith('/v1/account/profile')) {
+      if (new URL(url).pathname === '/v1/account/profile') {
         return { status: 200, data: { id: 'account-1' } };
       }
-      if (url.endsWith('/v2/changes')) {
+      if (new URL(url).pathname === '/v2/changes') {
         return { status: 200, data: { changes: [], nextCursor: 0 } };
       }
       throw new Error(`Unexpected GET ${url}`);
@@ -156,15 +119,15 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await runtime.syncChangesOnConnect({ reason: 'reconnect' });
     await vi.advanceTimersByTimeAsync(10 * 60_000);
 
-    expect(axiosGetMock.mock.calls.filter(([url]) => String(url).endsWith('/v2/changes'))).toHaveLength(2);
+    expect(axiosGetMock.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v2/changes')).toHaveLength(2);
   });
 
   it('routes durable Pending recipient projection into exact Execution Run reconciliation', async () => {
     axiosGetMock.mockImplementation(async (url: string) => {
-      if (url.endsWith('/v1/account/profile')) {
+      if (new URL(url).pathname === '/v1/account/profile') {
         return { status: 200, data: { id: 'account-1' } };
       }
-      if (url.endsWith('/v2/changes')) {
+      if (new URL(url).pathname === '/v2/changes') {
         return {
           status: 200,
           data: {

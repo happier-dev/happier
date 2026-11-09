@@ -80,6 +80,7 @@ describe('rpcHandlers.memory (window retrieval)', () => {
     } as unknown as RpcHandlerManager; // Test boundary: this registration helper only reads registerHandler.
     const memoryWorker: MemoryWorkerHandle = {
       stop: () => {},
+      waitForReady: async () => {},
       reloadSettings: async () => {},
       clearIndex: async () => {},
       ensureUpToDate: async () => {},

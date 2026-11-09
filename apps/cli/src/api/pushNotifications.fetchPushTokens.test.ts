@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import { PushNotificationClient } from './pushNotifications';
+import { readAccountSessionDeliveryMutedScopes } from './sessionDeliveryMuteTransport';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { notificationCatalogFixture, notificationSettingsFixture } from '@/notifications/activity/activityNotification.testkit';
@@ -69,7 +70,7 @@ describe('PushNotificationClient.fetchPushTokens', () => {
     const client = new PushNotificationClient('t', 'https://api.example.test');
 
     await expect(client.fetchPushTokens()).rejects.toThrow('Failed to fetch push tokens: server failed');
-    await expect(client.fetchPushTokens()).resolves.toEqual([]);
+    await expect(client.fetchPushTokens()).rejects.toThrow('Push token registration lookup unavailable during failure cooldown');
 
     expect((axios as any).get).toHaveBeenCalledTimes(1);
 
@@ -82,20 +83,28 @@ describe('PushNotificationClient.fetchPushTokens', () => {
   });
 });
 
-// Ready push is selected only for a followed Session; this suite exercises focus filtering, not Follow policy.
-function followEverythingContext(context: ReturnType<typeof createSessionNotificationContextFixture>) {
-  return { ...context, viewer: { ...context.viewer!, follow: { ...context.viewer!.follow, policy: { preset: 'everything' as const } } } };
-}
-
 describe('focused computer push filtering', () => {
-  beforeEach(() => { vi.mocked(axios.get).mockReset(); });
-  it('carries the canonical Account opt-in through real activity delivery to the HTTP boundary', async () => {
-    vi.mocked(axios.get).mockImplementation(async (url) => ({ status: 200, data:
-      String(url).includes('/v2/sessions/')
-        ? { session: followEverythingContext(createSessionNotificationContextFixture('focus-session')) }
-        : { tokens: [], suppressedByFocusedComputer: true },
-    }));
-    const client = new PushNotificationClient('t', 'https://api.example.test');
+  it.each([true, false])('carries the Account focus opt-in only with bound delivery admission (bound=%s)', async (bound) => {
+    vi.mocked(axios.get).mockReset();
+    vi.mocked(axios.get).mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v2/sessions/focus-session') {
+        const session = createSessionNotificationContextFixture('focus-session');
+        // Completion must opt into interrupt delivery before computer focus can filter it.
+        return { status: 200, data: { session: { ...session, viewer: { ...session.viewer!,
+          follow: { ...session.viewer!.follow, policy: { preset: 'everything' as const } },
+        } } } };
+      }
+      if (path === '/v2/account/session-delivery-mutes') {
+        return { status: 200, data: { scopes: [] } };
+      }
+      if (path === '/v1/push-tokens') {
+        return { status: 200, data: { tokens: [], suppressedByFocusedComputer: true } };
+      }
+      throw new Error(`Unexpected notification HTTP path: ${path}`);
+    });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'focus-account' })).toString('base64url')}.signature`;
+    const client = new PushNotificationClient(token, 'https://api.example.test');
     const settings = notificationSettingsFixture({
       attentionDeliveryPolicyV1: { mutePhoneWhenComputerFocused: true },
       notificationChannelsV1: [{ id: 'phone-push', kind: 'expo_push', enabled: true }],
@@ -106,13 +115,24 @@ describe('focused computer push filtering', () => {
       pluginNotifications: null,
       expoPushSender: client,
       fetchSessionNotificationContext: client.fetchSessionNotificationContext.bind(client),
-      readAccountSessionDeliveryMutedScopes: async () => [],
+      ...(bound ? { readAccountSessionDeliveryMutedScopes: () => readAccountSessionDeliveryMutedScopes({
+        serverHttpBaseUrl: 'https://api.example.test', accountId: 'focus-account', token,
+      }) } : {}),
       event: { topic: 'ready', sessionId: 'focus-session', waitingForCommandLabel: 'Agent' },
     });
-    expect(result).toMatchObject({ attemptedChannels: 1, deliveredChannels: 0 });
-    expect(axios.get).toHaveBeenCalledWith(
-      'https://api.example.test/v1/push-tokens?suppressIfComputerFocused=1', expect.anything(),
-    );
+    expect(result).toEqual({ attemptedChannels: bound ? 1 : 0, deliveredChannels: 0 });
+    if (bound) {
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://api.example.test/v2/account/session-delivery-mutes', expect.anything(),
+      );
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://api.example.test/v1/push-tokens?suppressIfComputerFocused=1', expect.anything(),
+      );
+    } else {
+      expect(axios.get).not.toHaveBeenCalledWith(
+        expect.stringContaining('/v1/push-tokens'), expect.anything(),
+      );
+    }
   });
   it('requests fresh focus filtering only for opted-in deliveries', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [] } });

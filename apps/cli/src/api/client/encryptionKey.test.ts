@@ -6,11 +6,11 @@ import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './encryptionKey';
 
 describe('resolveSessionEncryptionContext', () => {
-  it('generates a per-session AES key and publishes an encrypted dataEncryptionKey bundle when credentials are dataKey', () => {
+  it('generates a per-session AES key and publishes an encrypted dataEncryptionKey bundle when credentials are dataKey', async () => {
     const machineKey = new Uint8Array(32).fill(7);
     const publicKey = new Uint8Array(32).fill(3);
 
-    const res = resolveSessionEncryptionContext({
+    const res = await resolveSessionEncryptionContext({
       token: 't',
       encryption: {
         type: 'dataKey',
@@ -25,6 +25,26 @@ describe('resolveSessionEncryptionContext', () => {
     expect(res.dataEncryptionKey).not.toBeNull();
     expect(res.dataEncryptionKey![0]).toBe(0);
     expect(res.dataEncryptionKey!.length).toBeGreaterThan(1);
+  });
+
+  it('generates a transferable per-session key for recovery-secret credentials', async () => {
+    const secret = new Uint8Array(32).fill(17);
+    const ownerKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+
+    const res = await resolveSessionEncryptionContext({
+      token: 't',
+      encryption: { type: 'legacy', secret },
+    });
+
+    expect(res.encryptionVariant).toBe('dataKey');
+    expect(res.encryptionKey).toHaveLength(32);
+    expect(res.encryptionKey).not.toEqual(secret);
+    expect(res.encryptionKey).not.toEqual(ownerKey);
+    expect(res.dataEncryptionKey).not.toBeNull();
+    expect(openEncryptedDataKeyEnvelopeV1({
+      envelope: res.dataEncryptionKey!,
+      recipientSecretKeyOrSeed: ownerKey,
+    })).toEqual(res.encryptionKey);
   });
 });
 

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { isSessionTargetPreparationAction } from '@happier-dev/protocol/actions/actionSpecs';
@@ -212,7 +212,7 @@ export function createSessionFollowActionDeps(input: Readonly<{
         const receiver = FollowReceiverRefV1Schema.parse(listInput.receiver);
         // The rule owner supplies a complete private census on the first page;
         // continuation belongs to the source list and must not repeat rules.
-        const rules = listInput.cursor === undefined
+        const rules = listInput.cursor === undefined && listInput.sourceKinds === undefined
           ? (await readRules()).filter(rule => equalFollowRuleReceiverV1(rule.receiver, receiver)) : [];
         const rows = listInput.receiver.kind === 'account'
           ? { ...ListAccountSessionFollowsResponseV1Schema.parse(response.data), sources: [] }

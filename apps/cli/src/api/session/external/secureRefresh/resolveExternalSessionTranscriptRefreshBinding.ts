@@ -2,7 +2,7 @@ import { ExternalSessionTranscriptRefreshBindingV1Schema } from '@happier-dev/pr
 import type { ExternalSessionTranscriptRefreshBindingV1 } from '@happier-dev/protocol';
 
 import { resolveExternalSessionObservationLinkInput } from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
-import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import { loadLinkedExternalSession, type LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { readStoredCredentials } from '@/persistence';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -48,6 +48,7 @@ export async function resolveExternalSessionTranscriptRefreshCurrentness(params:
 }>): Promise<Readonly<{
     binding: ExternalSessionTranscriptRefreshBindingV1;
     occurrenceId: PluginRuntimeOccurrenceId;
+    linked: LoadedLinkedExternalSession;
 }> | null> {
     if (!params.deviceLocalSecretStorage) return null;
     const credentials = await readStoredCredentials().catch(() => null);
@@ -89,6 +90,7 @@ export async function resolveExternalSessionTranscriptRefreshCurrentness(params:
     return {
         binding,
         occurrenceId: observation.resource.occurrenceId as PluginRuntimeOccurrenceId,
+        linked: loaded.session,
     };
 }
 

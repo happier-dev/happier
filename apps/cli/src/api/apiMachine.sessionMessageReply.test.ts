@@ -78,14 +78,24 @@ function acknowledgeRegistration(event: string, args: unknown[], socket: ReturnT
 }
 
 it('carries an accepted Workflow terminal return through the Machine publication schema without a live Session', async () => {
+  const recoveryWakes: string[] = [];
+  let outcome: 'unavailable' | 'committed' | 'unknown' = 'unavailable';
   const client = new ApiMachineClient('token', { id: 'machine', encryptionMode: 'plain', metadata: null,
-    metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+      onWorkflowReplyReturned: async id => { recoveryWakes.push(id); },
+    });
   onTestFinished(() => client.shutdown());
   const packets: unknown[] = [];
   const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, raw) => {
     if (event !== DISCUSSION_AGENT_POST_EVENT_V1) throw new Error('Unexpected transport operation');
     const packet = DiscussionMachinePublicationV2Schema.parse(raw);
     packets.push(packet);
+    if (outcome === 'unknown') return { v: 1, ok: false, error: 'outcome_unknown' };
+    if (outcome === 'committed') return { v: 1, ok: true, value: { messageSeq: 2, message: {
+      id: 'returned', discussionId: 'discussion', localId: packet.publication.request.localId, seq: 2,
+      authorAccountId: 'account', accountActor: { v: 1, accountId: 'account', profile: null }, producerV1: null,
+      content: packet.publication.request.content, mentionedAccountIds: [], createdAt: 1,
+    } } };
     return { v: 1, ok: false, error: 'discussions_unavailable' };
   } });
   Reflect.set(client, 'socket', socket);
@@ -98,11 +108,68 @@ it('carries an accepted Workflow terminal return through the Machine publication
   expect(packets).toHaveLength(1);
   expect(packets[0]).toMatchObject({ v: 2, operation: 'terminal_return', machineId: 'machine', publication: reply });
   expect(await client.postAgentDiscussionMessage({ ...reply, replyReturn: { ...reply.replyReturn, workflow: undefined } }))
-    .toMatchObject({ ok: false, error: 'discussion_post_denied' });
+    .toMatchObject({ ok: false, error: 'discussion_machine_publication_invalid' });
   expect(packets).toHaveLength(1);
   expect(await client.postAgentDiscussionMessage({ ...reply, draftReview: { artifactId: 'approved', decidingAccountId: 'account' } }))
     .toMatchObject({ ok: false, error: 'discussions_unavailable' });
   expect(packets[1]).toMatchObject({ v: 1, operation: 'approved_replay' });
+  expect(recoveryWakes).toEqual([]);
+  outcome = 'committed';
+  expect(await client.postAgentDiscussionMessage(reply)).toMatchObject({ ok: true });
+  expect(recoveryWakes).toEqual(['run']);
+  const reviewed = { ...reply, draftReview: { artifactId: 'approved', decidingAccountId: 'account' } };
+  expect(await client.postAgentDiscussionMessage(reviewed)).toMatchObject({ ok: true });
+  expect(recoveryWakes).toEqual(['run', 'run']);
+  expect(await client.postAgentDiscussionMessage({ ...reviewed, replyReturn: { ...reply.replyReturn, workflow: undefined } }))
+    .toMatchObject({ ok: true });
+  expect(recoveryWakes).toEqual(['run', 'run']);
+  outcome = 'unknown';
+  await expect(client.postAgentDiscussionMessage(reply)).rejects.toMatchObject({ code: 'outcome_unknown' });
+  expect(recoveryWakes).toEqual(['run', 'run']);
+});
+
+it('wakes retained Workflow publication only for a current Workflow original-reply hint', async () => {
+  vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+  const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(51));
+  os.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
+    publicKey: Buffer.from(pair.publicKey).toString('base64url'), privateKey: Buffer.from(pair.secretKey).toString('base64url') };
+  os.credentials = { token: 'owner-token', encryption: null };
+  let inventoryReads = 0;
+  const workflowWakes: string[] = [];
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (url.includes('/session-message-replies/pending')) {
+      inventoryReads++;
+      return { status: 200, data: { v: 1, entries: [], nextAfter: null } };
+    }
+    return { status: 200, data: { id: 'owner', settings: null, settingsVersion: 0 } };
+  });
+  const socket = createApiSessionSocketStub({ emit: acknowledgeRegistration, emitWithAck: (event, raw) => {
+    if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 1 };
+    return { result: 'success', version: 1, daemonState: raw && typeof raw === 'object' && 'daemonState' in raw ? raw.daemonState : null };
+  } });
+  bindApiSessionSocketMock(io, socket);
+  const client = new ApiMachineClient(os.credentials.token, { id: 'target-machine', encryptionMode: 'plain',
+    metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+      onWorkflowReplyReturned: async id => { workflowWakes.push(id); },
+    });
+  installControlRegistrations(client);
+  const hint = { type: 'session-message-reply-pending-v1', v: 1, sessionId: 'c' + '2'.repeat(24), requestLocalId: 'original' };
+  try {
+    client.connect();
+    await vi.waitFor(() => expect(inventoryReads).toBeGreaterThan(0));
+    await Reflect.get(client, 'sessionMessageReplyRecovery')?.promise;
+    const beforeHint = inventoryReads;
+    socket.trigger('ephemeral', hint);
+    await vi.waitFor(() => expect(inventoryReads).toBeGreaterThan(beforeHint));
+    await Reflect.get(client, 'sessionMessageReplyRecovery')?.promise;
+    expect(workflowWakes).toEqual([]);
+    socket.trigger('ephemeral', { ...hint, workflowRunId: 'run-1' });
+    await vi.waitFor(() => expect(workflowWakes).toEqual(['run-1']));
+    await client.shutdown();
+    socket.trigger('ephemeral', { ...hint, workflowRunId: 'run-1' });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(workflowWakes).toEqual(['run-1']);
+  } finally { await client.shutdown(); }
 });
 
 it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the first fresh Workflow input after %s without a target update', async scenario => {
@@ -232,7 +299,11 @@ it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the
   } finally { releaseFeatures(); await client.shutdown(); }
 });
 
-it.each([false, true])('recovers a Discussion result through the actual Session publisher without admitting a new Session input (hosted requester: %s)', async hostedRequester => {
+it.each([
+  { hostedRequester: false, retainedTransient: false },
+  { hostedRequester: true, retainedTransient: false },
+  { hostedRequester: false, retainedTransient: true },
+])('recovers a Discussion result through the actual Session publisher without admitting a new Session input (hosted requester: $hostedRequester, retained transient: $retainedTransient)', async ({ hostedRequester, retainedTransient }) => {
   vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
   const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(51));
   os.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
@@ -255,7 +326,10 @@ it.each([false, true])('recovers a Discussion result through the actual Session 
     participantSessionId: requestSessionId };
   let returned = false;
   const progress = () => ({ v: 1, mode: 'return', disposition: returned ? 'returned' : 'return_pending',
-    acceptedTurnId: 'accepted-turn', discussion, outcome: { kind: 'pass' } });
+    acceptedTurnId: 'accepted-turn', discussion, outcome: { kind: 'pass' },
+    ...(retainedTransient && !returned ? { returnPublication: { kind: 'failed', failure: {
+      code: 'discussions_unavailable', phase: 'session_transport', retryable: true,
+    } } } : {}) });
   const accountId = hostedRequester ? 'bob' : 'owner';
   const actionRequestAttributionV1 = materializeActionRequestAttributionV1({ requestRef: 'original',
     requester: { serverId: configuration.activeServerId, accountId },
@@ -406,6 +480,16 @@ it.each([false, true])('recovers a Discussion result through the actual Session 
       resourceReads: vi.mocked(axios.request).mock.calls.map(([request]) => ({ method: request.method, url: request.url })),
     })).toHaveLength(1));
     expect(returned).toBe(true);
+    if (retainedTransient) {
+      returned = false;
+      const before = installedReads;
+      machineSocket.trigger('ephemeral', { type: 'session-message-reply-pending-v1', v: 1,
+        sessionId: requestSessionId, requestLocalId: 'original' });
+      await vi.waitFor(() => expect(installedReads).toBeGreaterThan(before));
+      await Reflect.get(client, 'sessionMessageReplyRecovery')?.promise;
+      expect(publications).toHaveLength(1);
+      returned = true;
+    }
     if (hostedRequester) {
       expect(requesterReads).toBeGreaterThan(0);
       await Reflect.get(client, 'sessionMessageReplyRecovery')?.promise;
@@ -415,10 +499,11 @@ it.each([false, true])('recovers a Discussion result through the actual Session 
       returned = false;
       const beforeRevocation = requesterReads;
       await client.requestSessionMessageReplyRecoveryForSession(requestSessionId);
-      expect(requesterReads).toBe(beforeRevocation);
-      expect(publications).toHaveLength(1);
-      expect(returned).toBe(false);
-      requesterCurrent = true;
+      // Recovery finishes the admitted return using retained Session custody;
+      // Machine withdrawal is checked by the next fresh admission.
+      expect(requesterReads).toBeGreaterThan(beforeRevocation);
+      expect(publications).toHaveLength(2);
+      expect(returned).toBe(true);
       await requesterRuntime!.dispose();
       const before = installedReads, priorRequesterReads = requesterReads;
       returned = false;
@@ -426,7 +511,7 @@ it.each([false, true])('recovers a Discussion result through the actual Session 
         sessionId: requestSessionId, requestLocalId: 'original' });
       await vi.waitFor(() => expect(installedReads).toBeGreaterThan(before));
       expect(requesterReads).toBe(priorRequesterReads);
-      expect(publications).toHaveLength(1);
+      expect(publications).toHaveLength(2);
       expect(returned).toBe(false);
     }
   } finally {

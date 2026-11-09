@@ -1,17 +1,68 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
+import axios from 'axios';
 import { z } from 'zod/mini';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 let cleanup: (() => void) | undefined;
 afterEach(() => { cleanup?.(); cleanup = undefined; vi.restoreAllMocks(); });
+
+it('keeps bound cancellation on a prepared Usage HTTP request', async () => {
+  const app = fastify();
+  let entered!: () => void;
+  let finish!: () => void;
+  const reading = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { finish = resolve; });
+  app.post('/v2/usage/query', async () => {
+    entered();
+    await held;
+    return { v: 1, totals: { eventCount: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } };
+  });
+  app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+    settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+  app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+  app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+  app.get('/v1/account/profile', async () => ({ id: 'prepared-account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+  cleanup = installAxiosFastifyAdapter({ app, origin: 'http://prepared-usage.test' });
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} })));
+  const request = axios.request.bind(axios);
+  const signals: (AbortSignal | undefined)[] = [];
+  // Observe only the genuine HTTP boundary; factory, preparation and Usage remain real.
+  vi.spyOn(axios, 'request').mockImplementation(async config => {
+    if (new URL(config.url!).pathname === '/v2/usage/query') signals.push(config.signal instanceof AbortSignal ? config.signal : undefined);
+    return await request(config);
+  });
+  const controller = new AbortController();
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'prepared-account',
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.fixture`, encryption: null };
+  const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'prepared-home',
+    serverApiUrl: 'http://prepared-usage.test', serverIdentityId: 'srv_prepared_usage' }).bindInvocation(controller.signal);
+  let running: Promise<unknown> | undefined;
+  try {
+    const prepared = await executor.prepare('usage.query', { queries: [normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 },
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false })] }, { surface: 'mcp', serverId: 'prepared-home' });
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected a prepared Usage invocation');
+    running = prepared.invocation.run();
+    await reading;
+    controller.abort(new Error('Prepared Usage caller cancelled'));
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every(signal => signal?.aborted === true)).toBe(true);
+  } finally {
+    controller.abort(); finish(); await running;
+    await app.close();
+  }
+});
 
 it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded activity query without private Session reads', async surface => {
   const app = fastify();

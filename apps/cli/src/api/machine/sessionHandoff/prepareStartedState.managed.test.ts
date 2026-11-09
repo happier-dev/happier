@@ -13,7 +13,7 @@ import { prepareStartedState } from './prepareStartedState';
 import { deriveSessionCreationTagV1, FeaturesResponseSchema, SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
-import { createExternalSessionOperationExclusion, type ExternalSessionOperationClaimMaintenance } from '@/session/external/operationExclusion';
+import { createExternalSessionOperationExclusion, type ExternalSessionOperationClaim } from '@/session/external/operationExclusion';
 import { createSessionHandoffStartActionHandler } from './start';
 
 describe('managed handoff source ownership', () => {
@@ -89,7 +89,7 @@ describe('managed handoff source ownership', () => {
         }), buildStartPendingStatus,
       })).rejects.toMatchObject({ code: 'SESSION_DIRECTORY_MISSING' });
       const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
-      let retainedClaim: ExternalSessionOperationClaimMaintenance | null = null;
+      let retainedClaim: ExternalSessionOperationClaim | null = null;
       const handler = createSessionHandoffStartActionHandler({ activeServerDir, createUuid: () => 'missing_managed_source',
         loadSessionMetadata: async () => ({ path: '/unproven/source/path', sessionDirectoryV1: { v: 1, kind: 'managed' } }),
         machineTransferChannelPresent: true, directPeerTransfer: undefined,
@@ -102,12 +102,10 @@ describe('managed handoff source ownership', () => {
           exportSessionBundle: async () => ({ targetPath: '/unproven/source/path', agentBundle: {
             agentId: 'claude', remoteSessionId: 'native-source', transcriptBase64: 'e30K' } }), buildStartPendingStatus,
         }), exportSessionBundle: async () => { throw new Error('Source ownership must be established before native export'); },
-        waitForPersistedSourceExport: async (handoffId) => sourceExportStore.load(handoffId),
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
         buildStartPendingStatus, buildStartRecoveryStatus, buildPrepareJobRecord, invalidRequest,
         sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'managed-source-test' }),
         retainSessionOperationClaim: (_handoffId, maintenance) => { retainedClaim = maintenance; },
-        releaseSessionOperationClaim: async () => { retainedClaim?.stop(); await retainedClaim?.claim.release(); },
+        releaseSessionOperationClaim: async () => { await retainedClaim?.release(); },
       });
       expect(await handler({ sessionId: 'session', operationId: 'operation', targetDirectory: { kind: 'managed' },
         sourceMachineId: 'a', targetMachineId: 'b', sessionStorageMode: 'persisted',

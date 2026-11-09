@@ -5,6 +5,7 @@ import { isPlainMachineDataKeyMarker, resolvePublishedMachineDataEncryptionKeyV1
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { AccountScopedCryptoMaterial, ExpectedRunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { admitCliMachineRowPlainMode } from '@/api/client/accountModeAdmission';
 import { decodeBase64, encodeBase64 } from '../encryption';
 import {
   createMachineContentCodec,
@@ -98,6 +99,7 @@ export function resolvePublishedMachineEncryptionContext(
     && accountContentSecret
       ? openPublishedEnvelope(published, accountContentSecret)
       : null;
+  const viewerAccountId = readAccountIdFromToken(params.credentials.token) ?? undefined;
   const resolution = resolvePublishedMachineDataEncryptionKeyV1({
     machine: {
       id: params.machineId,
@@ -109,7 +111,7 @@ export function resolvePublishedMachineEncryptionContext(
     },
     openedDataEncryptionKey,
     expectedAccountMode: params.expectedAccountMode,
-    viewerAccountId: readAccountIdFromToken(params.credentials.token) ?? undefined,
+    viewerAccountId,
     // The verifier identity is the creator's activation signing key, recovered
     // from the creator-sealed fact on the published binding. A daemon holds no
     // creator device custody, so Account material is the whole trust input.
@@ -122,7 +124,10 @@ export function resolvePublishedMachineEncryptionContext(
         }
       : {}),
   });
-  if (resolution.status === 'plain') return { encryptionMode: 'plain' };
+  if (resolution.status === 'plain') {
+    admitCliMachineRowPlainMode({ access: params.access, credentials: params.credentials, viewerAccountId });
+    return { encryptionMode: 'plain' };
+  }
   if (resolution.status === 'legacy' && encryption) {
     return encryption.type === 'legacy'
       ? { encryptionMode: 'e2ee', encryptionKey: encryption.secret, encryptionVariant: 'legacy' }

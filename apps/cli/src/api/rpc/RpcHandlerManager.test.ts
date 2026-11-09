@@ -1065,7 +1065,7 @@ it('finishes admitted Machine preparation and refuses the next request after aut
     .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
 });
 
-it('retains a live Machine authority verifier for accepted work after transport cancellation', async () => {
+it('keeps accepted work on local cancellation after Machine authority withdrawal', async () => {
   const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-a',
     installationId: 'installation-a', role: 'use' as const, encryptionMode: 'plain' as const };
   let current = true;
@@ -1083,12 +1083,11 @@ it('retains a live Machine authority verifier for accepted work after transport 
   rpc.onSocketConnect(boundary.socket);
   const response = rpc.handleRequest({ method: 'machine-a:accepted-work', params: {}, machineAdmission, requestId: 'accepted-request' });
   await vi.waitFor(() => expect(handlerContext).toBeDefined());
+  current = false;
+  expect(await handlerContext?.verifyMachineAdmissionCurrent?.()).toBe(true);
   boundary.trigger('rpc-cancel', { requestId: 'accepted-request' });
   expect(await response).toEqual({ accepted: true });
   expect(await handlerContext?.verifyMachineAdmissionCurrent?.()).toBe(false);
-  expect(await handlerContext?.verifyMachineAuthorityCurrent?.()).toBe(true);
-  current = false;
-  expect(await handlerContext?.verifyMachineAuthorityCurrent?.()).toBe(false);
 });
 
 it.each((['plain', 'e2ee'] as const).flatMap(mode => [

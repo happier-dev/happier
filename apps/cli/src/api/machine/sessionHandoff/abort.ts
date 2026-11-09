@@ -45,7 +45,6 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
     sourceStopState: 'stopped' | 'already_inactive';
   }>) => SessionHandoffStatus;
   buildSourceExportOnlyPrepareJobId: (handoffId: string) => string;
-  invalidateDirectPeerRouteCacheForHandoffMachines: (machineIds: readonly (string | undefined)[]) => void;
   invalidRequest: () => Readonly<{
     ok: false;
     errorCode: 'invalid_request';
@@ -63,7 +62,6 @@ export function createSessionHandoffAbortActionHandler(
     buildPrepareJobRecord,
     buildStartPendingStatus,
     buildSourceExportOnlyPrepareJobId,
-    invalidateDirectPeerRouteCacheForHandoffMachines,
     invalidRequest,
   } = params;
 
@@ -161,7 +159,7 @@ export function createSessionHandoffAbortActionHandler(
               operationId: targetRequest.operationId, sessionId: targetRequest.sessionId,
             });
           } finally {
-            await releaseSessionHandoffPrepareTargetJobLease({ activeServerDir, jobId: persistedJob.jobId, ownerId });
+            await releaseSessionHandoffPrepareTargetJobLease({ activeServerDir, jobId: persistedJob.jobId, ownerId, leaseId: lease.lease.leaseId });
           }
         }
       }
@@ -189,12 +187,6 @@ export function createSessionHandoffAbortActionHandler(
       }));
       status.jobId = jobId;
     }
-    invalidateDirectPeerRouteCacheForHandoffMachines([
-      persistedJob?.prepareTargetRequest?.sourceMachineId,
-      persistedJob?.prepareTargetRequest?.targetMachineId,
-      persistedSourceExport?.sourceMachineId,
-      persistedSourceExport?.targetMachineId,
-    ]);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceSeedTransferId(parsed.data.handoffId));
     await sourceExportStore.releaseTransferFiles(parsed.data.handoffId, {

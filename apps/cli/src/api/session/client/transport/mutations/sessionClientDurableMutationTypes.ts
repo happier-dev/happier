@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import type {
     SessionMessageRole,
@@ -85,7 +86,18 @@ export type TranscriptMessageAppendMutationContentV1 =
     | string
     | SessionStoredMessageContent;
 
+/**
+ * Live-delivery hint: the text appended since the last Home-acknowledged commit of this localId.
+ * Never restored from the journal; a replayed commit publishes its full message.
+ */
+export type TranscriptMessageAppendDeltaV1 = Readonly<{
+    content: TranscriptMessageAppendMutationContentV1;
+    baseLength: number;
+    baseUpdatedAt: number;
+}>;
+
 export type TranscriptMessageAppendMutationV1 = Readonly<{
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     v: 1;
     sessionId: string;
     mutationId: string;
@@ -99,6 +111,8 @@ export type TranscriptMessageAppendMutationV1 = Readonly<{
     sessionEventType?: 'ready';
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferencesV1;
+    approvalRequestArtifactId?: string;
+    append?: TranscriptMessageAppendDeltaV1;
 }>;
 
 /** Recovery-only shape for public-dev journals written before provenance became mandatory. */
@@ -275,6 +289,7 @@ export function resolveVoiceAgentTranscriptTurnMutationId(params: Readonly<{
 }
 
 export function createTranscriptMessageAppendMutation(params: Readonly<{
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     sessionId: string;
     localId: string;
     content: TranscriptMessageAppendMutationContentV1;
@@ -285,6 +300,8 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
     updatedAt?: number;
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
+    approvalRequestArtifactId?: string;
+    append?: TranscriptMessageAppendDeltaV1;
 }>): TranscriptMessageAppendMutationV1 {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
     const localId = readRequiredOpaqueString(params.localId, 'localId');
@@ -300,13 +317,18 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
         ...(sidechainId !== undefined ? { sidechainId } : {}),
         ...(params.messageRole ? { messageRole: params.messageRole } : {}),
         content: params.content,
+        ...(params.usageTimingV1 === undefined ? {} : { usageTimingV1: params.usageTimingV1 }),
         createdAt,
         updatedAt: Math.max(createdAt, updatedAt),
         provenance: requireTranscriptMessageAppendProvenance(params.provenance),
         ...(params.surfaceItemReference === undefined ? {} : {
             surfaceItemReference: SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(params.surfaceItemReference),
         }),
+        ...(params.approvalRequestArtifactId === undefined ? {} : {
+            approvalRequestArtifactId: readRequiredOpaqueString(params.approvalRequestArtifactId, 'approvalRequestArtifactId'),
+        }),
         ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
+        ...(params.append ? { append: params.append } : {}),
     };
 }
 
@@ -366,7 +388,7 @@ export function createRegisteredSessionStateFieldMutation(params: Readonly<{
     expectedMetadataRevision?: number;
 }>): RegisteredSessionStateFieldMutationV1 {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
-    if ((params.fieldId === 'intent.context' || params.fieldId === 'intent.memoryEnabled' || params.fieldId === 'intent.voicePreference')
+    if ((params.fieldId === 'intent.context' || params.fieldId === 'intent.memoryEnabled' || params.fieldId === 'intent.voicePreference' || params.fieldId === 'intent.approvalProfileId')
       && (!Number.isSafeInteger(params.expectedMetadataRevision) || (params.expectedMetadataRevision ?? -1) < 0)) {
       throw Object.assign(new Error('A reviewed Session metadata revision is required'), { code: 'invalid_parameters' });
     }

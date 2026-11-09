@@ -1,6 +1,6 @@
 import fastify from 'fastify';
 import axios from 'axios';
-import { expect, it, onTestFinished } from 'vitest';
+import { expect, it, onTestFinished, vi } from 'vitest';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { acquireRequesterAccountEncryptionCurrentness } from './client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from './client/serverHttpBaseUrl';
@@ -9,6 +9,9 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { encodeBase64, encrypt } from './encryption';
 import { ApiClient } from './api';
 import { readHttpStatus } from './client/httpStatusError';
+import { consumeMachineReplacementCandidateAfterRegistration, readMachineReplacementCandidateForActiveServer,
+  recordMachineReplacementCandidateForActiveServer } from '@/daemon/machineIdentity/machineReplacementCandidates';
+import { logger } from '@/ui/logger';
 
 async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
   const app = fastify();
@@ -54,7 +57,7 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
   await holder.read();
   const api = await ApiClient.create({ token, encryption: initialMode === 'plain' ? null : { type: 'legacy', secret } });
   return {
-    api, metadata, channel, serverBaseUrl,
+    api, metadata, channel, serverBaseUrl, accountId,
     run: <T>(action: () => T) => runWithServerHttpBaseUrl(serverBaseUrl, action),
     afterMachine(action: () => void) { afterMachine = action; },
     replacement(value: unknown) { machineReplacement = value; },
@@ -79,6 +82,32 @@ it('keeps ordinary Machine opening on the connected observed identity', async ()
   for (let i = 0; i < 2; i++) await expect(f.run(() => f.api.getMachine('machine'))).resolves.toMatchObject({ metadata: f.metadata });
   expect(f.counts()).toEqual({ identityReads: 1, modeReads: 0, writes: 0 });
 });
+
+it.each([undefined, 'installation_id_mismatch', 'untrusted replacement detail'] as const)(
+  'keeps a replacement candidate and surfaces a typed skipped reason (%s)', async reason => {
+    const f = await fixture('plain');
+    const warning = vi.spyOn(logger, 'warnLocalFile');
+    onTestFinished(async () => {
+      warning.mockRestore();
+      await consumeMachineReplacementCandidateAfterRegistration({ accountId: f.accountId, didRegister: true,
+        replacesMachineId: 'machine-old' });
+    });
+    await recordMachineReplacementCandidateForActiveServer({ accountId: f.accountId, machineId: 'machine-old',
+      replacementReason: 'reauth', now: 123 });
+    if (reason !== undefined) f.replacement({ status: 'skipped', replacesMachineId: 'machine-old', reason });
+
+    await expect(f.run(() => f.api.getOrCreateMachine({ machineId: 'machine', metadata: f.metadata })))
+      .resolves.toMatchObject({ id: 'machine', encryptionMode: 'plain', metadata: f.metadata });
+    expect(f.counts().writes).toBe(1);
+    expect(f.registration()).toMatchObject({ replacesMachineId: 'machine-old', replacementReason: 'reauth' });
+    await expect(readMachineReplacementCandidateForActiveServer({ accountId: f.accountId }))
+      .resolves.toEqual({ machineId: 'machine-old', replacementReason: 'reauth', createdAt: 123 });
+    if (reason === 'installation_id_mismatch') expect(warning).toHaveBeenCalledWith('[API] Machine replacement skipped', {
+      code: 'machine_replacement_skipped', phase: 'machine_registration', reason,
+    });
+    else expect(warning).not.toHaveBeenCalledWith('[API] Machine replacement skipped', expect.anything());
+  },
+);
 
 it('keeps final Machine transition authority on the captured request transport', async () => {
   const f = await fixture();

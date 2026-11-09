@@ -9,7 +9,6 @@ import {
 } from '../../pendingQueueV2Transport';
 import {
     findTranscriptEncryptedMessageByLocalIdV2,
-    type TranscriptLookupOutcome,
 } from '../../transcriptMessageLookup';
 import type { SessionMessageContent } from '../../../types';
 
@@ -30,12 +29,7 @@ type TranscriptQueryContext = Readonly<
 
 type RejoinDeps = Readonly<{
     readPending: typeof readPendingQueueV2MessageContentByLocalIdFromServer;
-    findTranscript: (params: {
-        token: string;
-        serverUrl: string;
-        sessionId: string;
-        localId: string;
-    }) => Promise<TranscriptLookupOutcome>;
+    findTranscript: typeof findTranscriptEncryptedMessageByLocalIdV2;
 }>;
 
 const DEFAULT_DEPS: RejoinDeps = Object.freeze({
@@ -95,6 +89,8 @@ export async function findPersistedSessionUserMessageAdmission(
         sessionId: string;
         localId: string;
         queryContext: TranscriptQueryContext;
+        signal?: AbortSignal;
+        resolveAuthorizationHeaders?: Parameters<typeof readPendingQueueV2MessageContentByLocalIdFromServer>[0]['resolveAuthorizationHeaders'];
     }>,
     deps: RejoinDeps = DEFAULT_DEPS,
 ): Promise<PersistedSessionUserMessageAdmission | null> {
@@ -103,12 +99,16 @@ export async function findPersistedSessionUserMessageAdmission(
             token: input.token,
             sessionId: input.sessionId,
             localId: input.localId,
+            ...(input.signal ? { signal: input.signal } : {}),
+            ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: input.resolveAuthorizationHeaders } : {}),
         }),
         deps.findTranscript({
             token: input.token,
             serverUrl: resolveServerHttpBaseUrl(),
             sessionId: input.sessionId,
             localId: input.localId,
+            ...(input.signal ? { signal: input.signal } : {}),
+            ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: input.resolveAuthorizationHeaders } : {}),
         }),
     ]);
     let transcriptContent: SessionMessageContent | null = null;

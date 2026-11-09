@@ -47,7 +47,7 @@ type ResolveSessionDefaults = typeof import(
 const outerResolutionMocks = vi.hoisted(() => ({
   acquireRuntimeRegistryLease: vi.fn(),
   readStoredCredentials: vi.fn(),
-  resolveRuntimeSnapshot: vi.fn(async () => ({})),
+  resolveRuntimeSnapshot: vi.fn<typeof import('@/daemon/connectedServices/externalSessionRuntimeSnapshotRecovery')['resolveConnectedServiceRuntimeSnapshotForExternalSession']>(async () => ({})),
   resolveSessionDefaults: vi.fn<ResolveSessionDefaults>(async () => null),
 }));
 
@@ -280,6 +280,42 @@ function contributions(params: Readonly<{
 }
 
 describe('External Session takeover launch consumption', () => {
+  it('finishes launch resolution with admitted credentials after the ambient Home becomes unavailable', async () => {
+    const fixture = contributions({
+      resolveLaunch: async () => ({
+        ok: true as const,
+        value: { applyConnectedAccountDefaults: true },
+      }),
+    });
+    outerResolutionMocks.acquireRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: runtimeRegistry(fixture),
+      release: async () => undefined,
+    });
+    outerResolutionMocks.readStoredCredentials.mockRejectedValueOnce(new Error('Ambient Home changed'));
+    const actualDefaults = await vi.importActual<typeof import('@/session/services/spawnConnectedServicesDefaults')>(
+      '@/session/services/spawnConnectedServicesDefaults',
+    );
+    outerResolutionMocks.resolveSessionDefaults.mockImplementationOnce(
+      actualDefaults.resolveSessionSpawnConnectedServicesDefaultsPayload,
+    );
+    const actualSnapshot = await vi.importActual<typeof import('@/daemon/connectedServices/externalSessionRuntimeSnapshotRecovery')>(
+      '@/daemon/connectedServices/externalSessionRuntimeSnapshotRecovery',
+    );
+    outerResolutionMocks.resolveRuntimeSnapshot.mockImplementationOnce(
+      actualSnapshot.resolveConnectedServiceRuntimeSnapshotForExternalSession,
+    );
+    try {
+      await expect(resolveExternalTakeoverSpawnOptions({
+        linked: linked(),
+        sessionId: 'linked-session-1',
+        targetDirectory: TARGET_DIRECTORY,
+        credentials: { token: 'admitted-account-a', encryption: null },
+      })).resolves.toMatchObject({ ok: true });
+    } finally {
+      outerResolutionMocks.readStoredCredentials.mockReset();
+    }
+  });
+
   it('applies the canonical account auth default when the Agent launch plan opts in', async () => {
     const fixture = contributions({
       resolveLaunch: async () => ({

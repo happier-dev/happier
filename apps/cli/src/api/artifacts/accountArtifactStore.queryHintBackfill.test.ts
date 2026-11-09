@@ -1,7 +1,9 @@
+import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from "@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator";
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { decodeArtifactKindV1, ArtifactKindWriteBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { isApprovalArtifactKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { ArtifactAccessRecipientCensusResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { fetchServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
@@ -11,14 +13,17 @@ import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import { createAccountArtifactStore, createCredentialedAccountArtifactStore } from './accountArtifactStore';
 import type { StoredCredentials } from '@/persistence';
 
+const healthSwitchContext = { credentialHealthSwitchLeases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<import("@happier-dev/protocol").QualifiedConnectedAccountServiceRef>(), };
+
 const source = { kind: 'plugin' as const, pluginId: 'acme.tasks', itemId: 'retained' };
 const noticeBody = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, source, type: 'update', resolved: false });
 const noticeHeader = AccountNoticeArtifactHeaderV1Schema.parse({ ...noticeBody, kind: 'account_notice.v1', title: 'Retained', status: 'dismissed' });
 
 async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: boolean; refused?: boolean; unreadable?: boolean; oversizedKind?: boolean;
-  unreadableIndex?: number; omitNotice?: boolean; classifiedNoticeInventory?: boolean; onFeaturesRequest?(): Promise<void> }>,
+  unreadableIndex?: number; omitNotice?: boolean; classifiedNoticeInventory?: boolean; approvalInventory?: boolean; onFeaturesRequest?(): Promise<void>;
+  onUnclassifiedPage?(): void }>,
   run: (home: Readonly<{ store: ReturnType<typeof createAccountArtifactStore>; requests: string[]; batches: string[][];
-    bodyReads: string[]; credentials: StoredCredentials; serverUrl: string; remaining(): number; setAccountMode(mode: 'plain' | 'e2ee'): void }>) => Promise<void>) {
+    bodyReads: string[]; approvalHints: unknown[]; credentials: StoredCredentials; serverUrl: string; remaining(): number; setAccountMode(mode: 'plain' | 'e2ee'): void }>) => Promise<void>) {
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
   const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) } };
   const resource = await createResourceDataKey({ credentials, mode });
@@ -26,10 +31,17 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
     : encodeBase64(encryptWithDataKey(value, resource.dataKey));
   const rows = Array.from({ length: 1001 }, (_, index) => ({
     id: index === 700 ? 'retained-notice-700' : `legacy-${index}`,
-    kind: options.classifiedNoticeInventory ? 'v1:other:account_notice.v1' : index % 2 === 0 ? null as string | null : 'other',
+    kind: options.approvalInventory && index === 600 ? 'v1:other:approval_request.v1'
+      : options.classifiedNoticeInventory ? 'v1:other:account_notice.v1' : index % 2 === 0 ? null as string | null : 'other',
+    approvalState: null as string | null,
+    approvalSessionId: null as string | null,
     ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: mode,
     header: (options.unreadable && index === 1000) || options.unreadableIndex === index ? 'unreadable'
-      : encode(index === 700 && !options.omitNotice ? noticeHeader
+      : encode(options.approvalInventory && index === 600
+        // Header produced by ../0.2 UI approvalsUpdate at 01107c0e7a6b2d4b521573c6d69b53070187e76a.
+        ? { v: 1, kind: 'approval_request.v1', title: 'Retained review', approvalStatus: 'executed', actionId: 'session.list',
+          sessions: ['session-legacy'], sessionId: 'session-legacy' }
+        : index === 700 && !options.omitNotice ? noticeHeader
         : options.classifiedNoticeInventory ? { ...noticeHeader, source: { ...source, itemId: `unrelated-${index}` } }
           : { kind: options.oversizedKind && index === 1000 ? 'x'.repeat(192) : index % 3 === 0 ? 'prompt_doc.v2' : 'ordinary.v1' }),
     body: encode({ body: index === 700 ? JSON.stringify(noticeBody) : 'Private unrelated content' }),
@@ -40,7 +52,10 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
   let accountMode = mode;
   const batches: string[][] = [];
   const bodyReads: string[] = [];
-  const remaining = () => rows.filter(row => !decodeArtifactKindV1(row.kind).classified).length;
+  const approvalHints: unknown[] = [];
+  const unclassified = (row: typeof rows[number]) => !decodeArtifactKindV1(row.kind).classified
+    || isApprovalArtifactKindV1(decodeArtifactKindV1(row.kind).kindHint) && row.approvalState === null;
+  const remaining = () => rows.filter(unclassified).length;
   const coverage = () => remaining() === 0 ? { status: 'complete', unclassifiedCount: 0 }
     : { status: 'partial', unclassifiedCount: remaining(), reason: 'unclassified_legacy_rows' };
   const wire = (row: typeof rows[number]) => {
@@ -67,13 +82,19 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
         const row = rows.find(row => row.id === item.artifactId);
         if (!row || options.refused || row.headerVersion !== item.expectedHeaderVersion) return { artifactId: item.artifactId, success: false, error: 'version-mismatch' };
         row.kind = item.kind;
+        const state: unknown = Reflect.get(item, 'approvalState');
+        const sessionId: unknown = Reflect.get(item, 'approvalSessionId');
+        if (typeof state === 'string') row.approvalState = state;
+        if (typeof sessionId === 'string') row.approvalSessionId = sessionId;
+        if (item.artifactId === 'legacy-600') approvalHints.push({ approvalState: state, approvalSessionId: sessionId });
         return { artifactId: item.artifactId, success: true };
       }) });
     }
     if (url.pathname === '/v1/artifacts' && request.method === 'GET') {
       expect(url.searchParams.has('includeBody')).toBe(false);
+      if (url.searchParams.has('unclassified')) options.onUnclassifiedPage?.();
       const kinds: unknown = url.searchParams.has('kinds') ? JSON.parse(url.searchParams.get('kinds')!) : undefined;
-      const candidates = url.searchParams.has('unclassified') ? rows.filter(row => !decodeArtifactKindV1(row.kind).classified)
+      const candidates = url.searchParams.has('unclassified') ? rows.filter(unclassified)
         : Array.isArray(kinds) ? rows.filter(row => kinds.includes(decodeArtifactKindV1(row.kind).kindHint)) : rows;
       const cursor = url.searchParams.get('cursor');
       const after = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { updatedAt: number; id: string } : null;
@@ -119,18 +140,25 @@ async function withHome(mode: 'plain' | 'e2ee', options: Readonly<{ supported?: 
     await runWithServerHttpBaseUrl(serverUrl, async () => {
       const input = { credentials, getAccountEncryptionMode: async () => mode,
         resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl }) };
-      await run({ store: createAccountArtifactStore(input), requests, batches, bodyReads, credentials, serverUrl, remaining,
+      await run({ store: createAccountArtifactStore(input), requests, batches, bodyReads, approvalHints, credentials, serverUrl, remaining,
         setAccountMode: value => { accountMode = value; } });
     });
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }
 
-async function backfill(store: ReturnType<typeof createAccountArtifactStore>, options = { isCurrent: async () => true }) {
+async function backfill(store: ReturnType<typeof createAccountArtifactStore>, options = { signal: new AbortController().signal }) {
   return store.backfillQueryHints(options);
 }
 
 describe('explicit daemon Account Artifact query-hint backfill', () => {
   afterEach(() => { resetServerFeaturesClientForTests(); vi.unstubAllEnvs(); });
+  it.each(['plain', 'e2ee'] as const)('backfills retained %s approval state through the canonical header CAS without bodies', async mode => {
+    await withHome(mode, { approvalInventory: true }, async home => {
+      expect(await backfill(home.store)).toMatchObject({ status: 'complete', unclassifiedCount: 0 });
+      expect(home.approvalHints).toEqual([{ approvalState: 'executed', approvalSessionId: 'session-legacy' }]);
+      expect(home.bodyReads).toEqual([]);
+    });
+  });
   it.each(['plain', 'e2ee'] as const)('labels all 1001 %s legacy headers with one framed write, then never rewrites completed inventory', async mode => {
     await withHome(mode, {}, async home => {
       expect(await backfill(home.store)).toMatchObject({ status: 'complete', unclassifiedCount: 0 });
@@ -224,10 +252,13 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
       expect(home.bodyReads).toEqual([]);
     });
   });
-  it('retires before a pending metadata write when the captured Account is no longer current', async () => {
-    await withHome('plain', {}, async home => {
-      expect(await backfill(home.store, { isCurrent: async () => home.requests.filter(path => path.includes('unclassified=true')).length < 3 }))
+  it.each(['plain', 'e2ee'] as const)('retires %s backfill before writing when its captured Account signal aborts during pagination', async mode => {
+    const lifetime = new AbortController();
+    let pages = 0;
+    await withHome(mode, { onUnclassifiedPage: () => { if (++pages === 3) lifetime.abort(); } }, async home => {
+      expect(await home.store.backfillQueryHints({ signal: lifetime.signal }))
         .toMatchObject({ status: 'retired' });
+      expect(pages).toBe(3);
       expect(home.batches).toEqual([]);
       expect(home.bodyReads).toEqual([]);
     });
@@ -250,17 +281,18 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
     await withHome('plain', { refused: true }, async home => {
       const lifetime = new AbortController();
       const unsupported = async () => { throw new Error('Connected Services disabled'); };
+      const warnings: unknown[][] = [];
       const input = {
-        api: {} as never, credentials: home.credentials, logger: { debug() {}, info() {}, warn() {} },
+        api: {} as never, credentials: home.credentials, logger: { debug() {}, info() {}, warn(...args: unknown[]) { warnings.push(args); } },
         processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
         controlPort: 43102, machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'artifact-backfill-bootstrap', cliVersion: '0.0.0',
         startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/artifact-bootstrap.log', controlToken: 'control',
         publishDaemonState: () => true, happyHomeDir: '/tmp/artifact-bootstrap-home', activeServerDir: '/tmp/artifact-bootstrap-server',
         filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
         connectedServicesRestartRequestedPids: new Set<number>(), pidToTrackedSession: new Map(),
-        connectedServiceAuthGroupPreTurnSwitchCoordinator: { switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
+        connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
         connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(), providerAccountUsageStore: createProviderAccountUsageStore(),
-        artifactQueryHints: { signal: lifetime.signal, isCurrent: async () => true,
+        artifactQueryHints: { signal: lifetime.signal,
           resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: home.serverUrl }) },
       };
       const runtime = await startDaemonRuntimeBootstrap(input);
@@ -271,6 +303,10 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
         expect(task).toBeInstanceOf(Promise);
         expect(await task).toMatchObject({ status: 'unavailable', reason: 'write_refused' });
         expect(home.batches).toHaveLength(1);
+        // A failed terminal attempt is visible on the daemon's default warn path, exactly once.
+        await Promise.resolve();
+        expect(warnings.filter(([message]) => String(message).includes('[Artifacts] Query-hint backfill')))
+          .toEqual([[expect.any(String), { status: 'unavailable', reason: 'write_refused' }]]);
         await home.store.list({ kinds: ['account_notice.v1'] });
         expect(await task).toMatchObject({ status: 'unavailable', reason: 'write_refused' });
         expect(runtime.artifactQueryHintBackfill).toBe(task);

@@ -18,8 +18,10 @@ const { mockPost, mockGet } = vi.hoisted(() => ({
   mockGet: vi.fn(),
 }));
 
-vi.mock('axios', () => ({
+vi.mock('axios', async importOriginal => ({
+  ...(await importOriginal<typeof import('axios')>()),
   default: {
+    ...(await importOriginal<typeof import('axios')>()).default,
     post: mockPost,
     get: mockGet,
   },
@@ -158,7 +160,7 @@ describe('approveTerminalAuthRequest', () => {
     });
   });
 
-  it('uses the explicitly targeted Home profile and credential instead of the active Home', async () => {
+  it.each([false, true])('uses the targeted Home with admitted Account custody (%s) instead of the active Home', async (admitted) => {
     await withTempDir('happier-cli-terminal-auth-explicit-home-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
@@ -184,6 +186,7 @@ describe('approveTerminalAuthRequest', () => {
         },
       }), 'utf8');
       for (const [profileId, token] of [['home-a', 'token-a'], ['home-b', 'token-b']] as const) {
+        if (admitted && profileId === 'home-b') continue;
         const profileDir = join(homeDir, 'servers', profileId);
         mkdirSync(profileDir, { recursive: true });
         writeFileSync(join(profileDir, 'access.key'), JSON.stringify({ token, encryption: null }), 'utf8');
@@ -207,6 +210,7 @@ describe('approveTerminalAuthRequest', () => {
         },
         supportsTokenOnly: true,
         target,
+        ...(admitted ? { accountCredentials: { token: 'token-b', encryption: null } } : {}),
       });
 
       expect(mockPost).toHaveBeenCalledTimes(1);
@@ -220,7 +224,10 @@ describe('approveTerminalAuthRequest', () => {
     { authorized: true, authority: 'manual_url' },
     { authorized: false, authority: 'manual_url' },
     { authorized: false, authority: 'account_directory' },
-  ] as const)('authorizes a remote route from the saved descriptor before bearer disclosure ($authority, authorized: $authorized)', async ({ authorized, authority }) => {
+    { authorized: true, authority: 'current_connection', servedIdentity: 'srv_other_home' },
+  ] as const)('authorizes a remote route from the saved descriptor before bearer disclosure ($authority, authorized: $authorized, served: $servedIdentity)', async (row) => {
+    const { authorized, authority } = row;
+    const servedIdentity = 'servedIdentity' in row ? row.servedIdentity : 'srv_route_alias_home';
     await withTempDir('happier-cli-terminal-auth-route-alias-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
@@ -262,7 +269,7 @@ describe('approveTerminalAuthRequest', () => {
       mockGet.mockResolvedValue({ status: 200, data: currentness('plain') });
       const featuresBody = JSON.stringify({
         features: {},
-        capabilities: { serverIdentity: { serverIdentityId: 'srv_route_alias_home' } },
+        capabilities: { serverIdentity: { serverIdentityId: servedIdentity } },
       });
       const fetchMock = vi.fn(async () => new Response(featuresBody, {
         status: 200,
@@ -291,9 +298,10 @@ describe('approveTerminalAuthRequest', () => {
         target,
       });
 
-      if (!authorized) {
+      if (!authorized || servedIdentity !== 'srv_route_alias_home') {
         await expect(result).rejects.toThrow();
         expect(fetchMock.mock.calls.every((call) => !new Headers((call as unknown as [string, RequestInit])[1]?.headers).has('Authorization'))).toBe(true);
+        expect(mockGet).not.toHaveBeenCalled();
         expect(mockPost).not.toHaveBeenCalled();
         return;
       }

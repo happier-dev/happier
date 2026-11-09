@@ -2,6 +2,7 @@ import { buildSessionTranscriptMessageProvenanceV1, SESSION_MESSAGE_PROVENANCE_M
 import { isMessageStructuredPresentationV1Candidate } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictSessionStoredMessageContentEnvelope, SidechainId } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -125,6 +126,7 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
   sidechainId: SidechainId | null;
   messageRole: SessionMessageRole | null;
   content: StrictSessionStoredMessageContentEnvelope;
+  usageTimingV1: UsageTimingBoundsV1 | null;
   sourceCreatedAtMs?: number;
 }>> {
   const localId = makeExternalSessionHistoricalImportLocalId({
@@ -182,6 +184,8 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     sidechainId: params.item.sidechainId ?? null,
     messageRole,
     content,
+    usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
+      message: { id: localId, localId, content: raw, createdAt: params.item.createdAtMs } }),
     ...(Number.isSafeInteger(params.item.createdAtMs) && params.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.item.createdAtMs }
       : {}),
@@ -256,6 +260,7 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
   sidechainId: SidechainId | null;
   messageRole: SessionMessageRole | null;
   content: StrictSessionStoredMessageContentEnvelope;
+  usageTimingV1: UsageTimingBoundsV1 | null;
   sourceCreatedAtMs?: number;
 }> {
   const localId = makeExternalSessionHistoricalImportLocalId({
@@ -265,20 +270,19 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
   });
   const parsedMessageRole = SessionMessageRoleSchema.safeParse(params.staged.item.messageRole);
   const messageRole = parsedMessageRole.success ? parsedMessageRole.data : null;
+  let raw: Record<string, unknown>;
   let content: StrictSessionStoredMessageContentEnvelope;
   try {
+    raw = sanitizeHistoricalImportRaw({
+      item: params.staged.item, messageRole,
+      raw: projectSessionMediaMetadataForHistoricalImportValidation({
+        raw: params.staged.item.raw, sessionId: params.sessionId, messageLocalId: localId,
+      }),
+    });
     content = buildStoredMessageContent({
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
-      raw: sanitizeHistoricalImportRaw({
-        item: params.staged.item,
-        messageRole,
-        raw: projectSessionMediaMetadataForHistoricalImportValidation({
-          raw: params.staged.item.raw,
-          sessionId: params.sessionId,
-          messageLocalId: localId,
-        }),
-      }),
+      raw,
     });
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('conversion');
@@ -288,6 +292,8 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
     sidechainId: params.staged.item.sidechainId ?? null,
     messageRole,
     content,
+    usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
+      message: { id: localId, localId, content: raw, createdAt: params.staged.item.createdAtMs } }),
     ...(Number.isSafeInteger(params.staged.item.createdAtMs) && params.staged.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.staged.item.createdAtMs }
       : {}),

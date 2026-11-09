@@ -24,6 +24,22 @@ function serverContract(
 }
 
 describe('deliverTranscriptMessageMutation provenance boundary', () => {
+  it('delivers retained message timing beside ciphertext through the existing socket boundary', async () => {
+    const usageTimingV1 = { v: 1 as const, minMs: 10, maxMs: 30 };
+    const mutation = createTranscriptMessageAppendMutation({ sessionId: 'session-1', localId: 'timed-message',
+      content: 'ciphertext-with-private-times', createdAt: 100,
+      provenance: { kind: 'non_dependent', source: 'background' }, ...{ usageTimingV1 } });
+    const observations: unknown[] = [];
+    const socket = { connected: true, emit: vi.fn(), emitWithAck: async (_event: string, payload: unknown) => {
+      observations.push(payload); return { ok: true, status: 'observed', id: 'message-1', seq: 1,
+        localId: 'timed-message', didWrite: true, ingestedAt: 300 };
+    } };
+    await expect(deliverTranscriptMessageMutation({ token: 'token', socket, mutation,
+      connectionContract: { ...serverContract(socket), transcriptTransport: { mode: 'session_transcript_observation_v2' } },
+    })).resolves.toMatchObject({ delivered: true });
+    expect(observations).toEqual([expect.objectContaining({ content: mutation.content, usageTimingV1 })]);
+  });
+
   it.each(['session_transcript_observation_v1', 'released_server_v0_2_1'] as const)(
     'awaits a delayed %s transcript commit until acknowledgement or disposal', async mode => {
       vi.useFakeTimers();
@@ -73,12 +89,12 @@ describe('deliverTranscriptMessageMutation provenance boundary', () => {
     const mutation = createTranscriptMessageAppendMutation({
       sessionId: 'session-1', localId: 'visual-result', content: 'sealed-tool-result',
       createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
-      surfaceItemReference,
+      surfaceItemReference, approvalRequestArtifactId: 'approval-1',
     });
     await expect(deliverTranscriptMessageMutation({ token: 'token', socket, connectionContract, mutation }))
       .resolves.toMatchObject({ delivered: true });
     expect(observations).toEqual([expect.objectContaining({
-      v: 2, content: 'sealed-tool-result', surfaceItemReference,
+      v: 2, content: 'sealed-tool-result', surfaceItemReference, approvalRequestArtifactId: 'approval-1',
     })]);
   });
 

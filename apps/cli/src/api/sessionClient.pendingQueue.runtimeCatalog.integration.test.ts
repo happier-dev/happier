@@ -5,6 +5,7 @@ import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePr
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
+import { createSessionProviderInputConsumerSessionAdapter } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { createSessionFollowContextReconciler } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
@@ -54,7 +55,6 @@ import {
     bindApiSessionSocketPairMock as bindApiSessionSocketPairHarness,
     createApiSessionSocketStub,
     resolveApiSessionSocketDefaultAck,
-    flushApiSessionClientMessageCommitQueue,
 } from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
@@ -458,25 +458,32 @@ describe('ApiSessionClient pending queue materialization', () => {
         );
     });
 
-    it('leaves foreground eligibility with the server Pending claim owner', async () => {
+    it('keeps ordinary Pending input unclaimed during an active turn until the turn completes', async () => {
         const sessionSocket = createApiSessionSocketStub({
             connected: true,
-            emitWithAck: async () => ({
-                ok: true,
-                didMaterialize: true,
-                didWrite: true,
-                deliveryState: { mode: 'provider', unresolved: true },
-                message: {
-                    id: 'msg-2',
-                    seq: 2,
-                    localId: 'local-p1',
-                    content: { t: 'encrypted', c: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                        role: 'user', content: { type: 'text', text: 'pending input' }, meta: { source: 'ui' },
-                    })) },
-                    requestedAction: { v: 1, kind: 'enqueue' },
-                    providerAction: 'send',
-                },
-            }),
+            // Network boundary: the server defers ordinary enqueue while the foreground is active.
+            emitWithAck: async (event, request) => {
+                if (event !== 'pending-materialize-next') return resolveApiSessionSocketDefaultAck(event, request);
+                if (typeof request === 'object' && request !== null && 'foregroundState' in request && request.foregroundState !== 'ready') {
+                    return { ok: true, didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' };
+                }
+                return {
+                    ok: true,
+                    didMaterialize: true,
+                    didWrite: true,
+                    deliveryState: { mode: 'provider', unresolved: true },
+                    message: {
+                        id: 'msg-2',
+                        seq: 2,
+                        localId: 'local-p1',
+                        content: { t: 'encrypted', c: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                            role: 'user', content: { type: 'text', text: 'pending input' }, meta: { source: 'ui' },
+                        })) },
+                        requestedAction: { v: 1, kind: 'enqueue' },
+                        providerAction: 'send',
+                    },
+                };
+            },
         });
         const userSocket = createApiSessionSocketStub();
 
@@ -497,15 +504,28 @@ describe('ApiSessionClient pending queue materialization', () => {
         }));
 
         await waitForPendingInputContract(client);
+        const delivered = vi.fn();
+        client.onUserMessage(delivered);
         expect(client.shouldAttemptPendingMaterialization()).toBe(true);
-        await expect(client.popPendingMessage()).resolves.toBe(true);
+        await expect(client.popPendingMessage()).resolves.toBe(false);
+        expect(delivered).not.toHaveBeenCalled();
         expect(sessionSocket.emitWithAck).toHaveBeenCalledWith('pending-materialize-next', {
             sid: mockSession.id,
             pendingVersion: 3,
             deliveryState: 'provider',
             deliveryTiming: 'after_foreground_ready',
-            foregroundState: 'ready',
+            foregroundState: 'active_unsteerable',
         });
+
+        sessionSnapshotHttpResponse = createSessionSnapshotHttpResponse({
+            pendingCount: 1, pendingVersion: 3, latestTurnStatus: 'completed',
+        });
+        void client.enqueueSessionTurnMutation({
+            v: 1, sessionId: mockSession.id, mutationId: 'pending-turn-completed',
+            action: 'complete', turnId: 'pending-turn', observedAt: Date.now(),
+        });
+        await expect(client.popPendingMessage()).resolves.toBe(true);
+        expect(delivered.mock.calls.map(([message]) => message.localId)).toEqual(['local-p1']);
     });
 
     it('wakes pending input after the socket-affine authority contract settles', async () => {
@@ -571,25 +591,52 @@ describe('ApiSessionClient pending queue materialization', () => {
         await expect(client.popPendingMessage()).resolves.toBe(true);
     });
 
+    it('serves idle live-work Pending reads from the socket projection and re-reads only after a new connection', async () => {
+        const sessionSocket = createApiSessionSocketStub({ connected: true, disconnectReason: 'transport close' });
+        const userSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+        sessionSnapshotHttpResponse = createSessionSnapshotHttpResponse({ pendingCount: 0, pendingVersion: 4 });
+        const client = createClient(createMockSession({ pendingCount: 0, pendingVersion: 4 }));
+        await waitForPendingInputContract(client);
+        const adapter = createSessionProviderInputConsumerSessionAdapter(client);
+        const snapshotReads = () => readSessionSnapshotRequestPurposes().length;
+
+        await expect(adapter.readPendingQueueStateForLiveWork!()).resolves.toMatchObject({ known: true, pendingCount: 0 });
+        const afterFirstRead = snapshotReads();
+        // Idle activity observations (daemon Guard/inventory reads) on the same connection.
+        for (let tick = 0; tick < 10; tick += 1) {
+            await expect(adapter.readPendingQueueStateForLiveWork!()).resolves.toMatchObject({ known: true, pendingCount: 0 });
+        }
+        expect(snapshotReads()).toBe(afterFirstRead);
+
+        // A real Pending change arrives on the existing update channel, without a Session read.
+        (client as unknown as {
+            updateRuntime: { handleUpdate: (update: unknown, opts: { source: 'session-scoped' }) => void };
+        }).updateRuntime.handleUpdate({
+            id: 'pending-live', seq: 1, createdAt: 1,
+            body: { t: 'pending-changed', sid: client.sessionId, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 5 },
+        }, { source: 'session-scoped' });
+        await expect(adapter.readPendingQueueStateForLiveWork!()).resolves.toMatchObject({ known: true, pendingCount: 1, pendingVersion: 5 });
+        expect(snapshotReads()).toBe(afterFirstRead);
+
+        // A reconnect may have missed updates: the next observation is authoritative again.
+        sessionSocket.disconnect();
+        sessionSnapshotHttpResponse = createSessionSnapshotHttpResponse({ pendingCount: 2, pendingVersion: 7 });
+        sessionSocket.connect();
+        await vi.waitFor(() => expect(sessionSocket.connected).toBe(true));
+        await expect(adapter.readPendingQueueStateForLiveWork!()).resolves.toMatchObject({ known: true, pendingCount: 2, pendingVersion: 7 });
+        const afterReconnect = snapshotReads();
+        expect(afterReconnect).toBeGreaterThan(afterFirstRead);
+        await expect(adapter.readPendingQueueStateForLiveWork!()).resolves.toMatchObject({ known: true, pendingCount: 2 });
+        expect(snapshotReads()).toBe(afterReconnect);
+    });
+
     it('refreshes durable turn status without making a local foreground eligibility decision', async () => {
         const sessionSocket = createApiSessionSocketStub({
             connected: true,
-            emitWithAck: async () => ({
-                ok: true,
-                didMaterialize: true,
-                didWrite: true,
-                deliveryState: { mode: 'provider', unresolved: true },
-                message: {
-                    id: 'msg-2',
-                    seq: 2,
-                    localId: 'local-p1',
-                    content: { t: 'encrypted', c: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                        role: 'user', content: { type: 'text', text: 'pending input' }, meta: { source: 'ui' },
-                    })) },
-                    requestedAction: { v: 1, kind: 'enqueue' },
-                    providerAction: 'send',
-                },
-            }),
+            emitWithAck: async (event, payload) => event === 'pending-materialize-next'
+                ? { ok: true, didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' }
+                : resolveApiSessionSocketDefaultAck(event, payload),
         });
         const userSocket = createApiSessionSocketStub();
 
@@ -610,8 +657,7 @@ describe('ApiSessionClient pending queue materialization', () => {
 
         await waitForPendingInputContract(client);
         await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({
-            type: 'materialized',
-            localId: 'local-p1',
+            type: 'no_pending',
         });
         expectSessionSnapshotRead('session-detail:explicit-drain');
         expect(sessionSocket.emitWithAck).toHaveBeenCalledWith('pending-materialize-next', {
@@ -619,7 +665,7 @@ describe('ApiSessionClient pending queue materialization', () => {
             pendingVersion: 4,
             deliveryState: 'provider',
             deliveryTiming: 'after_foreground_ready',
-            foregroundState: 'ready',
+            foregroundState: 'active_unsteerable',
         });
     });
 
@@ -1532,6 +1578,51 @@ describe('ApiSessionClient pending queue materialization', () => {
         expect(materializeResponses).toHaveLength(0);
     });
 
+    it('holds before metadata acquisition and resumes the existing Pending pump on editing-socket lapse', async () => {
+        const localId = 'edited-pending';
+        let claims = 0;
+        const session = createMockSession({ encryptionMode: 'plain', pendingCount: 1, pendingVersion: 1 });
+        const controller = new AbortController();
+        const sessionSocket = createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+            if (event !== 'pending-materialize-next') return resolveApiSessionSocketDefaultAck(event, payload);
+            claims++;
+            return {
+                ok: true, didMaterialize: true, didWrite: false,
+                pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2,
+                deliveryState: { mode: 'provider', unresolved: true },
+                message: { id: null, seq: null, localId, messageRole: 'user',
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'edited input' }, meta: { source: 'ui' } } },
+                    requestedAction: { v: 1, kind: 'send_now' }, providerAction: 'send', createdAt: 1, updatedAt: 1 },
+            };
+        } });
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket: createApiSessionSocketStub() });
+        const client = createClient(session);
+        const delivered: string[] = [];
+        client.onUserMessage(message => { delivered.push(message.content.text); controller.abort(); });
+        await waitForPendingInputContract(client);
+        const metadataBefore = client.getMetadataSnapshot();
+        const snapshot = (ids: string[]) => ({ v: 1, sessionId: session.id, observedAt: 1, viewers: [], pendingMessageEditHoldIds: ids });
+        sessionSocket.trigger('session-human-presence:snapshot', snapshot(['editing-device']));
+        const consumer = createSessionProviderInputConsumer({
+            messageQueue: new MessageQueue2<{ id: string }>(() => 'mode'),
+            session: createSessionProviderInputConsumerSessionAdapter(client),
+            reconcileWhenEmpty: 'skip',
+        });
+        await expect(consumer.drainPending()).resolves.toMatchObject({ stoppedReason: 'materialization_blocked' });
+        const pump = consumer.pumpPendingWhileActive({ abortSignal: controller.signal });
+        try {
+            await vi.waitFor(() => expect(client.listenerCount('metadata-updated')).toBeGreaterThan(0));
+            expect(claims).toBe(0);
+            sessionSocket.trigger('session-human-presence:snapshot', snapshot([]));
+            await vi.waitFor(() => expect(delivered).toEqual(['edited input']));
+            expect(claims).toBe(1);
+            expect(client.getMetadataSnapshot()).toBe(metadataBefore);
+        } finally {
+            controller.abort();
+            await pump;
+        }
+    });
+
     it('materializeNextPendingMessageSafely returns structured materialized payload details', async () => {
         installAxiosGetBoundaryMock(async () => ({ data: { messages: [] } }));
         const session = createMockSession({ pendingCount: 1, pendingVersion: 3 });
@@ -2204,8 +2295,6 @@ describe('ApiSessionClient pending queue materialization', () => {
             provenance: { kind: 'non_dependent', source: 'background' },
         });
 
-        await flushApiSessionClientMessageCommitQueue(client as any);
-
         const call = sessionSocket.emitWithAck.mock.calls.find(
             (args: unknown[]) => args[0] === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
                 && typeof args[1] === 'object' && args[1] !== null && 'localId' in args[1] && args[1].localId === 'msg-1',
@@ -2372,7 +2461,7 @@ describe('ApiSessionClient pending queue materialization', () => {
             pendingVersion: 4,
             deliveryState: 'provider',
             deliveryTiming: 'after_foreground_ready',
-            foregroundState: 'ready',
+            foregroundState: 'active_unsteerable',
         });
     });
 });

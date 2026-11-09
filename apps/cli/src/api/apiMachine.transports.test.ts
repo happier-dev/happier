@@ -7,6 +7,8 @@ import { Server } from 'socket.io';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { currentUiContextReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 
 import {
   bindApiSessionSocketMock,
@@ -54,6 +56,7 @@ vi.mock('socket.io-client', () => ({
 
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     isAxiosError: mockAxiosIsAxiosError,
     post: mockAxiosPost,
   },
@@ -185,6 +188,28 @@ describe('ApiMachineClient transports', () => {
         peerMediation: { loopback: { flows: { machine_rpc: { active: true, token: 'new-private-token' } } } },
       }))).rejects.toThrow();
       expect(published).toHaveLength(1);
+    } finally {
+      await client.shutdown();
+    }
+  });
+
+  it('records routine current UI availability at debug level while retaining its registration', async () => {
+    const socket = createApiSessionSocketStub({ connected: true });
+    bindApiSessionSocketMock(mockIo, socket);
+    const client = new ApiMachineClient('fake-token', {
+      id: 'test-machine', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    });
+    client.connect();
+    const method = currentUiContextReadClientRpcMethod();
+    const availability = { method: `test-machine:${method}` };
+    try {
+      socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, availability);
+      expect(client.hasConnectedClientRpcHandler(method)).toBe(true);
+      const describesAvailability = (args: unknown[]) => args.some(value => value !== null
+        && typeof value === 'object' && 'method' in value && value.method === availability.method);
+      expect(vi.mocked(logger.warn).mock.calls.filter(describesAvailability)).toHaveLength(0);
+      expect(vi.mocked(logger.debug).mock.calls.filter(describesAvailability)).toHaveLength(1);
     } finally {
       await client.shutdown();
     }
@@ -325,6 +350,10 @@ describe('ApiMachineClient transports', () => {
       daemonState: null,
       daemonStateVersion: 0,
     });
+    await expect(client.captureMachineSessionTerminal('s1')).rejects.toThrow('Machine socket is not connected');
+    await expect(client.finalizeMachineSessionTerminal({
+      sessionId: 's1', authority: { kind: 'generation', publisherGeneration: '7' },
+    })).rejects.toThrow('Machine socket is not connected');
     client.connect();
 
     await expect(client.captureMachineSessionTerminal('s1')).resolves.toEqual({

@@ -1,12 +1,10 @@
 import { createServer } from 'node:http';
-import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
-import { deriveApprovedDiscussionMutationLocalId } from '@/discussions/discussionPublicationIdentity';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, onTestFailed, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
-import { ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionAgentPostRequestV1Schema, DiscussionAgentCreateRequestV1Schema,
   DiscussionAgentPostPublicationV1Schema, DiscussionAgentApprovedReplayPublicationV1Schema,
@@ -14,8 +12,9 @@ import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionAgentPostRequestV1Schema, Dis
 import { DiscussionSummaryV1Schema, DiscussionMessageV1Schema } from '@happier-dev/protocol/discussions/models';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
-import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-import { createApiSessionSocketStub, createSessionTranscriptHomeStub, createSessionRuntimeActivityHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { deriveSessionMessageReplyReturnLocalIdV1, SessionMessageReplyAccountMutationV1Schema,
+  type SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot, createSessionTranscriptHomeStub, createSessionRuntimeActivityHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
@@ -42,6 +41,8 @@ import type { StoredCredentials } from '@/persistence';
 import { writeStoredCredentialsForServerId } from '@/persistence';
 import type { createRequesterSessionControlRuntimeFixture } from '@/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { ApiSessionClient } from './sessionClient';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { deriveApprovedDiscussionMutationLocalId } from '@/discussions/discussionPublicationIdentity';
 import { readApprovedDiscussionPublication } from '@/discussions/approvedDiscussionPublication';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { prepareAnchoredDiscussionCreateV1, prepareSecondOpinionQuestionV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
@@ -64,6 +65,10 @@ import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
 const io = vi.hoisted(() => vi.fn());
 // Socket.IO is the sole publication/absent-Session network boundary.
@@ -77,20 +82,29 @@ vi.mock('@/daemon/controlServer', () => ({
   startDaemonControlServer: async () => ({ port: 44324, stop: async () => {} }),
 }));
 
-afterEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.restoreAllMocks(); vi.unstubAllGlobals(); io.mockReset(); });
+afterEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); io.mockReset(); });
 
 it.each([
   { mode: 'plain', scope: 'draft creation' }, { mode: 'e2ee', scope: 'draft creation' },
   { mode: 'plain', scope: 'completed then late Stop' },
-  { mode: 'plain', scope: 'publication replay' }, { mode: 'e2ee', scope: 'publication replay' },
   { mode: 'plain', scope: 'publication identity' }, { mode: 'e2ee', scope: 'publication identity' },
+  { mode: 'plain', scope: 'publication replay' }, { mode: 'e2ee', scope: 'publication replay' },
   { mode: 'plain', scope: 'satisfied return' }, { mode: 'e2ee', scope: 'satisfied return' },
   { mode: 'plain', scope: 'pending explicit' }, { mode: 'e2ee', scope: 'pending explicit' },
   { mode: 'plain', scope: 'inactive private Post' }, { mode: 'e2ee', scope: 'inactive private Post' },
   { mode: 'plain', scope: 'inactive host private Post' },
+  { mode: 'plain', scope: 'inactive host answer private Post' },
   { mode: 'plain', scope: 'unsigned native startup private Post' },
+  { mode: 'plain', scope: 'browser ordinary Approve' },
+  { mode: 'plain', scope: 'CLI ordinary Approve' },
+  { mode: 'plain', scope: 'browser ordinary Deny' },
+  { mode: 'plain', scope: 'CLI ordinary Deny' },
 ] as const)('Discussion $scope ($mode)', async ({ mode, scope }) => {
-  const startupPost = scope === 'inactive host private Post' || scope === 'unsigned native startup private Post';
+  const ordinaryDecision = scope.includes('ordinary');
+  const deny = scope.endsWith('Deny');
+  const hostAnswerPost = scope === 'inactive host answer private Post';
+  const hostPost = scope === 'inactive host private Post' || hostAnswerPost;
+  const startupPost = hostPost || scope === 'unsigned native startup private Post' || ordinaryDecision;
   const inactivePost = scope === 'inactive private Post' || startupPost;
   let phase = 'initialization';
   let failedPhase: string | undefined;
@@ -101,7 +115,7 @@ it.each([
   const serverId = 'discussion-approval-home';
   const machineId = 'participant-machine';
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.fixture`;
-  const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+  const credentials: StoredCredentials = { token, ...(ordinaryDecision ? { credentialProvenance: 'stored_session' as const } : {}), encryption: mode === 'plain' ? null
     : { type: 'legacy', secret: new Uint8Array(32).fill(7) } };
   const draftAccountSettings = accountSettingsParse({ actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
     approvalWaivedSurfaces: { 'discussion.reply': ['agent'] } }) });
@@ -122,6 +136,7 @@ it.each([
     capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true,
       sendToSession: true, manageAccess: true, leave: false } });
   const artifacts = new Map<string, Record<string, unknown>>();
+  const originalSettlements = new Map<string, SessionMessageReplyProgressV1>();
   const httpCalls: { method?: string; path: string }[] = [];
   let createdDiscussion: ReturnType<typeof DiscussionSummaryV1Schema.parse> | null = null;
   let createdFirstMessage: ReturnType<typeof DiscussionMessageV1Schema.parse> | null = null;
@@ -154,6 +169,19 @@ it.each([
     if (path === '/v1/account/encryption/currentness') return reply({ mode, version: 1, updatedAt: 1,
       signingKeyFingerprint: mode === 'e2ee' ? 'a'.repeat(64) : null, contentKeyFingerprint });
     if (path === '/v1/account/profile') return reply({ id: accountCurrent ? 'owner' : 'revoked-owner' });
+    if (ordinaryDecision && path === `/v1/machines/${machineId}`) return reply({
+      machine: createAvailableSessionSpawnMachineSnapshot(machineId),
+    });
+    if (hostAnswerPost && path === `/v2/sessions/${sessionId}/messages/by-local-id/native-draft-input`) return reply({ message: {
+      id: 'native-input-message', seq: 1, localId: 'native-draft-input', createdAt: 1, updatedAt: 1,
+      content: sealSessionStoredContent({ mode: 'plain', ctx: null, payload: { role: 'user', content: { type: 'text', text: 'The original question' } } }),
+    } });
+    if (hostAnswerPost && path === `/v1/sessions/${sessionId}/messages`) return reply({ messages: [
+      { id: completedOutcome.result.messageId, seq: 2, localId: 'native-final', createdAt: 2,
+        content: sealSessionStoredContent({ mode: 'plain', ctx: null, payload: { role: 'agent', content: { type: 'text', text: content.parts[0]!.text } } }) },
+      { id: 'later-final-message', seq: 3, localId: 'later-final', createdAt: 3,
+        content: sealSessionStoredContent({ mode: 'plain', ctx: null, payload: { role: 'agent', content: { type: 'text', text: 'A later answer must not replace the reviewed result' } } }) },
+    ], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null });
     if (path === `/v1/sessions/${opinionSourceSessionId}/messages`) return reply({ messages: [
       { id: 'source-answer', seq: 1, localId: 'source-answer', messageRole: 'agent', createdAt: 1,
         content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Actual source answer' } } } },
@@ -162,6 +190,23 @@ it.each([
       createSessionRecordFixture({ id: opinionSourceSessionId, share: null, encryptionMode: 'plain',
         ...(inactivePost ? { active: false,
           metadata: JSON.stringify({ machineId, path: '/repo' }) } : {}) }) });
+    if (request.method === 'POST' && path.includes('/messages/by-local-id/') && path.endsWith('/reply')) {
+      let raw = ''; for await (const chunk of request) raw += chunk.toString();
+      const operation = SessionMessageReplyAccountMutationV1Schema.parse(JSON.parse(raw));
+      if (operation.kind !== 'discussion_review' && operation.kind !== 'discussion_publication')
+        return reply({ v: 1, ok: false, error: 'invalid_request' });
+      const progress: SessionMessageReplyProgressV1 = { v: 1, mode: 'return',
+        acceptedTurnId: operation.acceptedTurnId,
+        disposition: operation.kind === 'discussion_publication' && operation.publication.kind === 'failed'
+          && operation.publication.failure.retryable ? 'return_pending' : 'released',
+        discussion: { discussionId: operation.discussionId, messageId: operation.messageId, participantSessionId: sessionId, throughSeq: 1 },
+        outcome: operation.kind === 'discussion_review' ? { kind: 'declined' }
+          : scope === 'completed then late Stop' || hostAnswerPost ? completedOutcome : { kind: 'failed' },
+        ...(operation.kind === 'discussion_publication' ? { returnPublication: operation.publication } : {}) };
+      originalSettlements.set(path, progress);
+      return reply({ v: 1, ok: true, progress });
+    }
+    if (originalSettlements.has(path)) return reply({ v: 1, status: 'available', progress: originalSettlements.get(path) });
     if (path.endsWith('/messages/by-local-id/terminal-original/reply')
       || path.endsWith('/messages/by-local-id/forged-terminal-original/reply')) return reply({ v: 1, status: 'available',
       progress: { v: 1, mode: 'return', disposition: terminalReturned ? 'returned' : 'return_pending', acceptedTurnId: 'retired-turn',
@@ -176,7 +221,7 @@ it.each([
       progress: { v: 1, mode: 'return', disposition: 'return_pending',
         acceptedTurnId: path.includes('/pending-original/') ? 'retired-turn' : 'native-draft-turn',
         discussion: { discussionId: summary.id, messageId: 'question-1', participantSessionId: sessionId, throughSeq: 1 },
-        outcome: scope === 'completed then late Stop' ? completedOutcome : { kind: 'failed' } } });
+        outcome: scope === 'completed then late Stop' || hostAnswerPost ? completedOutcome : { kind: 'failed' } } });
     if (path.startsWith('/v2/sessions/')) return reply({ session: createSessionRecordFixture({ id: sessionId, share: null }) });
     if (path === '/v1/discussions/discussion-1' && request.method === 'GET') return reply({ discussion: summary });
     if (path === '/v1/discussions/created-discussion' && request.method === 'GET') return reply({ discussion: createdDiscussion });
@@ -215,7 +260,8 @@ it.each([
       // This is an HTTP boundary fixture; canonical stores produce these bytes.
       const body = JSON.parse(bytes) as Record<string, unknown>;
       if (path === '/v1/artifacts' && typeof body.id === 'string') {
-        artifacts.set(body.id, { ...body, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode, publicAudience: 'none',
+        const { idScope: _idScope, ...stored } = body;
+        artifacts.set(body.id, { ...stored, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode, publicAudience: 'none',
           headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
         return reply({ id: body.id, headerVersion: 1, bodyVersion: 1 });
       }
@@ -276,11 +322,23 @@ it.each([
     () => bootstrapAccountSettingsContext({ credentials, mode: 'blocking' }));
   if (inactivePost) {
     phase = scope;
+    const refusalDiagnostics = vi.spyOn(logger, 'warnLocalFile');
     const privateContent = scope === 'inactive host private Post'
       ? { v: 1 as const, parts: [{ t: 'text' as const, text: 'The requested session failed.' }] } : content;
     participantPolicy = 'drafts_for_approval';
     const machinePublications: unknown[] = [];
     const absentSessionCalls: unknown[] = [];
+    const decisionHandlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+    const forwardMachineDecision = async (payload: unknown) => {
+      const call = payload as { method: string; params: unknown };
+      const method = call.method.startsWith(`${machineId}:`) ? call.method.slice(machineId.length + 1) : '';
+      const handler = decisionHandlers.get(method);
+      if (!handler) return null;
+      return { ok: true, result: await handler(call.params, {
+        callerAuthority: 'present_user', signal: new AbortController().signal,
+        transportRequestId: 'cli-forwarded-decision',
+      }) };
+    };
     const missingSession = { ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
       errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
     const machineSocket = createApiSessionSocketStub({
@@ -314,18 +372,25 @@ it.each([
       return createApiSessionSocketStub({
       emit: (event, args) => {
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
-        absentSessionCalls.push(args[0]);
         const callback = args.at(-1);
-        if (typeof callback === 'function') callback(missingSession);
+        void forwardMachineDecision(args[0]).then(result => {
+          if (!result) absentSessionCalls.push(args[0]);
+          if (typeof callback === 'function') callback(result ?? missingSession);
+        });
       },
       emitWithAck: async (event, payload) => {
-        if (event === SOCKET_RPC_EVENTS.CALL) { absentSessionCalls.push(payload); return missingSession; }
+        if (event === SOCKET_RPC_EVENTS.CALL) {
+          const result = await forwardMachineDecision(payload);
+          if (!result) absentSessionCalls.push(payload);
+          return result ?? missingSession;
+        }
         return { result: 'success', version: 1 };
       },
       });
     });
     let machine: ApiMachineClient | null = null;
     let startupFixture: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
+    let standaloneExecutor: ReturnType<typeof createCliActionExecutorFromCredentials> | undefined;
     let startupDirectory: string | undefined;
     try {
       if (startupPost) {
@@ -338,7 +403,15 @@ it.each([
           connectedServicesMaterializationBaseDir: join(startupDirectory, 'connected-services'),
           registry: new ConnectedServiceRuntimeRegistry(), trackedSessions: new Map(), getRequester: () => null,
           getApiMachineForSessions: () => machine, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-          beforeStartup: async () => { await writeStoredCredentialsForServerId(serverId, credentials); },
+          beforeStartup: async () => {
+            await seedTestServerProfile({ id: serverId, homeId: advertisedHomeId, serverUrl });
+            await writeStoredCredentialsForServerId(serverId, credentials);
+            // Capture the ordinary CLI before this process registers its daemon
+            // transport: it must reach the real RPC handler over the socket boundary.
+            if (ordinaryDecision) standaloneExecutor = createCliActionExecutorFromCredentials({
+              credentials, serverId, serverApiUrl: serverUrl,
+            });
+          },
           startup: { resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: 'srv_fixture_home' }) },
         });
         await runWithServerHttpBaseUrl(serverUrl, () => bootstrapAccountSettingsContext({ credentials, mode: 'blocking' }));
@@ -393,13 +466,13 @@ it.each([
         const source = { sourceSessionId: sessionId, sourceInputId: 'native-draft-input',
           sourceTurnId: 'native-draft-turn', via: 'action' as const, discussionAddressing: {
             discussionId: summary.id, messageId: 'question-1', throughSeq: 1, participantSessionId: sessionId } };
-        if (scope === 'inactive host private Post') {
+        if (hostPost) {
           await createDiscussionReplyReturnPublisher({ credentials, machineId, serverId, serverHttpBaseUrl: serverUrl,
             signal: new AbortController().signal, isCurrent: async () => true,
             actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => draftAccountSettings,
               allowEnvironmentOverride: false }) })({ serverId, requestSessionId: sessionId,
             requestLocalId: source.sourceInputId, acceptedTurnId: source.sourceTurnId,
-            discussion: source.discussionAddressing, outcome: { kind: 'failed' }, message: privateContent.parts[0]!.text });
+            discussion: source.discussionAddressing, outcome: hostAnswerPost ? completedOutcome : { kind: 'failed' }, message: privateContent.parts[0]!.text });
         } else {
           const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
           const draftExecutor = createCliActionExecutor({ credentials, token, sessionId, serverId,
@@ -422,11 +495,83 @@ it.each([
             discussionReplyReturn: { serverId: 'srv_fixture_home', requestLocalId: source.sourceInputId, acceptedTurnId: source.sourceTurnId } },
           actionArgs: { content: privateContent } });
         if (captured?.v !== 2) throw new Error('Missing actual private draft');
+        if (ordinaryDecision) {
+          expect(captured.requesterConfirmation).toBeUndefined();
+          const ingress = startupFixture?.runtime.externalActionIngressOwner;
+          if (!ingress) throw new Error('Missing startup-composed credential-backed executor');
+          registerApprovalRpcHandlers({ actionExecutor: ingress.executor, rpcHandlerManager: {
+            registerHandler: (method, handler) => { decisionHandlers.set(method, handler); },
+          } });
+          const decide = async () => {
+            const input = { artifactId, decision: deny ? 'reject' : 'approve' };
+            if (scope.startsWith('CLI')) return standaloneExecutor?.execute('approval.request.decide', input, {
+              surface: 'cli', authority: 'present_user', actionRequestId: `cli-decision:${artifactId}`,
+            });
+            const handler = decisionHandlers.get('approval.request.decide');
+            if (!handler) throw new Error('Approval decision RPC was not registered');
+            return handler(input, { callerAuthority: 'present_user', signal: new AbortController().signal,
+              transportRequestId: `browser-decision:${artifactId}` });
+          };
+          const approvalDiagnostics = scope === 'browser ordinary Approve' ? vi.spyOn(logger, 'debug') : null;
+          onTestFailed(() => console.error('Discussion decision boundary', JSON.stringify({
+            httpCalls: httpCalls.slice(-20),
+            phases: approvalDiagnostics?.mock.calls.flatMap(([message, fields]) =>
+              message === '[ActionApproval] origin phase' && fields && typeof fields === 'object'
+                && 'phase' in fields && 'status' in fields ? [{ phase: fields.phase, status: fields.status }] : []),
+          })));
+          if (approvalDiagnostics) vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
+          phase = `${scope}: waiting for decision`;
+          const result = await decide();
+          phase = `${scope}: decision returned`;
+          expect(result, JSON.stringify({ result, httpCalls })).toMatchObject(scope.startsWith('CLI')
+            ? { ok: true, result: { status: deny ? 'rejected' : 'executed' } }
+            : { ok: true, status: deny ? 'rejected' : 'executed' });
+          expect(machinePublications).toHaveLength(deny ? 0 : 1);
+          if (approvalDiagnostics) {
+            const records = approvalDiagnostics.mock.calls.flatMap(([message, fields]) =>
+              message === '[ActionApproval] origin phase' && fields && typeof fields === 'object'
+                && 'artifactId' in fields ? [fields as Record<string, unknown>] : []);
+            const phases = ['approval.execute', 'approval.artifact.read', 'approval.origin.currentness',
+              'approval.artifact.update', 'approval.publication.credentials', 'approval.publication.admission',
+              'approval.publication.write'];
+            for (const name of phases) {
+              const start = records.findIndex(row => row.phase === name && row.status === 'started');
+              expect(start, name).toBeGreaterThanOrEqual(0);
+              const started = records[start]!;
+              const finish = records.findIndex((row, index) => index > start && row.spanId === started.spanId
+                && row.status === 'completed');
+              expect(finish, name).toBeGreaterThan(start);
+              expect(started.durationMs).toBe(0);
+              expect(records[finish]?.durationMs).toEqual(expect.any(Number));
+              expect(records[finish]!.durationMs).toBeGreaterThanOrEqual(0);
+              expect(started.actionId).toEqual(expect.any(String));
+              expect([null, artifactId]).toContain(started.artifactId);
+              expect(records[finish]!.artifactId).toBe(artifactId);
+            }
+            const write = records.findIndex(row => row.phase === 'approval.publication.write' && row.status === 'started');
+            expect(records.findIndex(row => row.phase === 'approval.artifact.update' && row.status === 'completed')).toBeLessThan(write);
+            expect(records.findLastIndex(row => row.phase === 'approval.artifact.update' && row.status === 'completed')).toBeGreaterThan(write);
+            const serialized = JSON.stringify(records);
+            for (const secret of [token, privateContent.parts[0]!.text, 'Unapproved replacement']) expect(serialized).not.toContain(secret);
+            expect(records.every(row => Object.keys(row).every(key => ['phase', 'status', 'durationMs', 'actionId',
+              'artifactId', 'requestId', 'spanId', 'parentSpanId'].includes(key)))).toBe(true);
+            expect(records.every(row => row.requestId === undefined || typeof row.requestId === 'string'
+              && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(row.requestId))).toBe(true);
+          }
+          await decide();
+          expect(machinePublications).toHaveLength(deny ? 0 : 1);
+          expect(await store.approvalsGet({ artifactId, serverId })).toMatchObject({
+            status: deny ? 'rejected' : 'executed',
+            ...(deny ? {} : { execution: { ok: true } }),
+          });
+          expect(humanWrites).toBe(0);
+          return;
+        }
         if (scope === 'unsigned native startup private Post') {
           expect(captured.executionOriginV1.caller.kind).toBe('session');
           expect(captured.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
           expect(captured.requesterConfirmation).toBeUndefined();
-          expect(requiresExactDaemonApprovalReplay(captured)).toBe(true);
+          expect(resolveApprovalExecutor(captured)).toMatchObject({ kind: 'daemon' });
         }
         expect(await store.approvalsUpdate({ artifactId, serverId, request: { ...captured, status: 'approved',
           updatedAtMs: captured.updatedAtMs + 1, decision: { kind: 'approve',
@@ -442,6 +587,12 @@ it.each([
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
         expect(refused).toEqual(Array.from({ length: startupPost ? 0 : mode === 'plain' ? 3 : 2 },
           () => ({ v: 1, ok: false, error: 'discussion_post_denied' })));
+        expect(refusalDiagnostics.mock.calls.filter(([message]) => message === '[Discussion approval replay] Publication refused')
+          .map(([, diagnostic]) => diagnostic)).toEqual(startupPost ? [] : [
+          { artifactId, discussionId: summary.id, sessionId, admissionPredicate: 'discussion_approval' },
+          { artifactId, discussionId: summary.id, sessionId, admissionPredicate: 'session_authorization' },
+          ...(mode === 'plain' ? [{ artifactId, discussionId: summary.id, sessionId, admissionPredicate: 'discussion_approval' }] : []),
+        ]);
         expect(absentSessionCalls).toEqual([]);
         expect(machinePublications).toHaveLength(1);
         expect(machinePublications[0]).toMatchObject({ v: 1, operation: 'approved_replay', machineId,
@@ -478,16 +629,21 @@ it.each([
     const draftAutomationResults: unknown[] = [];
     const nonhumanCreateResults: unknown[] = [];
     const reviewedActorStamps: unknown[] = [];
+    const publicationPolicyReadDeltas: number[] = [];
     let lastPublicationReplay: string | undefined;
     const deps = createDiscussionActionDeps({ credentials, serverId, serverHttpBaseUrl: serverUrl,
       postAgentMessage: async (request, options) => {
         const replayArtifactId = options?.approvedActionReplay?.artifactId;
         lastPublicationReplay = replayArtifactId;
         if (!('operation' in request) && participantPolicy === 'when_addressed' && replayArtifactId) {
+          const rosterReads = () => httpCalls.filter(call => call.method === 'GET'
+            && call.path === '/v1/discussions/discussion-1/participants').length;
+          const before = rosterReads();
           const reviewed = await readApprovedDiscussionPublication({
             artifactId: replayArtifactId, request, credentials, sessionId, serverId, serverUrl,
             callerAuthority: 'present_user', isApprovalExecutionOriginCurrent: currentness,
           });
+          publicationPolicyReadDeltas.push(rosterReads() - before);
           reviewedActorStamps.push(reviewed?.draftReview);
         }
         // JSON transport omits absent optional fields; preserve that boundary
@@ -545,19 +701,25 @@ it.each([
     // The live Session is plain in both Account/Discussion encryption modes;
     // its Action ports must not reuse the independent Discussion resource key.
     const fresh = () => createActionExecutor({ ...createCliActionDeps({ credentials, token, sessionId,
-      serverId, serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null }),
+      serverId, serverIdentityId: 'srv_fixture_home', serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null }),
       ...store, ...deps, isApprovalExecutionOriginCurrent: currentness });
     const actionArgs = { discussionId: summary.id, content }; // Omitted generated localId is a valid approved input.
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'agent', sessionId }, actionId: 'discussion.post', actionArgs,
       executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
-        serverId, ...(scope === 'publication identity' ? { serverIdentityId: 'srv_fixture_home' } : {}), accountId: 'owner', machineId, sessionId, actionId: 'discussion.post', requestId: 'approved-tool',
+        serverId, ...(scope === 'publication identity' ? { serverIdentityId: 'srv_fixture_home' } : {}),
+        accountId: 'owner', machineId, sessionId, actionId: 'discussion.post', requestId: 'approved-tool',
         sessionInputSource: { sourceSessionId: sessionId, sourceInputId: 'original', sourceTurnId: 'retired-turn', via: 'action' } },
       summary: 'Publish approved answer', approval: { flow: 'deferred', result: 'required' } });
     const docTarget = { ref: { kind: 'doc' as const, artifactId: 'doc-1', serverId },
       revision: { headerVersion: 1, bodyVersion: 2 }, range: { start: 0, end: 3 }, quote: 'old' };
+    let postIntent = 0;
     const approve = async (operation: 'post' | 'create' | 'doc-root' | 'doc-proposal' = 'post') => {
-      const proposal = operation === 'post' ? request : operation === 'create' ? ApprovalRequestV2Schema.parse({ ...request, actionId: 'discussion.create',
+      // Independent tool intents have independent original request identities;
+      // reusing one correctly rejoins its already-settled approval.
+      const proposal = operation === 'post' ? (++postIntent === 1 ? request : ApprovalRequestV2Schema.parse({ ...request,
+        executionOriginV1: { ...request.executionOriginV1, requestId: `approved-tool-${postIntent}` } }))
+        : operation === 'create' ? ApprovalRequestV2Schema.parse({ ...request, actionId: 'discussion.create',
         createdBy: { surface: 'mcp', sessionId },
         actionArgs: { title: 'Created by approved Session', firstMessage: { content } },
         executionOriginV1: { ...request.executionOriginV1, surface: 'mcp', actionId: 'discussion.create', requestId: 'approved-create' } })
@@ -569,8 +731,9 @@ it.each([
           executionOriginV1: { ...request.executionOriginV1,
             actionId: operation === 'doc-root' ? 'doc.comment.reply' : 'doc.edit.propose', requestId: `approved-${operation}` } });
       const created = await store.approvalsCreate({ request: proposal, serverId });
-      expect(await store.approvalsUpdate({ artifactId: created.artifactId, serverId, request: { ...proposal,
-        status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } } })).toMatchObject({ ok: true });
+      const updated = await store.approvalsUpdate({ artifactId: created.artifactId, serverId, request: { ...proposal,
+        status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } } });
+      expect(updated, JSON.stringify({ ok: updated.ok, ...(!updated.ok ? { errorCode: updated.errorCode } : {}) })).toMatchObject({ ok: true });
       return created.artifactId;
     };
     await runWithServerHttpBaseUrl(serverUrl, async () => {
@@ -847,6 +1010,7 @@ it.each([
       expect(await fresh().replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' }))
         .toMatchObject({ ok: true, result: { status: 'executed' } });
       expect(reviewedActorStamps).toEqual([{ artifactId, decidingAccountId: 'owner' }]);
+      expect(publicationPolicyReadDeltas).toEqual([0]);
       expect(secondKeyResults).toEqual([expect.objectContaining({ ok: false, error: 'discussion_post_denied' })]);
       expect(publications).toHaveLength(1);
       expect(publications[0]?.sourceSession).toEqual(request.executionOriginV1.sessionInputSource);
@@ -856,7 +1020,8 @@ it.each([
       expect(publications).toHaveLength(1);
       phase = 'private draft publication';
       participantPolicy = 'drafts_for_approval';
-      const draft = ApprovalRequestV2Schema.parse({ ...request, actionId: 'discussion.reply',
+      // Production preparation captures this policy fact in the original draft.
+      const draft = ApprovalRequestV2Schema.parse({ ...request, actionId: 'discussion.reply', discussionDraftReview: true,
         actionArgs: { ...actionArgs, localId: 'reviewed-draft', replyTarget: { kind: 'message', messageId: 'question-1' } },
         executionOriginV1: { ...request.executionOriginV1, actionId: 'discussion.reply', requestId: 'draft-tool' } });
       const createdDraft = await store.approvalsCreate({ request: draft, serverId });
@@ -876,8 +1041,10 @@ it.each([
       participantPolicy = 'when_addressed';
       publicationAuthority = 'account_automation';
       const revoked = await approve(); accountCurrent = false;
-      expect(await fresh().replayApprovedApprovalRequest({ artifactId: revoked, callerAuthority: 'present_user' }))
-        .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale', effectAttempted: false } } });
+      const revokedReplay = await fresh().replayApprovedApprovalRequest({ artifactId: revoked, callerAuthority: 'present_user' });
+      expect(revokedReplay, JSON.stringify({ ok: revokedReplay.ok, ...(!revokedReplay.ok ? { errorCode: revokedReplay.errorCode } : {}) }))
+        .toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
+      expect(await store.approvalsGet({ artifactId: revoked, serverId })).toMatchObject({ status: 'approved' });
       expect(publications).toHaveLength(afterDraft);
       expect(humanWrites).toBe(0);
       accountCurrent = true;
@@ -1009,7 +1176,7 @@ it.each([
       const unknownArtifactId = await approve();
       corruptNextAck = true;
       expect(await fresh().replayApprovedApprovalRequest({ artifactId: unknownArtifactId, callerAuthority: 'present_user' }))
-        .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'outcome_unknown', effectAttempted: true } } });
+        .toMatchObject({ ok: true, result: { status: 'outcome_unknown', execution: { ok: false, errorCode: 'outcome_unknown', effectAttempted: true } } });
       let lastHostApprovalArtifactId: string | undefined;
       const replayHostReturn = async (text: string, requestLocalId = 'terminal-original') => {
         const returnLocalId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId, localId: requestLocalId, acceptedTurnId: 'retired-turn' });
@@ -1038,8 +1205,12 @@ it.each([
       expect(publications).toHaveLength(beforeHost + 1);
       expect(lastPublicationReplay).toBe(lastHostApprovalArtifactId);
       expect(publications.at(-1)).toMatchObject({ sessionId, replyReturn: terminal.replyReturn, terminalReturn: true });
-      expect(await replayHostReturn('Invented success instead of failed original', 'forged-terminal-original')).toMatchObject({ ok: true,
-        result: { status: 'failed', execution: { errorCode: 'discussion_post_denied' } } });
+      const refusedHostReturn = await replayHostReturn('Invented success instead of failed original', 'forged-terminal-original');
+      expect(refusedHostReturn, JSON.stringify(refusedHostReturn)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      // The admitted replay reached the publisher RPC, which refused the
+      // missing original. Its failed receipt is retained without publication.
+      expect(await store.approvalsGet({ artifactId: lastHostApprovalArtifactId!, serverId }))
+        .toMatchObject({ status: 'failed', execution: { errorCode: 'discussion_post_denied', effectAttempted: true } });
       expect(publications).toHaveLength(beforeHost + 1);
       expect(humanWrites).toBe(0);
     });

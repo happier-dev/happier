@@ -2,12 +2,9 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-
 import {
     hasUnsupportedWorkspaceAction,
 } from './workspaceSyncGuard';
-import { projectReleasedSessionHandoffRequestForMethod } from './predecessorCompatibility';
 
 const FORBIDDEN_SESSION_HANDOFF_RPC_HANDLER_TOKENS = [
     'DAEMON_SESSION_HANDOFF_COMMIT',
@@ -124,15 +121,6 @@ describe('sessionHandoff architecture', () => {
             workspaceReplicationReverseTargetRootPath: '/repo/target',
         })).toBe(true);
 
-        // The released predecessor request projection stays frozen on the released shape, so a
-        // retired reverse-root commit is admitted by the compatibility seam and then answered by
-        // the boundary guard with the typed update-required result (never invalid_request).
-        expect(projectReleasedSessionHandoffRequestForMethod(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, {
-            handoffId: 'handoff_released_reverse',
-            mode: 'source_cleanup',
-            workspaceReplicationReverseSourceRootPath: '/repo/source',
-            workspaceReplicationReverseTargetRootPath: '/repo/target',
-        })).toMatchObject({ accepted: true });
         expect(hasUnsupportedWorkspaceAction({
             handoffId: 'handoff_released_reverse',
             mode: 'source_cleanup',

@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -31,10 +32,9 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { decodeBase64 } from '@/api/encryption';
+import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 const ptyBoundary = vi.hoisted(() => ({ spawns: [] as Array<{ launch: PtySpawnParams; finish(): void }> }));
-const pluginFixtures: Array<Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>> = [];
-afterAll(async () => { for (const fixture of pluginFixtures.reverse()) await fixture.dispose(); });
 const requesterAccountToken = `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
   provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
 })).toString('base64url')}.signature`;
@@ -55,7 +55,7 @@ vi.mock('@/terminal/pty/provider', async importOriginal => ({
 describe('detached execution-run Machine composition', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); ptyBoundary.spawns.length = 0; });
 
-  it('reads through the installed Machine transport without reopening network admission', async () => {
+  it('refuses detached reads without requester custody on the installed Machine transport', async () => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine-detached', encryptionMode: 'plain' });
     const registration = registerMachineRpcHandlers({
       rpcHandlerManager: rpc,
@@ -66,8 +66,8 @@ describe('detached execution-run Machine composition', () => {
       },
       deps: { currentMachineId: 'machine-detached' },
     });
-    // HTTP is a genuine system boundary. Already admitted local controls keep
-    // their installed transport when network admission is unavailable.
+    // HTTP is a genuine system boundary. Installed transport alone supplies
+    // no requester Account proof for detached Run reads.
     vi.spyOn(axios, 'get').mockRejectedValue(new Error('network unavailable'));
     const deps = createCliActionDeps({
       sessionId: 'cli-global', token: 'token', mode: 'plain', ctx: null,
@@ -80,7 +80,7 @@ describe('detached execution-run Machine composition', () => {
     try {
       const options = { exactMachineId: 'machine-detached' };
       const listed = await deps.executionRunList(null, { limit: 3 }, options);
-      expect(getActionSpec('execution.run.list').outputSchema.parse(listed)).toEqual({ runs: [] });
+      expect(listed).toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
       await expect(deps.executionRunGet(null, { runId: 'missing-run' }, options))
         .resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
     } finally {
@@ -132,14 +132,36 @@ describe('detached execution-run Machine composition', () => {
     detach();
   });
 
-  it.each(['session', 'account'] as const)('carries the captured %s requester through real Action dispatch, Machine registration, native launch and cold resume', async requesterKind => {
+  it.each([
+    { requesterKind: 'session', rootActionId: 'execution.run.start' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start' },
+    { requesterKind: 'account', rootActionId: 'scm.diffSummary.generate' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'owner' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'member' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'foreign-requester' },
+  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch, Machine registration, native launch and cold resume ($selectedMcp)', async row => {
+    const { requesterKind, rootActionId } = row;
+    const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
+    const custodianAccountId = selectedMcp === 'member' ? 'other-custodian' : 'requester';
+    const actorAccountId = selectedMcp === 'foreign-requester' ? 'member' : 'requester';
+    const memberCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member',
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
+    })).toString('base64url')}.signature`, encryption: null };
     let phase = 'Project fixture admission';
     let readFailedRun: (() => Promise<unknown>) | undefined;
     onTestFailed(async () => {
       console.error(`Machine composition failed during: ${phase}`, readFailedRun ? await readFailedRun() : undefined);
     });
-    const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token: requesterAccountToken, encryption: null } });
+    const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token: requesterAccountToken, encryption: null },
+      ...(selectedMcp ? { homeServerIdentityId: 'srv_session_home', agentIsolationEnabled: false,
+        ...(selectedMcp === 'foreign-requester' ? { additionalAccountCredentials: [memberCredentials] } : {}),
+        machineAccess: { custodianAccountId, role: 'manage' }, mcpCatalog: { v: 1, servers: [{ id: 'selected', name: 'selected', title: 'Selected fixture',
+          transport: 'stdio', stdio: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
+          env: {}, createdAt: 1, updatedAt: 1 }], bindings: [{ id: 'selected-all', serverId: 'selected', enabled: true,
+          target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] } } : {}),
+    });
     const { f, cwd, finite } = h;
+    const callerCredentials = selectedMcp === 'foreign-requester' ? memberCredentials : f.bootstrap.credentials;
     expect(f.bootstrap.savedSecretOperationContext.readSnapshot()?.scopeKey, 'The admitted requester must belong to the current fixture Home')
       .toBe(resolveAccountSettingsScopeKey(f.bootstrap.credentials));
     const bin = join(f.directory, 'bin');
@@ -162,7 +184,7 @@ describe('detached execution-run Machine composition', () => {
         { id: 'workspace', capability: 'filesystem', reason: 'Use the admitted Project working directory',
           scope: { locations: [{ root: 'workspace' }], access: ['read'] } }], optional: [] },
         contributes: { agents: [{ id: 'agent', title: 'Detached Project Agent', runtime: { kind: 'custom' }, primary: 'sessions',
-          capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true,
+          capabilities: { ...(selectedMcp ? { tools: { delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' } } } : {}), sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true,
             executionRunContext: { versions: [1] } } } }],
         systemTools: [{ id: 'fixture-cli', title: 'Fixture Agent', executableNames: [toolName] }] } }),
         files: { 'daemon.mjs': `import { factory } from './agent.mjs';
@@ -171,6 +193,15 @@ describe('detached execution-run Machine composition', () => {
           'agent.mjs': `import { createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
           async function openConversation(request, context) {
             if (request.kind === 'fork') throw new Error('Fixture supports create and resume');
+            if (${Boolean(selectedMcp)}) {
+              const servers = await context.executionRun.services.mcp.resolveServers();
+              if (!request.mcpServers?.selected || !servers.some(server => server.id === 'selected' && server.transport.kind === 'stdio')) {
+                throw new Error('Selected MCP material did not reach the native Agent');
+              }
+              if (request.mcpToolPolicy?.selected?.unlisted !== 'deny') {
+                throw new Error('Retained Agent host control did not enforce read-only MCP policy');
+              }
+            }
             const result = await context.services.exec.run({ executable: { kind: 'systemTool', id: 'fixture-cli' },
               args: ['-e', ${JSON.stringify(child)}, '--', '--cold-run', request.kind], cwd: { root: 'workspace', relativePath: '' },
               env: { ORIGINAL: 'host' } }, { nativeLaunch: context.executionRun.services.nativeLaunch });
@@ -200,16 +231,18 @@ describe('detached execution-run Machine composition', () => {
                 openConversation: () => openConversation(request, context) });
             } },
           } }; }` } }] });
-    pluginFixtures.push(plugin);
-    onTestFinished(() => plugin.lease.release());
+    onTestFinished(() => plugin.dispose());
     // The loopback daemon admission endpoint is the network boundary. Its real
     // client and response parser consume the isolated Home's fixture state.
-    writeDaemonState({ pid: process.pid, httpPort: 43130, startedAt: Date.now(), startedWithCliVersion: 'fixture', controlToken: 'fixture-control-token' });
-    const homeFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      if (new URL(String(url)).pathname === '/execution-run/admission') return Response.json({ admitted: true });
-      return await homeFetch(url, init);
+    const daemonHttp = createServer((request, response) => {
+      if (request.url !== '/execution-run/admission') { response.writeHead(404).end(); return; }
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ admitted: true }));
     });
+    await new Promise<void>(resolve => daemonHttp.listen(0, '127.0.0.1', resolve));
+    onTestFinished(() => new Promise<void>((resolve, reject) => daemonHttp.close(error => error ? reject(error) : resolve())));
+    const daemonAddress = daemonHttp.address();
+    if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Missing fixture daemon endpoint');
+    writeDaemonState({ pid: process.pid, httpPort: daemonAddress.port, startedAt: Date.now(), startedWithCliVersion: 'fixture', controlToken: 'fixture-control-token' });
     const incoming = new Map<string, RpcHandler>();
     // Observe the callbacks installed for the authenticated Home transport;
     // registration, Action dispatch and the complete Run controller remain real.
@@ -225,6 +258,11 @@ describe('detached execution-run Machine composition', () => {
       if (!snapshot) throw new Error('Requester Account lifetime retired');
       return snapshot;
     };
+    // Observe the resolver built by the actual ApiMachine constructor, rather
+    // than authoring an Agent-context callback in this receiving transport fixture.
+    const installedSnapshot = Reflect.get(h.machine, 'executionRunAccountSnapshots') as AccountSettingsSnapshotResolver | undefined;
+    const readRunSnapshot = selectedMcp ? installedSnapshot : readSnapshot;
+    if (typeof readRunSnapshot !== 'function') throw new Error('Missing installed Machine Account snapshot owner');
     const actionOperations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'requester',
       custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
     const actionsSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => readSnapshot().settings,
@@ -235,7 +273,7 @@ describe('detached execution-run Machine composition', () => {
       deps: { currentMachineId: 'machine', currentServerId: 'session-home', workingDirectory: cwd,
         executionRunRuntimeAccountId: 'requester', createProjectFiniteRuntime: finite, actionOperations, actionsSettingsProvider,
         executionRunAccountSettings: { serverUrl: 'https://session-home.test', resolveAccountSettings: () => readSnapshot().settings,
-          resolveAccountSettingsSnapshot: readSnapshot,
+          resolveAccountSettingsSnapshot: readRunSnapshot,
           actionsSettingsProvider } } });
     onTestFinished(() => registration.dispose());
     // An installed CLI's Account token is not an authenticated requester
@@ -251,50 +289,77 @@ describe('detached execution-run Machine composition', () => {
       cwd, permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
     }, { exactMachineId: 'machine' })).toMatchObject({ ok: false,
       errorCode: 'project_requester_credentials_unavailable', details: { executionRunStart: { runCreation: 'noRunCreated' } } });
-    expect(await unscopedCli.executionRunList(null, {}, { exactMachineId: 'machine' })).toMatchObject({ runs: [] });
+    expect(await unscopedCli.executionRunList(null, {}, { exactMachineId: 'machine' }))
+      .toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
     expect(h.nativeEffects()).toBe(0);
     let currentIngress = new AbortController();
     const accountRequester = requesterKind === 'account' ? await admitRequesterAccountActionContext({
       authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'native-run-root', binding: {
-        accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
-        accountEncryptionMode: 'plain', serverIdentityId: 'session-home', machineId: 'machine', installationId: f.installation.installationId,
-        actionId: 'execution.run.start', requestId: randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
-      } }), credentials: f.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'session-home',
+        accountId: actorAccountId, custodianAccountId, authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_session_home', machineId: 'machine', installationId: f.installation.installationId,
+        actionId: rootActionId, requestId: randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+      } }), credentials: callerCredentials,
+      serverId: 'session-home', serverIdentityId: 'srv_session_home',
       serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => f.isHomeCurrent(), isCustodyCurrent: async () => f.isHomeCurrent(),
     }) : null;
     if (requesterKind === 'account' && !accountRequester) throw new Error('Account requester admission failed');
     if (accountRequester) onTestFinished(() => accountRequester.dispose());
     const accountAuthorization = accountRequester ? await projectExternalActionRequesterHttpAuthorization({
-      authorization: accountRequester.authorization, serverId: 'session-home', serverIdentityId: 'session-home',
+      authorization: accountRequester.authorization, serverId: 'session-home', serverIdentityId: 'srv_session_home',
       serverHttpBaseUrl: 'https://session-home.test', target: { kind: 'machine', machineId: 'machine' },
       installationId: f.installation.installationId, privateKey: decodeBase64(f.installation.privateKey, 'base64url'),
       isCurrent: accountRequester.isCustodyCurrent,
     }) : null;
     if (accountRequester && !accountAuthorization) throw new Error('Account requester HTTP projection failed');
-    const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester', custodianAccountId: 'requester',
+    const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: actorAccountId, custodianAccountId,
       machineId: 'machine', installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' });
-    const deps = createCliActionDeps({ sessionId: 'cli-global', token: f.bootstrap.credentials.token, mode: 'plain', ctx: null,
-      credentials: f.bootstrap.credentials, serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+    const deps = createCliActionDeps({ sessionId: 'cli-global', token: callerCredentials.token, mode: 'plain', ctx: null,
+      credentials: callerCredentials, serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+      externalActionMachineInstallationId: f.installation.installationId,
+      externalActionMachineRequestPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
       ...(requesterKind === 'session' ? { requesterSessionBootstrap: f.bootstrap } : {}),
       machineActionDirectTargetTransport: { machineId: 'machine', async invoke(method, request, options) {
         return await rpc.invokeLocal(method, request, { ...options, signal: options?.signal ?? currentIngress.signal,
-          ...(accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START ? { rpcContext: { callerInputAuthorization: accountAuthorization, machineAdmission,
-            verifyMachineAdmissionCurrent: accountRequester!.isCurrent } } : {}) });
+          // The receiving Home transport stamps every call, including reads,
+          // with its admitted caller; installed runtime identity is insufficient.
+          rpcContext: { ...options?.rpcContext, machineAdmission, verifyMachineAdmissionCurrent: f.bootstrap.isCurrent,
+            ...(accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+              ? { callerInputAuthorization: accountAuthorization, verifyMachineAdmissionCurrent: accountRequester!.isCurrent }
+              : {}) } });
       } } });
     const options = { exactMachineId: 'machine', surface: 'cli' as const, authority: 'present_user' as const };
     phase = 'initial native Run admission';
     const action = await createActionExecutor(deps).execute('execution.run.start', { sessionId: null,
       intent: 'agent', backendTarget: { kind: 'backend', backendId: `${pluginId}/agent` },
-      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' ? 'resumable' : 'ephemeral',
-      cwd, runClass: requesterKind === 'account' ? 'long_lived' : 'bounded', ioMode: 'request_response',
+      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp ? 'resumable' : 'ephemeral',
+      cwd, runClass: requesterKind === 'account' && !selectedMcp ? 'long_lived' : 'bounded', ioMode: 'request_response',
+      ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
       ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
     }, { surface: 'cli', authority: 'present_user',
-      executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: 'requester', actionRequestId: randomUUID() });
+      executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
+      ...(accountRequester ? { externalActionExecutionAuthorization: accountRequester.authorization,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) });
+    if (selectedMcp === 'member' || selectedMcp === 'foreign-requester') {
+      // The registered Action owner refuses this authority before creating a
+      // Run. Do not bypass that owner merely to exercise a deeper MCP callee.
+      expect(action).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        details: { executionRunStart: { runCreation: 'outcomeUnknown' } } });
+      expect(await deps.executionRunList(null, {}, options)).toMatchObject({ runs: [] });
+      expect(h.nativeEffects()).toBe(0);
+      return;
+    }
     expect(action, JSON.stringify(action)).toMatchObject({ ok: true });
     if (!action.ok) throw new Error(`Action start refused: ${action.errorCode}`);
     const started = action.result;
     expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
     const runId = ExecutionRunStartResponseSchema.parse(started).runId;
+    if (selectedMcp) {
+      phase = 'bounded Machine selected-MCP settlement';
+      const settled = await deps.executionRunWait(null, { runId, timeoutSeconds: 30 }, options);
+      expect(settled).toMatchObject({ ok: true, status: 'succeeded', result: { run: { status: 'succeeded' } } });
+      expect(h.nativeEffects()).toBe(1);
+      return;
+    }
     // The original Account Action returns before the native Run opens. Its
     // private requester must survive through the Run's own runtime lifetime.
     await accountRequester?.dispose();

@@ -116,6 +116,18 @@ async function preparePlainHistoricalImportItem(params: Readonly<{
 }
 
 describe('external session historical import item preparation', () => {
+  it('keeps per-record timing on both prepared and staged historical imports', async () => {
+    const item = { id: 'timed-item', localId: 'timed-item', createdAtMs: 123,
+      raw: { role: 'agent', content: { type: 'output', data: 'private text' } } };
+    const linked = createLinkedSession('/unused');
+    const prepared = await prepareExternalSessionHistoricalImportItem({ item, linked, credentials,
+      sessionId: 'sess-managed', workingDirectory: null, sourceReadRoots: [] });
+    const staged = await stageExternalSessionHistoricalImportItem({ item, workingDirectory: null, sourceReadRoots: [] });
+    const validated = validateExternalSessionHistoricalImportStagedItem({ staged, linked, credentials, sessionId: 'sess-managed' });
+    for (const result of [prepared, validated]) {
+      expect(Reflect.get(result, 'usageTimingV1')).toEqual({ v: 1, minMs: null, maxMs: null });
+    }
+  });
   it('writes plain historical content with token-only credentials', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-token-only-import-'));
     try {

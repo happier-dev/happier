@@ -5,7 +5,7 @@ import type { StreamedTranscriptSegmentState } from './segmentRuntime';
 export type StreamedTranscriptWriterSession = TranscriptSessionPort;
 
 export type StreamedTranscriptWriter = Readonly<{
-  appendAssistantDelta: (deltaText: string, opts?: { sidechainId?: string | null }) => void;
+  appendAssistantDelta: (deltaText: string, opts?: { sidechainId?: string | null; meta?: Readonly<Record<string, unknown>> }) => void;
   appendThinkingDelta: (deltaText: string, opts?: { sidechainId?: string | null }) => void;
   overrideAssistantText: (text: string, opts?: { sidechainId?: string | null }) => boolean;
   overrideThinkingText: (text: string, opts?: { sidechainId?: string | null }) => boolean;

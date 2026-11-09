@@ -123,8 +123,6 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
     /** Host-bound lifetime of the admitted request; checks local cancellation, never caller input. */
     verifyMachineAdmissionCurrent?: () => Promise<boolean>;
-    /** Same current Machine admission owner, independent of a completed/cancelled transport request. */
-    verifyMachineAuthorityCurrent?: () => Promise<boolean>;
     localActionContext?: RpcLocalActionContext;
     /** Exact active common-issuer context; host-only and never accepted from RPC DTOs. */
     reviewedChildActionContext?: ActionExecutorContext;

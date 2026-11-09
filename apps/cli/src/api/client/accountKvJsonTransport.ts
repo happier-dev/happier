@@ -26,7 +26,7 @@ export async function resolveCliAccountStorageContext(params: Readonly<{
   usage?: 'identity' | 'fresh-authority';
 }>) {
   const readCurrentness = params.usage === 'identity' ? readRequesterAccountEncryptionCurrentness : fetchAccountEncryptionCurrentness;
-  const currentness = await readCurrentness({ token: params.credentials.token,
+  const currentness = await readCurrentness({ token: params.credentials.token, credentials: params.credentials,
     ...(params.serverBaseUrl ? { serverBaseUrl: params.serverBaseUrl } : {}),
     ...(params.authorizationHeaders ? { authorizationHeaders: params.authorizationHeaders } : {}),
     ...(params.signal ? { signal: params.signal } : {}) });
@@ -36,8 +36,14 @@ export async function resolveCliAccountStorageContext(params: Readonly<{
   if (!encryption) throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account encryption material is unavailable');
   const material = encryption.type === 'legacy' ? { type: 'legacy' as const, secret: encryption.secret }
     : { type: 'dataKey' as const, machineKey: encryption.machineKey };
-  const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
-    ...(encryption.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) });
+  const snapshot = (() => {
+    try {
+      return createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
+        ...(encryption.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) });
+    } catch {
+      throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account encryption material is invalid');
+    }
+  })();
   if (convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) !== currentness.contentKeyFingerprint) {
     throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account content-key fingerprint mismatch');
   }

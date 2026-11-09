@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +26,8 @@ import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { createAccountSessionFollowRuleCache } from '@/agent/runtime/session/follow/accountSessionFollowRuleCache';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
@@ -55,14 +58,19 @@ import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from './apiMa
 import { createDaemonTeamCredentialDirectMaterialReconciler, subscribeTeamCredentialDirectMaterialAccountChanges, subscribeTeamCredentialDirectMaterialSourceChanges } from '@/daemon/connectedServices/directMaterial/daemonTeamCredentialDirectMaterialReconciler';
 import { attachPluginWebhookDaemonWakeV1 } from '@/plugins/runtime/webhooks/pluginWebhookDaemonWake';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/accountUsage';
-import type { ChangeEntry } from '@happier-dev/protocol/changes';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, ChangesResponseSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
 import { createLightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
 import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
 import { markAccountChanged } from '../../../server/sources/app/changes/markAccountChanged';
+import { markSessionProjectionRecipientsChanged } from '../../../server/sources/app/session/changeTracking/markSessionProjectionRecipientsChanged';
+import { registerAccountSecurityRoutes } from '../../../server/sources/app/api/routes/auth/registerAccountSecurityRoutes';
 import { eventRouter } from '../../../server/sources/app/events/connectionEventRouter';
 import { getAccountStoredContentV3SocketRoom } from '../../../server/sources/app/api/socketRooms';
 import { createAuthenticatedTestApp } from '../../../server/sources/app/api/testkit/sqliteFastify';
@@ -139,7 +147,7 @@ const {
         axiosIsAxiosError: vi.fn((error: unknown) => (
             typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
         )),
-        readAccountChangesCursor: vi.fn(async () => 0),
+        readAccountChangesCursor: vi.fn<typeof persistence.readAccountChangesCursor>(async () => 0),
         writeAccountChangesCursor: vi.fn(async (_accountId: string, _cursor: number) => {}),
     };
 });
@@ -168,6 +176,7 @@ vi.mock('socket.io-client', () => ({
 
 vi.mock('axios', () => ({
     default: {
+        defaults: {}, // The credential-safe HTTP decorator reads Axios defaults before dispatch.
         get: axiosGet,
         post: axiosPost,
         put: axiosPut,
@@ -574,8 +583,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'policy-account' } };
             if (url.includes('/v2/changes')) {
                 if (cursorGone) return { status: 410, data: { error: 'cursor-gone', currentCursor: 2 } };
-                const after = options?.params && typeof options.params === 'object' && 'after' in options.params
-                    ? Number(options.params.after) : 0;
+                const after = Number(new URL(url).searchParams.get('after') ?? 0);
                 const page = !paged ? changes : after === 0
                     ? Array.from({ length: 200 }, (_, index) => ({ cursor: index + 1, kind: 'account',
                         entityId: `unrelated-${index}`, changedAt: 1, hint: null }))
@@ -608,13 +616,15 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             notifications.length = 0;
             changes = [entry];
             await sync();
-            expect(notifications).toEqual([undefined]);
+            expect(notifications).toEqual([{ kind: 'managed', managedIds: [entry.entityId] }]);
             changes = [{ ...entry, kind: 'machine', entityId: machine.id, hint: null }];
             await sync();
-            expect(notifications).toEqual([undefined, { kind: 'currentness' }]);
-            changes = [];
+            expect(notifications).toEqual([{ kind: 'managed', managedIds: [entry.entityId] }, { kind: 'currentness' }]);
+            changes = [entry];
             await sync('reconnect');
             expect(notifications).toHaveLength(3);
+            expect(notifications.at(-1)).toBeUndefined();
+            changes = [];
             cursorGone = true;
             await sync();
             expect(notifications).toHaveLength(4);
@@ -633,6 +643,61 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             await client.shutdown();
         }
     });
+    it('reconciles the removed member sandbox when a Team withdrawal shares a page with another managed activity', async () => {
+        const machine: Machine = { id: 'withdrawal-controller', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const controller = { machineId: machine.id, installationId: 'installation' };
+        const signing = tweetnacl.sign.keyPair();
+        const machines = ['removed-member-sandbox', 'active-member-sandbox'].map(id => ManagedMachineV1Schema.parse({
+            id, homeId: 'home', custodianAccountId: 'policy-owner', controller, enrolledMachineId: `${id}-guest`,
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'sandbox' }, schemaVersion: 1, name: id, choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'sandbox' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        }));
+        let changes: ChangeEntry[] = [];
+        mockAccountGet(async url => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'policy-owner' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? 0 } };
+            if (url.includes('/v1/machines/')) return { status: 200, data: { machine } };
+            throw new Error(`Unexpected withdrawal route: ${new URL(url).pathname}`);
+        });
+        axiosPost.mockResolvedValue({ status: 200, data: { machines, targets: [] } });
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        const reconciled: string[] = [];
+        const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine: client,
+            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
+                custodianAccountId: 'policy-owner', privateKey: signing.secretKey, token: 'token',
+                serverUrl: 'https://policy.example', signal }),
+            // Observe native executor admissions; feed classification and scheduling stay real.
+            reconcileNativeCredentials: async current => { reconciled.push(current.id); },
+            executePolicy: async () => { throw new Error('No compute policy requested'); },
+        });
+        const retryOwner = (client as unknown as {
+            connectedServicesProjectionRetry: { waitForIdle(): Promise<void> };
+        }).connectedServicesProjectionRetry;
+        try {
+            client.connect();
+            await vi.waitFor(() => expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v2/changes'))).toBe(true));
+            await retryOwner.waitForIdle();
+            await runtime.notifyChanged();
+            reconciled.length = 0;
+            changes = [
+                { cursor: 1, kind: 'account', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, changedAt: 1, hint: null },
+                { cursor: 2, kind: 'account', entityId: machines[1]!.id, changedAt: 1,
+                    hint: { managedMachinePolicy: true, machineId: machine.id } },
+                { cursor: 3, kind: 'machine', entityId: machines[1]!.enrolledMachineId!, changedAt: 1, hint: null },
+            ];
+            socket.trigger('update', { id: 'withdrawal', seq: 3, createdAt: 1, body: { t: 'account-change' } });
+            await retryOwner.waitForIdle();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(reconciled).toEqual(machines.map(current => current.id));
+        } finally { await runtime.stop(); await client.shutdown(); }
+    });
+
     it('wakes the webhook worker only for its durable domains or completeness recovery', async () => {
         const machine: Machine = { id: 'webhook-observer-machine', encryptionMode: 'plain', metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
@@ -840,6 +905,9 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         changes = [];
         await sync('reconnect');
         expect(notified).toHaveBeenCalledTimes(2);
+        // An empty reconnect page must retain its recovery origin; catalog
+        // edits alone cannot reset a heartbeat waiting for its first receipt.
+        expect(notified).toHaveBeenLastCalledWith({ reason: 'reconnect' });
         cursorGone = true;
         await sync('live');
         expect(notified).toHaveBeenCalledTimes(3);
@@ -955,6 +1023,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             registerProviderConnectionsRoutes(app);
             registerSavedSecretResourceRoutes(app);
             registerAccountSettingsRoutes(app);
+            registerAccountSecurityRoutes(app);
             registerRoutes?.(app);
             await app.ready();
             const machine: Machine = { id: 'material-cost-machine', encryptionMode: 'plain', metadata: null,
@@ -984,7 +1053,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 const data: unknown = response.json();
                 if (path === '/v2/changes' && response.statusCode === 200) {
                     changePages.push({ after: Number(request.searchParams.get('after')),
-                        entries: response.json<{ changes: ChangeEntry[] }>().changes });
+                        entries: ChangesResponseSchema.parse(data).changes });
                 }
                 if (!(options?.validateStatus?.(response.statusCode) ?? (response.statusCode >= 200 && response.statusCode < 300))) {
                     // Preserve Axios's real HTTP refusal shape, including the
@@ -1033,6 +1102,99 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 initAuth: false, initEncrypt: true, initFiles: false });
         });
         afterAll(async () => { await database?.close(); });
+
+        it('carries projection-only Follow facts through the real changes feed without hiding a coalesced original', async () => {
+            const account = await db.account.create({ data: { id: 'follow-projection-cost-account', encryptionMode: 'plain' } });
+            const session = await db.session.create({ data: { accountId: account.id, tag: 'follow-projection-cost',
+                metadata: '{}', encryptionMode: 'plain' } });
+            admitAccountSnapshot(admitAccountSnapshot.name);
+            const harness = await createMaterialChangeHarness(account.id, admitAccountSnapshot.name);
+            const delivered: unknown[] = [];
+            harness.client.onSessionChanged(change => { delivered.push(change); });
+            const original = (tx: Parameters<typeof markAccountChanged>[0], seq: number) => markAccountChanged(tx, {
+                accountId: account.id, kind: 'session', entityId: session.id, hint: { lastMessageSeq: seq },
+            });
+            const metadata = (tx: Parameters<typeof markAccountChanged>[0], version: number) => markSessionProjectionRecipientsChanged({
+                tx, sessionId: session.id, recipientAccountIds: [account.id], hint: { metadataVersion: version }, followSourceChanged: false,
+            });
+            try {
+                await inTx(tx => original(tx, 1));
+                await harness.start();
+                await harness.settle();
+                expect(delivered.at(-1)).not.toHaveProperty('followSourceChanged', false);
+                await inTx(async tx => { await metadata(tx, 1); await metadata(tx, 2); });
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ sessionId: session.id, followSourceChanged: false });
+                expect(harness.wakes.at(-1)).toHaveProperty('body.sessionSystemRecords', []);
+                await inTx(async tx => { await original(tx, 2); await metadata(tx, 3); });
+                await harness.settle();
+                expect(delivered.at(-1)).not.toHaveProperty('followSourceChanged', false);
+                expect(delivered).toHaveLength(3);
+                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
+                await harness.settle();
+                expect(delivered.at(-1)).not.toHaveProperty('followSourceChanged', false);
+                await inTx(tx => metadata(tx, 4));
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ followSourceChanged: false });
+                expect(harness.wakes.at(-1)).toHaveProperty('body.sessionSystemRecords', []);
+                expect(delivered).toHaveLength(5);
+                await inTx(async tx => {
+                    await markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+                        hint: { runtimeActivityRevision: 1 }, followSourceChanged: false, followReceiverAvailabilityChanged: true });
+                    await metadata(tx, 5);
+                });
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ sessionId: session.id, followSourceChanged: false,
+                    followReceiverAvailabilityChanged: true });
+                await inTx(tx => metadata(tx, 6));
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ followSourceChanged: false, followReceiverAvailabilityChanged: false });
+                await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id,
+                    recipientAccountIds: [account.id], hint: { runtimeActivityRevision: 2 }, followSourceChanged: false }));
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ followSourceChanged: false, followReceiverAvailabilityChanged: false });
+                expect(delivered).toHaveLength(8);
+            } finally { await harness.close(); }
+        });
+
+        it('carries the Memory-unchanged proof for idle activity writes without hiding a coalesced Memory input', async () => {
+            const account = await db.account.create({ data: { id: 'memory-projection-cost-account', encryptionMode: 'plain' } });
+            const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-projection-cost',
+                metadata: '{}', encryptionMode: 'plain' } });
+            admitAccountSnapshot(admitAccountSnapshot.name);
+            const harness = await createMaterialChangeHarness(account.id, admitAccountSnapshot.name);
+            const delivered: Array<{ memoryInputsChanged?: false }> = [];
+            harness.client.onSessionChanged(change => { delivered.push(change); });
+            let revision = 0;
+            // The real runtime-activity and presence writers mark the proof; a transcript or metadata write does not.
+            const activity = (tx: Parameters<typeof markAccountChanged>[0]) => markSessionProjectionRecipientsChanged({
+                tx, sessionId: session.id, recipientAccountIds: [account.id], hint: { runtimeActivityRevision: ++revision },
+                followSourceChanged: false, usageAccountingChanged: false, memoryInputsChanged: false,
+            });
+            const metadata = (tx: Parameters<typeof markAccountChanged>[0], version: number) => markSessionProjectionRecipientsChanged({
+                tx, sessionId: session.id, recipientAccountIds: [account.id], hint: { metadataVersion: version },
+                followSourceChanged: false, usageAccountingChanged: false,
+            });
+            try {
+                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+                    hint: { lastMessageSeq: 1 } }));
+                await harness.start();
+                await harness.settle();
+                expect(delivered.at(-1)).not.toHaveProperty('memoryInputsChanged', false);
+                for (let tick = 0; tick < 3; tick += 1) {
+                    await inTx(tx => activity(tx));
+                    await harness.settle();
+                    expect(delivered.at(-1)).toMatchObject({ sessionId: session.id, memoryInputsChanged: false });
+                }
+                // A Memory input coalesced under a later activity write must still reach the Memory reader.
+                await inTx(async tx => { await metadata(tx, 1); await activity(tx); });
+                await harness.settle();
+                expect(delivered.at(-1)).not.toHaveProperty('memoryInputsChanged', false);
+                await inTx(tx => activity(tx));
+                await harness.settle();
+                expect(delivered.at(-1)).toMatchObject({ memoryInputsChanged: false });
+            } finally { await harness.close(); }
+        });
 
         it('materializes only consumed domains at scale, stays idle for 300 seconds, and never rereads acknowledged entries', async () => {
             const account = await db.account.create({ data: { id: 'domain-cost-account', encryptionMode: 'plain' } });
@@ -1141,7 +1303,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         const team = await db.team.create({ data: { name: 'Material currentness' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: 'owner' } });
         expect(await inTx(tx => mutateProviderConnectionsRowInTx(tx, { accountId: account.id, expectedRevision: 'absent',
-            sourceSettingsVersion: 1, referencedSavedSecretIds: [], content: { t: 'plain', v: catalog } })))
+            sourceSettingsVersion: 1, referencedSavedSecretIds: [], savedSecretRevisions: [], content: { t: 'plain', v: catalog } })))
             .toMatchObject({ status: 'updated', revision: 0 });
         clearActiveAccountSettingsSnapshot();
         setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
@@ -1169,10 +1331,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         const publish = async () => {
             if (kind === 'preference' || kind === 'material') {
                 const result = await inTx(tx => mutateProviderConnectionsRowInTx(tx, { accountId: account.id,
-                    expectedRevision: catalogRevision, referencedSavedSecretIds: [], content: { t: 'plain', v: {
+                    expectedRevision: catalogRevision, referencedSavedSecretIds: [], savedSecretRevisions: [], content: { t: 'plain', v: {
                         ...catalog,
                         ...(kind === 'material' ? { connections: catalog.connections.map(connection => ({ ...connection, revision: 1 })) } : {}),
-                        modelPickerVisibilityByConnectionId: { pc_a: revision % 2 === 0 },
+                        modelPickerVisibilityByConnectionId: { [catalog.connections[0]!.id]: revision % 2 === 0 },
                     } } }));
                 expect(result).toMatchObject({ status: 'updated', revision: catalogRevision + 1 });
                 catalogRevision++;
@@ -2888,7 +3050,9 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 expect(await open()).toMatchObject({ ok: true, payload: { material: { kind: 'qualified_connected_account' } } });
                 const memberKey = computeTeamCredentialSourceMemberKeyV1({ kind: 'connected_account', service, connectedAccountId: ref.accountId });
                 const storedBefore = await db.teamCredentialRecipientMaterial.findFirstOrThrow({ where: { resourceId: resource.id, recipientAccountId: recipient.id } });
-                const censusCount = () => homeDomainAction.mock.calls.filter(([action]) => action.actionId === 'teams.list').length;
+                // C1-02 count RED/GREEN:103 inventory reads→1 exact custodian read; source revocation/recovery below stays real.
+                const censusCount = () => homeDomainAction.mock.calls.filter(([action]) => action.actionId === 'teams.credentials.list'
+                    && action.input && typeof action.input === 'object' && 'scope' in action.input && action.input.scope === 'custodian').length;
                 const checkpoints = async () => Promise.all([custodian, recipient, departed].map(async account => ({
                     accountId: account.id, cursor: (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq,
                 })));
@@ -3134,10 +3298,11 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 client.onManagedProviderRetainedCurrentnessInvalidation(directMaterial);
                 // The Action transport is the boundary; feed classification,
                 // subscription and the real census owner remain composed.
-                const homeDomainAction = vi.fn(async () => ({ items: [], nextCursor: null }));
+                const homeDomainAction = vi.fn(async () => ({ resources: [], nextCursor: null,
+                    viewer: { manageCredentials: false, offerOwnCredential: true } }));
                 const materialOwner = createDaemonTeamCredentialDirectMaterialReconciler({
                     token: 'token', accountId: account.id, homeDomainAction,
-                    establishedRuntimeOwner: { readMaterialSnapshot: async () => { throw new Error('Empty Team census must not read material'); } },
+                    establishedRuntimeOwner: { readMaterialSnapshot: async () => { throw new Error('Empty custodian selection must not read material'); } },
                     listAccounts, readGroup: async () => null, resolveProviderSource: async () => null,
                     isAccountChangesObserverCurrent: () => true,
                 });
@@ -3760,7 +3925,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         client.onSessionFollowRulesChanged(onSessionFollowRulesChanged);
         await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
-        expect(onSessionFollowRulesChanged).toHaveBeenCalledExactlyOnceWith({ full: true, workflowRunIds: [] });
+        expect(onSessionFollowRulesChanged).toHaveBeenCalledExactlyOnceWith({ full: true, workflowRunIds: [], continuityReset: true });
         expect(onAccountSettingsVersionHint).toHaveBeenCalledTimes(1);
         expect(onAccountSettingsVersionHint).toHaveBeenCalledWith({
             settingsVersion: null,
@@ -3982,11 +4147,14 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             },
         });
         client.onConnectedServicesProjection(async () => {});
+        const followChanges: unknown[] = [];
+        client.onSessionFollowRulesChanged(change => { followChanges.push(change); });
 
         await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
         expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({ accountId: 'acc-1' });
         expect(order).toEqual(['witness', 'cursor']);
+        expect(followChanges).toEqual([{ full: true, workflowRunIds: [], continuityReset: true }]);
     });
 
     it('does not change Session Resource access for a malformed cursor-gone response', async () => {
@@ -4133,6 +4301,154 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             { sessionId: 'session-deleted', cursor: 12, removed: true },
         ]);
         expect(order).toEqual(['deleted', 'cursor']);
+    });
+
+    it('distinguishes Follow configuration from lost discovery continuity on the existing Machine feed', async () => {
+        const machine: Machine = { id: 'machine-follow-continuity', encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        let changes: ChangeEntry[] = [];
+        let cursor = 0;
+        mockAccountGet(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-follow-continuity' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes, nextCursor: cursor } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const connected = createDeferred<void>();
+        const followChanges: unknown[] = [];
+        const client = new ApiMachineClient('fake-token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        client.onSessionFollowRulesChanged(change => { followChanges.push(change); });
+        admitAccountSnapshot('fake-token');
+        try {
+            client.connect({ onConnect: () => { connected.resolve(); } });
+            await vi.waitFor(() => expect(socket.connect).toHaveBeenCalled());
+            socket.trigger('connect');
+            await connected.promise;
+            expect(followChanges).toEqual([{ full: true, workflowRunIds: [], discussionIds: [], continuityReset: true }]);
+            followChanges.length = 0;
+            changes = [{ cursor: 1, kind: 'account', entityId: 'follow-config', changedAt: 1, hint: { sessionFollows: true } }];
+            cursor = 1;
+            socket.trigger('update', { id: 'follow-config', seq: cursor, createdAt: cursor, body: { t: 'account-change' } });
+            await vi.waitFor(() => expect(writeAccountChangesCursor).toHaveBeenCalledWith('account-follow-continuity', cursor));
+            expect(followChanges).toEqual([{ full: true, workflowRunIds: [], discussionIds: [] }]);
+            followChanges.length = 0;
+            changes = [];
+            socket.trigger('disconnect', 'transport close');
+            socket.trigger('connect');
+            await vi.waitFor(() => expect(followChanges).toEqual([
+                { full: true, workflowRunIds: [], discussionIds: [], continuityReset: true },
+            ]));
+        } finally { await client.shutdown(); }
+    });
+
+    it('publishes Discussion availability only for resource changes, not private read-state arrivals', async () => {
+        const machine: Machine = { id: 'machine-discussion-availability', encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        let changes: ChangeEntry[] = [];
+        let cursor = 0;
+        mockAccountGet(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-discussion-availability' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes, nextCursor: cursor } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const connected = createDeferred<void>();
+        const followChanges: unknown[] = [];
+        const client = new ApiMachineClient('fake-token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        client.onSessionFollowRulesChanged(change => { followChanges.push(change); });
+        admitAccountSnapshot('fake-token');
+        try {
+            client.connect({ onConnect: () => { connected.resolve(); } });
+            await vi.waitFor(() => expect(socket.connect).toHaveBeenCalled());
+            socket.trigger('connect');
+            await connected.promise;
+            followChanges.length = 0;
+            writeAccountChangesCursor.mockClear();
+            changes = Array.from({ length: 100 }, (_, index) => ({ cursor: index + 1, kind: 'discussion',
+                entityId: `read-only-discussion-${index}`, changedAt: index + 1, hint: DISCUSSION_READ_STATE_CHANGE_HINT_V1 }));
+            cursor = 100;
+            socket.trigger('update', { id: 'private-read-state', seq: cursor, createdAt: cursor, body: { t: 'account-change' } });
+            await vi.waitFor(() => expect(writeAccountChangesCursor).toHaveBeenCalledWith('account-discussion-availability', cursor));
+            expect(followChanges).toEqual([]);
+            changes = [{ cursor: 101, kind: 'discussion', entityId: 'available-discussion', changedAt: 101, hint: DISCUSSION_CHANGE_HINT_V1 }];
+            cursor = 101;
+            socket.trigger('update', { id: 'discussion-resource', seq: cursor, createdAt: cursor, body: { t: 'account-change' } });
+            await vi.waitFor(() => expect(writeAccountChangesCursor).toHaveBeenCalledWith('account-discussion-availability', cursor));
+            expect(followChanges).toEqual([{ full: false, workflowRunIds: [], discussionIds: ['available-discussion'] }]);
+        } finally { await client.shutdown(); }
+    });
+
+    it('invalidates exact Follow progress before awaited recovery and settles all listeners before refusing the cursor', async () => {
+        await withRealCheckpoint(async storage => {
+            const machine: Machine = { id: 'follow-ordering-machine', encryptionMode: 'plain', metadata: null,
+                metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+            const destinationSessionId = 'follow-ordering-receiver';
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'coalesce-account' })).toString('base64url')}.signature`;
+            let transcriptSeq = 1;
+            let progressReads = 0;
+            mockAccountGet(async url => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/profile') return { status: 200, data: { id: 'coalesce-account' } };
+                if (path === '/v2/changes') return { status: 200, data: { changes: [{ cursor: 11, kind: 'account',
+                    entityId: buildSessionFollowReceiverChangeEntityIdV1(destinationSessionId), changedAt: 11 }], nextCursor: 11 } };
+                if (path === '/v2/account/session-follow-rules') {
+                    progressReads++;
+                    return { status: 200, data: { rules: [{ ruleId: 'held-rule', version: 1,
+                        receiver: { kind: 'session', sessionId: destinationSessionId },
+                        sources: [{ sourceSessionId: 'ordering-source', delivered: {
+                            transcriptSeq, agentStateVersion: 0, readyEventSeq: 0, turn: null } }],
+                        content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({}),
+                            policy: { preset: 'quiet' } } } }] } };
+                }
+                throw new Error(`Unexpected Follow ordering request ${path}`);
+            });
+            admitAccountSnapshot(token);
+            const client = new ApiMachineClient(token, machine);
+            const lifetime = new AbortController();
+            const firstFailure = new Error('follow_subscriber_unavailable');
+            const stopFailure = client.onSessionFollowRulesChanged(() => { throw firstFailure; });
+            const started = createDeferred<void>();
+            const release = createDeferred<void>();
+            const observed: unknown[] = [];
+            // Recovery was registered before the lazily demanded projection.
+            client.onSessionFollowRulesChanged(async () => {
+                observed.push(await cache.readReceiverSourceRanges({ destinationSessionId }));
+                started.resolve();
+                await release.promise;
+            });
+            const cache = createAccountSessionFollowRuleCache({ accountId: 'coalesce-account', credentials: { token, encryption: null },
+                serverHttpBaseUrl: 'https://follow-ordering.test', signal: lifetime.signal, isCurrent: async () => true,
+                subscribeInvalidation: listener => client.onSessionFollowRulesChanged(listener) });
+            const sync = () => (client as unknown as {
+                syncChangesOnConnect(options: { reason: 'live' }): Promise<void>;
+            }).syncChangesOnConnect({ reason: 'live' });
+            try {
+                expect(await cache.readReceiverSourceRanges({ destinationSessionId })).toMatchObject({ status: 'available' });
+                expect(progressReads).toBe(1);
+                transcriptSeq = 6;
+                const work = sync();
+                let settled = false;
+                void work.then(() => { settled = true; }, () => { settled = true; });
+                const first = await Promise.race([started.promise.then(() => 'recovery-started'),
+                    work.then(() => 'acknowledged', () => 'rejected')]);
+                expect(first).toBe('recovery-started');
+                expect(observed).toMatchObject([{ status: 'available', value: {
+                    rules: [{ sources: [{ delivered: { transcriptSeq: 6 } }] }] } }]);
+                expect(progressReads).toBe(2);
+                expect(settled).toBe(false);
+                expect(await storage.readAccountChangesCursor('coalesce-account')).toBe(10);
+                release.resolve();
+                await expect(work).rejects.toBe(firstFailure);
+                expect(await storage.readAccountChangesCursor('coalesce-account')).toBe(10);
+                stopFailure();
+                await sync();
+                expect(await storage.readAccountChangesCursor('coalesce-account')).toBe(11);
+            } finally { release.resolve(); lifetime.abort(); cache.dispose(); await client.shutdown(); }
+        });
     });
 
     it('delivers exact changed Session ids before cursor acknowledgement and retains failed Follow wake work', async () => {
@@ -4618,7 +4934,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
 
         const applyResourceSessionAccessWitness = vi.fn();
         const api = await ApiClient.create({ token: 'token', encryption: { type: 'legacy', secret: machine.encryptionKey } });
-        const client = api.machineSyncClient(machine, undefined, { resourceSessionLifecycle: { applyResourceSessionAccessWitness } });
+        const client = await api.machineSyncClient(machine, undefined, { resourceSessionLifecycle: { applyResourceSessionAccessWitness } });
         client.onConnectedServicesProjection(async () => {});
         await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 

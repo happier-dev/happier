@@ -146,6 +146,7 @@ describe('runtime session client durable mutation outbox', () => {
             try {
                 await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
                 const prepared = prepareSessionEventMessageViaPort({
+                    sessionId,
                     buildOutboundSessionMessagePayload: content => ({ t: 'plain', v: content }),
                 }, { type: 'message', message: 'Skill unavailable', [SESSION_CAPABILITY_NOTICE_SIDECAR_KEY]: { v: 1,
                     items: [{ kind: 'skill', name: 'Review', itemId: 'skill-1', code: 'skills_unavailable', detail }] } });
@@ -470,7 +471,6 @@ describe('runtime session client durable mutation outbox', () => {
         });
 
         const draining = consumer.drainPending({
-            maxPopPerWake: 1,
             reason: 'composed-runtime-settlement',
         });
         await vi.waitFor(() => expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1));

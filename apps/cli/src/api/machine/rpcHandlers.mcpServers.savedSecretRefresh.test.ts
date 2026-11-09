@@ -10,6 +10,7 @@ import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/acco
 import type { StoredCredentials } from '@/persistence';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
+import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
 
 const randomBytes = (length: number) => new Uint8Array(length).fill(11);
 // A real MCP process advertises a tool only if fresh secret material reached it.
@@ -55,8 +56,10 @@ describe('rpcHandlers.mcpServers (saved secret refresh)', () => {
           deriveSettingsSecretsKeyV1(secret), randomBytes) }, createdAt: 1, updatedAt: 1 }] });
     version = 2;
     const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
-    registerMachineMcpServersRpcHandlers({ rpcHandlerManager,
-      deps: { readCredentials: async () => credentials, bootstrapAccountSettingsContext: bootstrap } });
+    registerMachineMcpServersRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
+      rpcHandlerManager.registerHandler(method, (raw, context) => handler(raw, createMcpOwnerRpcContext(context)));
+    } } as Pick<RpcHandlerManager, 'registerHandler'> as RpcHandlerManager,
+      deps: { hostHomeServerIdentityId: MCP_TEST_HOME_ID, readCredentials: async () => credentials, bootstrapAccountSettingsContext: bootstrap } });
     const result = DaemonMcpServersTestResponseSchema.parse(await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_MCP_SERVERS_TEST, {
       t: 'draft', machineId: 'machine', directory: tmpdir(), server: {
         id: 'draft', name: 'saved_secret_fixture', transport: 'stdio',

@@ -13,8 +13,8 @@ type ShellRequest = Pick<DaemonTerminalEnsureRequest, 'terminalKey' | 'cols' | '
     launch: Extract<NonNullable<DaemonTerminalEnsureRequest['launch']>, { kind: 'service_shell' }>;
 }>;
 
-/** Existing terminal registration invokes this only after its incumbent
- * owner-person identity decision. Native selection remains service-owned.
+/** Terminal registration admits requester-owned Machine custody before this
+ * consumer runs. Native execution identity and selection remain service-owned.
  */
 export async function openServiceShellTerminal(input: Readonly<{
     request: ShellRequest;

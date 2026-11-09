@@ -95,7 +95,7 @@ export async function resolveActiveServerAuthReadiness(
   ) {
     const { fetchAccountEncryptionCurrentness } = await import('@/api/client/connectedServiceCredentialApi');
     await fetchAccountEncryptionCurrentness({
-      token: credentials.token,
+      credentials: credentials, token: credentials.token,
       ...(deps.signal ? { signal: deps.signal } : {}),
     }).catch(() => {
       deps.signal?.throwIfAborted();

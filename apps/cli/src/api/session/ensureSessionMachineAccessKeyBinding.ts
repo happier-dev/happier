@@ -36,6 +36,8 @@ export async function ensureSessionMachineAccessKeyBinding(params: Readonly<{
     token: string;
     sessionId: string;
     machineId?: string;
+    /** The caller's own create just committed this Session, so no binding can exist yet: write without a lookup. */
+    sessionCreatedByCaller?: boolean;
     /** Host-private requester authorization; ordinary runners retain bearer auth. */
     authorizeRequest?: (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
 }>): Promise<void> {
@@ -83,12 +85,16 @@ async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<t
         validateStatus: () => true,
     });
     const accessKeyUrl = `${params.serverUrl}${path}`;
-    const existing = await axios.get(accessKeyUrl, requestConfig('GET'));
-    if (existing.status === 200 && existing.data?.accessKey) return;
-    if (isAuthenticationStatus(existing.status)) {
-        throw createAuthenticationHttpStatusError(existing.status, 'Authentication failed while binding session machine control');
+    // The create route answers 200 (bound now) or 409 (already bound), so a fresh
+    // Session needs no lookup; an existing one keeps the read-only fast path.
+    if (!params.sessionCreatedByCaller) {
+        const existing = await axios.get(accessKeyUrl, requestConfig('GET'));
+        if (existing.status === 200 && existing.data?.accessKey) return;
+        if (isAuthenticationStatus(existing.status)) {
+            throw createAuthenticationHttpStatusError(existing.status, 'Authentication failed while binding session machine control');
+        }
+        if (existing.status !== 200) throw createHttpStatusError(existing.status, 'Session machine access-key lookup failed');
     }
-    if (existing.status !== 200) throw createHttpStatusError(existing.status, 'Session machine access-key lookup failed');
 
     const body = {
         data: `session-machine-control:${randomUUID()}`,

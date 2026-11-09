@@ -3,10 +3,13 @@ import { networkInterfaces } from 'node:os';
 
 import {
   runTailscaleStatusJson,
+  TailscaleCommandError,
+  type TailscaleCommandFailure,
   type TailscaleStatusSnapshot,
 } from '@happier-dev/cli-common/tailscale';
 
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
+import { warnTailscaleCommandFailure } from '@/integrations/tailscale/tailscaleCommand';
 
 export type CurrentMachineReachableServerUrlCandidateSource =
   | 'tailscale-serve'
@@ -249,7 +252,8 @@ async function defaultResolveTailscaleIps(params: Readonly<{
       env: params.env ?? process.env,
     });
     return tailscaleIpsForReachableCandidates(status);
-  } catch {
+  } catch (error) {
+    if (error instanceof TailscaleCommandError && error.failure) throw error;
     return [];
   }
 }
@@ -274,6 +278,7 @@ export async function collectCurrentMachineReachableServerUrlCandidates(
     probeTimeoutMs?: number;
     tailscaleTimeoutMs?: number;
     env?: NodeJS.ProcessEnv;
+    onTailscaleFailure?: (failure: TailscaleCommandFailure) => void;
   }>,
   deps: CurrentMachineReachableServerUrlCandidateDeps = {},
 ): Promise<readonly CurrentMachineReachableServerUrlCandidate[]> {
@@ -292,11 +297,21 @@ export async function collectCurrentMachineReachableServerUrlCandidates(
       internalServerUrl: normalizeUrl(localServerUrl.toString()),
       timeoutMs: tailscaleTimeoutMs,
       env: params.env ?? process.env,
-    }).catch(() => null),
+    }).catch(error => {
+      if (error instanceof TailscaleCommandError && error.failure) {
+        (params.onTailscaleFailure ?? warnTailscaleCommandFailure)(error.failure);
+      }
+      return null;
+    }),
     resolveTailscaleIps({
       timeoutMs: tailscaleTimeoutMs,
       env: params.env ?? process.env,
-    }).catch(() => []),
+    }).catch(error => {
+      if (error instanceof TailscaleCommandError && error.failure) {
+        (params.onTailscaleFailure ?? warnTailscaleCommandFailure)(error.failure);
+      }
+      return [];
+    }),
   ]);
 
   const networkAddressCandidates = listCurrentMachineNetworkAddressCandidates({

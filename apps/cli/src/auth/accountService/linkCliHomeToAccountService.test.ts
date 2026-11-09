@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { linkCliHomeToAccountService, unlinkCliHomeFromAccountService } from './linkCliHomeToAccountService';
@@ -85,6 +86,54 @@ describe('linkCliHomeToAccountService production adapter', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it.each([200, 302, 307])('settles an authenticated unlink (%s) without forwarding its bearer or body', async (status) => {
+    let secondHopRequests = 0;
+    let firstHopAuthenticated = false;
+    let firstHopBodyReceived = false;
+    let origin = '';
+    const server = createServer(async (request, response) => {
+      if (request.url === '/redirected') {
+        secondHopRequests += 1;
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ v: 1, deleted: true, issuerServerIdentityId: 'srv_account_service' }));
+        return;
+      }
+      firstHopAuthenticated = request.headers.authorization === 'Bearer home-token';
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      firstHopBodyReceived = JSON.parse(Buffer.concat(chunks).toString('utf8')).v === 1;
+      response.writeHead(status, status === 200
+        ? { 'Content-Type': 'application/json' }
+        : { Location: `${origin.replace('127.0.0.1', '127.0.0.2')}/redirected` });
+      response.end(JSON.stringify({ v: 1, deleted: true, issuerServerIdentityId: 'srv_account_service' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing HTTP test address');
+    origin = `http://127.0.0.1:${address.port}`;
+    // The transport boundary maps the fixture Home to this real HTTP listener.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+      realFetch(new URL(new URL(String(url)).pathname, origin), init));
+    try {
+      const result = unlinkCliHomeFromAccountService({ homeServerIdentityId: descriptor.homeServerIdentityId });
+      if (status === 200) {
+        await expect(result).resolves.toEqual({
+          kind: 'unlinked', homeServerIdentityId: descriptor.homeServerIdentityId, issuerServerIdentityId: 'srv_account_service',
+        });
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+      }
+      expect(firstHopAuthenticated).toBe(true);
+      expect(firstHopBodyReceived).toBe(true);
+      expect(secondHopRequests).toBe(0);
+      expect(closeRuntimeMock).toHaveBeenCalledOnce();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 
   it('finishes Account Service publication when abort flips during the successful Home PUT', async () => {

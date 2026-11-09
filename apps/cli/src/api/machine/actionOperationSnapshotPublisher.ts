@@ -67,10 +67,12 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             },
         ) });
         if (accountMode.kind !== 'resolved') return false;
-        // Successful setup output must reach the outside holder before its last
-        // effect can replace this process. Other pushes retain their projection.
-        const outward = (snapshot: Snapshot) => snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
-            && snapshot.state === 'succeeded' && snapshot.domainRef?.kind === 'machineSetup'
+        // Reboot facts and successful setup output must reach the outside holder
+        // before their last effect can replace this process. Closed predecessor
+        // readers drop these current domains; other pushes retain their projection.
+        const outward = (snapshot: Snapshot) => snapshot.actionId === 'machines.reboot'
+            || (snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+                && snapshot.state === 'succeeded' && snapshot.domainRef?.kind === 'machineSetup')
             ? snapshot : projectActionOperationSnapshotForV1Reader(snapshot);
         const publish = async (content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content']) => {
             if (acknowledge) return await input.publishContentAcknowledged!(content);
@@ -128,3 +130,4 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
         },
     });
 }
+

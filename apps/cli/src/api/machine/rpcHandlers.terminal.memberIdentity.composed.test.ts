@@ -173,7 +173,7 @@ class NativePty implements PtyProcess {
   waitForSettlement() { return this.settled; }
 }
 
-async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false }> = {}) {
+async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; ownerAgent?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false }> = {}) {
   const accountId = options.accountId ?? 'member-a';
   const isolationEnabled = options.isolationEnabled ?? true;
   const actionId = options.finite ? 'projects.script.run' : 'machines.terminal.open';
@@ -197,7 +197,7 @@ async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePa
   let finite: ReturnType<typeof createInstalledProjectFiniteRuntime> | undefined;
   const agentIsolation = { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
     read: () => ({ enabled: isolationEnabled, ...(options.legacy ? {} : { memberProvisioning: 'linuxUsersV1' as const }),
-      status: isolationEnabled ? { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const }
+      status: isolationEnabled && !options.ownerAgent ? { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const }
         : { kind: 'disabled' as const }, workspaceRoots: [...(nativeOs.home ? [nativeOs.home.workspaceRoot] : []),
           ...(nativeOs.sharedHome ? [nativeOs.sharedHome] : [])] }),
     readMember: async (input: Parameters<NonNullable<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext['readMember']>>[0]) => {
@@ -226,7 +226,7 @@ async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePa
   const member = deriveAgentIsolationMemberIdentity(selected);
   preparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
     requesterIdentity: selected, custodianAccountId: 'requester', encryptionMode: 'plain', uid: 2401 });
-  for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: selected, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
+  if (!options.ownerAgent) for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: selected, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
     binaryPath: agentIsolation.managedHappierBinaryPath })) preparation.installed.add(step.id);
   const backing = join(f.directory, 'native-home'), workspaceBacking = join(f.directory, 'native-workspace');
   await mkdir(backing); await mkdir(workspaceBacking);
@@ -268,7 +268,7 @@ child.on('close', code => { process.exitCode = code ?? 1; });
     }
   }
   nativeOs.home = { path: member.home, workspaceRoot: member.workspaceRoot, backing, workspaceBacking, uid: 2401 };
-  await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+  if (!options.ownerAgent) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
   // Open's canonical Account acceptance assigns the Project anchor; an
   // unenriched legacy Workspace row does not model a newly opened Project.
   const accepted = materializeWorkspaceRefForMachineRoot([], { serverId: f.homeServerIdentityId,
@@ -326,16 +326,23 @@ child.on('close', code => { process.exitCode = code ?? 1; });
     nativeIo: createProjectNativeIo({ agentIsolation }), agentIsolation, successHomeDir: f.directory,
     isCurrent: async () => f.isHomeCurrent(), prepareBetween: async () => { throw new Error('No Workspace Sync expected'); },
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: f.homeServerIdentityId, machineId: f.machineId }) });
+  const ownerAgentOrigin = options.ownerAgent ? { v: 1 as const,
+    caller: AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: f.bootstrap.getBoundSessionId(), starterDepth: 0, turnDepth: 0 }),
+    sourceTurnId: 'approved-terminal-turn', callerPermissionMode: null, requestId: 'installed-member-terminal' } : undefined;
   const wire = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'member-terminal-root', binding: {
     accountId, custodianAccountId: 'requester', serverIdentityId: f.homeServerIdentityId, machineId: f.machineId,
     installationId: f.installation.installationId, actionId, accountEncryptionMode: 'plain',
     authentication: { kind: 'account', tokenEpoch: 0 }, requestId: 'installed-member-terminal',
     requestEnvelopeDigest: options.finite ? computeExternalActionRequestEnvelopeDigestV1(envelope) : 'a'.repeat(43),
-    target: { kind: 'machine', machineId: f.machineId } } });
+    target: { kind: 'machine', machineId: f.machineId },
+    ...(ownerAgentOrigin ? { sessionActionOrigin: ownerAgentOrigin,
+      sessionActionSource: { machineId: f.machineId, installationId: f.installation.installationId } } : {}) } });
   const account = await admitRequesterAccountActionContext({ authorization: wire,
     // A present person's ordinary Account click retains its invocation through
     // the same requester projection the installed receiving Action consumes.
-    invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
+    invocation: ownerAgentOrigin
+      ? { surface: 'agent', authority: 'account_automation', caller: ownerAgentOrigin.caller }
+      : { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
     credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null },
     serverId: f.serverId, serverIdentityId: f.homeServerIdentityId, serverHttpBaseUrl: f.serverHttpBaseUrl, isCurrent: async () => f.isHomeCurrent() });
   if (!account) throw new Error('Genuine requester Account admission failed');
@@ -373,10 +380,11 @@ child.on('close', code => { process.exitCode = code ?? 1; });
         installationId: f.installation.installationId, role, encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => f.isHomeCurrent() } });
   const operation = async (operationId: string) => ActionOperationGetV1ResponseSchema.parse(await invoke(ACTION_OPERATION_RPC_METHODS_V1.get,
     { operationId, waitForTerminal: true }));
-  const invokeOwnerAgentTerminal = (method: string, input: unknown) => f.rpcHandlerManager.invokeLocal(method, input,
-    { localActionContext: localAgent, rpcContext: { callerAuthority: 'present_user',
+  const invokeOwnerAgentTerminal = (method: string, input: unknown, actorAccountId: string = accountId) => f.rpcHandlerManager.invokeLocal(method, input,
+    { localActionContext: localAgent, rpcContext: { callerAuthority: 'account_automation',
+      ...(ownerAgentOrigin ? { sessionActionOrigin: ownerAgentOrigin } : {}),
       callerInputAuthorization: authorization, requesterSessionBootstrap: f.bootstrap,
-      machineAdmission: { actorAccountId: accountId, custodianAccountId: 'requester', machineId: f.machineId,
+      machineAdmission: { actorAccountId, custodianAccountId: 'requester', machineId: f.machineId,
         installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => f.isHomeCurrent() } });
   return { ...f, member, workspace, workspaceBacking, sharedHome, accountId, account, finiteInput,
@@ -445,32 +453,35 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     await expect(access(join(f.workspaceBacking, 'finite-result.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('offers a requester-rooted Machine shell and admits isolated Use without exposing another Account terminal', async () => {
+  it.each([false, true])('offers a requester-rooted Machine shell and admits isolated Use without exposing another Account terminal (Agent=%s)', async agent => {
     const f = await fixture();
-    const available = await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true });
+    const invokeOwn = (method: string, input: unknown) => agent
+      ? f.invokeTerminal(method, input, f.accountId, true, undefined, 'use')
+      : f.invokeInstalledTerminal(method, input);
+    const available = await invokeOwn(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true });
     expect(available).toMatchObject({ ok: true, machineShell: { ok: true, cwd: f.member.workspaceRoot } });
-    const shell = await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'use-machine-shell' });
+    const shell = await invokeOwn(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'use-machine-shell' });
     expect(shell).toMatchObject({ ok: true, terminalId: expect.any(String) });
     if (!shell || typeof shell !== 'object' || !('terminalId' in shell) || typeof shell.terminalId !== 'string')
       throw new Error('Requester Machine shell refused');
     expect(f.processes[0]!.frames[0]!.cwd).toBe(f.member.workspaceRoot);
-    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: shell.terminalId, data: 'own-shell\n' }))
+    expect(await invokeOwn(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: shell.terminalId, data: 'own-shell\n' }))
       .toMatchObject({ ok: true });
     expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: shell.terminalId, data: 'foreign\n' }, 'member-b'))
       .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
     for (const cwd of [f.directory, '/var/lib/happier/members/another-account']) {
-      expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'foreign-root', cwd }))
+      expect(await invokeOwn(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'foreign-root', cwd }))
         .toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
     }
     const opened = await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
-      { terminalKey: 'use-project-shell', workspace: f.workspace }, 'member-a', false, undefined, 'use');
+      { terminalKey: 'use-project-shell', workspace: f.workspace }, 'member-a', agent, undefined, 'use');
     expect(opened).toMatchObject({ ok: true, terminalId: expect.any(String) });
     if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string')
       throw new Error('Admitted Use Project terminal refused');
     expect(f.processes[1]!.params.args).toEqual(['-n', '-u', f.member.username, '--', '/opt/happier/cli/current/happier', 'agent-launch']);
     expect(f.processes[1]!.frames[0]!.cwd).toBe(f.member.workspaceRoot);
     expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: opened.terminalId, data: 'use-project\n' },
-      'member-a', false, undefined, 'use')).toMatchObject({ ok: true });
+      'member-a', agent, undefined, 'use')).toMatchObject({ ok: true });
     expect(f.processes[1]!.writes).toEqual(['use-project\n']);
   });
 
@@ -514,17 +525,35 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
       expect(f.processes).toHaveLength(processCount);
     });
 
-  it.each(['off', 'legacy', 'linuxUsersV1'] as const)('refuses owner-Agent interactive terminal admission with %s placement', async mode => {
-    const f = await fixture({ accountId: 'requester', isolationEnabled: mode !== 'off', ...(mode === 'legacy' ? { legacy: true } : {}) });
-    const cwd = mode === 'off' ? f.directory : mode === 'legacy' ? f.sharedHome : f.member.workspaceRoot;
-    // X6 removal: an Agent cannot turn its owner's grant into person presence.
-    for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
-      const refusal = await f.invokeOwnerAgentTerminal(method, { terminalKey: `owner-agent-${mode}`, cwd })
-        .then(value => ({ kind: 'returned' as const, value }), (error: unknown) => ({ kind: 'rejected' as const, error }));
-      if (refusal.kind === 'rejected') expect(refusal.error).toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
-      else expect(refusal.value).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
-    }
+  it.each(['off', 'legacy', 'linuxUsersV1'] as const)('opens the approved signed owner-Agent terminal and retains control with %s placement', async mode => {
+    const f = await fixture({ ownerAgent: true, accountId: 'requester', isolationEnabled: mode !== 'off', ...(mode === 'legacy' ? { legacy: true } : {}) });
+    const cwd = f.directory;
+    expect(await f.invokeOwnerAgentTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+      { terminalKey: 'mismatched-original-requester', cwd }, 'member-b'))
+      .not.toMatchObject({ ok: true });
     expect(f.processes).toEqual([]);
+    // Approval retains Agent authority. This owner's terminal needs no
+    // separation from another person, including with unprepared isolation.
+    for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+      const opened = await f.invokeOwnerAgentTerminal(method, { terminalKey: `owner-agent-${mode}`, cwd });
+      expect(opened).toMatchObject({ ok: true, terminalId: expect.any(String) });
+      if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string')
+        throw new Error('Approved owner-Agent terminal did not open');
+      expect(await f.invokeOwnerAgentTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+        { terminalId: opened.terminalId, data: 'owner-agent-work\n' })).toMatchObject({ ok: true });
+      const output = TerminalStreamReadResponseSchema.parse(await f.invokeOwnerAgentTerminal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+        { terminalId: opened.terminalId, byteOffset: 0 }));
+      if (!output.ok) throw new Error('Owner-Agent terminal output refused');
+      expect(Buffer.concat(output.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+        .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString()).toContain('ran:owner-agent-work');
+      expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+        { terminalId: opened.terminalId, data: 'foreign-work\n' }, 'member-b')).not.toMatchObject({ ok: true });
+    }
+    expect(f.processes).toHaveLength(2);
+    for (const process of f.processes) {
+      expect(process.params.file).not.toBe('sudo');
+      expect(process.frames).toEqual([]);
+    }
     expect(f.preparation.launches).toEqual([]);
     expect(f.preparation.permissionQueries).toEqual([]);
   });

@@ -29,6 +29,10 @@ export async function publishMachineOperationProtocolCapabilitiesOnSocket(input:
     socket: input.socket,
     event: MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
     payload: request,
+    // Publication waits for the server's transaction/recovery outcome. The
+    // Session control ACK deadline can expire before even one DB attempt ends;
+    // native Socket.IO ACKs still reject when this connection disconnects.
+    timeoutMs: null,
   });
   const response = MachineUpdateOperationProtocolCapabilitiesResponseV1Schema.parse(raw);
   if (response.result !== 'success') {

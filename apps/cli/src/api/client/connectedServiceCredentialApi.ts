@@ -1,6 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
+import { waitForAccountEncryptionObservation as waitForSharedOperation } from '@happier-dev/sync-client';
 
 import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
 import { ConnectedServiceCredentialRecordV1Schema, SealedConnectedServiceCredentialV1Schema, readConnectedServiceCredentialRevisionBoundaryV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -79,6 +80,7 @@ export type ConnectedServiceCredentialApi = Readonly<{
   listConnectedServiceProfiles(params: Readonly<{
     serviceId: ConnectedServiceId;
     forceRefresh?: boolean;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceProfileListResult>;
   deleteConnectedServiceCredentialRevisioned(params: Readonly<{
     storageMode: 'e2ee' | 'plain';
@@ -214,19 +216,24 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
   async listConnectedServiceProfiles(params: Readonly<{
     serviceId: ConnectedServiceId;
     forceRefresh?: boolean;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceProfileListResult> {
+    params.signal?.throwIfAborted();
     if (params.forceRefresh) {
       this.connectedServiceProfileListCache.delete(params.serviceId);
     }
     const cached = this.connectedServiceProfileListCache.get(params.serviceId);
     const nowMs = Date.now();
     if (cached?.kind === 'value' && cached.expiresAtMs > nowMs) return cached.value;
-    if (cached?.kind === 'in_flight') return await cached.promise;
+    if (cached?.kind === 'in_flight') return await (params.signal
+      ? waitForSharedOperation(cached.promise, params.signal)
+      : cached.promise);
 
     const promise = this.fetchConnectedServiceProfilesFromServer(params);
     this.connectedServiceProfileListCache.set(params.serviceId, { kind: 'in_flight', promise });
     try {
       const value = await promise;
+      params.signal?.throwIfAborted();
       this.connectedServiceProfileListCache.set(params.serviceId, {
         kind: 'value',
         value,
@@ -304,16 +311,20 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
 
   private async fetchConnectedServiceProfilesFromServer(params: Readonly<{
     serviceId: ConnectedServiceId;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceProfileListResult> {
+    params.signal?.throwIfAborted();
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
     const response = await axios.get(
       `${serverUrl}/v2/connect/${serviceId}/profiles`,
       {
+        signal: params.signal,
         headers: createHeaders(this.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
       },
     );
+    params.signal?.throwIfAborted();
     if (response.status !== 200) {
       throw new Error(`Server returned status ${response.status}`);
     }

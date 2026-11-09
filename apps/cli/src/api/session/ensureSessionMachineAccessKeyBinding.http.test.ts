@@ -120,4 +120,26 @@ describe('access-key bootstrap Home failure seam', () => {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
   });
+
+  it('binds a Session its caller just created with one write and no lookup round trip', async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      request.resume();
+      requests.push(`${request.method} ${request.url}`);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(request.method === 'POST' ? { success: true } : { accessKey: null }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected test Home listener');
+    try {
+      await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
+        await ensureSessionMachineAccessKeyBinding({ token: 'PRIVATE_TOKEN', sessionId: 'fresh-session',
+          machineId: 'fresh-machine', sessionCreatedByCaller: true });
+        expect(requests).toEqual(['POST /v1/access-keys/fresh-session/fresh-machine']);
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
 });

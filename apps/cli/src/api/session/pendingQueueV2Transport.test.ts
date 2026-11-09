@@ -1248,6 +1248,7 @@ describe('pendingQueueV2Transport', () => {
         };
         const decision = {
             kind: 'admit' as const,
+            usageTimingV1: { v: 1, minMs: null, maxMs: null } as const,
             finalContent: {
                 t: 'plain' as const,
                 v: { role: 'user', content: { type: 'text', text: 'settled' } },
@@ -1278,10 +1279,11 @@ describe('pendingQueueV2Transport', () => {
             })),
         };
         const acceptedDelivery = { t: 'encrypted', c: 'sealed-exact-acceptance' } as const;
-        const request = { socket: socket as never, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery };
+        const usageTimingV1 = { v: 1, minMs: 123, maxMs: 123 } as const;
+        const request = { socket: socket as never, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery, usageTimingV1 };
         await resolveAcceptedPendingQueueV2Delivery(request);
         expect(socket.emitWithAck).toHaveBeenCalledWith('pending-delivery-accepted-v1', {
-            v: 1, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery,
+            v: 1, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery, usageTimingV1,
         });
     });
 

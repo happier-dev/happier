@@ -142,7 +142,7 @@ describe('ApiSessionClient user socket lifecycle', () => {
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledWith({
       token: 'tok',
       sessionId: 's1',
-      reason: 'legacy-compat-proof',
+      reason: 'close-end-proof',
     });
   });
 
@@ -164,6 +164,39 @@ describe('ApiSessionClient user socket lifecycle', () => {
 
     expect(userSocketStub.disconnect).toHaveBeenCalledTimes(0);
 
+    await client.close();
+  });
+
+  it('disconnects the user socket as soon as metadata-wait demand ends', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const controller = new AbortController();
+    const wait = client.waitForMetadataUpdate(controller.signal);
+    controller.abort();
+    await wait;
+    expect(userSocketStub.disconnect).toHaveBeenCalledTimes(1);
+    await client.close();
+  });
+
+  it('retains the socket until the last concurrent metadata waiter leaves', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: true });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const first = new AbortController();
+    const second = new AbortController();
+    const firstWait = client.waitForMetadataUpdate(first.signal);
+    const secondWait = client.waitForMetadataUpdate(second.signal);
+    first.abort();
+    await firstWait;
+    expect(userSocketStub.disconnect).toHaveBeenCalledTimes(0);
+    second.abort();
+    await secondWait;
+    expect(userSocketStub.disconnect).toHaveBeenCalledTimes(1);
     await client.close();
   });
 

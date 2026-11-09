@@ -50,10 +50,7 @@ import {
   type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2,
   type ProviderBrokerAccountAdmissionV2, type ProviderBrokerAccountAdmissionResponseV2,
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import {
-  ApiMachineClient,
-  type ApiMachineClientLifecycleDependencies,
-} from './apiMachine';
+import type { ApiMachineClient, ApiMachineClientLifecycleDependencies } from './apiMachine';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { ComputerRoutes } from '@/daemon/computer/routes';
@@ -738,6 +735,7 @@ export class ApiClient {
             token: this.credential.token,
             sessionId: raw.id,
             machineId: this.localMachineId,
+            sessionCreatedByCaller: response.data.created === true,
           });
           preparingMachineAccess = false;
         };
@@ -1608,7 +1606,7 @@ export class ApiClient {
     return client;
   }
 
-  machineSyncClient(
+  async machineSyncClient(
     machine: Machine,
     ownershipMetadata?: Readonly<{
       runtimeId?: string;
@@ -1619,7 +1617,9 @@ export class ApiClient {
       serviceLabel?: string;
     }>,
     lifecycleDependencies?: ApiMachineClientLifecycleDependencies,
-  ): ApiMachineClient {
+  ): Promise<ApiMachineClient> {
+    // Only the daemon creates Machine clients; session runners must not load this tree.
+    const { ApiMachineClient } = await import('./apiMachine');
     return new ApiMachineClient(
       this.credential.token,
       machine,

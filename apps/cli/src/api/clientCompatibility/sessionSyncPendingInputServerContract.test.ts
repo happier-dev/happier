@@ -42,6 +42,19 @@ function createSocket() {
 }
 
 describe('Session server capability detection', () => {
+    it('settles a redirect loop instead of scheduling another capability probe', async () => {
+        const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 307,
+            headers: { location: 'https://other.example.test/?credential=hidden' } }));
+        const controller = createSessionSyncPendingInputServerContractController({
+            serverUrl: 'https://home.example.test', token: 'fixture', fetchImpl,
+        });
+        const probe = { socket: createSocket(), sessionConnectionEpoch: 1, machineId: 'machine-fixture' };
+        await expect(controller.resolve(probe)).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false });
+        await expect(controller.resolve(probe)).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false });
+        // Fetch's existing 20-hop budget permits 21 responses in one probe.
+        expect(fetchImpl).toHaveBeenCalledTimes(21);
+    });
+
     it('advertises reset start only when its owner is installed and the cached Home implements Pending V4', () => {
         const v4 = { status: 'ready' as const, features: FeaturesResponseSchema.parse(currentFeatures({ pendingInput: { protocolVersion: 4 } })) };
         const v3 = { status: 'ready' as const, features: FeaturesResponseSchema.parse(currentFeatures({ pendingInput: { protocolVersion: 3 } })) };
@@ -64,11 +77,11 @@ describe('Session server capability detection', () => {
         expect(resolveMachineSessionInputAdmissionCapability({
             status: 'ready',
             features: currentFeatures({ pendingInput: { protocolVersion: 3 } }),
-        } as never)).toEqual({ protocolVersions: [1, 2] });
+        } as never)).toEqual({ protocolVersions: [1, 2, 3] });
         expect(resolveMachineSessionInputAdmissionCapability({
             status: 'ready',
             features: currentFeatures({ pendingInput: { protocolVersion: 4 } }),
-        } as never)).toEqual({ protocolVersions: [1, 2] });
+        } as never)).toEqual({ protocolVersions: [1, 2, 3] });
     });
     it('retains the target-aware Pending epoch separately from main support', () => {
         expect(resolveSessionServerCapabilities(currentFeatures({

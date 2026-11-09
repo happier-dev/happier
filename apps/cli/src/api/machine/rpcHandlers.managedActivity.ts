@@ -11,9 +11,6 @@ import type { ManagedCommittedIdleEvidenceV1 } from '@happier-dev/protocol/machi
 export type ManagedActivityRpcOwner = Readonly<{
     activity: ManagedActivityInventory;
     admissionDrain: DaemonAdmissionDrain;
-    /** The authenticated guest transport checks the exact retained row at its Home owner. */
-    validateCurrentTarget(target: ManagedActivityReadRequestV1, context: RpcHandlerContext,
-        method: string): Promise<boolean>;
     commitIdleEvidence?: (target: ManagedActivityReadRequestV1, idle: Readonly<{ kind: 'idle'; since: number }>,
         context: RpcHandlerContext) => ManagedCommittedIdleEvidenceV1 | null;
 }>;
@@ -38,15 +35,10 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
         try { return await context.verifyMachineAdmissionCurrent() && !context.signal.aborted; }
         catch { return false; }
     };
-    const currentTarget = async (target: ManagedActivityReadRequestV1, context: RpcHandlerContext, method: string) => {
-        try { return !context.signal.aborted && await params.validateCurrentTarget(target, context, method)
-            && !context.signal.aborted; }
-        catch { return false; }
-    };
     const confirm = async (target: ManagedActivityReadRequestV1, context: RpcHandlerContext,
-        method: string, probe: boolean): Promise<ManagedActivityBridgeResultV1> => {
-        if (params.admissionDrain.isFinalShutdown()
-            || !await currentTarget(target, context, method)) return refused();
+        probe: boolean): Promise<ManagedActivityBridgeResultV1> => {
+        // The ingress verifier already admits this exact target at Home.
+        if (context.signal.aborted || params.admissionDrain.isFinalShutdown()) return refused();
         // A read owns a reversible probe only. Never borrow or release a
         // concurrent final native-effect confirmation's retained drain.
         const ownsDrain = !probe || drainedTarget === null;
@@ -60,15 +52,13 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
         try {
             if (context.signal.aborted) { releaseOwned(); return refused(); }
             const decision = await params.activity.readDecision();
-            if (!await currentAdmission(context)
-                || !await currentTarget(target, context, method)) {
+            if (context.signal.aborted) {
                 releaseOwned(); return refused();
             }
             if (decision.kind !== 'idle') releaseOwned();
             else if (params.commitIdleEvidence) {
                 const evidence = params.commitIdleEvidence(target, decision, context);
-                if (!evidence || !await currentAdmission(context)
-                    || !await currentTarget(target, context, method)) {
+                if (!evidence || context.signal.aborted) {
                     releaseOwned(); return refused();
                 }
                 return { ...decision, evidence };
@@ -83,7 +73,7 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
     params.rpcHandlerManager.registerHandler(MANAGED_ACTIVITY_READ_RPC_METHOD, async (raw: unknown, context) => {
         const parsed = ManagedActivityReadRequestV1Schema.safeParse(raw);
         if (!parsed.success || !await currentAdmission(context) || !context) return refused();
-        return await confirm(parsed.data, context, MANAGED_ACTIVITY_READ_RPC_METHOD, true);
+        return await confirm(parsed.data, context, true);
     });
     params.rpcHandlerManager.registerHandler(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, async (raw: unknown, context) => {
         const parsed = ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(raw);
@@ -95,6 +85,6 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
             release(target);
             return await params.activity.readDecision();
         }
-        return await confirm(target, context, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, false);
+        return await confirm(target, context, false);
     });
 }

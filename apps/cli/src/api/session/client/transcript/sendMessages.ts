@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
+import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import type {
     Metadata,
@@ -49,7 +50,7 @@ function buildSessionEventContent(event: SessionEventMessage, id?: string, meta?
 }
 
 export function prepareSessionEventMessageViaPort(
-    port: Pick<SessionClientTranscriptSendPort, 'buildOutboundSessionMessagePayload'>,
+    port: Pick<SessionClientTranscriptSendPort, 'buildOutboundSessionMessagePayload' | 'sessionId'>,
     event: SessionEventMessage,
     id?: string,
     meta?: Record<string, unknown>,
@@ -58,6 +59,7 @@ export function prepareSessionEventMessageViaPort(
     localId: string;
     messageRole: SessionMessageRole;
     sessionEventType: SessionEventType | undefined;
+    usageTimingV1: UsageTimingBoundsV1 | null;
 }> {
     const ownerActivityDelivery = event.type === 'ready'
         ? event.ownerActivityDelivery ?? 'home_required'
@@ -67,13 +69,16 @@ export function prepareSessionEventMessageViaPort(
         : event;
     // Spawn/resume retries can report the same capability facts again. Reuse
     // transcript local-id deduplication across processes, rather than keeping
-    // another publication ledger. Different causes/items remain distinct.
+    // another publication ledger. A producer-supplied transition id takes
+    // precedence so a failure returning after recovery is a fresh entry.
     const notice = readSessionCapabilityNoticeV1(transcriptEvent);
-    const noticeId = notice ? `capability-notice:${createHash('sha256').update(JSON.stringify(
+    const noticeId = notice ? id ?? `capability-notice:${createHash('sha256').update(JSON.stringify(
         notice.items.map(item => JSON.stringify([item.kind, item.itemId ?? null, item.name, item.code, item.detail ?? null])).sort(),
     )).digest('hex')}` : null;
+    const content = buildSessionEventContent(transcriptEvent, noticeId ?? id, meta);
     return {
-        payload: port.buildOutboundSessionMessagePayload(buildSessionEventContent(transcriptEvent, noticeId ?? id, meta)),
+        payload: port.buildOutboundSessionMessagePayload(content),
+        usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: port.sessionId, message: { id: content.content.id, content } }),
         // Backward-compatible authenticated composition sideband: predecessor
         // Homes already accept opaque local ids, while current Homes recognize
         // this bounded prefix without adding a field to the strict v1 wire.
@@ -224,16 +229,16 @@ export function sendAgentMessageEphemeralViaPort(
 
 /**
  * Emit a live transcript delta tick: `body` carries ONLY the text appended since the previous
- * live emission for this segment. Full-snapshot checkpoints still flow through
- * `sendAgentMessageEphemeralViaPort`; receivers that cannot chain a delta drop it and resync on
- * the next checkpoint. The delta content goes through the same envelope/encryption choke point as
+ * live emission for this segment. Segment-opening and rewrite snapshots flow through
+ * `sendAgentMessageEphemeralViaPort`; receivers that cannot chain a delta resync from the durable
+ * message revision (see session-core `transcriptStreamSegmentAssembly`). The delta content goes through the same envelope/encryption choke point as
  * snapshots (`prepareAcpTranscriptDispatch` + `buildOutboundSessionMessagePayload`).
  */
 export function sendAgentMessageEphemeralDeltaViaPort(
     port: SessionClientTranscriptSendPort,
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: Readonly<{ localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }>,
+    opts: Readonly<{ localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; snapshotBody?: ACPMessageData }>,
 ): EphemeralSendOutcome {
     const epoch = readEphemeralStreamConnectionEpoch(port);
     if (!port.socket.connected) {
@@ -272,9 +277,21 @@ export function sendAgentMessageEphemeralDeltaViaPort(
             ? Math.max(createdAt, Math.trunc(opts.updatedAt))
             : Date.now();
 
-    // Intentionally no observeAcpAssistantText here: delta bodies carry only appended chars, and
-    // the turn-assistant-text snapshot expects full text. Full-snapshot checkpoints (<= 1s apart)
-    // keep the turn snapshot fresh through sendAgentMessageEphemeralViaPort.
+    // The wire body carries only appended chars; the turn-assistant-text snapshot observes the
+    // writer's full current body locally (it never crosses the wire).
+    if (opts.snapshotBody) {
+        try {
+            observeAcpAssistantText({
+                store: port.turnAssistantTextSnapshotStore,
+                provider,
+                body: opts.snapshotBody,
+                localId,
+                source: 'ephemeral',
+            });
+        } catch (error) {
+            return createEphemeralSendFailure('observe_failed', readEphemeralStreamConnectionEpoch(port), error);
+        }
+    }
 
     try {
         port.socket.emit('transcript-stream-segment-delta', {

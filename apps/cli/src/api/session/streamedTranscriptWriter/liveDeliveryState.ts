@@ -10,7 +10,6 @@ export type LocallyAcceptedLivePublication = Readonly<{
   tick: number;
   epoch: number;
   acceptedAtMs: number;
-  lastCheckpointAtMs: number;
 }>;
 
 export type LiveDeliveryState = {
@@ -84,21 +83,22 @@ export function takeLiveDeliveryFailureSummary(
   return summary;
 }
 
+/**
+ * A live emission is a delta whenever the receiver can chain it onto the last accepted text: the
+ * segment has an accepted baseline on this connection epoch and has only grown since. Terminal
+ * emissions are deltas too; their meta carries the terminal state.
+ */
 export function shouldPublishLiveDelta(
   state: LiveDeliveryState,
   params: Readonly<{
-    state: LiveDeliveryIntent['state'];
-    nowMs: number;
     epoch: number;
-    liveCheckpointIntervalMs: number;
+    liveDeltas: boolean;
     supportsDelta: boolean;
   }>,
 ): boolean {
   const accepted = state.locallyAccepted;
-  if (!params.supportsDelta || !accepted || state.checkpointRequired) return false;
-  if (!state.appendOnlySinceLocallyAccepted || params.state !== 'streaming') return false;
-  if (params.liveCheckpointIntervalMs <= 0 || accepted.epoch !== params.epoch) return false;
-  return params.nowMs - accepted.lastCheckpointAtMs < params.liveCheckpointIntervalMs;
+  if (!params.liveDeltas || !params.supportsDelta || !accepted || state.checkpointRequired) return false;
+  return state.appendOnlySinceLocallyAccepted && accepted.epoch === params.epoch;
 }
 
 export function acceptLivePublication(
@@ -108,19 +108,14 @@ export function acceptLivePublication(
     tick: number;
     epoch: number;
     acceptedAtMs: number;
-    wasCheckpoint: boolean;
   }>,
 ): boolean {
   if (state.disposed) return false;
-  const lastCheckpointAtMs = publication.wasCheckpoint
-    ? publication.acceptedAtMs
-    : state.locallyAccepted?.lastCheckpointAtMs ?? 0;
   state.locallyAccepted = {
     text: publication.text,
     tick: publication.tick,
     epoch: publication.epoch,
     acceptedAtMs: publication.acceptedAtMs,
-    lastCheckpointAtMs,
   };
   state.appendOnlySinceLocallyAccepted = true;
   state.checkpointRequired = false;

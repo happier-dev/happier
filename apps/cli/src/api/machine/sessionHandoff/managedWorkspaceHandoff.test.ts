@@ -8,7 +8,6 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
-import { createMachineTransferRouteCache } from '@/machines/transfer/transferRouteCache';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
 import { prepareStartedState } from './prepareStartedState';
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
@@ -76,13 +75,12 @@ describe('managed workspace handoff through real source and target owners', () =
           }, actualTransportStrategy: 'direct_peer',
           pendingStatus: { handoffId, jobId, status: 'pending', phase: 'staging_target', transportStrategy: 'direct_peer', recoveryActions: [] },
           prepareJobStore, sourceExportStore: targetStore, prepareTargetJobLeaseOwnerId: `cli-daemon:${process.pid}:round-trip`,
-          prepareTargetJobLeaseTtlMs: 5_000, machineTransferChannel: undefined, directPeerTransfer: peer,
+          machineTransferChannel: undefined, directPeerTransfer: peer,
           importSessionBundle: async (_bundle, targetPath) => ({ remoteSessionId: 'native-target',
             directSource: { kind: 'claudeConfig', configDir: join(targetRoot, 'native-config') },
             resume: { directory: targetPath, agent: 'claude', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
               resume: 'native-target', transcriptStorage: 'persisted', approvedNewDirectoryCreation: true },
-          }), getTransferRouteCache: () => createMachineTransferRouteCache({ serverId: targetRoot }),
-          invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
+          }),
         });
         const prepared = await prepareJobStore.read(jobId);
         expect(prepared?.status.status, prepared?.lastErrorMessage).toBe('ready_for_cutover');
@@ -91,7 +89,6 @@ describe('managed workspace handoff through real source and target owners', () =
         await createSessionHandoffCommitActionHandler({ activeServerDir: targetRoot, prepareJobStore,
           sourceExportStore: targetStore, directPeerTransfer: peer, readPersistedPrepareJob, buildPrepareJobRecord,
           buildStartPendingStatus, buildSourceExportOnlyPrepareJobId, invalidRequest,
-          invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
         })({ handoffId, mode: 'target' });
         await sourceStore.releaseTransferFiles(handoffId);
         return targetPath;

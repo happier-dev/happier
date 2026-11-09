@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createMachineTransferRouteCache } from '@/machines/transfer/transferRouteCache';
 import { importSessionHandoffAgentBundle } from '@/session/handoff/agentBundle/import';
 import {
   releaseSessionHandoffPrepareTargetJobLease,
@@ -22,7 +21,6 @@ describe('prepare-target direct-peer admission', () => {
     const jobId = `prepare_${handoffId}`;
     const ownerId = 'test-competing-handoff-runner';
     const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
-    const routeCache = createMachineTransferRouteCache({ serverId: 'test-server' });
     const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
       activeServerDir, jobId, ownerId, nowMs: Date.now(),
     });
@@ -34,7 +32,6 @@ describe('prepare-target direct-peer admission', () => {
         sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir }),
         activePrepareJobs: new Map(),
         prepareTargetJobLeaseOwnerId: 'test-target-runner',
-        prepareTargetJobLeaseTtlMs: 5_000,
         runtimeConfig: { activeServerDir },
         machineTransferChannel: undefined,
         directPeerTransfer: {
@@ -46,8 +43,6 @@ describe('prepare-target direct-peer admission', () => {
         },
         importSessionBundle: (bundle, targetPath, sessionStorageMode) =>
           importSessionHandoffAgentBundle({ bundle, targetPath, sessionStorageMode }),
-        getTransferRouteCache: () => routeCache,
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
       });
 
       await expect(handler.handle({
@@ -72,7 +67,7 @@ describe('prepare-target direct-peer admission', () => {
       await expect(prepareJobStore.read(jobId)).resolves.toBeNull();
     } finally {
       await releaseSessionHandoffPrepareTargetJobLease({
-        activeServerDir, jobId, ownerId,
+        activeServerDir, jobId, ownerId, leaseId: leaseAttempt.lease.leaseId,
       });
       await rm(activeServerDir, { recursive: true, force: true });
     }

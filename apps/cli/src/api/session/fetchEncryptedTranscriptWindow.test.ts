@@ -23,20 +23,27 @@ describe('fetchEncryptedTranscriptWindow', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
-  it('builds afterSeq/limit params for page fetch', async () => {
+  it('preserves sidechain selection and request-scoped authorization for page fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
+      data: { messages: [{ id: 'm5', seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }], hasMore: false },
     });
 
+    let authorizedPath: string | undefined;
     const rows = await fetchEncryptedTranscriptPageAfterSeq({
       token: 't',
       sessionId: 'sess_1',
       afterSeq: 4,
       limit: 3,
+      sidechainId: 'thread_1',
+      resolveAuthorizationHeaders: request => {
+        authorizedPath = request.path;
+        return { 'X-External-Action': 'scoped' };
+      },
     });
 
     expect(rows).toHaveLength(1);
@@ -44,7 +51,9 @@ describe('fetchEncryptedTranscriptWindow', () => {
     const [url] = mockGet.mock.calls[0]!;
     const requestUrl = new URL(String(url));
     expect(`${requestUrl.origin}${requestUrl.pathname}`).toBe('http://127.0.0.1:1234/v1/sessions/sess_1/messages');
-    expect(Object.fromEntries(requestUrl.searchParams)).toEqual({ afterSeq: '4', limit: '3' });
+    expect(Object.fromEntries(requestUrl.searchParams)).toEqual({ scope: 'sidechain', afterSeq: '4', limit: '3', sidechainId: 'thread_1' });
+    expect(authorizedPath).toBe(`${requestUrl.pathname}${requestUrl.search}`);
+    expect(mockGet.mock.calls[0]![1].headers).toMatchObject({ 'X-External-Action': 'scoped' });
   });
 
   it('rejects oversized windows with window_too_large', async () => {
@@ -61,7 +70,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('fetches latest messages with limit only (descending as returned by API)', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 9, createdAt: 2, content: { t: 'encrypted', c: 'c2' } }] },
+      data: { messages: [{ id: 'm9', seq: 9, createdAt: 2, content: { t: 'encrypted', c: 'c2' } }], hasMore: false },
     });
 
     const rows = await fetchEncryptedTranscriptPageLatest({
@@ -72,13 +81,14 @@ describe('fetchEncryptedTranscriptWindow', () => {
 
     expect(rows).toHaveLength(1);
     const [url] = mockGet.mock.calls.at(-1)!;
-    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ limit: '2' });
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ scope: 'main', limit: '2' });
   });
 
   it('applies sanitized caller timeouts to page fetches', async () => {
+    vi.useFakeTimers();
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [] },
+      data: { messages: [], hasMore: false },
     });
 
     await fetchEncryptedTranscriptPageLatest({
@@ -103,7 +113,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('uses the safe default timeout when caller timeout is absent or unsafe', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [] },
+      data: { messages: [], hasMore: false },
     });
 
     await fetchEncryptedTranscriptPageLatest({
@@ -130,11 +140,13 @@ describe('fetchEncryptedTranscriptWindow', () => {
       data: {
         messages: [
           {
+            id: 'm1',
             seq: 1,
             createdAt: 2,
             content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
           },
         ],
+        hasMore: false,
       },
     });
 
@@ -153,10 +165,11 @@ describe('fetchEncryptedTranscriptWindow', () => {
       status: 200,
       data: {
         messages: [
-          { seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c5' } },
-          { seq: 6, createdAt: 2, content: { t: 'future', value: 'unreadable' } },
-          { seq: 7, createdAt: 3, content: { t: 'encrypted', c: 'c7' } },
+          { id: 'm5', seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c5' } },
+          { id: 'm6', seq: 6, createdAt: 2, content: { t: 'future', value: 'unreadable' } },
+          { id: 'm7', seq: 7, createdAt: 3, content: { t: 'encrypted', c: 'c7' } },
         ],
+        hasMore: false,
       },
     });
 
@@ -175,7 +188,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('computes afterSeq and limit for a bounded range fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
+      data: { messages: [{ id: 'm5', seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }], hasMore: false },
     });
 
     const result = await fetchEncryptedTranscriptRange({
@@ -188,7 +201,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
     expect(result.ok).toBe(true);
     expect(mockGet).toHaveBeenCalledTimes(1);
     const [url] = mockGet.mock.calls[0]!;
-    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ afterSeq: '4', limit: '3' });
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ scope: 'main', afterSeq: '4', limit: '3' });
   });
 
   it('throws a typed auth error when transcript fetch returns 401', async () => {

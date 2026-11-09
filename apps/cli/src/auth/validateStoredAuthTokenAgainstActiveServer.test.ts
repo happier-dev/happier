@@ -75,6 +75,13 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
     });
   });
 
+  it('preserves a typed redirect refusal for an injected profile transport', async () => {
+    const transport: typeof fetch = async () => new Response(null, { status: 307, headers: { location: 'https://other.example.test/?token=hidden' } });
+    const { validateStoredAuthTokenAgainstServer } = await import('./validateStoredAuthTokenAgainstActiveServer');
+    await expect(validateStoredAuthTokenAgainstServer({ token: 'fixture', baseUrl: 'https://home.example.test', fetchImpl: transport }))
+      .rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
+  });
+
   it('propagates caller cancellation through the active Home profile request', async () => {
     const caller = new AbortController();
     let requestSignal: AbortSignal | undefined;

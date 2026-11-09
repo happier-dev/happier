@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, type CreateOrUpdateSessionOrganizationFolderRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { prepareSessionOrganizationDisplayEnvelopeForAccountModeV1, projectSessionOrganizationDisplayEnvelopeForReadV1, openSessionOrganizationDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions/organization/content';

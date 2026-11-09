@@ -59,6 +59,7 @@ export function buildStreamedTranscriptSegmentSnapshotMeta(params: {
   const { segment, state, interruptedReason, nowMs } = params;
 
   return {
+    ...segment.meta,
     happierStreamSegmentV1: {
       v: 1,
       segmentKind: segment.kind,
@@ -66,6 +67,7 @@ export function buildStreamedTranscriptSegmentSnapshotMeta(params: {
       segmentState: state,
       startedAtMs: segment.startedAtMs,
       updatedAtMs: nowMs,
+      ...(segment.textGeneration > 0 ? { textGeneration: segment.textGeneration } : {}),
       ...(segment.sourceMessageId ? { sourceMessageId: segment.sourceMessageId } : {}),
       ...(state === 'interrupted' && typeof interruptedReason === 'string' && interruptedReason
         ? { interruptedReason }

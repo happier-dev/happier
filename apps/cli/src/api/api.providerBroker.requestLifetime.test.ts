@@ -1,12 +1,13 @@
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import type { ProviderBrokerRequestAdmissionV1 } from '@happier-dev/protocol';
 import type { ProviderBrokerResourceTestRelayBindingV1 } from '@happier-dev/protocol';
 import { ProviderConnectionIdSchema, ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol';
-import { TEAM_CREDENTIAL_ACTION_PATHS_V1, type TeamCredentialResourceSummaryV1,
-  type TeamCredentialResourceTestAdmissionV1 } from '@happier-dev/protocol/teams';
+import { TEAM_CREDENTIAL_ACTION_PATHS_V1, TeamCredentialResourceSummaryV1Schema,
+  type TeamCredentialResourceTestAdmissionV1, RunnerBrokerReadinessRequestV1Schema,
+  RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams';
 
 import { createDeferred } from '@/testkit/async/deferred';
 
@@ -35,7 +36,7 @@ const admission: ProviderBrokerRequestAdmissionV1 = {
   requestFacts: { generation: true, routeKind: 'openai_responses', modelId: 'gpt-5', reasoningEffort: null },
 };
 
-const resource: TeamCredentialResourceSummaryV1 = {
+const resource = TeamCredentialResourceSummaryV1Schema.parse({
   id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian', sourceOwnerDisplayName: null,
   displayName: 'Shared source', enabled: true, revision: 0, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
   sessionUsePolicy: 'personal_allowed', source: null,
@@ -49,7 +50,7 @@ const resource: TeamCredentialResourceSummaryV1 = {
     narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false,
     disable: false, enable: false, delete: false },
   createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
-};
+});
 const testBinding: ProviderBrokerResourceTestRelayBindingV1 = {
   v: 1, kind: 'resource_test', requestId: 'test-request-1', actorAccountId: 'custodian',
   teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 0,
@@ -70,6 +71,80 @@ const testAdmission: TeamCredentialResourceTestAdmissionV1 = {
 };
 
 describe('Provider broker Home admission request lifetime', () => {
+  // Preserve the former integration harness budget: this regression intentionally
+  // waits beyond the thirty-second transport cutoff on real HTTP.
+  it('accepts runner readiness beyond thirty seconds and lets the caller cancel a later request', async () => {
+    const received = createDeferred();
+    const nextReceived = createDeferred();
+    const disconnected = createDeferred();
+    let firstResponse: ServerResponse | undefined;
+    let requests = 0;
+    const home = createServer((_request, response) => {
+      requests++;
+      if (requests === 1) {
+        firstResponse = response;
+        received.resolve();
+      } else {
+        response.once('close', () => disconnected.resolve());
+        nextReceived.resolve();
+      }
+    });
+    home.listen(0, '127.0.0.1');
+    await once(home, 'listening');
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Home fixture not listening');
+    const api = await ApiClient.create({ token: 'fixture-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } });
+    const controller = new AbortController();
+    const request = RunnerBrokerReadinessRequestV1Schema.parse({
+      v: 1, kind: 'provider_broker_readiness', homeServerIdentityId: 'srv_home',
+      activationId: '00000000-0000-4000-8000-000000000010', launchManifestCommitment: 'A'.repeat(43),
+      resourceId: 'resource-1', agentTargetKey: 'agent:happier.agent.codex/codex',
+      protocol: 'openai-responses', modelId: 'gpt-5',
+      initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) },
+      target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) },
+      activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
+    });
+    const { v: _v, kind: _kind, activationSignature: _activation, installationSignature: _installation, ...binding } = request;
+    const authorization = RunnerBrokerReadinessResponseV1Schema.parse({
+      v: 1, binding,
+      credentialSelectionBinding: {
+        v: 1, resourceId: request.resourceId, brokerMachineId: request.target.machineId, revision: 0,
+        application: { ...admission.authority.payload.application, agentTargetKey: request.agentTargetKey },
+        sourceRevision: 'source-revision-0',
+      },
+      readiness: { kind: 'available' },
+    });
+    try {
+      let settled = false;
+      const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () =>
+        await api.authorizeRunnerBrokerReadiness(request, controller.signal));
+      const result = pending.then(value => { settled = true; return value; }, error => {
+        settled = true;
+        return error instanceof Error && 'code' in error ? error.code : 'unexpected_error';
+      });
+      await received.promise;
+      await delay(30_100);
+      expect(settled).toBe(false);
+      if (!firstResponse) throw new Error('Home fixture did not receive readiness');
+      firstResponse.writeHead(200, { 'content-type': 'application/json' });
+      firstResponse.end(JSON.stringify(authorization));
+      expect(await result).toEqual(authorization);
+      const cancelled = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () =>
+        await api.authorizeRunnerBrokerReadiness(request, controller.signal));
+      const cancellation = expect(cancelled).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+      await nextReceived.promise;
+      controller.abort();
+      await cancellation;
+      await disconnected.promise;
+      // Neither slow completion nor cancellation may create an extra Home read.
+      expect(requests).toBe(2);
+    } finally {
+      controller.abort();
+      home.closeAllConnections();
+      await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve()));
+    }
+  }, 60_000);
+
   it('accepts a valid Home response beyond the former ten-second phase cutoff', async () => {
     // Real HTTP/Axios observes the former cutoff; no adapter mock can mask it.
     const home = createServer(async (request, response) => {

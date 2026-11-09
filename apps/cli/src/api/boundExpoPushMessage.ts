@@ -1,3 +1,4 @@
+import { PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import type { ExpoPushMessage } from 'expo-server-sdk';
 
 // Expo documents a 4096-byte native payload ceiling. This preflight bounds the
@@ -10,6 +11,14 @@ export function boundExpoPushMessage(message: ExpoPushMessage): ExpoPushMessage 
     if (byteLength(message) <= MAX_EXPO_MESSAGE_BYTES) return message;
 
     const bounded = { ...message };
+    // A native choice button requires its complete question mapping. Once the
+    // whole message exceeds Expo's ceiling, retain ordinary request review.
+    if (bounded.data?.questionAnswerV1 !== undefined) {
+        const { questionAnswerV1: _question, ...data } = bounded.data;
+        bounded.data = data;
+        bounded.categoryId = PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1;
+        if (byteLength(bounded) <= MAX_EXPO_MESSAGE_BYTES) return bounded;
+    }
     // Preserve identifiers and actions exactly. Shorten only presentation text,
     // retaining the beginning of the body where request formatters put the action.
     for (const field of ['body', 'subtitle', 'title'] as const) {

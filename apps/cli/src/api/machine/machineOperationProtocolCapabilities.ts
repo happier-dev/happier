@@ -62,17 +62,20 @@ export async function readMachineOperationProtocolCapabilitiesV1(params: Readonl
   credentials: Pick<StoredCredentials, 'token'>;
   machineId: string;
   signal?: AbortSignal;
+  authorizeRequest?: (request: Readonly<{ method: string; path: string }>) => Readonly<Record<string, string>>;
 }>): Promise<MachineOperationProtocolCapabilitiesProjectionV1 | null> {
   params.signal?.throwIfAborted();
   const machineId = params.machineId.trim();
   if (!machineId) return null;
+  const path = `/v1/machines/${encodeURIComponent(machineId)}`;
 
   const response = await axios.get(
-    `${resolveServerHttpBaseUrl()}/v1/machines/${encodeURIComponent(machineId)}`,
+    `${resolveServerHttpBaseUrl()}${path}`,
     {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-        Authorization: `Bearer ${params.credentials.token}`,
+        ...(params.authorizeRequest ? params.authorizeRequest({ method: 'GET', path })
+          : { Authorization: `Bearer ${params.credentials.token}` }),
       },
       timeout: 15_000,
       validateStatus: () => true,

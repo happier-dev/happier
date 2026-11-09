@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
-import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -23,33 +22,6 @@ describe('createMachineSocketTransport', () => {
                 auth: options.auth,
             });
         });
-    });
-
-    it('refreshes terminal policy before each socket connection and narrows the new handshake', async () => {
-        const get = vi.spyOn(axios, 'get')
-            .mockResolvedValueOnce({ status: 200, data: {
-                v: 1, encryptionMode: 'plain', nativeEmail: null,
-                password: { status: 'not_enrolled', revision: null }, terminalPresentUserPolicy: 'allowed',
-            } })
-            .mockResolvedValueOnce({ status: 200, data: {
-                v: 1, encryptionMode: 'plain', nativeEmail: null,
-                password: { status: 'not_enrolled', revision: null }, terminalPresentUserPolicy: 'disallowed',
-            } });
-        const { createMachineSocketTransport } = await import('./createMachineSocketTransport');
-        const { socket, transport } = createMachineSocketTransport({
-            serverUrl: 'https://policy-reconnect.example.com', token: 'reconnect-test',
-            machineId: 'machine-1', env: {},
-        });
-        await transport.connect();
-        expect(socket.auth).not.toHaveProperty('authorityCeiling');
-        await transport.disconnect();
-        await transport.connect();
-        expect(socket.auth).toHaveProperty('authorityCeiling', 'account_automation');
-        expect(get).toHaveBeenCalledWith('https://policy-reconnect.example.com/v1/account/security', expect.anything());
-        const { resolveEffectiveTerminalPresentUserPolicy } = await import('@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy');
-        expect(resolveEffectiveTerminalPresentUserPolicy({
-            token: 'reconnect-test', serverHttpBaseUrl: 'https://policy-reconnect.example.com',
-        })).toBe('disallowed');
     });
 
     it('declares only the account-storage contract on the machine-scoped socket', async () => {

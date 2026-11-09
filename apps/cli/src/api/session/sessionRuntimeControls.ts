@@ -1,13 +1,16 @@
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 
-// These two controls belong to the client/transcript lifetime, not the host
+// Pending custody controls belong to the client/transcript lifetime, not the host
 // generation. All other members come directly from the typed installed source.
-type ClientOwnedControl = 'wakePendingMaterialization' | 'preparePendingMessageComposerAdmission';
+type ClientOwnedControl = 'wakePendingMaterialization' | 'preparePendingMessageComposerAdmission'
+  | 'acceptPendingMessageComposerAdmission' | 'abandonPendingMessageComposerAdmission';
 type InstalledRuntimeControls = Omit<SessionRuntimeControls, ClientOwnedControl>;
 
 function installedRuntimeControls({
   wakePendingMaterialization: _wake,
   preparePendingMessageComposerAdmission: _admission,
+  acceptPendingMessageComposerAdmission: _accepted,
+  abandonPendingMessageComposerAdmission: _abandoned,
   ...controls
 }: SessionRuntimeControls): InstalledRuntimeControls {
   return controls;

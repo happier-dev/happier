@@ -204,7 +204,7 @@ describe('machine provider RPC registration', () => {
         }],
         catalog: { source: 'manual', manualModelPolicy: 'allowed' },
       },
-      savedSecretId: null, actionNonce: 'draft-action-0001',
+      savedSecretId: null,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
     const reviewedMapping = {
       connection: {
@@ -372,7 +372,6 @@ describe('machine provider RPC registration', () => {
         },
       },
       savedSecretId: null,
-      actionNonce: 'draft-action-0001',
     } as const;
     await expect(h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_PROBE)!(request))
       .resolves.toMatchObject({ status: 'success' });
@@ -476,7 +475,6 @@ describe('machine provider RPC registration', () => {
         },
       },
       savedSecretId: null,
-      actionNonce: 'draft-action-0002',
     };
     const handler = h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_PROBE)!;
     const firstController = new AbortController();

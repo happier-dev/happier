@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios, { type AxiosResponse } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosResponse } from 'axios';
 import { SessionMessagesPageV1Schema, buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { SessionMessageV1 } from '@happier-dev/protocol';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';

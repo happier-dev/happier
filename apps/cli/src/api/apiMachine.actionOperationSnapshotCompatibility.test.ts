@@ -9,6 +9,14 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
 
 import { createActionOperationSnapshotPublisher, emitActionOperationSnapshotV1 } from './apiMachine';
+import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
+import { createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 describe('Action operation snapshot producer compatibility', () => {
   beforeEach(() => {
@@ -117,6 +125,40 @@ describe('Action operation snapshot producer compatibility', () => {
     // Its UI opener safeParses and returns null, dropping only this new Action;
     // existing Actions still use their unchanged predecessor projection below.
     expect(PredecessorSnapshotSchema.safeParse(opened).success).toBe(false);
+  });
+  it('withholds deployment-child content from the ordinary Account publisher while preserving ordinary publication and internal activity', async () => {
+    const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain' });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'ann' })).toString('base64url')}.signature`;
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const publications: Promise<void>[] = [];
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => 'ann',
+      serverBaseUrl: h.serverHttpBaseUrl, readCredentials: async () => ({ token, encryption: null }),
+      publishContent: content => { contents.push(content); } });
+    let sequence = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'holder', resolveAccountId: async () => 'ann',
+      generateOperationId: () => `snapshot-${++sequence}`, publishSnapshot: snapshot => { publications.push(publisher(snapshot)); } });
+    const method = `holder:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`;
+    const execution = createExternalActionMachineRpcExecution({ context: {
+      externalActionExecutionAuthorization: h.sealed, externalActionTarget: h.root.binding.target },
+      effectActionId: 'daemon.filesystem.download', installationId: h.installed.installationId,
+      method, requestId: 'download', params: {}, deploymentChildExecution: h.packet,
+      deploymentArchiveOrigin: { environmentId: h.job.input.environmentId, deploymentId: 'deployment',
+        holderMachineId: 'holder', holderInstallationId: 'holder-install' }, privateKey: h.receiver.secretKey });
+    if (!execution) throw new Error('Missing receiver execution proof');
+    const context = { callerInputAuthorization: h.sealed,
+      workspaceSyncSourceExecution: { method, requestId: 'download', params: {}, externalActionExecution: execution },
+      machineAdmission: { actorAccountId: 'ann', custodianAccountId: 'ann', machineId: 'holder',
+        installationId: 'holder-install', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => true };
+    const execute = async () => ({ ok: true as const, result: { descriptor: 'private-source' } });
+    await runtime.observeExecution({ actionId: 'daemon.filesystem.download', input: {}, rpcContext: context, execute });
+    await runtime.observeExecution({ actionId: 'daemon.filesystem.download', input: {}, execute });
+    await Promise.all(publications);
+    const published = contents.flatMap(content => content.t === 'plain' ? [content.v] : []);
+    expect(published.some(snapshot => snapshot.operationId === 'snapshot-2')).toBe(true);
+    expect(published.some(snapshot => snapshot.operationId === 'snapshot-1')).toBe(false);
+    expect(runtime.store.readLiveWork().items.some(item => item.actionOperationId === 'snapshot-1')).toBe(true);
   });
   it('retains released encrypted publication when the Home exposes persisted mode but no currentness endpoint', async () => {
     const accountId = 'older-account';
@@ -344,4 +386,32 @@ describe('Action operation snapshot producer compatibility', () => {
     } finally { warning.mockRestore(); }
   });
 
+});
+
+
+it('shares the Machine connection observation across snapshot batches and Automation preflight', async () => {
+  const accountId = 'connected-owner';
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+  const serverBaseUrl = 'https://connected-home.test';
+  const channel = await createRequesterCurrentnessSocketHarness();
+  const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture() });
+  const observation = acquireRequesterAccountEncryptionCurrentness({ accountId, token, serverBaseUrl });
+  try {
+    await observation.read();
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const credentials = { token, encryption: null };
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => accountId,
+      serverBaseUrl, readCredentials: async () => credentials, publishContent: content => { contents.push(content); } });
+    const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'connected-operation', revision: 1,
+      actionId: 'session.title.set', state: 'running', scope: { accountId, machineId: 'machine' }, title: 'Title',
+      createdAt: 1, startedAt: 2, cancellation: 'unsupported' };
+    for (let revision = 1; revision <= 3; revision++) {
+      await publisher({ ...snapshot, revision });
+      await expect(runWithServerHttpBaseUrl(serverBaseUrl,
+        () => resolveAutomationWorkerAccountEncryption({ token, credentials }))).resolves.toMatchObject({ kind: 'available', witness: { mode: 'plain' } });
+    }
+    expect(contents).toHaveLength(3);
+    expect(get.mock.calls.filter(([url]) => String(url).endsWith('/currentness'))).toHaveLength(1);
+    expect(get.mock.calls.filter(([url]) => String(url).endsWith('/encryption'))).toHaveLength(0);
+  } finally { await observation.dispose(); await channel.close(); vi.restoreAllMocks(); }
 });

@@ -24,7 +24,7 @@ describe('same-machine handoff terminal ownership', () => {
       let stops = 0;
       const deps = { activeServerDir, prepareJobStore, sourceExportStore, directPeerTransfer: undefined,
         readPersistedPrepareJob, buildPrepareJobRecord, buildStartPendingStatus, buildSourceExportOnlyPrepareJobId,
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined, invalidRequest,
+        invalidRequest,
         stopSessionForHandoff: async () => { stops++; running = false; return 'stopped' as const; },
       };
       const commit = createSessionHandoffCommitActionHandler(deps);

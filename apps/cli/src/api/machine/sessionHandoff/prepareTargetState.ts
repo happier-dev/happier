@@ -1,4 +1,3 @@
-import { normalizeSessionHandoffTargetPathForLocalMachine } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
@@ -12,8 +11,6 @@ import {
 } from '@happier-dev/protocol';
 
 export type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
-
-const PREPARE_JOB_FAST_PATH_BUDGET_MS = 250;
 
 export function buildStartRecoveryStatus(handoffId: string): SessionHandoffStatus {
   return {
@@ -34,16 +31,6 @@ export function buildStartPendingStatus(input: Readonly<{
     phase: 'preparing',
     recoveryActions: input.sourceStopState === 'stopped' ? ['restart_on_source', 'keep_stopped'] : [],
   };
-}
-
-export function resolvePrepareTargetWorkspaceRootPath(input: Readonly<{
-  requestedTargetPath: string;
-  homeDir: string;
-}>): string {
-  return normalizeSessionHandoffTargetPathForLocalMachine({
-    requestedTargetPath: input.requestedTargetPath,
-    homeDir: input.homeDir,
-  });
 }
 
 export function missingHandoffMetadataV2() {
@@ -160,13 +147,4 @@ export async function readPersistedPrepareJob(params: Readonly<{
   }
 
   return null;
-}
-
-export async function waitForPrepareJobFastPath(runPromise: Promise<void>): Promise<'completed' | 'pending'> {
-  return await Promise.race([
-    runPromise.then(() => 'completed' as const),
-    new Promise<'pending'>((resolve) => {
-      setTimeout(() => resolve('pending'), PREPARE_JOB_FAST_PATH_BUDGET_MS);
-    }),
-  ]);
 }

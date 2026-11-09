@@ -141,6 +141,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           voiceProviders: lease.registry.contributes.voiceProviders ?? [],
           provider: provider.identity,
           kind: 'conversation',
+          realm: request.data.platform,
           phase: request.data.phase,
           credentialResolver,
           connectedAccounts,

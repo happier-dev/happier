@@ -10,8 +10,10 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
-import { decodeBase64, decrypt } from '@/api/encryption';
-import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
+import { createPlainSessionFixture, createSessionRecordFixture, createAccountEncryptionCurrentnessFixture, createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
@@ -38,6 +40,11 @@ import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, ty
 import { runPermissionModePromptLoop, type PermissionModePromptLoopTurnOperations } from '@/agent/runtime/runPermissionModePromptLoop';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createExecutionRunPendingInputConsumer } from '@/agent/runtime/bridges/executionRun/pending/executionRunPendingInputConsumer';
+import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { createDeferred } from '@/testkit/async/deferred';
+import { DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -76,8 +83,8 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
   },
 }));
 
-vi.mock('@happier-dev/connection-supervisor', () => ({
-  DEFAULT_MANAGED_CONNECTION_POLICY: {},
+vi.mock('@happier-dev/connection-supervisor', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/connection-supervisor')>(),
   createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
     getState: () => ({ phase: 'online' }),
     start: async () => {
@@ -1232,10 +1239,93 @@ describe('ApiSessionClient provider-input settlement', () => {
     await client.close();
   });
 
-  it('recovers exact committed provider-input acceptance after restart before consulting Pending status', async () => {
+  it.each([false, true])('does not infer provider acceptance from a host-admitted transcript row (warm=%s)', async (warm) => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }), {
+      getServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: 'srv_acceptance_home' } } }) }),
+    });
+    if (warm) {
+      sessionSocketStub.trigger('update', { id: 'echo', createdAt: 100, body: {
+        t: 'new-message', delivery: 'full', sid: 's1', message: {
+          id: 'admitted-message', seq: 42, localId: 'admitted-only', messageRole: 'user',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'host admission' } } },
+        },
+      } });
+      expect(client.getCommittedUserMessageSeq('admitted-only')).not.toBeNull();
+    }
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { message: {
+      id: 'admitted-message', seq: 42, localId: 'admitted-only', createdAt: 100, updatedAt: 101,
+      content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'host admission' } } },
+    } } } as never);
+    await expect(client.readDurableProviderInputAcceptanceV1('admitted-only')).resolves.toBe('unknown');
+    await client.close();
+  });
+
+  it.each(['admitted', 'manual_handled', 'provider_accepted'] as const)('keeps the execution-run output anchor and replay retirement tied to native settlement (%s)', async (settlement) => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1',
+      metadata: createTestMetadata({ replaySeedV1: { v: 1, seedText: 'transition context',
+        sourceSessionId: 'source', sourceCutoffSeqInclusive: 3, createdAtMs: 1, dispatchedToLocalId: 'anchor' } }),
+    }));
+    const exactRead = createDeferred();
+    const response = { status: 200, data: { message: {
+      id: 'anchor-message', seq: 7, localId: 'anchor', sidechainId: 'run-sidechain', createdAt: 100, updatedAt: 101,
+      content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } },
+      ...(settlement === 'admitted' ? {} : { deliveryResolution: settlement === 'manual_handled'
+        ? { v: 1, kind: 'manual_handled' }
+        : { v: 1, kind: 'provider_accepted', content: { t: 'plain', v: {
+          v: 1, acceptedAtMs: 100, delivery: { kind: 'newTurn', turnId: 'native-turn' },
+        } } } }),
+    } } };
+    let reads = 0;
+    vi.spyOn(axios, 'get').mockImplementation(async () => {
+      if (++reads === 1) await exactRead.promise;
+      return response;
+    });
+    const consumer = createExecutionRunPendingInputConsumer({
+      recipient: { kind: 'execution_run', runId: 'run-a' }, sidechainId: 'run-sidechain',
+      bindPendingInput: binding => client.bindExecutionRunPendingInput(binding),
+      readRuntimeActivity: () => ({ turnInFlight: false, supportsSteer: true }), isCurrent: () => true,
+      delivery: { deliver: async () => ({ status: 'admitted' }) },
+    });
+    let anchor: string | undefined;
+    const acceptance = consumer.awaitAcceptedUserAnchor('anchor').then(value => { anchor = value; return value; });
+    // The network read is held so disposal races its completion deterministically.
+    await vi.waitFor(() => expect(axios.get).toHaveBeenCalled());
+    expect(anchor).toBeUndefined();
+    if (settlement === 'provider_accepted') {
+      exactRead.resolve(undefined);
+      await expect(acceptance).resolves.toBe('accepted');
+      await consumer.dispose();
+    } else {
+      await consumer.dispose();
+      exactRead.resolve(undefined);
+    }
+    await expect(acceptance).resolves.toBe(settlement === 'provider_accepted' ? 'accepted' : 'unknown');
+    expect(anchor).toBe(settlement === 'provider_accepted' ? 'accepted' : 'unknown');
+
+    const replay = createSessionClientWithMetadata({ initialMetadata: client.getMetadataSnapshot()! });
+    await resolveProviderPromptWithReplaySeed({ session: {
+      getMetadataSnapshot: replay.getMetadata, updateMetadata: replay.session.updateMetadata,
+      readDurableProviderInputAcceptanceV1: localId => client.readDurableProviderInputAcceptanceV1(localId),
+    }, userText: 'next prompt', allowSeed: true, localId: 'next', nowMs: 200, refreshMetadataBeforeRead: false });
+    expect(replay.getMetadata().replaySeedV1?.seedText)
+      .toBe(settlement === 'provider_accepted' ? '' : 'transition context');
+    await client.close();
+  });
+
+  it.each(['plain', 'e2ee', 'wrong_mode', 'unopenable'] as const)('recovers exact native acceptance after restart with valid Session-mode facts (%s)', async (mode) => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const encryptionKey = new Uint8Array(32).fill(7);
+    const session = mode === 'plain' ? createPlainSessionFixture({ id: 's1' }) : {
+      ...createPlainSessionFixture({ id: 's1' }), encryptionMode: 'e2ee' as const,
+      encryptionKey, encryptionVariant: 'dataKey' as const,
+    };
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', session);
     const transcriptGet = vi.spyOn(axios, 'get');
 
     expect(client.getCommittedUserMessageSeq('committed-after-restart')).toBeNull();
@@ -1249,6 +1339,11 @@ describe('ApiSessionClient provider-input settlement', () => {
           sidechainId: null,
           createdAt: 100,
           updatedAt: 101,
+          deliveryResolution: { v: 1, kind: 'provider_accepted', content: mode === 'plain' || mode === 'wrong_mode'
+            ? { t: 'plain', v: { v: 1, acceptedAtMs: 100, delivery: { kind: 'newTurn', turnId: 'native-turn' } } }
+            : { t: 'encrypted', c: mode === 'unopenable' ? 'not-ciphertext' : encodeBase64(encrypt(encryptionKey, 'dataKey', {
+              v: 1, acceptedAtMs: 100, delivery: { kind: 'newTurn', turnId: 'native-turn' },
+            })) } },
           content: {
             t: 'plain',
             v: { role: 'user', content: { type: 'text', text: 'committed prompt' } },
@@ -1258,7 +1353,7 @@ describe('ApiSessionClient provider-input settlement', () => {
     } as never);
 
     await expect(client.readDurableProviderInputAcceptanceV1('committed-after-restart'))
-      .resolves.toBe('accepted');
+      .resolves.toBe(mode === 'plain' || mode === 'e2ee' ? 'accepted' : 'unknown');
     expect(listDeliveryStatusesMock).not.toHaveBeenCalled();
 
     const notFound = createTranscriptLookupHttpError({
@@ -1318,6 +1413,9 @@ describe('ApiSessionClient provider-input settlement', () => {
         message: {
           id: 'target-message-after-restart', seq: 7, localId: 'target-accepted-after-restart',
           sidechainId: 'run-sidechain', createdAt: 100, updatedAt: 101,
+          deliveryResolution: { v: 1, kind: 'provider_accepted', content: { t: 'plain', v: {
+            v: 1, acceptedAtMs: 100, delivery: { kind: 'newTurn', turnId: 'native-turn' },
+          } } },
           content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'target prompt' } } },
         },
       },
@@ -1417,12 +1515,24 @@ describe('ApiSessionClient provider-input settlement', () => {
     await client.close();
   });
 
+  it.each([400, 401, 403, 404, 414, 422, 429])('surfaces a refused durable acceptance lookup as a typed HTTP failure (%s)', async status => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const get = vi.spyOn(axios, 'get').mockRejectedValueOnce(createTranscriptLookupHttpError({
+      message: 'Lookup refused', status, data: { code: 'FST_ERR_MAX_PARAM_LENGTH' },
+    }));
+    try {
+      await expect(client.readDurableProviderInputAcceptanceV1('lookup-refused'))
+        .rejects.toMatchObject({ response: { status } });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(listDeliveryStatusesMock).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+    }
+  });
+
   it.each([
-    ['auth failure', createTranscriptLookupHttpError({
-      message: 'unauthorized',
-      status: 401,
-      data: { error: 'Unauthorized' },
-    })],
     ['unhealthy lookup', createTranscriptLookupHttpError({
       message: 'connection reset',
       code: 'ECONNRESET',
@@ -1669,36 +1779,46 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect((client as any).materializationRuntime.hasAgentQueueEchoSuppressedLocalId(localId)).toBe(true);
   });
 
-  it('publishes the accepted dispatch-time model without changing selected-next intent', async () => {
+  it('does not publish a configured model from provider acceptance', async () => {
     resolveAcceptedMock.mockResolvedValueOnce({
       didResolve: true,
       pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2 },
     });
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
     const fixture = createPlainSessionFixture({ id: 's1' });
-    const client = createTestApiSessionClient(ApiSessionClient, 'tok', {
-      ...fixture,
-      metadata: {
-        ...fixture.metadata,
-        modelSelectionIntentV1: {
-          v: 1,
-          updatedAt: 20,
-          selection: {
-            agentTargetKey: 'agent:happier.agent.codex/codex',
-            providerConnectionId: null,
-            modelId: 'gpt-5.6-sol',
-          },
+    const metadata: typeof fixture.metadata = {
+      ...fixture.metadata,
+      sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 10, currentModelId: 'actual-model', availableModels: [] },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 20,
+        selection: {
+          agentTargetKey: 'agent:happier.agent.codex/codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5.6-sol',
         },
       },
+    };
+    const credentials = { token: 'tok', encryption: null };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      metadata, agentState: null, storedContentMode: 'plain' });
+    const raw = createSessionRecordFixture({ id: 's1', encryptionMode: 'plain',
+      metadataLayoutVersion: 1, metadataVersion: 0, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, share: null });
+    const previousGet = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      const path = new URL(String(args[0])).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      if (path === '/v2/sessions/s1') return { status: 200, data: { session: raw } };
+      return await previousGet(...args);
     });
-    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId('accepted-local');
-    vi.spyOn(client, 'updateMetadata').mockImplementation(async (updater) => {
-      (client as any).metadata = updater((client as any).metadata);
-    });
-
-    client.observeProviderInputSettlement({
-      kind: 'accepted',
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', { ...fixture, metadata,
+      metadataLayoutVersion: 1 }, { metadataAuthority: { kind: 'owner', credentials } });
+    markMaterializedProviderInput(client, 'accepted-local');
+    const acceptance = {
+      kind: 'accepted' as const,
       localId: 'accepted-local',
       userMessageSeq: 43,
       appliedModel: {
@@ -1709,19 +1829,57 @@ describe('ApiSessionClient provider-input settlement', () => {
           modelId: 'gpt-5.6-terra',
         },
       },
-    });
-
-    await vi.waitFor(() => expect(client.getMetadataSnapshot()?.sessionAppliedModelV1).toMatchObject({
-      v: 1,
-      provider: 'codex',
-      modelId: 'gpt-5.6-terra',
-      selection: {
-        agentTargetKey: 'agent:happier.agent.codex/codex',
-        providerConnectionId: null,
-        modelId: 'gpt-5.6-terra',
-      },
-    }));
+    };
+    await client.observeProviderInputSettlement(acceptance);
+    // Join the real metadata writer queue; the socket testkit owns its Home ACKs.
+    await client.updateMetadata(metadata => metadata);
+    expect(client.getMetadataSnapshot()?.sessionAppliedModelV1).toBeUndefined();
+    expect(client.getMetadataSnapshot()?.sessionModelsV1?.currentModelId).toBe('actual-model');
     expect(client.getMetadataSnapshot()?.modelSelectionIntentV1?.selection?.modelId).toBe('gpt-5.6-sol');
+  });
+
+  it('releases a failed pre-dispatch claim so Send now can materialize the retained input again', async () => {
+    blockDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 2, pendingBlockedCount: 1, pendingVersion: 2 },
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'access-withdrawn-before-dispatch';
+    markMaterializedProviderInput(client, localId);
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+      mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
+    queue.push({ text: 'retained input', localId,
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+    }, { permissionMode: 'default' });
+    const runtime = {
+      beginTurnLifecycle: vi.fn(), sendTurnPrompt: vi.fn(async () => undefined),
+      steerInFlightTurn: vi.fn(async () => undefined), waitForTurnCompletion: vi.fn(async () => undefined),
+      subscribeRuntimeEvents: () => () => undefined, cancelTurn: async () => undefined,
+      readSessionIdentity: () => ({ sessionId: 'native-session' }),
+      updateSessionRuntimeConfig: async () => undefined, resetOrDisposeRuntime: async () => undefined,
+    } satisfies RuntimeTurnOperations;
+    let ready = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider', agentMessageType: 'qwen', explicitPermissionMode: undefined,
+      session: client, messageQueue: queue, runtime,
+      permissionHandler: { setPermissionMode() {}, reset() {} },
+      createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+      messageBuffer: new MessageBuffer(), shouldExit: () => ready,
+      getAbortSignal: () => new AbortController().signal, keepAlive() {}, setThinking() {},
+      sendReady: () => { ready = true; }, currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+      formatPromptErrorMessage: error => String(error), registerProviderAcceptedEffect() {},
+    });
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(blockDeliveryMock).toHaveBeenCalledWith(expect.objectContaining({ localId }));
+    expect(client.hasPendingProviderInput(localId)).toBe(false);
+    // Restored access and Send now rearm this same durable identity at Home.
+    // The old pre-effect claim must no longer hold the consumer ahead of it.
+    listDeliveryStatusesMock.mockResolvedValueOnce([{ localId, deliveryStatus: { status: 'queued' } }]);
+    await expect(client.reconcilePendingProviderInputCustodyBeforeMaterialization()).resolves.toBe(true);
+    markMaterializedProviderInput(client, localId);
+    expect(client.hasPendingProviderInput(localId)).toBe(true);
   });
 
   it.each([
@@ -1838,14 +1996,105 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect(client.hasPendingProviderInput(localId)).toBe(true);
   });
 
-  it('retries an accepted settlement once at the typed operation-local delay and accepts exact committed replay', async () => {
+  it.each([1, 2])('retries a typed turn-publication prerequisite once its own Turn publication drains (%s pending answers)', async (pendingAnswers) => {
+    // The real transport and response schema run below the network boundary.
+    const transport = await vi.importActual<typeof import('./pendingQueueV2Transport')>('./pendingQueueV2Transport');
+    resolveAcceptedMock.mockImplementation(transport.resolveAcceptedPendingQueueV2Delivery);
+    const infoFile = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    // Only the timer clock is fake: the Turn publication drain may do real I/O.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let attempts = 0;
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event !== 'pending-delivery-accepted-v1') return resolveApiSessionSocketDefaultAck(event, payload);
+      attempts += 1;
+      return attempts <= pendingAnswers
+        ? { ok: false, error: 'turn-publication-pending' }
+        : { ok: true, didResolve: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3,
+          message: { id: 'published-input', seq: 43, localId: 'publication-local', content: null, createdAt: 10, updatedAt: 10 } };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    markMaterializedProviderInput(client, 'publication-local');
+    // The accepted lifecycle has already queued this Turn's begin.
+    void client.enqueueSessionTurnMutation({ v: 1, sessionId: 's1', mutationId: 'host-begin', action: 'begin',
+      turnId: 'host-turn', agentId: 'codex', observedAt: 5 });
+    const settlement = client.observeProviderInputSettlement({ kind: 'accepted', localId: 'publication-local',
+      userMessageSeq: null, providerTurnId: 'host-turn', providerDeliveryKind: 'newTurn', acceptedAtMs: 10 });
+    // No clock advance: the prerequisite is this client's own queued Turn
+    // publication, so the retry follows its drain rather than a timer.
+    const startedAt = Date.now();
+    while (attempts < 2 && Date.now() - startedAt < 30_000) await new Promise(resolve => setImmediate(resolve));
+    expect(attempts).toBe(2);
+    const scheduledRetries = () => infoFile.mock.calls.filter(([message]) => message === '[pendingQueue] provider-input settlement retry scheduled').length;
+    if (pendingAnswers === 1) expect(scheduledRetries()).toBe(0);
+    if (pendingAnswers === 2) {
+      // Still unpublished after the drain: the existing bounded backoff applies.
+      expect(client.hasPendingProviderInput('publication-local')).toBe(true);
+      await vi.waitFor(() => expect(scheduledRetries()).toBe(1));
+      await vi.advanceTimersByTimeAsync(DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs);
+      expect(attempts).toBe(3);
+    }
+    await settlement;
+    expect(client.hasPendingProviderInput('publication-local')).toBe(false);
+    expect(client.getCommittedUserMessageSeq('publication-local')).toBe(43);
+    await client.close();
+  });
+
+  it('settles on the delivery of its own Turn begin when that begin is queued only after the first pending answer', async () => {
+    // Live order (P03-SEND-PATH): provider acceptance settles while the accepted lifecycle
+    // still holds this Turn's begin; a drain of already-queued Turn writes finds nothing.
+    const transport = await vi.importActual<typeof import('./pendingQueueV2Transport')>('./pendingQueueV2Transport');
+    resolveAcceptedMock.mockImplementation(transport.resolveAcceptedPendingQueueV2Delivery);
+    const infoFile = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let attempts = 0;
+    let beginPublished = false;
+    // Home model: the accepted settlement waits until the exact Turn row exists.
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event === 'session-turn-mutation') {
+        const mutation = payload as Readonly<{ v: 1; sessionId: string; mutationId: string; action: string; turnId?: string; observedAt: number }>;
+        if (mutation.action === 'begin' && mutation.turnId === 'late-turn') beginPublished = true;
+        return { ok: true, receipt: { v: 1, sessionId: mutation.sessionId, mutationId: mutation.mutationId, turnId: mutation.turnId,
+          action: mutation.action, decision: 'applied', observedAt: mutation.observedAt, appliedAt: mutation.observedAt } };
+      }
+      if (event !== 'pending-delivery-accepted-v1') return resolveApiSessionSocketDefaultAck(event, payload);
+      attempts += 1;
+      return beginPublished
+        ? { ok: true, didResolve: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3,
+          message: { id: 'late-input', seq: 44, localId: 'late-local', content: null, createdAt: 10, updatedAt: 10 } }
+        : { ok: false, error: 'turn-publication-pending' };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    markMaterializedProviderInput(client, 'late-local');
+    const settlement = client.observeProviderInputSettlement({ kind: 'accepted', localId: 'late-local',
+      userMessageSeq: null, providerTurnId: 'late-turn', providerDeliveryKind: 'newTurn', acceptedAtMs: 10 });
+    const startedAt = Date.now();
+    while (attempts < 1 && Date.now() - startedAt < 30_000) await new Promise(resolve => setImmediate(resolve));
+    for (let turn = 0; turn < 20; turn += 1) await new Promise(resolve => setImmediate(resolve));
+    // The lifecycle now admits this Turn's begin.
+    await client.enqueueSessionTurnMutation({ v: 1, sessionId: 's1', mutationId: 'late-begin', action: 'begin',
+      turnId: 'late-turn', agentId: 'codex', observedAt: 20 });
+    // No clock advance: the retry follows the begin's own delivery, not the 1 s timer.
+    while (client.hasPendingProviderInput('late-local') && Date.now() - startedAt < 30_000) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    const scheduledRetries = infoFile.mock.calls.filter(([message]) => message === '[pendingQueue] provider-input settlement retry scheduled').length;
+    expect({ beginPublished, attempts, scheduledRetries, pending: client.hasPendingProviderInput('late-local') })
+      .toEqual({ beginPublished: true, attempts: 2, scheduledRetries: 0, pending: false });
+    await settlement;
+    expect(client.getCommittedUserMessageSeq('late-local')).toBe(44);
+    await client.close();
+  });
+
+  it.each([1, 1_250, 60_001])('preserves the server settlement retry delay (%s ms) and accepts exact committed replay', async (retryAfterMs) => {
     const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     vi.useFakeTimers();
     resolveAcceptedMock
       .mockRejectedValueOnce(new PendingQueueAcceptedSettlementError(
         'transaction-unavailable',
-        1_250,
+        retryAfterMs,
         'accepted-settlement-1',
       ))
       .mockResolvedValueOnce({
@@ -1868,7 +2117,7 @@ describe('ApiSessionClient provider-input settlement', () => {
 
     expect(resolveAcceptedMock).toHaveBeenCalledTimes(1);
     expect(client.hasPendingProviderInput('accepted-local')).toBe(true);
-    await vi.advanceTimersByTimeAsync(1_249);
+    await vi.advanceTimersByTimeAsync(retryAfterMs - 1);
     expect(resolveAcceptedMock).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
@@ -1879,7 +2128,7 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect(resolveAcceptedMock.mock.calls[1][0].acceptedDelivery).toBeUndefined();
     expect(infoFileSpy).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ localId: 'accepted-local', retryAfterMs: 1_250 }),
+      expect.objectContaining({ localId: 'accepted-local', retryAfterMs }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
   });

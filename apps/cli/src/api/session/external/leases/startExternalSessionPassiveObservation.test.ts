@@ -2360,7 +2360,7 @@ describe('startExternalSessionPassiveObservation', () => {
         await manager.dispose();
     });
 
-    it('skips exact reconciliation work when passive restore is globally disabled', async () => {
+    it('honors explicit exact reconciliation while automatic restart restoration is disabled', async () => {
         const loadCurrentSessionPolicy = vi.fn(async () => ({
             state: 'active' as const,
             observation: resolvedInput('session-global-disabled'),
@@ -2386,13 +2386,16 @@ describe('startExternalSessionPassiveObservation', () => {
         });
 
         await lifecycle.resume();
-        await expect(
-            lifecycle.reconcileSession('session-global-disabled'),
-        ).resolves.toEqual({ status: 'stale' });
-
         expect(loadCurrentSessionPolicy).not.toHaveBeenCalled();
         expect(restoreFollowPolicy).not.toHaveBeenCalled();
         expect(reconcileLink).not.toHaveBeenCalled();
+
+        await expect(
+            lifecycle.reconcileSession('session-global-disabled'),
+        ).resolves.toEqual({ status: 'settled' });
+        expect(loadCurrentSessionPolicy).toHaveBeenCalledOnce();
+        expect(restoreFollowPolicy).toHaveBeenCalledOnce();
+        expect(reconcileLink).toHaveBeenCalledOnce();
 
         await lifecycle.dispose();
     });

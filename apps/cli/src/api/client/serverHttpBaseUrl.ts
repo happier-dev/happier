@@ -98,12 +98,35 @@ export async function borrowServerHttpRuntimeHomeTunnel(
     || !publication.homeTunnelOwner
     || !isDeepStrictEqual(publication.homeTunnelOwner.descriptor, descriptor)
   ) return null;
-  if (signal?.aborted) throw new DOMException('Iroh Home tunnel acquisition was cancelled', 'AbortError');
-  const lease = await publication.homeTunnelOwner.acquire();
+  const cancellationError = () => new DOMException('Iroh Home tunnel acquisition was cancelled', 'AbortError');
+  if (signal?.aborted) throw cancellationError();
+  let lease: NodeIrohHomeTunnelLease;
+  let onAbort: (() => void) | undefined;
+  try {
+    const acquisition = publication.homeTunnelOwner.acquire();
+    lease = signal ? await new Promise<NodeIrohHomeTunnelLease>((resolve, reject) => {
+      onAbort = () => reject(cancellationError());
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      acquisition.then(acquired => {
+        if (signal.aborted) {
+          // Only this borrowed lease is abandoned. Failed disposal stays in
+          // the daemon's existing retryable custody; its endpoint stays alive.
+          void acquired.release().catch(() => undefined);
+          reject(cancellationError());
+          return;
+        }
+        resolve(acquired);
+      }, reject);
+    }) : await acquisition;
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
   if (signal?.aborted) {
-    // Failed cleanup remains in the daemon's existing retryable lease custody.
-    await lease.release().catch(() => undefined);
-    throw new DOMException('Iroh Home tunnel acquisition was cancelled', 'AbortError');
+    // Cancellation can win after resolution but before this continuation.
+    // Cleanup must not hold the cancelled caller on another native wait.
+    void lease.release().catch(() => undefined);
+    throw cancellationError();
   }
   return lease;
 }

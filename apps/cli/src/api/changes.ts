@@ -1,7 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { ChangeEntrySchema, ChangesResponseSchema, CursorGoneErrorSchema } from '@happier-dev/protocol/changes';
-import type { ChangeEntry, ChangesResponse, CursorGoneError } from '@happier-dev/protocol/changes';
-import axios from 'axios';
+import { buildChangesReadRequest, ChangeEntrySchema, ChangesResponseSchema, CursorGoneErrorSchema } from '@happier-dev/protocol/changes';
+import type { ChangeEntry, ChangeKind, ChangesResponse, CursorGoneError } from '@happier-dev/protocol/changes';
+import axios from '@/api/client/credentialAxios';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
@@ -52,7 +52,7 @@ export async function fetchChangesAccountId(opts: {
   return id;
 }
 
-export async function fetchChanges(opts: { token: string; after: number; limit?: number; sessionAccessSessionId?: string; signal?: AbortSignal }): Promise<{
+export async function fetchChanges(opts: { token: string; after: number; limit?: number; kinds?: readonly ChangeKind[]; sessionAccessSessionId?: string; signal?: AbortSignal }): Promise<{
   status: 'ok';
   response: ChangesResponse;
 } | {
@@ -65,20 +65,14 @@ export async function fetchChanges(opts: { token: string; after: number; limit?:
   const after = Number.isFinite(opts.after) && opts.after >= 0 ? Math.floor(opts.after) : 0;
   const limit = typeof opts.limit === 'number' && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 500) : DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT;
   const serverUrl = resolveServerHttpBaseUrl();
+  const read = buildChangesReadRequest({ after, limit, kinds: opts.kinds, sessionAccessSessionId: opts.sessionAccessSessionId });
 
   try {
-    const response = await axios.get(`${serverUrl}/v2/changes`, {
+    const response = await axios.get(`${serverUrl}${read.path}`, {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${opts.token}`,
-        'Content-Type': 'application/json',
-      },
-      params: {
-        after,
-        limit,
-        ...(opts.sessionAccessSessionId === undefined
-          ? {}
-          : { sessionAccessSessionId: opts.sessionAccessSessionId }),
+        ...read.headers,
       },
       timeout: 15_000,
       ...(opts.signal ? { signal: opts.signal } : {}),

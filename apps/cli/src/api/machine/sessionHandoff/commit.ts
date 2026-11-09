@@ -45,7 +45,6 @@ export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
     sourceStopState: 'stopped' | 'already_inactive';
   }>) => SessionHandoffStatus;
   buildSourceExportOnlyPrepareJobId: (handoffId: string) => string;
-  invalidateDirectPeerRouteCacheForHandoffMachines: (machineIds: readonly (string | undefined)[]) => void;
   invalidRequest: () => Readonly<{
     ok: false;
     errorCode: 'invalid_request';
@@ -64,7 +63,6 @@ export function createSessionHandoffCommitActionHandler(
     buildPrepareJobRecord,
     buildStartPendingStatus,
     buildSourceExportOnlyPrepareJobId,
-    invalidateDirectPeerRouteCacheForHandoffMachines,
     invalidRequest,
   } = params;
 
@@ -188,12 +186,6 @@ export function createSessionHandoffCommitActionHandler(
       }));
       status.jobId = jobId;
     }
-    invalidateDirectPeerRouteCacheForHandoffMachines([
-      persistedJob?.prepareTargetRequest?.sourceMachineId,
-      persistedJob?.prepareTargetRequest?.targetMachineId,
-      persistedSourceExport?.sourceMachineId,
-      persistedSourceExport?.targetMachineId,
-    ]);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceSeedTransferId(parsed.data.handoffId));
     await sourceExportStore.releaseTransferFiles(parsed.data.handoffId, { preserveRequesterSessionCustody: mode === 'target' });

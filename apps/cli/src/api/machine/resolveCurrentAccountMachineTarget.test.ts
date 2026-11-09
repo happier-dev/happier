@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const boundaries = vi.hoisted(() => ({ axiosGet: vi.fn(), axiosPost: vi.fn() }));
 
-vi.mock('axios', () => ({ default: { get: boundaries.axiosGet, post: boundaries.axiosPost } }));
+vi.mock('axios', () => ({ default: { defaults: {}, get: boundaries.axiosGet, post: boundaries.axiosPost } }));
 vi.mock('@/api/clientCompatibility/cliClientCompatibility', () => ({
   buildCurrentAccountStoredContentCompatibilityHttpHeaders: () => ({
     'X-Happier-Account-Content': 'current',
@@ -18,6 +18,8 @@ import { PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@hap
 import { createMachineContentCodec } from './machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { DEFAULT_MACHINE_ONLINE_GRACE_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import tweetnacl from 'tweetnacl';
 
 function currentMachine(id: string, host?: string) {
   return {
@@ -91,6 +93,98 @@ describe('resolveCurrentAccountMachineTarget', () => {
     await expect(listCurrentAccountMachines({ token: 'token', projection: 'hostFacts' }))
       .rejects.toMatchObject({ code: 'machine_inventory_unavailable' });
   });
+  it.each([{ machineIds: [] }, { machineIds: ['offline-one', 'offline-two'] }])('retains the typed no-active-Machine refusal and known ids: $machineIds', async ({ machineIds }) => {
+    boundaries.axiosGet.mockResolvedValue({ data: machineIds.map(id => ({ ...currentMachine(id), active: false })) });
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({
+      kind: 'unavailable', code: 'machine_offline', details: { machineIds },
+    });
+    expect(boundaries.axiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects the sole reachable Machine when another legacy heartbeat has expired', async () => {
+    const nowMs = Date.now();
+    boundaries.axiosGet.mockResolvedValue({ data: [
+      { ...currentMachine('expired'), activeAt: nowMs - DEFAULT_MACHINE_ONLINE_GRACE_MS - 1 },
+      { ...currentMachine('reachable'), activeAt: nowMs },
+    ] });
+
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({
+      kind: 'selected', target: { machineId: 'reachable' },
+    });
+  });
+
+  it('reports offline with known ids when every legacy heartbeat has expired', async () => {
+    const activeAt = Date.now() - DEFAULT_MACHINE_ONLINE_GRACE_MS - 1;
+    boundaries.axiosGet.mockResolvedValue({ data: ['expired-one', 'expired-two'].map(id => ({ ...currentMachine(id), activeAt })) });
+
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({
+      kind: 'unavailable', code: 'machine_offline', details: { machineIds: ['expired-one', 'expired-two'] },
+    });
+  });
+
+  it('retains Home-owned presence when the heartbeat timestamp is old', async () => {
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('home-present'),
+      activeAt: Date.now() - DEFAULT_MACHINE_ONLINE_GRACE_MS - 1, presenceProtocolVersion: 1 }] });
+
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({
+      kind: 'selected', target: { machineId: 'home-present' },
+    });
+  });
+
+  it('reads fresh host facts without opening unrelated Machine metadata', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
+    const secret = new Uint8Array(32).fill(7);
+    const codec = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionVariant: 'legacy', encryptionKey: secret });
+    const metadata = codec.encodeStored(MachinePublishedMetadataV1Schema.parse({ host: 'worker', platform: 'linux',
+      happyCliVersion: 'test', homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier' }));
+    const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage' as const,
+      resourceMode: 'e2ee' as const, accessState: 'ready' as 'ready' | 'key_pending' };
+    const selected = { ...currentMachine('selected'), revokedAt: null as number | null,
+      metadata, storageMode: 'e2ee', activeAt: Date.now(), access };
+    const fleet = Array.from({ length: 128 }, (_, index) => ({ ...selected, id: `unrelated-${index}` }));
+    let current = selected;
+    boundaries.axiosGet.mockImplementation(async (url: string) => ({ data: url.endsWith('/v1/machines/selected')
+      ? { machine: current } : [current, ...fleet] }));
+    // Cryptographic opening is the external boundary; parsing and access projection stay real.
+    const opens = vi.spyOn(tweetnacl.secretbox, 'open');
+    try {
+      const params = { token, credentials: { token, encryption: { type: 'legacy' as const, secret } },
+        projection: 'hostFacts' as const, machineIds: ['selected'] };
+      const ready = await listCurrentAccountMachines(params);
+      expect(opens).not.toHaveBeenCalled();
+      expect(boundaries.axiosGet).toHaveBeenCalledWith('https://api.example.test/v1/machines/selected',
+        expect.objectContaining({ headers: expect.objectContaining({ Accept: 'application/json;happier-machine-projection=host-facts' }) }));
+      expect(ready).toHaveLength(1);
+      expect(ready.find(machine => machine.id === 'selected')).toMatchObject({ label: 'selected', active: true,
+        activeAt: selected.activeAt, revokedAt: null, access });
+      current = { ...selected, active: false, revokedAt: 5,
+        access: { ...access, accessState: 'key_pending' } };
+      expect((await listCurrentAccountMachines(params)).find(machine => machine.id === 'selected')).toMatchObject({
+        active: false, revokedAt: 5, access: { accessState: 'key_pending' },
+      });
+      expect(opens).not.toHaveBeenCalled();
+      expect(await listCurrentAccountAdministrationMachines({ token: params.token, credentials: params.credentials }))
+        .toHaveLength(fleet.length);
+      expect(opens).not.toHaveBeenCalled();
+      // Ordinary label consumers retain their explicit content demand.
+      const named = await listCurrentAccountMachines({ token: params.token, credentials: params.credentials });
+      expect(opens).toHaveBeenCalledTimes(fleet.length);
+      expect(named.find(machine => machine.id === 'unrelated-0')).toMatchObject({ platform: 'linux', label: expect.stringContaining('worker') });
+      expect(boundaries.axiosGet.mock.calls.at(-1)?.[1].headers).not.toHaveProperty('Accept');
+    } finally { opens.mockRestore(); }
+  });
+  it('does not return host facts when the inventory read is cancelled', async () => {
+    const controller = new AbortController();
+    let finishRead: ((response: { data: ReturnType<typeof currentMachine>[] }) => void) | undefined;
+    boundaries.axiosGet.mockImplementation(() => new Promise(resolve => { finishRead = resolve; }));
+    const params = { token: 'token', projection: 'hostFacts' as const, signal: controller.signal };
+    const reading = listCurrentAccountMachines(params);
+    controller.abort();
+    finishRead!({ data: [currentMachine('selected')] });
+    await expect(reading).rejects.toMatchObject({ name: 'AbortError' });
+    expect(boundaries.axiosGet).toHaveBeenCalledWith('https://api.example.test/v1/machines',
+      expect.objectContaining({ signal: controller.signal }));
+  });
   it.each(['plain', 'e2ee'] as const)('projects platform facts through the canonical %s Machine content reader', async mode => {
     const secret = new Uint8Array(32).fill(7);
     const metadata = MachinePublishedMetadataV1Schema.parse({ host: 'worker', platform: 'linux', arch: 'arm64',
@@ -144,7 +238,7 @@ describe('resolveCurrentAccountMachineTarget', () => {
   it('projects the complete signed Account inventory without hiding revoked machines', async () => {
     boundaries.axiosGet.mockResolvedValue({ data: [
       currentMachine('machine-current', 'desk'),
-      { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current', managedMachineRef: null },
+      { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
     ] });
     await expect(listCurrentAccountMachines({ token: 'token-1' })).resolves.toEqual([
       { id: 'machine-current', label: 'desk', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, managedMachineRef: null },
@@ -202,8 +296,12 @@ describe('resolveCurrentAccountMachineTarget', () => {
   });
 
   it('requires an explicit choice when multiple current machines exist', async () => {
+    const activeAt = Date.now();
     boundaries.axiosGet.mockResolvedValue({
-      data: [currentMachine('machine-laptop', 'laptop'), currentMachine('machine-build', 'build-host')],
+      data: [
+        { ...currentMachine('machine-laptop', 'laptop'), activeAt },
+        { ...currentMachine('machine-build', 'build-host'), activeAt },
+      ],
     });
 
     await expect(resolveCurrentAccountMachineTarget({ token: 'token-1' })).resolves.toEqual({

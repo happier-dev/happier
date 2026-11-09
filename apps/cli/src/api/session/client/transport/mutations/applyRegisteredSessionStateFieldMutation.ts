@@ -10,6 +10,8 @@ import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sess
 import { SessionContextIntentV1Schema, migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { SessionVoicePreferenceV1Schema } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { z } from 'zod/mini';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { SessionTurnProgressV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 
 import type { Metadata } from '@/api/types';
 import { mergeUsageLimitRecoveryFieldIntoMetadata } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryFieldIntoMetadata';
@@ -36,6 +38,7 @@ export function resolveRegisteredSessionStateFieldMutationSettlement(
 export function applyRegisteredSessionStateFieldMutationToMetadata(
     metadata: Metadata,
     mutation: RegisteredSessionStateFieldMutationV1,
+    baseMetadata?: Record<string, unknown>,
 ): Metadata {
     if (mutation.sessionRoleEdit !== undefined) {
         if (mutation.fieldId !== 'intent.sessionRoles' || mutation.op.kind !== 'set') throw new Error('Invalid Role edit field');
@@ -62,6 +65,7 @@ export function applyRegisteredSessionStateFieldMutationToMetadata(
     let value = mutation.op.value;
     if (mutation.fieldId === 'intent.context') value = SessionContextIntentV1Schema.parse(value);
     if (mutation.fieldId === 'intent.memoryEnabled') value = z.boolean().parse(value);
+    if (mutation.fieldId === 'intent.approvalProfileId') value = z.nullable(ApprovalProfileIdV1Schema).parse(value);
     if (mutation.fieldId === 'intent.voicePreference') value = z.nullable(SessionVoicePreferenceV1Schema).parse(value);
 
     if (mutation.fieldId === 'intent.role') {
@@ -81,6 +85,10 @@ export function applyRegisteredSessionStateFieldMutationToMetadata(
         value = SessionStateWorkStateValueSchema.parse(value);
     }
 
+    if (mutation.fieldId === 'runtime.turnProgress') {
+        value = SessionTurnProgressV1Schema.parse(value);
+    }
+
     if (mutation.fieldId === 'runtime.activity') {
         value = SessionRuntimeActivitySnapshotSchema.parse(value);
     }
@@ -89,7 +97,7 @@ export function applyRegisteredSessionStateFieldMutationToMetadata(
       value = SessionStateUsageLimitRecoveryValueSchema.parse(value);
       return mergeUsageLimitRecoveryFieldIntoMetadata({
         latestMetadata: metadata,
-        baseMetadata: metadata,
+        ...(baseMetadata ? { baseMetadata } : {}),
         candidateMetadata: { sessionUsageLimitRecoveryV1: value },
       }) as Metadata;
     }

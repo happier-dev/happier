@@ -31,11 +31,14 @@ export function createSessionClientExecutionRunService(
     const readExecutionRunServiceContext = (): Readonly<{
         token: string;
         sessionId: string;
+        authorityCeiling: 'account_automation';
     }> & SessionStoredContentCryptoContext => {
         return {
             token: params.token,
             sessionId: params.sessionId,
             ...params.getStoredContentCryptoContext(),
+            // This service runs host/Agent work, including automatic approval reviews.
+            authorityCeiling: 'account_automation',
         };
     };
 
@@ -70,7 +73,7 @@ export function createSessionClientExecutionRunService(
                 ...readExecutionRunServiceContext(),
                 request,
             })),
-        wait: async (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+        wait: async (request: unknown, options?: Parameters<NonNullable<HappyMcpExecutionRunService['wait']>>[1]) => {
             const rawTimeoutSeconds = readUnknownRecordProperty(request, 'timeoutSeconds');
             const condition = readUnknownRecordProperty(request, 'condition');
             const after = readUnknownRecordProperty(request, 'after');
@@ -82,6 +85,7 @@ export function createSessionClientExecutionRunService(
                 ...(condition === undefined ? {} : { condition: ExecutionRunWaitConditionSchema.parse(condition) }),
                 ...(after === undefined ? {} : { after: ExecutionRunGetResponseSchema.parse(after) }),
                 ...(options?.signal ? { signal: options.signal } : {}),
+                ...(options?.onSnapshot ? { onSnapshot: options.onSnapshot } : {}),
             }));
         },
     } as const;

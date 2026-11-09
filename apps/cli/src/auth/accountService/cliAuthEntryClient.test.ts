@@ -5,6 +5,18 @@ import { fetchCliHomeAuthEntry } from './cliAuthEntryClient';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('fetchCliHomeAuthEntry', () => {
+  it('preserves a typed redirect refusal instead of reporting discovery unavailable', async () => {
+    let redirectMode: RequestRedirect | undefined;
+    vi.stubGlobal('fetch', async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      redirectMode = init?.redirect;
+      return new Response(null, { status: 302, headers: { Location: 'https://other.example.test/?secret=private' } });
+    });
+    await expect(fetchCliHomeAuthEntry({ serverUrl: 'https://accounts.example.test' })).rejects.toMatchObject({
+      code: 'credential_request_redirect_refused', retryable: false, status: 302,
+    });
+    expect(redirectMode).toBe('manual');
+  });
+
   it('propagates caller cancellation instead of reporting the Account Service unavailable', async () => {
     const caller = new AbortController();
     let observedSignal: AbortSignal | undefined;

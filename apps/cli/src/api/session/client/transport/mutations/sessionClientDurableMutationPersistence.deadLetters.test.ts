@@ -1,8 +1,15 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Inject read faults only at the filesystem boundary; persistence stays real.
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 const { configurationMock } = vi.hoisted(() => ({
     configurationMock: {
@@ -18,6 +25,9 @@ import {
     appendSessionClientDurableMutationDeadLetters,
     loadSessionClientDurableMutationDeadLetters,
     recoverAuthoritativeSessionClientDurableMutationDeadLetters,
+    loadSessionClientDurableMutationOutbox,
+    resolveSessionClientDurableMutationDeadLetterPath,
+    resolveSessionClientDurableMutationOutboxPath,
 } from './sessionClientDurableMutationPersistence';
 import type { VoiceAgentTranscriptTurnMutationV1 } from './sessionClientDurableMutationTypes';
 
@@ -58,6 +68,47 @@ describe('durable mutation dead-letter persistence', () => {
 
     afterEach(async () => {
         await rm(configurationMock.activeServerDir, { recursive: true, force: true });
+    });
+
+    it('preserves an unread queue and admits it after filesystem access returns', async () => {
+        const queuePath = resolveSessionClientDurableMutationOutboxPath('session-1');
+        await appendSessionClientDurableMutationDeadLetters('session-1', [{
+            v: 1, kind: 'outbox_file', sessionId: 'session-1', reason: 'evidence', deadLetteredAt: 100,
+        }]);
+        const bytes = JSON.stringify({ v: 1, mutations: [] });
+        await writeFile(queuePath, bytes);
+        const error = Object.assign(new Error('journal read failed'), { code: 'EBUSY' });
+        const spy = vi.spyOn(fsPromises, 'readFile').mockRejectedValueOnce(error);
+        try {
+            await expect(loadSessionClientDurableMutationOutbox('session-1')).rejects.toBe(error);
+            await expect(readFile(queuePath, 'utf8')).resolves.toBe(bytes);
+            await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([]);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it.each(['dead-letter', 'prerequisite-queue'] as const)('preserves dead letters when the %s read fails during append', async (phase) => {
+        const oldEntry = {
+            v: 1 as const, kind: 'outbox_file' as const, sessionId: 'session-1',
+            reason: 'original', deadLetteredAt: 100, payloadSummary: { evidence: 'retained bytes' },
+        };
+        await appendSessionClientDurableMutationDeadLetters('session-1', [oldEntry]);
+        const filePath = resolveSessionClientDurableMutationDeadLetterPath('session-1');
+        const bytes = await readFile(filePath, 'utf8');
+        const error = Object.assign(new Error('journal read failed'), { code: 'EMFILE' });
+        const spy = vi.spyOn(fsPromises, 'readFile');
+        if (phase === 'prerequisite-queue') spy.mockResolvedValueOnce(bytes);
+        spy.mockRejectedValueOnce(error);
+        const newEntry = { ...oldEntry, reason: 'new', deadLetteredAt: 200 };
+        try {
+            await expect(appendSessionClientDurableMutationDeadLetters('session-1', [newEntry])).rejects.toBe(error);
+            await expect(readFile(filePath, 'utf8')).resolves.toBe(bytes);
+            await appendSessionClientDurableMutationDeadLetters('session-1', [newEntry]);
+            await expect(loadSessionClientDurableMutationDeadLetters('session-1')).resolves.toEqual([oldEntry, newEntry]);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     it('appends terminal evidence idempotently by session, mutation kind, and mutation id', async () => {

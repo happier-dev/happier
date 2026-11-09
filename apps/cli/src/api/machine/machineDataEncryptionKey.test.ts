@@ -19,10 +19,27 @@ describe('published Machine mode authority', () => {
     expect(codec.decodeStored(fixture.machine.metadata)).toEqual(predecessor.openedMetadata);
     expect(codec.decodeStored(fixture.machine.daemonState)).toEqual(predecessor.openedDaemonState);
   });
-  it('reads Plain under persisted Account mode even if retained credentials contain keys', () => {
+  it('reads Plain under persisted Account mode when this computer keeps its keys only as history', () => {
     expect(resolvePublishedMachineEncryptionContext({
-      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32) }, accountE2eeCustody: 'historical' },
       machineId: 'plain', expectedAccountMode: 'plain', publishedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    })).toEqual({ encryptionMode: 'plain' });
+  });
+
+  it('refuses a Home-reported Plain own Machine while this computer holds active Account keys', () => {
+    // Own rows carry the Account mode, so the row's plain passes the same admission as the Account reader.
+    const token = `h.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.s`;
+    const credentials = { token, encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const own = { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' };
+    for (const access of [undefined, own]) {
+      expect(() => resolvePublishedMachineEncryptionContext({
+        credentials, machineId: 'own', expectedAccountMode: 'plain', access, publishedDataEncryptionKey: null,
+      })).toThrow(expect.objectContaining({ code: 'account_mode_downgrade_unverified' }));
+    }
+    // A foreign custodian's resource mode is that custodian's, not this Account's.
+    expect(resolvePublishedMachineEncryptionContext({
+      credentials, machineId: 'shared', expectedAccountMode: 'e2ee', publishedDataEncryptionKey: null,
+      access: { ...own, custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' },
     })).toEqual({ encryptionMode: 'plain' });
   });
 

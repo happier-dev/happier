@@ -1,9 +1,8 @@
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { logger } from '@/ui/logger';
-import type { ManagedConnectionState, ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
+import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import type { Update } from '../../../types';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { catchUpSessionMessagesAfterSeq } from '../../sessionMessageCatchUp';
 import {
     isV2ChangesSyncEnabled,
@@ -19,29 +18,18 @@ import type { SessionStoredContentCryptoContext } from '@/session/transport/encr
 
 export type SessionClientRecoveryRuntime = Readonly<{
     catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-    scheduleNextStartupMessageCatchUpRetry: () => void;
-    clearStartupMessageCatchUpRetryTimer: () => void;
     syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' | 'live' }) => Promise<void>;
     getAccountId: () => Promise<string | null>;
 }>;
 
 export function createSessionClientRecoveryRuntime(
     params: Readonly<{
-        startupMessageCatchUpRetryDelaysMs: readonly number[];
         token: string;
         serverUrl?: string;
         accountChangesEnabled?: boolean;
         sessionId: string;
         getClosed: () => boolean;
         getSessionConnectionSupervisor: () => ManagedConnectionSupervisor | null;
-        getCurrentConnectionState: () => ManagedConnectionState;
-        getStartedByDaemonProcess: () => boolean;
-        getMetadataStartedBy: () => string | null;
-        getMetadataStartedFromDaemon: () => boolean | null;
-        getStartupMessageCatchUpRetryIndex: () => number;
-        setStartupMessageCatchUpRetryIndex: (value: number) => void;
-        getStartupMessageCatchUpInitialAfterSeq: () => number;
-        getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => boolean;
         getLastObservedMessageSeq: () => number;
         handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
         syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<boolean>;
@@ -57,7 +45,6 @@ export function createSessionClientRecoveryRuntime(
     let changesSyncInFlight: Promise<void> | null = null;
     let liveChangesPending = false;
     const sessionChangesCursorByAccountId = new Map<string, number>();
-    let startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null;
     const catchUpSessionMessages = async (catchUpRequest: SessionCatchUpRequest): Promise<void> => {
         const request = () => runWithServerHttpBaseUrl(serverUrl, () => catchUpSessionMessagesAfterSeq({
             ...(params.mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx: params.ctx }),
@@ -79,68 +66,6 @@ export function createSessionClientRecoveryRuntime(
             requireOnline: false,
             request,
         });
-    };
-
-    const shouldRunStartupTranscriptCatchUp = (): boolean =>
-        params.getStartedByDaemonProcess()
-        || params.getMetadataStartedBy() === 'daemon'
-        || params.getMetadataStartedFromDaemon() === true;
-
-    const clearStartupMessageCatchUpRetryTimer = (): void => {
-        if (!startupMessageCatchUpRetryTimer) return;
-        clearTimeout(startupMessageCatchUpRetryTimer);
-        startupMessageCatchUpRetryTimer = null;
-    };
-
-    const scheduleNextStartupMessageCatchUpRetry = (): void => {
-        if (params.getClosed()) return;
-        if (startupMessageCatchUpRetryTimer) return;
-        if (!shouldRunStartupTranscriptCatchUp()) return;
-        if (params.getCurrentConnectionState()?.phase === 'auth_failed') return;
-
-        const retryIndex = params.getStartupMessageCatchUpRetryIndex();
-        const delayMs = params.startupMessageCatchUpRetryDelaysMs[retryIndex];
-        if (typeof delayMs !== 'number') return;
-
-        logger.debug('[API] Scheduling startup transcript catch-up retry', {
-            delayMs,
-            retryIndex,
-            startupMessageCatchUpInitialAfterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
-            startupMessageCatchUpInitialAfterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
-            lastObservedMessageSeq: params.getLastObservedMessageSeq(),
-        });
-        startupMessageCatchUpRetryTimer = setTimeout(() => {
-            startupMessageCatchUpRetryTimer = null;
-            if (params.getClosed()) return;
-
-            params.setStartupMessageCatchUpRetryIndex(retryIndex + 1);
-            logger.debug('[API] Running startup transcript catch-up retry', {
-                retryIndex: retryIndex + 1,
-                afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
-                afterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
-            });
-            void catchUpSessionMessages({
-                afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
-            })
-                .then(() => true, (error) => {
-                    if (isAuthenticationError(error)) {
-                        logger.debug('[API] Startup transcript catch-up retry failed with terminal auth', {
-                            error: serializeAxiosErrorForLog(error),
-                        });
-                        return false;
-                    }
-                    logger.debug('[API] Startup transcript catch-up retry failed (non-fatal)', {
-                        error: serializeAxiosErrorForLog(error),
-                    });
-                    return true;
-                })
-                .then((shouldContinue) => {
-                    if (shouldContinue === true) {
-                        scheduleNextStartupMessageCatchUpRetry();
-                    }
-                });
-        }, delayMs);
-        startupMessageCatchUpRetryTimer.unref?.();
     };
 
     const getAccountId = async (): Promise<string | null> => {
@@ -281,8 +206,6 @@ export function createSessionClientRecoveryRuntime(
 
     return {
         catchUpSessionMessages,
-        scheduleNextStartupMessageCatchUpRetry,
-        clearStartupMessageCatchUpRetryTimer,
         syncChangesOnConnect,
         getAccountId,
     };

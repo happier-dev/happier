@@ -1,6 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { randomBytes } from 'node:crypto';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import tweetnacl from 'tweetnacl';
 import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
@@ -293,7 +293,7 @@ export async function approveTerminalAuthRequest(params: Readonly<{
         throw new Error('The selected Home carrier is not authorized by the saved Home descriptor. No approval was sent.');
       }
       const snapshot = await observeServerFeaturesSnapshot({ serverUrl: runtimeOrigin, token: creds.token, ...(params.signal ? { signal: params.signal } : {}) });
-      verifyTerminalAuthEnrollmentRuntime({ target: params.target, runtime: acquired.runtime, snapshot });
+      verifyTerminalAuthEnrollmentRuntime({ target: params.target, runtime: acquired.runtime, snapshot, phase: 'controller_approval' });
     }
     if (params.target?.authority === 'manual_url' && targetCredentials?.observedHomeServerIdentityId) {
       const authenticatedSnapshot = await observeServerFeaturesSnapshot({ serverUrl: runtimeOrigin, token: creds.token, ...(params.signal ? { signal: params.signal } : {}) });

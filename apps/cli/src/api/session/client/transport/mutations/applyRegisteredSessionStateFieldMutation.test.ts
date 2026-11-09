@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY, createSessionOwnerMetadataV1,
+    projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1,
+    SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import { deterministicStringify } from '@/utils/deterministicJson';
@@ -71,6 +73,44 @@ const baseMetadata: Metadata = {
 };
 
 describe('applyRegisteredSessionStateFieldMutationToMetadata', () => {
+    it('validates retry progress custody when replaying the runtime outbox', () => {
+        const progress = { turnId: 'turn-1', phase: 'retrying', attempt: 2, reason: 'connection_failed' };
+        const payload = { ...mutation({ kind: 'set', value: progress }, 'runtime.turnProgress'), source: 'runtime' as const };
+        const queued = { kind: 'registered_session_state_field', payload,
+            mutationId: payload.mutationId, attempts: 0, createdAt: 1 };
+        expect(parseRuntimeSessionClientDurableMutation(queued, 'sess-1').mutations).toHaveLength(1);
+        expect(parseRuntimeSessionClientDurableMutation({ ...queued, payload: {
+            ...payload, op: { kind: 'clear' },
+        } }, 'sess-1').mutations).toHaveLength(1);
+        for (const invalid of [{ ...progress, message: 'private' }, { ...progress, attempt: 0 }]) {
+            const result = parseRuntimeSessionClientDurableMutation({ ...queued, payload: {
+                ...payload, op: { kind: 'set', value: invalid },
+            } }, 'sess-1');
+            expect(result.mutations).toHaveLength(0);
+            expect(result.deadLetters).toHaveLength(1);
+        }
+    });
+    it('admits strict retry progress through registered shared metadata and clears it', () => {
+        const progress = { turnId: 'turn-1', phase: 'retrying', attempt: 2, reason: 'connection_failed' };
+        const updated = applyRegisteredSessionStateFieldMutationToMetadata(baseMetadata,
+            mutation({ kind: 'set', value: progress }, 'runtime.turnProgress'));
+        expect(updated).toEqual({ ...baseMetadata, sessionTurnProgressV1: progress });
+        const owner = createSessionOwnerMetadataV1({ metadata: updated });
+        if (!owner.ok) throw new Error('Registered retry metadata rejected');
+        expect(createSessionOwnerMetadataV1({ metadata: baseMetadata })).toEqual(owner);
+        const shared = SessionSharedMetadataV1Schema.parse(projectSessionSharedMetadataV1({ metadata: updated }));
+        expect(shared.sessionTurnProgressV1).toEqual(progress);
+        expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: owner.ownerMetadata }))
+            .toMatchObject({ sessionTurnProgressV1: progress });
+        expect(applyRegisteredSessionStateFieldMutationToMetadata(updated,
+            mutation({ kind: 'clear' }, 'runtime.turnProgress'))).toEqual(baseMetadata);
+        for (const invalid of [{ ...progress, message: 'private' }, { ...progress, attempt: 0 },
+            { ...progress, attempt: 1.5 }, { ...progress, attempt: Number.MAX_SAFE_INTEGER + 1 },
+            { ...progress, phase: 'working' }, { ...progress, reason: 'provider_message' }]) {
+            expect(() => applyRegisteredSessionStateFieldMutationToMetadata(baseMetadata,
+                mutation({ kind: 'set', value: invalid }, 'runtime.turnProgress'))).toThrow();
+        }
+    });
     it('requires the reviewed revision for durable Session voice preference mutations', () => {
         expect(() => createRegisteredSessionStateFieldMutation({ sessionId: 'sess-1', fieldId: 'intent.voicePreference',
             source: 'ui', op: { kind: 'set', value: null } })).toThrow('reviewed Session metadata revision');

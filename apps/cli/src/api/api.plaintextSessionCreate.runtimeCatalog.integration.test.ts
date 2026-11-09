@@ -12,9 +12,15 @@ import {
 import { ApiClient } from './api';
 import type { Metadata } from './types';
 import { decodeBase64, decrypt } from './encryption';
+import { openResourceDataKey } from './encryption/resourceDataKey';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { resolveSessionCreateEncryptionMode } from './session/resolveSessionCreateEncryptionMode';
+import { commitDaemonLaunchSession } from '@/daemon/spawn/commitDaemonLaunchSession';
+import { getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
+import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 const mockPost = vi.fn();
@@ -78,6 +84,58 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       },
     });
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { code: 'ECONNABORTED', reason: 'timeout', retryable: true },
+    { code: 'ECONNREFUSED', reason: 'network', retryable: true },
+    { status: 503, reason: 'http_error', retryable: true },
+    { status: 400, reason: 'http_error', retryable: false },
+    { status: 200, reason: 'invalid_response', retryable: false },
+  ])('preserves a payload-free currentness refusal through real Session commit ($reason/$code/$status)', async failure => {
+    vi.stubGlobal('fetch', vi.fn(async () => serverFeaturesResponse({ encryption: {
+      storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain',
+    } })));
+    if ('code' in failure) {
+      mockGet.mockRejectedValue(Object.assign(new Error('Currentness request failed'), { code: failure.code }));
+    } else {
+      mockGet.mockResolvedValue({ status: failure.status, data: {} });
+    }
+    const credentials = { token: '', encryption: null };
+    const result = await commitDaemonLaunchSession({
+      api: new ApiClient(credentials), credentials, options: { directory: '/repo' },
+      directory: '/repo', accountSettings: {},
+    });
+    const detail = {
+      kind: 'session_creation_currentness_unavailable', code: 'currentness_unavailable',
+      reason: failure.reason, retryable: failure.retryable,
+      ...('status' in failure && failure.status !== 200 ? { statusCode: failure.status } : {}),
+    };
+    expect(result).toMatchObject({ ok: false, result: {
+      type: 'error', errorCode: 'SPAWN_FAILED', errorDetail: detail,
+    } });
+    if (result.ok) throw new Error('Currentness refusal must not create a Session');
+    expect(normalizeSpawnSessionErrorDetail(result.result.errorDetail)).toEqual(detail);
+    const actionResult = projectSessionSpawnFailure(result.result);
+    const { kind: _kind, code: _code, ...currentnessFailure } = detail;
+    expect(SessionSpawnNewResultV1Schema.parse(actionResult)).toMatchObject({ type: 'error',
+      retryable: failure.retryable, launchError: { code: 'currentness_unavailable', currentnessFailure } });
+    // A non-retryable refusal settles here, and even retryable reads do not
+    // acquire a second retry owner or send a Session-create mutation.
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('retains the currentness timeout at the tagged HTTP creation boundary', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => serverFeaturesResponse({ encryption: {
+      storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain',
+    } })));
+    mockGet.mockRejectedValue(Object.assign(new Error('Currentness request timed out'), { code: 'ECONNABORTED' }));
+    await expect(getOrCreateSessionByTag({
+      credentials: { token: '', encryption: null }, tag: 'currentness-refusal',
+      metadata: { path: '/repo', host: 'test-host' }, agentState: null,
+    })).rejects.toMatchObject({ code: 'account_encryption_currentness_unavailable', cause: { code: 'ECONNABORTED' } });
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it.each([200, 503])('overlaps independent creation preflights without bypassing Account admission (%s)', async status => {
@@ -554,6 +612,8 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
         sessionCreationTag,
         recipe: {
           execution: { machineId: 'machine-1', directory: { kind: 'path', path: directory } },
+          managedCreation: { homeId: 'home-1', managedId: 'managed-1',
+            controller: { machineId: 'controller-1', installationId: 'installation-1' } },
           organization: { folderId: null, tagIds: [] },
           agentTarget: {
             kind: 'agent',
@@ -650,6 +710,7 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       code: 'creation_conflict',
     });
     expect(mockPost).toHaveBeenCalledTimes(lostReceipt ? 2 : 1);
+    expect(mockPost.mock.calls[0]?.[1].managedCreation).toEqual(admittedCorrespondence.recipe.managedCreation);
   });
 
   it('creates encrypted fresh sessions on layout 1 without exposing owner metadata in the shared envelope', async () => {
@@ -696,9 +757,11 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
 
     mockPost.mockImplementation(async (_url: string, body: any) => {
       expect(body.metadataLayoutVersion).toBe(1);
+      const resourceKey = await openResourceDataKey({ credentials: credential, mode: 'e2ee', dataEncryptionKey: body.dataEncryptionKey });
+      if (resourceKey.mode !== 'e2ee') throw new Error('Expected the submitted Session recipient key envelope to open');
       const sharedMetadata = decrypt(
-        credential.encryption.secret,
-        'legacy',
+        resourceKey.dataKey,
+        'dataKey',
         decodeBase64(body.sharedMetadata.ciphertext),
       );
       expect(sharedMetadata).toMatchObject({
@@ -710,7 +773,7 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       const display = SessionDisplayProjectionV1Schema.parse(body.displayProjectionV1);
       expect(display).toMatchObject({ v: 1, sourceMetadataVersion: 0, metadataLayoutVersion: 1 });
       const sharedDisplay = openSessionSharedDisplayEnvelopeV1Sync({ sessionMode: 'e2ee', envelope: display.shared,
-        decryptPayload: value => decrypt(credential.encryption.secret, 'legacy', decodeBase64(value)) });
+        decryptPayload: value => decrypt(resourceKey.dataKey, 'dataKey', decodeBase64(value)) });
       const ownerDisplay = openSessionOwnerDisplayEnvelopeV1({ accountMode: 'e2ee', envelope: display.owner,
         material: { type: 'legacy', secret: credential.encryption.secret } });
       expect(sharedDisplay.ok).toBe(true);
@@ -719,8 +782,8 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       expect(JSON.stringify(sharedDisplay)).not.toContain('codex-private');
       expect(JSON.stringify(ownerDisplay)).toContain('/private/e2ee');
       expect(decrypt(
-        credential.encryption.secret,
-        'legacy',
+        resourceKey.dataKey,
+        'dataKey',
         decodeBase64(body.agentState),
       )).toMatchObject({
         completedRequests: {
@@ -745,7 +808,7 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
             metadataVersion: 1,
             agentState: body.agentState,
             agentStateVersion: 1,
-            dataEncryptionKey: null,
+            dataEncryptionKey: body.dataEncryptionKey,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },

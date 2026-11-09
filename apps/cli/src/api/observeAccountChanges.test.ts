@@ -24,7 +24,10 @@ const wire = vi.hoisted(() => {
   return { socket, emit, post: vi.fn(), io: vi.fn(() => socket) };
 });
 vi.mock('socket.io-client', () => ({ io: wire.io }));
-vi.mock('axios', () => ({ default: { post: wire.post } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, post: wire.post } };
+});
 
 import { createWorkflowRunStorageClient, type WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
 
@@ -34,6 +37,7 @@ describe('Account-fed Workflow wait through the existing CLI transport', () => {
     vi.useFakeTimers();
     const runId = '11111111-1111-4111-8111-111111111111';
     const run = WorkflowRunSummaryV1Schema.parse({
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, ownerAccountId: 'account-a', sourceArtifactId: null, visibleTeamId: null,
       origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'offline-machine',
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
@@ -44,7 +48,7 @@ describe('Account-fed Workflow wait through the existing CLI transport', () => {
     const operations: string[] = [];
     wire.post.mockImplementation(async (_url: string, body: Readonly<{ operation: string }>) => {
       operations.push(body.operation);
-      return { data: { observation: paused ? 'paused' : 'waiting', ...(paused ? { matchedCondition: 'paused' } : {}),
+      return { status: 200, data: { observation: paused ? 'paused' : 'waiting', ...(paused ? { matchedCondition: 'paused' } : {}),
         run: { ...run, state: paused ? 'paused' : 'running', attentionRequired: false } } };
     });
     const storage = createWorkflowRunStorageClient({ token: 'account-token', serverHttpBaseUrl: 'https://exact-home.test' });
@@ -82,13 +86,14 @@ describe('Account-fed Workflow wait through the existing CLI transport', () => {
     try {
       const runId = '11111111-1111-4111-8111-111111111111';
       let run = WorkflowRunSummaryV1Schema.parse({
+        failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: runId, ownerAccountId: 'account-a', sourceArtifactId: null, visibleTeamId: null,
         origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'offline-machine',
         attentionRequired: false, workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
         createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
       });
-      wire.post.mockImplementation(async () => ({ data: {
+      wire.post.mockImplementation(async () => ({ status: 200, data: {
         observation: run.state === 'succeeded' ? 'terminal' : 'waiting',
         ...(run.state === 'succeeded' ? { matchedCondition: 'terminal' } : {}), run,
       } }));

@@ -1387,16 +1387,21 @@ export function createAccountArtifactStore(params: Readonly<{
     },
   };
   const readListBodies = async (items: readonly AccountArtifactHeader[], signal?: AbortSignal,
-    readAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>): Promise<readonly AccountArtifactHeader[]> => {
+    readAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<readonly AccountArtifactHeader[]> => {
     signal?.throwIfAborted();
     if (items.length === 0) return items;
     const startedAt = performance.now();
     const input = ArtifactReadBatchInputV1Schema.parse({ artifactIds: items.map(item => item.artifactId) });
-    const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/read`, input, accessConfig(signal));
+    const path = '/v1/artifacts/read';
+    const config = { headers: authorizationHeaders
+      ? await authorizationHeaders({ method: 'POST', path, body: input }) : headers(),
+      ...(signal ? { signal } : {}), validateStatus: () => true };
+    const response = await axios.post(`${resolveServerHttpBaseUrl()}${path}`, input, config);
     signal?.throwIfAborted();
     const httpMs = performance.now() - startedAt;
     if (response.status < 200 || response.status >= 300) {
-      throw artifactReadHttpError(response.status);
+      throw artifactReadHttpError(response.status, response.data, authorizationHeaders ? config.headers : undefined);
     }
     const parsed = ArtifactReadBatchResponseV1Schema.safeParse(response.data);
     if (!parsed.success || parsed.data.items.length !== items.length
@@ -1413,27 +1418,29 @@ export function createAccountArtifactStore(params: Readonly<{
     // Keep refused/unopenable identities visible without content so consumers can report incomplete coverage.
     return items.map(item => byId.get(item.artifactId) ?? item);
   };
-  async function list(options?: ArtifactListSelectionOptionsV1) {
+  async function list(options?: ArtifactListSelectionOptionsV1,
+    readAdmittedAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders) {
     let accountMode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
-    const readAccountMode = () => accountMode ??= params.getAccountEncryptionMode({ usage: 'identity', signal: options?.signal });
+    const readListAccountMode = () => accountMode ??= readAdmittedAccountMode?.()
+      ?? readAccountMode({ signal: options?.signal, authorizationHeaders });
     const result = await listArtifactHeadersV1({ options,
-      readPage: page => store.list(page, readAccountMode), encodeCursor: encodeAccountArtifactListCursor,
+      readPage: page => store.list(page, readListAccountMode, authorizationHeaders), encodeCursor: encodeAccountArtifactListCursor,
       ...((options?.kind || options?.kinds || options?.headerFilter || options?.approvalStates || options?.approvalSessionIds) && options.includeBody
-        ? { readBodies: (items: readonly AccountArtifactHeader[]) => readListBodies(items, options.signal, readAccountMode) } : {}) });
+        ? { readBodies: (items: readonly AccountArtifactHeader[]) => readListBodies(items, options.signal, readListAccountMode, authorizationHeaders) } : {}) });
     options?.signal?.throwIfAborted();
     if (accountMode && result.items.some(item => item.access === 'owner' && Object.hasOwn(item, 'body'))) {
       const mode = await accountMode;
       if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
-      await assertOwnerAccountMode({ access: 'owner', encryptionMode: mode }, undefined, { signal: options?.signal });
+      await assertOwnerAccountMode({ access: 'owner', encryptionMode: mode }, undefined, { signal: options?.signal, authorizationHeaders });
     }
     options?.signal?.throwIfAborted();
     return result;
   }
-  const backfillQueryHints = async (options: Readonly<{ signal?: AbortSignal; isCurrent(): Promise<boolean> }>): Promise<ArtifactQueryHintBackfillResult> => {
-    const current = async () => !options.signal?.aborted && await options.isCurrent() && !options.signal?.aborted;
+  const backfillQueryHints = async (options: Readonly<{ signal: AbortSignal }>): Promise<ArtifactQueryHintBackfillResult> => {
     let phase: 'read_unavailable' | 'write_unavailable' = 'read_unavailable';
     try {
-      if (!await current()) return { status: 'retired' };
+      if (options.signal.aborted) return { status: 'retired' };
       if (!await supportsQueryHints()) return { status: 'unsupported' };
       const ownerAccountId = contentAccountId;
       if (!ownerAccountId) return { status: 'unavailable', reason: phase };
@@ -1442,11 +1449,11 @@ export function createAccountArtifactStore(params: Readonly<{
       let mode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
       const readAccountMode = () => mode ??= params.getAccountEncryptionMode({ usage: 'identity', signal: options.signal });
       do {
-        if (!await current()) return { status: 'retired' };
+        if (options.signal.aborted) return { status: 'retired' };
         const page = await fetchHeaderPage({ limit: 500, unclassified: true, ownerAccountId, cursor, signal: options.signal });
         if (!page.kindCoverage) return { status: 'unavailable', reason: phase };
         const items = await projectHeaderRows(page.rows, { signal: options.signal }, { accountModeMs: 0, codecMs: 0 }, readAccountMode);
-        if (!await current()) return { status: 'retired' };
+        if (options.signal.aborted) return { status: 'retired' };
         for (const item of items) {
           if (item.access !== 'owner' || item.ownerAccountId !== ownerAccountId) continue;
           const kind = tryDeriveArtifactStoredKindV1(item.header);
@@ -1456,24 +1463,24 @@ export function createAccountArtifactStore(params: Readonly<{
         cursor = page.nextCursor;
       } while (cursor);
       for (const input of frameArtifactKindWriteBatchesV1(labels)) {
-        if (!await current()) return { status: 'retired' };
+        if (options.signal.aborted) return { status: 'retired' };
         if (!await supportsQueryHints()) return { status: 'unsupported' };
-        if (!await current()) return { status: 'retired' };
+        if (options.signal.aborted) return { status: 'retired' };
         phase = 'write_unavailable';
         const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/query-hints/batch`, input, accessConfig(options.signal));
-        if (!await current()) return { status: 'retired' };
+        if (options.signal.aborted) return { status: 'retired' };
         const result = ArtifactKindWriteBatchResponseV1Schema.safeParse(response.data);
         if (response.status < 200 || response.status >= 300 || !result.success || result.data.items.length !== input.items.length
           || result.data.items.some((item, index) => item.artifactId !== input.items[index]?.artifactId)) return { status: 'unavailable', reason: phase };
         if (result.data.items.some(item => !item.success)) return { status: 'unavailable', reason: 'write_refused' };
       }
       phase = 'read_unavailable';
-      if (!await current()) return { status: 'retired' };
+      if (options.signal.aborted) return { status: 'retired' };
       const probe = await fetchHeaderPage({ limit: 1, kinds: [], ownerAccountId, signal: options.signal });
-      if (!await current()) return { status: 'retired' };
+      if (options.signal.aborted) return { status: 'retired' };
       return probe.kindCoverage ?? { status: 'unavailable', reason: phase };
     } catch {
-      return !await current().catch(() => false) ? { status: 'retired' } : { status: 'unavailable', reason: phase };
+      return options.signal.aborted ? { status: 'retired' } : { status: 'unavailable', reason: phase };
     }
   };
   return {

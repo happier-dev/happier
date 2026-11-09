@@ -151,7 +151,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
         api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features: FeaturesResponseSchema.parse({
             features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_machine_reboot' } },
         }) }));
-        const client = api.machineSyncClient({ id: 'machine', encryptionMode: 'plain',
+        const client = await api.machineSyncClient({ id: 'machine', encryptionMode: 'plain',
             metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'dev', homeDir: '/users/worker',
                 happyHomeDir: '/users/worker/.happier', adminAccess: { version: 1, mode: 'ask', administratorUsername: 'operator' } },
             metadataVersion: 1, daemonState: { status: 'running' }, daemonStateVersion: 0,

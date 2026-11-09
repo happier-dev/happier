@@ -24,7 +24,6 @@ describe('liveDeliveryState', () => {
       tick: 1,
       epoch: 3,
       acceptedAtMs: 100,
-      wasCheckpoint: true,
     });
 
     expect(state.locallyAccepted).toMatchObject({ text: 'hello', tick: 1, epoch: 3 });
@@ -38,43 +37,30 @@ describe('liveDeliveryState', () => {
       tick: 1,
       epoch: 3,
       acceptedAtMs: 100,
-      wasCheckpoint: true,
     });
 
     expect(shouldPublishLiveDelta(state, {
-      state: 'streaming',
-      nowMs: 101,
-      epoch: 3,
-      liveCheckpointIntervalMs: 1_000,
-      supportsDelta: true,
+      epoch: 3, liveDeltas: true, supportsDelta: true,
     })).toBe(true);
 
     expect(shouldPublishLiveDelta(state, {
-      state: 'streaming',
-      nowMs: 102,
-      epoch: 4,
-      liveCheckpointIntervalMs: 1_000,
-      supportsDelta: true,
+      epoch: 4, liveDeltas: true, supportsDelta: true,
     })).toBe(false);
 
     markLiveDeliveryRewrite(state);
     expect(shouldPublishLiveDelta(state, {
-      state: 'streaming',
-      nowMs: 102,
-      epoch: 3,
-      liveCheckpointIntervalMs: 1_000,
-      supportsDelta: true,
+      epoch: 3, liveDeltas: true, supportsDelta: true,
     })).toBe(false);
 
     acceptLivePublication(state, {
-      text: 'rewritten', tick: 2, epoch: 3, acceptedAtMs: 103, wasCheckpoint: true,
+      text: 'rewritten', tick: 2, epoch: 3, acceptedAtMs: 103,
     });
     expect(shouldPublishLiveDelta(state, {
-      state: 'streaming', nowMs: 104, epoch: 3, liveCheckpointIntervalMs: 1_000, supportsDelta: true,
+      epoch: 3, liveDeltas: true, supportsDelta: true,
     })).toBe(true);
     markLiveDeliveryFailure(state);
     expect(shouldPublishLiveDelta(state, {
-      state: 'streaming', nowMs: 104, epoch: 3, liveCheckpointIntervalMs: 1_000, supportsDelta: true,
+      epoch: 3, liveDeltas: true, supportsDelta: true,
     })).toBe(false);
   });
 
@@ -96,7 +82,6 @@ describe('liveDeliveryState', () => {
       tick: 1,
       epoch: 1,
       acceptedAtMs: 1,
-      wasCheckpoint: true,
     });
 
     expect(takePendingLiveDeliveryIntent(state)).toBeNull();

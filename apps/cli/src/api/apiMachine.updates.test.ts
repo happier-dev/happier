@@ -136,7 +136,7 @@ describe('ApiMachineClient updates', () => {
     const api = await ApiClient.create({ token, encryption: { type: 'legacy', secret: key } });
     const machine = await api.getMachine('child-machine');
     if (!machine) throw new Error('Expected admitted child Machine');
-    const client = api.machineSyncClient(machine);
+    const client = await api.machineSyncClient(machine);
     try {
       client.connect();
       await vi.waitFor(() => expect(socket.connected).toBe(true));
@@ -154,7 +154,7 @@ describe('ApiMachineClient updates', () => {
     } finally { await client.shutdown(); }
   });
 
-  it('repairs a later Team member from the actual Machine change page using another online Manage holder', async () => {
+  it.each(['machine', 'machineRecipientAccess'] as const)('repairs a later Team member from the actual %s change page using another online Manage holder', async (changeKind) => {
     // afterEach resets the module graph; bind the filesystem boundary used by
     // this case's actual ApiMachine, not a retired top-level module instance.
     const persistence = await import('@/persistence');
@@ -193,8 +193,14 @@ describe('ApiMachineClient updates', () => {
     };
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
-      if (url.endsWith('/v2/changes')) return { status: 200, data: { changes: teamJoined
-        ? [{ cursor: 1, kind: 'machine', entityId: 'alice-machine', changedAt: 1 }] : [], nextCursor: teamJoined ? 1 : 0 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.includes('/v2/changes?')) {
+        // The Home selects by exact kind, so an unsubscribed producer never reaches this page.
+        const subscribed = new URL(url).searchParams.get('kinds')?.split(',').includes(changeKind);
+        return { status: 200, data: { changes: teamJoined && subscribed
+          ? [{ cursor: 1, kind: changeKind, entityId: 'alice-machine', changedAt: 1 }] : [], nextCursor: teamJoined ? 1 : 0 } };
+      }
       if (url.endsWith('/v1/machines/alice-machine')) return { status: 200, data: { machine: {
         id: 'alice-machine', ...publishedContent, dataEncryptionKey: caller,
         access: { custodian: { accountId: 'offline-alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
@@ -223,6 +229,8 @@ describe('ApiMachineClient updates', () => {
       id: 'bob-executor', encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey', dataEncryptionKey: caller,
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     }));
+    client.onConnectedServicesProjection(async () => {});
+    await seedActiveAccountSnapshot(token);
     try {
       // This fixture owns the live socket/feed boundary, not daemon startup's connected-service
       // reconciler. Deliver the Home wake from the public connected callback; the incumbent
@@ -400,7 +408,7 @@ describe('ApiMachineClient updates', () => {
     const api = await ApiClient.create({ token: 'token', encryption: { type: 'dataKey', machineKey: accountKey, publicKey } });
     const initial = await api.getMachine(row.id);
     if (!initial) throw new Error('Expected admitted Machine');
-    const client = api.machineSyncClient(initial);
+    const client = await api.machineSyncClient(initial);
     const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
     const refresh: unknown = Reflect.get(client, 'refreshMachineFromServer');
     if (!(manager instanceof RpcHandlerManager) || typeof refresh !== 'function') throw new Error('Missing Machine RPC owner');
@@ -462,7 +470,7 @@ describe('ApiMachineClient updates', () => {
     const api = await ApiClient.create({ token: 'token', encryption: { type: 'dataKey', machineKey: accountKey, publicKey } });
     const initial = await api.getMachine(row.id);
     if (!initial) throw new Error('Expected Machine');
-    const client = api.machineSyncClient(initial);
+    const client = await api.machineSyncClient(initial);
     client.connect();
     let releaseOldReply: (() => void) | undefined;
     let releaseOldRead: (() => void) | undefined;
@@ -619,7 +627,7 @@ describe('ApiMachineClient updates', () => {
     const api = await ApiClient.create({ token: 'token', encryption: { type: 'dataKey', machineKey: accountKey, publicKey } });
     const initial = await api.getMachine(row.id);
     if (!initial) throw new Error('Expected admitted E2EE Machine');
-    const client = api.machineSyncClient(initial);
+    const client = await api.machineSyncClient(initial);
     let summary = { v: 1 as const, state: 'ready' as const, runningCount: 1 };
     const readiness = { status: 'running' as const, pid: 4242, httpPort: 4321, startedAt: 100,
       contributionRegistryProjectionRevision: 0 };
@@ -633,7 +641,7 @@ describe('ApiMachineClient updates', () => {
         client.updateDaemonState(state => ({ ...state, status: 'running',
           contributionRegistryProjectionRevision: (state?.contributionRegistryProjectionRevision ?? 0) + 1 })),
       ]);
-      await vi.waitFor(() => expect(publications).toBe(4));
+      await vi.waitFor(() => expect(publications).toBe(2));
       // A later owner edit and service scan win while the earlier ACKs are held.
       // Retries must merge into this snapshot and read the current summary.
       summary = { ...summary, runningCount: 2 };
@@ -769,7 +777,7 @@ describe('ApiMachineClient updates', () => {
     const api = await ApiClient.create({ token: 'token', encryption: { type: 'dataKey', machineKey: accountKey, publicKey } });
     const opened = await api.getMachine(row.id);
     if (!opened) throw new Error('Expected opened Machine');
-    const client = api.machineSyncClient(opened);
+    const client = await api.machineSyncClient(opened);
     client.connect();
     let release: (() => void) | undefined;
     socket.emitWithAck.mockImplementation(async (event: string, payload: unknown) => {

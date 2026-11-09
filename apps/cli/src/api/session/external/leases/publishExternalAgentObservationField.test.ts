@@ -216,7 +216,8 @@ describe('publishExternalAgentObservationField', () => {
         }
         expect(axios.get).toHaveBeenCalledWith(
             `https://external-home.example.test/v2/sessions/${sessionId}?accessProjectionVersion=1`,
-            expect.objectContaining({ headers: expect.objectContaining({ Authorization: `Bearer ${externalToken}` }) }),
+            expect.objectContaining({ headers: expect.objectContaining({ Authorization: `Bearer ${externalToken}`,
+                'X-Happier-Request-Purpose': 'session-detail:session-notification' }) }),
         );
         const incumbent = getActiveAccountSettingsSnapshot();
         if (!incumbent) throw new Error('Notification Account fixture retired');

@@ -8,7 +8,9 @@ import {
   SavedSecretSchema,
   PluginPermissionGrantRequestActionInputV1Schema,
   type PluginPermissionGrantRequestActionInputV1,
+  sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
+import { DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema, DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -101,7 +103,7 @@ const principalSnapshot = Object.freeze({
   presentation: principalPresentation,
 });
 
-function manifest() {
+function manifest(mediatedOnly = false) {
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
     id: contribution.pluginId,
     displayName: 'Acme Voice',
@@ -121,14 +123,24 @@ function manifest() {
           sources: [{
             kind: 'savedSecret',
             secretKinds: ['apiKey'],
-            rawGrants: [{
+            ...(mediatedOnly ? { operationProjections: [{ kind: 'recipientCredential',
+              operation: 'client-auth', phase: 'connection', format: 'bearer' }] } : { rawGrants: [{
               ...webConnectionAuthorizationGrant,
             }, {
               ...webPrepareAuthorizationGrant,
             }, {
               ...iosConnectionAuthorizationGrant,
-            }],
+            }] }),
           }],
+          ...(mediatedOnly ? { hostMediated: { operations: [{
+            id: 'client-auth', purpose: 'voice.client-auth', credentialSlotId: 'api_key', effect: 'read',
+            request: { origin: 'https://voice.example.test', pathTemplate: '/session', queryTemplate: [],
+              headerTemplate: [], bodyTemplate: { kind: 'none' }, method: 'POST',
+              credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+              redirect: 'error', maxBodyBytes: 0, contentTypes: [] },
+            parameters: { schema: { type: 'object', properties: {}, additionalProperties: false }, mapping: [] },
+            response: { maxBytes: 1024, contentTypes: ['application/json'] },
+          }] } } : {}),
         },
         client: { artifactId: 'browser-client', exportName: 'activate' },
       }],
@@ -151,8 +163,9 @@ async function createHarness(overrides: Readonly<{
   materializationUnavailable?: boolean;
   rejectedPrincipalSnapshot?: typeof principalSnapshot;
   accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
+  mediatedOnly?: boolean;
 }> = {}) {
-  const exactManifest = manifest();
+  const exactManifest = manifest(overrides.mediatedOnly);
   const requesterRequest = vi.fn<(input: PluginPermissionGrantRequestActionInputV1) => void>();
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
     controller: pluginReloadController,
@@ -254,6 +267,38 @@ async function createHarness(overrides: Readonly<{
 }
 
 describe('Voice client raw credential authorization RPC', () => {
+  it('uses the existing inspect and request RPCs for a mediated-only recipient with the same custodian subject', async () => {
+    const resourceId = 'mediated-custodian-secret';
+    const secretRef = `happier:shared-secret:v1:${resourceId}`;
+    const { service, requesterRequest } = await createHarness({ mediatedOnly: true,
+      accountSettingsSnapshot: { source: 'network', scopeKey: 'account-scope', settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
+        connectedPurposeCatalog: { status: 'ready', revision: 1, record: {
+          key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } },
+        savedSecretResources: [{ resourceId, ownerAccountId: 'custodian', relationship: 'recipient',
+          capabilities: { use: true }, displayName: 'Voice credential', kind: 'apiKey',
+          encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+          storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+            content: { v: 1, name: 'Voice credential', kind: 'apiKey', value: 'custodian-secret-never-disclosed' } }) }],
+        settings: accountSettingsParse({ voiceSettingsV1: { credentialBindings: [{ contribution,
+          credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
+          credentialBindings: { account: { api_key: secretRef } } }] } }),
+      } });
+    const { handlers, registrar } = manager();
+    registerMachineVoiceClientCredentialAuthorizationRpcHandlers({ rpcHandlerManager: registrar, service });
+    const input = { contribution, rawGrant: webConnectionAuthorizationGrant };
+    const inspected = DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema.parse(await handlers.get(
+      RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT)(input));
+    expect(inspected).toMatchObject({ ok: true, authorization: { grantRequirement: 'approval_required' } });
+    if (!inspected.ok) throw new Error('Expected the existing custodian review');
+    const requested = DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema.parse(await handlers.get(
+      RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_REQUEST)(input));
+    expect(requested).toMatchObject({ ok: true, pendingRequest: {
+      subject: inspected.authorization.subject, capability: 'credentials.materialize.raw', status: 'pending' } });
+    expect(requesterRequest.mock.calls[0]?.[0].subject).toEqual(inspected.authorization.subject);
+    expect(JSON.stringify({ inspected, requested })).not.toContain('custodian-secret-never-disclosed');
+  });
+
   it('inspects the current host-derived subject and exact normalized disclosure without creating a request', async () => {
     const { service, requesterRequest, fixture } = await createHarness();
 

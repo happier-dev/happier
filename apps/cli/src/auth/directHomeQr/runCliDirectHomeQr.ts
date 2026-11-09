@@ -9,9 +9,9 @@ import {
 import { deriveHomeQrBindingKeyV2, encodeHomeQrInviteV2Payload, parseHomeQrInviteV2Payload } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import qrcode from 'qrcode-terminal';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { buildTerminalAuthorityCeilingHttpHeaders } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { resolveAuthenticatedExactHomeConnectionDescriptorObservation, verifyTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentClient';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -230,14 +230,13 @@ export async function runCliDirectHomeQr(input: Readonly<{
   let qrOutput: string | null = null;
   const authHeaders = () => ({
     ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-    ...buildTerminalAuthorityCeilingHttpHeaders({ token: credentials.token, serverHttpBaseUrl: origin }),
     Authorization: `Bearer ${credentials.token}`,
   });
   const adapters: DirectHomeQrLifecycleAdapters = {
     randomBytes: (length) => new Uint8Array(randomBytes(length)),
     now: Date.now,
     start: async ({ signal, ...body }) => {
-      const response = await fetch(`${origin}/v1/auth/pairing/start`, {
+      const response = await fetchWithCredentialRedirectRefusal(`${origin}/v1/auth/pairing/start`, {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -253,11 +252,12 @@ export async function runCliDirectHomeQr(input: Readonly<{
     poll: async ({ pairId, signal, timeoutMs }) => {
       let response: Response;
       try {
-        response = await fetch(`${origin}/v1/auth/pairing/status?pairId=${encodeURIComponent(pairId)}`, {
+        response = await fetchWithCredentialRedirectRefusal(`${origin}/v1/auth/pairing/status?pairId=${encodeURIComponent(pairId)}`, {
           headers: authHeaders(),
           signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { ok: false, reason: 'transient', status: 0 };
       }
       if (response.status === 404) return { ok: false, reason: 'not_found', status: 404 };
@@ -272,7 +272,7 @@ export async function runCliDirectHomeQr(input: Readonly<{
     },
     consume: async ({ pairId, intent, signal, timeoutMs }) => {
       try {
-        const response = await fetch(`${origin}/v1/auth/pairing/consume`, {
+        const response = await fetchWithCredentialRedirectRefusal(`${origin}/v1/auth/pairing/consume`, {
           method: 'POST',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ pairId, intent }),
@@ -286,7 +286,8 @@ export async function runCliDirectHomeQr(input: Readonly<{
           }
         }
         return { ok: false };
-      } catch {
+      } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { ok: false };
       }
     },
@@ -294,13 +295,14 @@ export async function runCliDirectHomeQr(input: Readonly<{
       let currentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentnessFromServer>>;
       try {
         currentness = await fetchAccountEncryptionCurrentnessFromServer({
-          token: credentials.token, serverBaseUrl: origin, signal, allowCredentialRecovery: false,
+          credentials: credentials, token: credentials.token, serverBaseUrl: origin, signal, allowCredentialRecovery: false,
           request: async () => {
-            const response = await fetch(`${origin}/v1/account/encryption/currentness`, { headers: authHeaders(), signal });
+            const response = await fetchWithCredentialRedirectRefusal(`${origin}/v1/account/encryption/currentness`, { headers: authHeaders(), signal });
             return { status: response.status, data: await readJson(response) };
           },
         });
       } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         const status = readHttpStatus(error) ?? (error instanceof AccountEncryptionCurrentnessUnavailableError ? readHttpStatus(error.cause) : null);
         const retryable = status !== null ? status === 408 || status === 429 || status >= 500
           : error instanceof AccountEncryptionCurrentnessUnavailableError && error.cause !== undefined;
@@ -330,7 +332,7 @@ export async function runCliDirectHomeQr(input: Readonly<{
       }
       let response: Response;
       try {
-        response = await fetch(`${origin}/v1/auth/account/response`, {
+        response = await fetchWithCredentialRedirectRefusal(`${origin}/v1/auth/account/response`, {
           method: 'POST',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -342,7 +344,8 @@ export async function runCliDirectHomeQr(input: Readonly<{
           }),
           signal,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         throw new DirectHomeQrCompletionError('retryable');
       }
       if (response.ok) return 'completed';

@@ -84,6 +84,19 @@ describe('Follow HTTP family adapter', () => {
   let restore = () => {};
   beforeEach(() => { app = fastify(); restore = installAxiosFastifyAdapter({ app, origin: 'http://follow.test' }); });
   afterEach(async () => { restore(); await app.close(); });
+  it('reads only the selected Follow kind without acquiring unrelated private rules', async () => {
+    const requests: string[] = [];
+    app.addHook('onRequest', async request => { requests.push(request.url); });
+    app.get('/v2/account/session-follows', async request => {
+      expect(request.query).toEqual({ sourceKinds: '["execution_run","workflow_run"]' });
+      return { follows: [] };
+    });
+    const deps = createSessionFollowActionDeps({ token: 'account-token', serverId: 'home', serverHttpBaseUrl: 'http://follow.test' });
+    await expect(deps.sessionFollowAction!({ context: {}, actionId: 'follow.list', input: {
+      direction: 'following', receiver: { kind: 'account' }, sourceKinds: ['execution_run', 'workflow_run'],
+    } })).resolves.toEqual({ follows: [], sources: [], rules: [], coverage: 'complete' });
+    expect(requests).toEqual(['/v2/account/session-follows?sourceKinds=%5B%22execution_run%22%2C%22workflow_run%22%5D']);
+  });
   const createRuleAuthorityFixture = async () => {
     // This composed slice uses real HTTP and the existing real Socket.IO harness.
     restore();

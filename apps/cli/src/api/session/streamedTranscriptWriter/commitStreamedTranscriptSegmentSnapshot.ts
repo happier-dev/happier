@@ -6,6 +6,7 @@ import type { StreamedTranscriptWriterSession } from './types';
 import type { StreamedTranscriptSegmentRuntime, StreamedTranscriptSegmentState } from './segmentRuntime';
 import type { CommittedTranscriptAdmission } from '../transcriptPort';
 import {
+  buildStreamedTranscriptSegmentDeltaBody,
   buildStreamedTranscriptSegmentSnapshotBody,
   buildStreamedTranscriptSegmentSnapshotMeta,
 } from './buildStreamedTranscriptSegmentSnapshot';
@@ -40,6 +41,25 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
     ...buildStreamedTranscriptSegmentSnapshotMeta({ segment, state, interruptedReason, nowMs }),
     ...(params.runtimeTurnId ? { runtimeTurnId: params.runtimeTurnId } : {}),
   };
+  // The source timestamp Home stores for this commit (see enqueueAgentMessageCommitted).
+  const commitSourceUpdatedAtMs = Math.max(segment.startedAtMs, nowMs);
+  // Home holds the last acknowledged commit and the text has only grown since: name that base
+  // and carry just the appended text for live consumers. Home still stores the full body.
+  const baseUpdatedAt = segment.lastCommittedSourceUpdatedAtMs;
+  const append = segment.didWriteDurable
+    && segment.lastCommittedDelivered
+    && segment.appendOnlySinceLastDurableSnapshot
+    && baseUpdatedAt !== undefined
+    // A rewrite racing an in-flight commit can be lost from the append-only flag; the prefix
+    // check (once per durable commit) keeps the named base exact.
+    && commitText.startsWith(segment.lastDurableText)
+    ? {
+        body: buildStreamedTranscriptSegmentDeltaBody(segment, commitText.slice(segment.lastDurableText.length)),
+        baseLength: segment.lastDurableText.length,
+        baseUpdatedAt,
+        length: commitTextLen,
+      }
+    : undefined;
 
   const markDurablyPersisted = (delivered: boolean, committedSequence?: number) => {
     segment.didWriteDurable = true;
@@ -50,6 +70,7 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
     segment.lastCommittedState = state;
     segment.lastCommittedDelivered = delivered;
     segment.lastCommittedSequence = delivered ? committedSequence : undefined;
+    segment.lastCommittedSourceUpdatedAtMs = delivered ? commitSourceUpdatedAtMs : undefined;
     segment.appendOnlySinceLastDurableSnapshot = true;
     segment.durableRetryNotBeforeMs = 0;
     const recovered = segment.durableCommitFailure;
@@ -73,6 +94,7 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
         .enqueueAgentMessageCommitted(provider, body, {
           localId: durableLocalId,
           meta,
+          ...(append ? { append } : {}),
           ...(params.admission ? { admission: params.admission } : {}),
           provenance: {
             kind: 'non_dependent',

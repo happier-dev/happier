@@ -2,9 +2,11 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
-import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { observeServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 import { createCurrentMachineExecutionOriginContextResolver } from './resolveCurrentMachineExecutionOriginContext';
+import { ApiClient } from '@/api/api';
+import type { MachineRpcAdmissionBoundary } from './machineRpcAuthorization';
 
 function readyResponse(serverIdentityId = 'srv_current_machine_fixture'): Response {
     return new Response(JSON.stringify(FeaturesResponseSchema.parse({
@@ -18,6 +20,41 @@ describe('createCurrentMachineExecutionOriginContextResolver', () => {
         resetServerFeaturesClientForTests();
     });
     afterEach(() => vi.restoreAllMocks());
+
+    it('feeds the actual Machine receiver from the ApiClient held Home without fetching features per request', async () => {
+        let snapshot: CliServerFeaturesSnapshot | undefined = {
+            status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_first_home' } } }),
+        };
+        const api = await ApiClient.create({ token: 'owner-token', encryption: null });
+        api.setServerFeaturesSnapshotProvider(() => snapshot);
+        const client = await api.machineSyncClient({ id: 'machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        // Read the real installed receiving owner; no admission/runtime logic is substituted.
+        const boundary = Reflect.get(client, 'machineRpcAdmissionBoundary') as MachineRpcAdmissionBoundary;
+        const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(readyResponse('srv_unexpected_network'));
+        try {
+            expect(await boundary.resolveHomeServerIdentityId?.()).toBe('srv_first_home');
+            expect(await boundary.resolveHomeServerIdentityId?.()).toBe('srv_first_home');
+            snapshot = { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
+                capabilities: { serverIdentity: { serverIdentityId: 'srv_next_home' } } }) };
+            expect(await boundary.resolveHomeServerIdentityId?.()).toBe('srv_next_home');
+            snapshot = undefined;
+            expect(await boundary.resolveHomeServerIdentityId?.()).toBeNull();
+            let boundHome: string | null = 'srv_exact_saved_home';
+            const bound = await api.machineSyncClient({ id: 'bound-machine', encryptionMode: 'plain', metadata: null,
+                metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
+                { resolveCurrentServerIdentityId: () => boundHome });
+            try {
+                const receiver = Reflect.get(bound, 'machineRpcAdmissionBoundary') as MachineRpcAdmissionBoundary;
+                expect(await receiver.resolveHomeServerIdentityId?.()).toBe('srv_exact_saved_home');
+                boundHome = null;
+                snapshot = { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
+                    capabilities: { serverIdentity: { serverIdentityId: 'srv_unbound_rival' } } }) };
+                expect(await receiver.resolveHomeServerIdentityId?.()).toBeNull();
+            } finally { await bound.shutdown(); }
+            expect(fetch).not.toHaveBeenCalled();
+        } finally { await client.shutdown(); }
+    });
 
     it('stamps the current Home observation without rediscovering features per use', async () => {
         const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(readyResponse('srv_first_home')).mockResolvedValueOnce(readyResponse('srv_next_home'));

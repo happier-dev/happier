@@ -612,7 +612,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); await h.dispose(); }
   });
 
-  it('refuses Agent access to custodian terminals even with the same requester Machine grant', async () => {
+  it('refuses unsigned Session origin while admitting the owner Account automation to its retained terminal', async () => {
     await withTempDir('terminal-person-agent-boundary-', async root => {
       const provider = new FakeInteractivePtyProvider();
       // forkpty is the OS boundary; RPC admission, retained custody and terminal
@@ -665,14 +665,14 @@ describe('registerMachineTerminalRpcHandlers', () => {
           [RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId: opened.terminalId }],
         ] as const) {
           await expect(invoke(method, params, true)).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-          // Account automation has no Session-origin carrier to reject. Its
-          // current Machine grant still cannot grant present-person custody.
-          await expect(invoke(method, params, true, false)).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
         }
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+          { terminalId: opened.terminalId, data: 'owner-automation-command\n' }, true, false)).resolves.toMatchObject({ ok: true });
         await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: opened.terminalId, data: 'person-command\n' }))
           .resolves.toMatchObject({ ok: true });
         expect(provider.spawned).toHaveLength(1);
         expect(provider.spawned[0].pty.writes.join('')).toContain('person-command');
+        expect(provider.spawned[0].pty.writes.join('')).toContain('owner-automation-command');
         expect(provider.spawned[0].pty.writes.join('')).not.toContain('host-effect');
       } finally {
         for (const { pty } of provider.spawned) pty.exit(0);
@@ -681,7 +681,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
   });
 
-  it.skipIf(process.platform !== 'linux')('retains Manage requester custody across native and host PTYs while refusing foreign and Agent controls', async () => {
+  it.skipIf(process.platform !== 'linux')('retains requester native custody for Agent controls while refusing foreign and unisolated PTYs', async () => {
     await withTempDir('terminal-native-member-controls-', async root => {
       // forkpty and its native identity/handshake are the OS boundary. The
       // canonical material projection, Exec finalizer, PTY and RPC owners run.
@@ -813,11 +813,20 @@ describe('registerMachineTerminalRpcHandlers', () => {
             const errorCode = response && typeof response === 'object'
               ? 'errorCode' in response ? response.errorCode : 'code' in response ? response.code : undefined
               : undefined;
-            expect(response, `${name}:${method}`).not.toMatchObject({ ok: true });
-            expect(['agent_isolation_unavailable', RPC_ERROR_CODES.FORBIDDEN, 'terminal_forbidden'], `${name}:${method}`).toContain(errorCode);
+            if (name === 'automation' || name === 'local-session-agent') {
+              expect(response, `${name}:${method}`).toMatchObject({ ok: true });
+            } else {
+              expect(response, `${name}:${method}`).not.toMatchObject({ ok: true });
+              expect(['agent_isolation_unavailable', RPC_ERROR_CODES.FORBIDDEN, 'terminal_forbidden'], `${name}:${method}`).toContain(errorCode);
+            }
           }
+          const sharedResponse = await invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT,
+            { terminalId: shared.terminalId, data: 'agent-host-command\n' }, 'member-a', source).catch(error => ({
+              ok: false, errorCode: readRpcErrorCode(error),
+            }));
+          expect(sharedResponse, `${name}:unisolated`).not.toMatchObject({ ok: true });
         }
-        expect(spawned[0]!.writes).toEqual(['member-command\n']);
+        expect(spawned[0]!.writes).toEqual(['member-command\n', 'agent-command\n', 'agent-command\n']);
         expect(spawned[1]!.writes).toEqual(['manage-own-host\n']);
         expect(sessions.getNativeExecutionIdentity?.(native.terminalId)).toEqual(member);
         expect(sessions.getNativeExecutionIdentity?.(shared.terminalId)).toBeNull();
@@ -2154,7 +2163,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     expect(await realpath(provider.spawned[0]?.options.cwd ?? '')).toBe(realExternalDir);
   });
 
-  it('resolves a typed session-attach launch into PTY executable argv', async () => {
+  it.each(['present_user', 'account_automation'] as const)('resolves an admitted %s session-attach launch into PTY executable argv', async authority => {
     const suiteDir = await mkdtemp(join(tmpdir(), 'happier-terminal-attach-'));
     const provider = new FakePtyProvider();
     const sessionManager = createTerminalPtySessionManager({
@@ -2189,7 +2198,11 @@ describe('registerMachineTerminalRpcHandlers', () => {
       terminalKey: 'dialog-attach:session-1',
       cwd: suiteDir,
       launch: { kind: 'session_attach', sessionId: 'session-1' },
-    }, ownerIngress('session-1'))).resolves.toEqual(expect.objectContaining({ ok: true, reused: false }));
+    }, { ...ownerIngress('session-1'), callerAuthority: authority,
+      ...(authority === 'account_automation' ? { sessionActionOrigin: { v: 1 as const,
+        caller: { kind: 'session' as const, sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+        sourceTurnId: 'attach-turn', callerPermissionMode: null, requestId: 'approved-attach' } } : {}),
+    })).resolves.toEqual(expect.objectContaining({ ok: true, reused: false }));
     expect(provider.spawned[0]).toMatchObject({
       file: '/opt/happier/bin/happier',
       args: ['attach', 'session-1'],

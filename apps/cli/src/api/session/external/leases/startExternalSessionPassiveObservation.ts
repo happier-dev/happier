@@ -97,7 +97,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
         ?? resolveExternalSessionObservationLinkInput;
     const accountEncryptionCurrentness = await (
         params.getAccountEncryptionCurrentness
-        ?? (async () => await fetchAccountEncryptionCurrentness({ token: credentials.token }))
+        ?? (async () => await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }))
     )();
     const linked: Array<Readonly<{
         sessionId: string;
@@ -865,7 +865,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                 new Error('External Session passive observation is disposed'),
             );
         }
-        if (!online || !isRestoreEnabled()) {
+        if (!online) {
             return Promise.resolve({ status: 'stale' });
         }
         const reconcileRevision = invalidateSessionReconcile(sessionId);
@@ -878,7 +878,6 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
             const isStale = (): boolean => (
                 disposed
                 || !online
-                || !isRestoreEnabled()
                 || generation !== reconcileGeneration
                 || observedAccountScopeKey !== reconcileAccountScopeKey
                 || readSessionReconcileRevision(sessionId) !== reconcileRevision

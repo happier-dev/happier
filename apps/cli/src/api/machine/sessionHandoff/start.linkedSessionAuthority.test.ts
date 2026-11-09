@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
@@ -10,6 +10,14 @@ import { prepareStartedState } from './prepareStartedState';
 import { buildPrepareJobRecord, buildStartPendingStatus, buildStartRecoveryStatus, invalidRequest } from './prepareTargetState';
 
 import { createSessionHandoffStartActionHandler } from './start';
+import { registerMachineSessionHandoffRpcHandlers } from './handlers';
+import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandler } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { readSessionHandoffAgentBundleFile } from '@/session/handoff/agentBundle/file';
+import { readSessionHandoffAgentBundleRecords } from '@/session/handoff/agentBundle/records';
 
 /**
  * Storage authority belongs to the SOURCE daemon, and it has to be settled
@@ -81,6 +89,90 @@ const enabledServerFeaturesSnapshot = {
 };
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
+  it.each(['server_routed_stream', 'direct_peer'] as const)('exports supported native source state once after its single stop over %s', async (strategy) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-supported-source-'));
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const publishedTransfers: string[] = [];
+    try {
+      const configDir = join(activeServerDir, 'claude');
+      const projectDir = join(configDir, 'projects', 'source-project');
+      await mkdir(projectDir, { recursive: true });
+      const transcriptPath = join(projectDir, 'native-claude.jsonl');
+      await writeFile(transcriptPath, '{"type":"assistant","text":"before_stop"}\n');
+      const stop = vi.fn(async () => {
+        await writeFile(transcriptPath, '{"type":"assistant","text":"after_stop"}\n');
+        return 'stopped' as const;
+      });
+      // Native transcript IO and all admission/export/storage owners remain real.
+      const rpcHandlerManager = { registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => handlers.set(method, handler) } as unknown as RpcHandlerManager;
+      registerMachineSessionHandoffRpcHandlers({
+        rpcHandlerManager, runtimeConfig: { activeServerDir }, runtimeDependencies: { createUuid: () => 'test' },
+        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: '/source',
+          externalSessionV1: { v: 1, agentId: 'claude', machineId: 'machine-source', remoteSessionId: 'native-claude',
+            source: { kind: 'claudeConfig', configDir, projectId: 'source-project' } } }),
+        stopSessionForHandoff: stop, resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
+        machineTransferChannel: { onEnvelope: () => () => undefined, sendEnvelope: () => undefined },
+        ...(strategy === 'direct_peer' ? { directPeerTransfer: {
+          publishTransfer: ({ transferId }: { transferId: string }) => { publishedTransfers.push(transferId); return []; },
+          clearPublishedTransfer: () => undefined,
+        } } : {}),
+      });
+      const result = await handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)!({
+        sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+        sessionStorageMode: 'direct', preferredTransportStrategies: [strategy, 'server_routed_stream'],
+        negotiatedTransportStrategy: strategy,
+      });
+      expect(result).toMatchObject({ handoffId: 'handoff_test', status: { status: 'pending' } });
+      if (strategy === 'direct_peer') expect(result).toMatchObject({ handoffMetadataV2: {
+        agentBundleTransferPublication: { transferId: 'session-handoff:handoff_test:provider-bundle-file' },
+      } });
+      expect(stop).toHaveBeenCalledTimes(1);
+      await vi.waitFor(async () => {
+        expect((await createSessionHandoffSourceExportStore({ activeServerDir }).load('handoff_test'))?.agentBundle).toBeDefined();
+      });
+      const record = await createSessionHandoffSourceExportStore({ activeServerDir }).load('handoff_test');
+      if (!record?.agentBundle) throw new Error('Source did not publish its native export');
+      const bundle = await readSessionHandoffAgentBundleFile(record.agentBundle.filePath);
+      expect(await readSessionHandoffAgentBundleRecords(bundle)).toEqual([{ type: 'assistant', text: 'after_stop' }]);
+      expect(publishedTransfers.filter(transferId => transferId.endsWith(':deferred-carrier'))).toEqual([]);
+    } finally {
+      await handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3)?.({ handoffId: 'handoff_test' });
+      await runtime.dispose();
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+  it.each(['server_routed_stream', 'direct_peer'] as const)('refuses an ineligible source before stopping it over %s', async (strategy) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-ineligible-source-'));
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.gemini'] } });
+    try {
+      const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+      // Only RPC registration and the native process stop are external boundaries.
+      const rpcHandlerManager = { registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => handlers.set(method, handler) } as unknown as RpcHandlerManager;
+      const stop = vi.fn(async () => 'stopped' as const);
+      registerMachineSessionHandoffRpcHandlers({
+        rpcHandlerManager, runtimeConfig: { activeServerDir }, runtimeDependencies: { createUuid: () => 'test' },
+        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: '/source', flavor: 'gemini',
+          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'native-gemini' } }),
+        stopSessionForHandoff: stop,
+        resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
+        machineTransferChannel: { onEnvelope: () => () => undefined, sendEnvelope: () => undefined },
+        ...(strategy === 'direct_peer' ? { directPeerTransfer: {
+          publishTransfer: () => [], clearPublishedTransfer: () => undefined,
+        } } : {}),
+      });
+      const result = await handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)!({
+        sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+        sessionStorageMode: 'persisted', preferredTransportStrategies: [strategy, 'server_routed_stream'],
+        negotiatedTransportStrategy: strategy,
+      });
+      expect(stop).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed' });
+      expect(await createSessionHandoffSourceExportStore({ activeServerDir }).load('handoff_test')).toBeNull();
+    } finally { await runtime.dispose(); await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it.each(['handoff_existing_state_update_required', 'existing_session_state_unavailable'] as const)('refuses existing-state handoff before any source effect (%s)', async (errorCode) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'existing-handoff-admission-'));
     const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
@@ -101,7 +193,6 @@ describe('session handoff start — source-derived transcript-storage authority'
       prepareStartedState: async callInput => await prepareStartedState({ activeServerDir, callInput,
         sourceExportStore, exportSessionBundle, directPeerTransfer: undefined, buildStartPendingStatus }),
       exportSessionBundle,
-      waitForPersistedSourceExport: async () => null, invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
       buildStartPendingStatus, buildStartRecoveryStatus, buildPrepareJobRecord, invalidRequest,
       sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'existing-admission-test' }),
       retainSessionOperationClaim: () => undefined, releaseSessionOperationClaim: async () => undefined,
@@ -119,7 +210,6 @@ describe('session handoff start — source-derived transcript-storage authority'
     const prepareStartedState = vi.fn();
     const exportSessionBundle = vi.fn();
     const acquire = vi.fn(async () => ({ status: 'unavailable' as const }));
-    const invalidateDirectPeerRouteCacheForHandoffMachines = vi.fn();
 
     const handler = createSessionHandoffStartActionHandler({
       activeServerDir: '/tmp/happier-handoff-storage-authority',
@@ -137,8 +227,6 @@ describe('session handoff start — source-derived transcript-storage authority'
       sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
       prepareStartedState: prepareStartedState as never,
       exportSessionBundle: exportSessionBundle as never,
-      waitForPersistedSourceExport: vi.fn() as never,
-      invalidateDirectPeerRouteCacheForHandoffMachines,
       buildStartPendingStatus: vi.fn() as never,
       buildStartRecoveryStatus: vi.fn() as never,
       buildPrepareJobRecord: vi.fn() as never,
@@ -161,8 +249,6 @@ describe('session handoff start — source-derived transcript-storage authority'
       ok: false,
       errorCode: 'session_storage_mode_mismatch',
     });
-
-    expect(invalidateDirectPeerRouteCacheForHandoffMachines).not.toHaveBeenCalled();
     expect(acquire).not.toHaveBeenCalled();
     expect(stopSessionForHandoff).not.toHaveBeenCalled();
     expect(prepareStartedState).not.toHaveBeenCalled();
@@ -179,7 +265,6 @@ describe('session handoff start — source-derived transcript-storage authority'
       // the handler answer `session_operation_in_progress` rather than crash:
       // the failure then names the missing gate instead of a stub.
       const acquire = vi.fn(async () => ({ status: 'unavailable' as const }));
-      const invalidateDirectPeerRouteCacheForHandoffMachines = vi.fn();
 
       const handler = createSessionHandoffStartActionHandler({
         activeServerDir: '/tmp/happier-handoff-authority',
@@ -193,8 +278,6 @@ describe('session handoff start — source-derived transcript-storage authority'
         sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
         prepareStartedState: prepareStartedState as never,
         exportSessionBundle: exportSessionBundle as never,
-        waitForPersistedSourceExport: vi.fn() as never,
-        invalidateDirectPeerRouteCacheForHandoffMachines,
         buildStartPendingStatus: vi.fn() as never,
         buildStartRecoveryStatus: vi.fn() as never,
         buildPrepareJobRecord: vi.fn() as never,

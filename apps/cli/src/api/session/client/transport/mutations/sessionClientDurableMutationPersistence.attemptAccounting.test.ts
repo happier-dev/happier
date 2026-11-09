@@ -54,6 +54,25 @@ describe('durable mutation attempt-accounting persistence', () => {
         await rm(configurationMock.activeServerDir, { recursive: true, force: true });
     });
 
+    it('retains per-message timing across journal recovery without upgrading old unknown rows', async () => {
+        const payload = createTranscriptMessageAppendMutation({ sessionId: 'session-1', localId: 'timed', content: 'ciphertext',
+            createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
+            usageTimingV1: { v: 1, minMs: 10, maxMs: 30 } });
+        const row = { kind: 'transcript_message_append', mutationId: payload.mutationId,
+            payload, createdAt: 100, attempts: 0, nextAttemptAt: 100 };
+        await writeRawOutbox([row]);
+        await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([
+            expect.objectContaining({ payload: expect.objectContaining({ usageTimingV1: payload.usageTimingV1 }) }),
+        ]);
+        const { usageTimingV1: _timing, ...oldPayload } = payload;
+        await writeRawOutbox([{ ...row, payload: oldPayload }]);
+        const oldRows = await loadSessionClientDurableMutationOutbox('session-1');
+        expect(oldRows).toHaveLength(1);
+        expect(oldRows[0].payload).not.toHaveProperty('usageTimingV1');
+        await writeRawOutbox([{ ...row, payload: { ...payload, usageTimingV1: { v: 1, minMs: 30, maxMs: 10 } } }]);
+        await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([]);
+    });
+
     it('retains an encrypted visual association through journal reload and quarantines malformed references', async () => {
         const legacyReference = { v: 1 as const, itemId: 'visual-1', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
             sourceAddress: { serverId: 'home-1', sessionId: 'session-1' } };
@@ -62,12 +81,12 @@ describe('durable mutation attempt-accounting persistence', () => {
         const payload = createTranscriptMessageAppendMutation({
             sessionId: 'session-1', localId: 'visual-result', content: 'sealed-result',
             createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
-            surfaceItemReference,
+            surfaceItemReference, approvalRequestArtifactId: 'approval-1',
         });
         await writeRawOutbox([{ kind: 'transcript_message_append', mutationId: payload.mutationId,
             payload, createdAt: 100, attempts: 0, nextAttemptAt: 100 }]);
         await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([
-            expect.objectContaining({ payload: expect.objectContaining({ surfaceItemReference }) }),
+            expect.objectContaining({ payload: expect.objectContaining({ surfaceItemReference, approvalRequestArtifactId: 'approval-1' }) }),
         ]);
         await writeRawOutbox([{ kind: 'transcript_message_append', mutationId: payload.mutationId,
             payload: { ...payload, surfaceItemReference: { ...surfaceItemReference,

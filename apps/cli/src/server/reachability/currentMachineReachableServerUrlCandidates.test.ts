@@ -10,13 +10,13 @@ import {
 
 function statusSnapshot(overrides: Partial<TailscaleStatusSnapshot>): TailscaleStatusSnapshot {
   return {
-    magicDnsEnabled: null,
-    interfaceName: null,
-    sourceRanges: [],
     backendState: 'Running',
     authUrl: null,
     dnsName: 'mac.tailnet.ts.net',
     tailnetName: 'tailnet.ts.net',
+    magicDnsEnabled: null,
+    interfaceName: null,
+    sourceRanges: [],
     tailscaleIps: ['100.96.55.1'],
     loggedIn: true,
     running: true,
@@ -42,12 +42,12 @@ describe('tailscaleIpsForReachableCandidates', () => {
 
   it('offers nothing when the tailscaled daemon never answered', () => {
     expect(tailscaleIpsForReachableCandidates(statusSnapshot({
-      magicDnsEnabled: null,
-      interfaceName: null,
-      sourceRanges: [],
       backendState: null,
       dnsName: null,
       tailnetName: null,
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       tailscaleIps: [],
       loggedIn: false,
       running: false,

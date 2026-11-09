@@ -17,6 +17,7 @@ export class ResourceDataKeyUnavailableError extends Error {
   }
 }
 
+type ContentEncryption = Pick<StoredCredentials, 'encryption'>;
 function requireEncryption(credentials: ContentEncryption): Pick<Credentials, 'encryption'> {
   if (!credentials.encryption) throw new ResourceDataKeyUnavailableError();
   return { encryption: credentials.encryption };
@@ -69,5 +70,3 @@ export async function openResourceDataKey(params: Readonly<{
   if (!dataKey) throw new ResourceDataKeyUnavailableError();
   return { mode: 'e2ee', dataKey, dataEncryptionKey: params.dataEncryptionKey };
 }
-
-type ContentEncryption = Pick<StoredCredentials, 'encryption'>;

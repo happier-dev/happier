@@ -231,7 +231,9 @@ describe('ensureExternalSessionLink', () => {
     listSessionMarkersMock.mockResolvedValue([]);
     fetchSessionsPageMock.mockResolvedValue({ sessions: [], hasNext: false, nextCursor: null });
     fetchSessionByIdMock.mockResolvedValue(null);
-    lookupSessionsByTagsMock.mockResolvedValue({ state: 'unavailable' });
+    lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: string[] }) => ({
+      state: 'available', tags, sessions: [],
+    }));
     tryDecryptSessionMetadataMock.mockReturnValue(null);
     tryDecryptSessionOwnerMetadataMock.mockReturnValue(null);
     tryDecryptSessionOwnerMetadataViewMock.mockImplementation(
@@ -859,12 +861,14 @@ describe('ensureExternalSessionLink', () => {
         linkedAtMs: 1,
       },
     };
+    let acceptedProjectKey: string | null = null;
     lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: string[] }) => {
       return {
         state: 'available',
         tags,
         sessions: [{
           id: 'sess_legacy_tag',
+          projectKey: acceptedProjectKey,
           metadata: 'encrypted-metadata-placeholder',
           currentStorageState: 'machine_only',
         }],
@@ -872,6 +876,7 @@ describe('ensureExternalSessionLink', () => {
     });
     fetchSessionByIdMock.mockImplementation(async () => ({
       id: 'sess_legacy_tag',
+      projectKey: acceptedProjectKey,
       metadata: 'encrypted-metadata-placeholder',
       currentStorageState: 'machine_only',
     }));
@@ -899,14 +904,34 @@ describe('ensureExternalSessionLink', () => {
       directoryHint: '/tmp/repo',
       nowMs: () => 123,
     } as const;
-    const firstResult = await ensureExternalSessionLink(input);
-    const secondResult = await ensureExternalSessionLink(input);
+    // Feature HTTP is the genuine boundary; an unchanged revisit must never
+    // begin optional Project discovery or fill a historical missing key.
+    const featureRead = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 404 }));
+    let firstResult: Awaited<ReturnType<typeof ensureExternalSessionLink>>;
+    let secondResult: Awaited<ReturnType<typeof ensureExternalSessionLink>>;
+    try {
+      firstResult = await ensureExternalSessionLink(input);
+      featureRead.mockClear();
+      updateSessionMetadataWithRetryMock.mockClear();
+      secondResult = await ensureExternalSessionLink(input);
+      expect(featureRead).not.toHaveBeenCalled();
+      expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+      // A genuine title write still happens after publication without
+      // reacquiring unchanged Project identity facts.
+      acceptedProjectKey = 'already-published-project';
+      await ensureExternalSessionLink({ ...input, titleHint: 'Readable conversation title' });
+      expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledOnce();
+      expect(existingMetadata.summary).toMatchObject({ text: 'Readable conversation title' });
+      expect(featureRead).not.toHaveBeenCalled();
+    } finally {
+      featureRead.mockRestore();
+    }
 
     expect(firstResult).toEqual({ sessionId: 'sess_legacy_tag', created: false, tag: canonicalTag });
     expect(secondResult).toEqual(firstResult);
-    expect(lookupSessionsByTagsMock).toHaveBeenCalledTimes(2);
+    expect(lookupSessionsByTagsMock).toHaveBeenCalledTimes(3);
     expect(fetchSessionsPageMock).not.toHaveBeenCalled();
-    expect(getOrCreateSessionByTagMock).toHaveBeenCalledTimes(2);
+    expect(getOrCreateSessionByTagMock).toHaveBeenCalledTimes(3);
     expect(getOrCreateSessionByTagMock.mock.calls.every(
       ([call]) => call.tag === legacyTag && call.currentStorageState === 'machine_only',
     )).toBe(true);
@@ -1143,11 +1168,9 @@ describe('ensureExternalSessionLink', () => {
     let refreshedMetadata: Record<string, unknown> | null = null;
 
     getOrCreateSessionByTagMock.mockClear();
-    fetchSessionsPageMock.mockResolvedValueOnce({
-      sessions: [existingRawSession],
-      hasNext: false,
-      nextCursor: null,
-    });
+    lookupSessionsByTagsMock.mockImplementationOnce(async ({ tags }: { tags: string[] }) => ({
+      state: 'available', tags, sessions: [existingRawSession],
+    }));
     fetchSessionByIdMock.mockResolvedValue(existingRawSession);
     tryDecryptSessionMetadataMock.mockImplementation(({ rawSession }: { rawSession?: unknown }) =>
       rawSession === existingRawSession ? staleMetadata : null,
@@ -2189,7 +2212,7 @@ describe('ensureExternalSessionLink', () => {
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
 
-  it('fails closed for hook-required lookup when the old server route is unavailable', async () => {
+  it.each([true, false])('rejects unavailable current tag lookup regardless of hook requirement (%s)', async requireIndexedTagLookup => {
     lookupSessionsByTagsMock.mockResolvedValueOnce({ state: 'unavailable' });
 
     await expect(ensureExternalSessionLink({
@@ -2198,7 +2221,7 @@ describe('ensureExternalSessionLink', () => {
       agentId: 'codex',
       remoteSessionId: 'thread_old_server',
       source: { kind: 'codexHome', home: 'user' },
-      requireIndexedTagLookup: true,
+      requireIndexedTagLookup,
       nowMs: () => 123,
     })).rejects.toMatchObject({
       code: 'agent_unavailable',
@@ -2265,7 +2288,9 @@ describe('ensureExternalSessionLink', () => {
   it('threads caller cancellation through the legacy metadata recovery scan', async () => {
     const controller = new AbortController();
     const aborted = new DOMException('aborted', 'AbortError');
-    lookupSessionsByTagsMock.mockResolvedValueOnce({ state: 'unavailable' });
+    lookupSessionsByTagsMock.mockImplementationOnce(async ({ tags }: { tags: string[] }) => ({
+      state: 'available', tags, sessions: [],
+    }));
     fetchSessionsPageMock.mockRejectedValueOnce(aborted);
 
     await expect(ensureExternalSessionLink({

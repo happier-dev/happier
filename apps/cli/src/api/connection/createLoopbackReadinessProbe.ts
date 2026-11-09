@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios, { AxiosHeaders } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { AxiosHeaders } from 'axios';
 import { readRetryLaterHints, type ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { isAuthenticationStatus } from '@/api/client/httpStatusError';

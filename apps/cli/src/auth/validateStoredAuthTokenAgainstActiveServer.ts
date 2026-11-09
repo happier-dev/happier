@@ -1,4 +1,6 @@
 import { isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { withAbortTimeout } from '@/diagnostics/httpClient';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -71,7 +73,7 @@ export async function validateStoredAuthTokenAgainstServer(
   try {
     const response = await withAbortTimeout(
       params.timeoutMs ?? 5_000,
-      async (requestSignal) => await fetchImpl(`${baseUrl}/v1/account/profile`, {
+      async (requestSignal) => await fetchWithCredentialRedirectRefusal(`${baseUrl}/v1/account/profile`, {
         method: 'GET',
         headers: {
           ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -79,7 +81,7 @@ export async function validateStoredAuthTokenAgainstServer(
           'Content-Type': 'application/json',
         },
         signal: requestSignal,
-      }),
+      }, fetchImpl),
       params.signal,
     );
 
@@ -107,6 +109,7 @@ export async function validateStoredAuthTokenAgainstServer(
     };
   } catch (error) {
     params.signal?.throwIfAborted();
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return {
       state: 'unknown',
       httpStatus: null,
@@ -162,6 +165,7 @@ export async function validateStoredAuthTokenAgainstActiveServer(
     });
   } catch (error) {
     signal?.throwIfAborted();
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return {
       state: 'unknown',
       httpStatus: null,

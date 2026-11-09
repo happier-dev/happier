@@ -9,7 +9,6 @@ import { configuration } from '@/configuration';
 import { ensureSessionMachineAccessKeyBinding } from '@/api/session/ensureSessionMachineAccessKeyBinding';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import { buildTerminalAuthorityCeiling } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import {
     buildCurrentSessionRunnerCompatibilitySocketAuth,
 } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -41,7 +40,6 @@ export function createSessionSocketTransport(params: Readonly<{
         ...(params.machineId ? { machineId: params.machineId } : {}),
         authExtras: {
             ...buildCurrentSessionRunnerCompatibilitySocketAuth(),
-            ...buildTerminalAuthorityCeiling({ token: params.token, serverHttpBaseUrl: serverUrl }),
         },
         connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(),
         ...(transports ? { transports } : null),

@@ -21,7 +21,7 @@ import {
   projectAuthenticationMethodCatalogFromAuthEntry,
   type ProjectedAuthenticationCatalog,
 } from '@happier-dev/cli-common/authentication/authMethodCatalog';
-import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal, type HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 import { createStepPrinter } from '@happier-dev/cli-common/output';
 
@@ -31,7 +31,6 @@ import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import { promptMultipleChoice } from '@/terminal/prompts/promptMultipleChoice';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
-import { buildTerminalAuthorityCeilingHttpHeaders } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { verifyTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentClient';
 import {
@@ -128,7 +127,7 @@ function readCommittedMaterialStageError(error: unknown): Readonly<{
 }
 
 async function jsonRequest(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
+  const response = await fetchWithCredentialRedirectRefusal(url, init);
   if (!response.ok) throw new Error(`Request failed (${response.status})`);
   return await response.json();
 }
@@ -147,14 +146,15 @@ async function validateStoredAccountServiceCredential(input: Readonly<{
 }>): Promise<StoredAccountServiceCredentialValidation> {
   if (input.signal?.aborted) return { kind: 'cancelled' };
   try {
-    const response = await fetch(endpointUrl(input.requestOrigin, '/v1/account-directory/me'), {
-      headers: { Authorization: `Bearer ${input.credential.token}`, ...buildTerminalAuthorityCeilingHttpHeaders({ token: input.credential.token, serverHttpBaseUrl: input.requestOrigin }) },
+    const response = await fetchWithCredentialRedirectRefusal(endpointUrl(input.requestOrigin, '/v1/account-directory/me'), {
+      headers: { Authorization: `Bearer ${input.credential.token}` },
       signal: input.signal,
     });
     if (response.ok) return { kind: 'valid' };
     if (response.status === 401 || response.status === 403) return { kind: 'rejected' };
     return { kind: 'account_service_unavailable' };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return input.signal?.aborted
       ? { kind: 'cancelled' }
       : { kind: 'account_service_unavailable' };
@@ -232,7 +232,7 @@ async function discoverService(
   if (snapshot.status !== 'ready') return { kind: 'account_service_unavailable' };
   if (input.selfTarget && input.selfRuntime) {
     try {
-      verifyTerminalAuthEnrollmentRuntime({ target: input.selfTarget, runtime: input.selfRuntime, snapshot });
+      verifyTerminalAuthEnrollmentRuntime({ target: input.selfTarget, runtime: input.selfRuntime, snapshot, phase: 'first_contact' });
     } catch {
       return { kind: 'identity_mismatch' };
     }
@@ -403,7 +403,7 @@ export async function runCliAccountServiceSetupEntry(
             ? { kind: 'cancelled' }
             : { kind: 'account_service_unavailable' };
         }
-        verifyTerminalAuthEnrollmentRuntime({ target: contextTarget, runtime: acquired.runtime, snapshot });
+        verifyTerminalAuthEnrollmentRuntime({ target: contextTarget, runtime: acquired.runtime, snapshot, phase: 'first_contact' });
         const entry = await fetchCliHomeAuthEntry({
           serverUrl: acquired.runtime.runtimeOrigin,
           purpose: 'home',
@@ -424,8 +424,9 @@ export async function runCliAccountServiceSetupEntry(
           selfTransport = null;
         }
       }
-    } catch {
+    } catch (error) {
       if (selfTransport) await selfTransport.close().catch(() => undefined);
+      if (error instanceof CredentialRequestRedirectError) throw error;
       return input.signal?.aborted
         ? { kind: 'cancelled' }
         : { kind: 'account_service_unavailable' };
@@ -599,7 +600,7 @@ export async function runCliAccountServiceSetupEntry(
         const result = await authenticateCliAccountService(
           { service, method, ...(key ? { key } : {}), signal: authSignal, timeoutMs },
           {
-            request: async (path, init) => await fetch(endpointUrl(requestOrigin, path), init),
+            request: async (path, init) => await fetchWithCredentialRedirectRefusal(endpointUrl(requestOrigin, path), init),
             write: announce,
           },
         );
@@ -614,6 +615,7 @@ export async function runCliAccountServiceSetupEntry(
     if (auth.kind !== 'authenticated') {
       if (auth.kind === 'timed_out') return { kind: 'timed_out' };
       if (auth.kind === 'cancelled') return { kind: 'cancelled' };
+      if (auth.error instanceof CredentialRequestRedirectError) throw auth.error;
       const outcome = typeof auth.error === 'object' && auth.error !== null && 'outcome' in auth.error
         ? (auth.error as { outcome?: unknown }).outcome
         : null;
@@ -653,7 +655,7 @@ export async function runCliAccountServiceSetupEntry(
       try {
         const directory = AccountDirectoryHomesResponseV1Schema.parse(await jsonRequest(
           endpointUrl(requestOrigin, ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1),
-          { headers: { Authorization: `Bearer ${credential.token}`, ...buildTerminalAuthorityCeilingHttpHeaders({ token: credential.token, serverHttpBaseUrl: requestOrigin }) }, signal },
+          { headers: { Authorization: `Bearer ${credential.token}` }, signal },
         ));
         const completeCommittedHomeCredential = async (inputValue: Readonly<{
           runtimeOrigin: string;
@@ -667,14 +669,15 @@ export async function runCliAccountServiceSetupEntry(
             mode = await readAccountEncryptionModeOnce({
               credentials: inputValue.credential,
               request: async () => {
-                const response = await fetch(endpointUrl(inputValue.runtimeOrigin, '/v1/account/encryption'), {
-                  headers: { Authorization: `Bearer ${inputValue.credential.token}`, ...buildTerminalAuthorityCeilingHttpHeaders({ token: inputValue.credential.token, serverHttpBaseUrl: inputValue.runtimeOrigin }) },
+                const response = await fetchWithCredentialRedirectRefusal(endpointUrl(inputValue.runtimeOrigin, '/v1/account/encryption'), {
+                  headers: { Authorization: `Bearer ${inputValue.credential.token}` },
                   signal: inputValue.signal,
                 });
                 return { status: response.status, data: await response.json().catch(() => null) };
               },
             });
           } catch (cause) {
+            if (cause instanceof CredentialRequestRedirectError) throw cause;
             throw Object.assign(new Error('Home encryption mode unavailable', { cause }), { stage: 'material' });
           }
           if (mode.kind !== 'resolved') {
@@ -704,7 +707,8 @@ export async function runCliAccountServiceSetupEntry(
               });
             });
             return { profileId: inputValue.profileId, material: 'ready', machineRegistered: true };
-          } catch {
+          } catch (error) {
+            if (error instanceof CredentialRequestRedirectError) throw error;
             return { profileId: inputValue.profileId, material: 'ready', machineRegistered: false };
           }
         };
@@ -761,7 +765,7 @@ export async function runCliAccountServiceSetupEntry(
             },
             requestAssertion: async ({ homeServerIdentityId, clientBoxPublicKeyBase64 }) => HomeLoginAssertionResponseV1Schema.parse(await jsonRequest(
               endpointUrl(requestOrigin, buildAccountDirectoryHomeLoginAssertionHttpPathV1(homeServerIdentityId)),
-              { method: 'POST', headers: { Authorization: `Bearer ${credential.token}`, ...buildTerminalAuthorityCeilingHttpHeaders({ token: credential.token, serverHttpBaseUrl: requestOrigin }), 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, homeServerIdentityId, clientBoxPublicKeyBase64 }), signal: operationSignal },
+              { method: 'POST', headers: { Authorization: `Bearer ${credential.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, homeServerIdentityId, clientBoxPublicKeyBase64 }), signal: operationSignal },
             )),
             openHomeTransport: async (home) => {
               const acquired = await acquireTerminalAuthEnrollmentRuntime(
@@ -907,6 +911,7 @@ export async function runCliAccountServiceSetupEntry(
               try {
                 commit = await failure.retryMaterial();
               } catch (retryError) {
+                if (retryError instanceof CredentialRequestRedirectError) throw retryError;
                 return mapCommittedMaterialFailure(homeServerIdentityId, retryError, selection, directoryAdoptionFailures)
                   ?? { kind: 'home_unavailable' };
               }
@@ -975,6 +980,7 @@ export async function runCliAccountServiceSetupEntry(
             };
           }
           if (enrollment.kind === 'unavailable') {
+            if (enrollment.error instanceof CredentialRequestRedirectError) throw enrollment.error;
             const materialFailure = mapCommittedMaterialFailure(
               homeServerIdentityId,
               enrollment.error,
@@ -1083,7 +1089,8 @@ export async function runCliAccountServiceSetupEntry(
           adoptHome: adoptDirectoryHome,
           enrollmentAdapters,
         }));
-      } catch {
+      } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { kind: 'account_service_unavailable' };
       }
     },

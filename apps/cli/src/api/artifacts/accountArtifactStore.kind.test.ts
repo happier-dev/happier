@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ArtifactKindCoverageV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { createAccountArtifactStore, encodeAccountArtifactListCursor } from './accountArtifactStore';
 
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock('axios', () => ({ default: { get, post } }));
+vi.mock('axios', () => ({ default: { get, post, defaults: {} } }));
 
-const skillHeader = { kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Skill' };
+const skillHeader = { v: 1, kind: 'prompt_bundle.v2', bundleSchemaId: 'skills.skill_md_v1', title: 'Skill' };
+const skillBody = JSON.stringify({ v: 1, entries: [{ path: 'SKILL.md', contentKind: 'utf8',
+  contentBase64: Buffer.from('---\nname: sample\ndescription: useful\n---\nInstructions').toString('base64') }], createdAtMs: 1, updatedAtMs: 1 });
 const artifactId = '11111111-1111-4111-8111-111111111111';
 function row(id: string, header: Readonly<Record<string, unknown>>, updatedAt: number) {
   return { id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
@@ -26,8 +29,50 @@ function store(supported = true) {
 describe('Account Artifact coarse kind transport', () => {
   beforeEach(() => { get.mockReset(); post.mockReset(); });
 
+  it('reads received templates as one header page without legacy or body demand', async () => {
+    const selected = { ...row(artifactId, { kind: 'bot_template.v1', title: 'Received' }, 1), access: 'view' };
+    const header = { ...selected };
+    Reflect.deleteProperty(header, 'body');
+    get.mockResolvedValue({ status: 200, data: { items: [header], hasUnclassified: true,
+      coverage: { status: 'partial', unclassifiedCount: 1, reason: 'unclassified_legacy_rows' } } });
+    const options = { audience: 'received' as const, kinds: ['bot_template.v1'], limit: 1 };
+    const page = await store().list(options);
+    expect(page.items.map(item => item.artifactId)).toEqual([artifactId]);
+    expect(page.coverage).toBe('partial');
+    expect(get).toHaveBeenCalledTimes(1);
+    const query = new URL(get.mock.calls[0]![0]).searchParams;
+    expect(query.get('audience')).toBe('received');
+    expect(query.get('limit')).toBe('1');
+    expect(query.has('includeBody')).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('retains admitted Team audience through list, selected header and exact body reads', async () => {
+    const shared = { ...row(artifactId, { kind: 'workflow-definition.v1', title: 'Review' }, 1), sharedTeamIds: ['team-a'] };
+    const header = { ...shared };
+    Reflect.deleteProperty(header, 'body');
+    get.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === '/v1/artifacts' ? [shared] : shared }));
+    post.mockResolvedValue({ status: 200, data: { projection: 'headers', items: [{ artifactId, ok: true, artifact: header }] } });
+    const artifacts = store();
+    expect((await artifacts.list({})).items[0]).toMatchObject({ artifactId, sharedTeamIds: ['team-a'] });
+    expect(await artifacts.readHeader(artifactId)).toMatchObject({ artifactId, sharedTeamIds: ['team-a'] });
+    expect(await artifacts.read(artifactId)).toMatchObject({ artifactId, sharedTeamIds: ['team-a'] });
+  });
+
+  it('commits approval state and Session identity with each header transition', async () => {
+    const open = { kind: 'approval_request.v1', title: 'Private review', approvalStatus: 'open', sessionId: 'session-1' };
+    get.mockResolvedValue({ status: 200, data: row(artifactId, open, 1) });
+    post.mockResolvedValue({ status: 200, data: { id: artifactId, success: true, headerVersion: 2, bodyVersion: 2 } });
+    const artifacts = store();
+    await artifacts.create({ artifactId, header: open, body: 'private open request' });
+    await artifacts.update({ artifactId, header: { ...open, approvalStatus: 'executed' }, body: 'private receipt',
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 } });
+    expect(post.mock.calls.map(([, wire]) => ({ approvalState: wire.approvalState, approvalSessionId: wire.approvalSessionId })))
+      .toEqual([{ approvalState: 'open', approvalSessionId: 'session-1' }, { approvalState: 'executed', approvalSessionId: 'session-1' }]);
+  });
+
   it('sends classification for create, update, binary upload and restore', async () => {
-    const current = row(artifactId, skillHeader, 1);
+    const current = { ...row(artifactId, skillHeader, 1), body: encodePlainArtifactStoredContent({ body: skillBody }) };
     get.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname.endsWith('/revisions')
       ? { revisions: [{ bodyVersion: 1, body: current.body, createdAt: 1, sizeBytes: 8 }], retentionCount: 10 }
       : current }));
@@ -40,8 +85,8 @@ describe('Account Artifact coarse kind transport', () => {
       return { status: 200, data: { id: artifactId, success: true, headerVersion: 2, bodyVersion: 2 } };
     });
     const artifacts = store();
-    await artifacts.create({ artifactId, header: skillHeader, body: 'new' });
-    await artifacts.update({ artifactId, header: skillHeader, body: 'new', expectedRevision: { headerVersion: 1, bodyVersion: 1 } });
+    await artifacts.create({ artifactId, header: skillHeader, body: skillBody });
+    await artifacts.update({ artifactId, header: skillHeader, body: skillBody, expectedRevision: { headerVersion: 1, bodyVersion: 1 } });
     await artifacts.create({ artifactId, header: { kind: 'ordinary.v1' }, binary: { bytes: new Uint8Array([1, 2]), mime: 'application/octet-stream' } });
     await artifacts.update({ artifactId, header: { kind: 'ordinary.v1' }, binary: { bytes: new Uint8Array([3, 4]), mime: 'application/octet-stream' },
       expectedRevision: { headerVersion: 1, bodyVersion: 1 } });
@@ -51,7 +96,7 @@ describe('Account Artifact coarse kind transport', () => {
   });
 
   it('omits unsupported optional hints on normal create, update, binary upload and restore without refusing content', async () => {
-    const current = row(artifactId, skillHeader, 1);
+    const current = { ...row(artifactId, skillHeader, 1), body: encodePlainArtifactStoredContent({ body: skillBody }) };
     get.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname.endsWith('/revisions')
       ? { revisions: [{ bodyVersion: 1, body: current.body, createdAt: 1, sizeBytes: 8 }], retentionCount: 10 } : current }));
     post.mockImplementation(async (_url: string, input: unknown) => {
@@ -61,8 +106,8 @@ describe('Account Artifact coarse kind transport', () => {
       return { status: 200, data: { id: artifactId, success: true, headerVersion: 2, bodyVersion: 2 } };
     });
     const artifacts = store(false);
-    await artifacts.create({ artifactId, header: skillHeader, body: 'new' });
-    await expect(artifacts.update({ artifactId, header: skillHeader, body: 'new', expectedRevision: { headerVersion: 1, bodyVersion: 1 } }))
+    await artifacts.create({ artifactId, header: skillHeader, body: skillBody });
+    await expect(artifacts.update({ artifactId, header: skillHeader, body: skillBody, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }))
       .resolves.toMatchObject({ ok: true });
     await artifacts.create({ artifactId, header: { kind: 'ordinary.v1' }, binary: { bytes: new Uint8Array([1, 2]), mime: 'application/octet-stream' } });
     await expect(artifacts.update({ artifactId, header: { kind: 'ordinary.v1' }, binary: { bytes: new Uint8Array([3, 4]), mime: 'application/octet-stream' },
@@ -111,7 +156,8 @@ describe('Account Artifact coarse kind transport', () => {
       const query = new URL(url).searchParams;
       kinds.push(query.get('kind') ?? query.get('unclassified'));
       expect(query.has('kind') || query.has('unclassified')).toBe(true);
-      return { status: 200, data: { items: query.has('unclassified') ? [older] : [known], hasUnclassified: true } };
+      return { status: 200, data: { items: query.has('unclassified') ? [older] : [known], hasUnclassified: true,
+        coverage: ArtifactKindCoverageV1Schema.parse({ status: 'partial', unclassifiedCount: 1, reason: 'unclassified_legacy_rows' }) } };
     });
     post.mockResolvedValue({ status: 409, data: { success: false, error: 'version-mismatch' } });
     const artifacts = store();

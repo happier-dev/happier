@@ -4,7 +4,8 @@ import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBoots
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { isMachineReachableV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { StoredMachinePublishedMetadataV1Schema, type MachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readMachineName, resolveMachineDisplayNameParts, type MachineNameMetadata } from '@happier-dev/protocol/machines/machineDisplayNames';
 import { ManagedMachineInputRuntimeV1Schema, type ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -17,12 +18,13 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 // The machine bootstrap rows reuse the one Protocol-owned external Action
-// bootstrap projection; this parser extends it only with the legacy/full-account
-// `metadata` blob it genuinely needs. Labels and decoded platform facts remain
+// bootstrap projection; this parser adds the legacy/full-account presence and
+// `metadata` facts its consumers need. Labels and decoded platform facts remain
 // CLI projections of that metadata and never alter machine identity.
 const ACCOUNT_MACHINE_ROW_SCHEMA = z.looseObject({ ...ExternalActionMachineBootstrapV1Schema.shape,
     managedInputRuntime: z.optional(z.nullable(ManagedMachineInputRuntimeV1Schema)),
     metadata: z.optional(z.string()), activeAt: z.optional(z.nullable(z.number())), access: z.optional(AccessibleMachineAccessV1Schema),
+    presenceProtocolVersion: MachinePublishedRowV1Schema.shape.presenceProtocolVersion,
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)) });
 
 const ACCOUNT_MACHINE_INVENTORY_SCHEMA = z.array(ACCOUNT_MACHINE_ROW_SCHEMA);
@@ -38,6 +40,7 @@ export type CurrentAccountMachineInventoryItem = Readonly<{
   installationId: string | null;
   active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
   activeAt?: number | null;
+  presenceProtocolVersion?: MachinePresenceV1['presenceProtocolVersion'];
   platform?: string;
   arch?: string;
   agentInventory?: MachinePublishedMetadataV1['agentInventory'];
@@ -94,9 +97,9 @@ export async function listCurrentAccountMachines(params: Readonly<{
       || !await projection.isCurrent())) throw new Error('Requester Machine inventory authority is unavailable');
     if (!params.authorization && !params.token) throw new Error('Machine inventory authentication is unavailable');
     const demandedIds = params.machineIds === undefined ? undefined : new Set(params.machineIds);
-    // Existing requester/API-token grants authorize the Account roster. Ordinary
-    // stored credentials can use the existing exact read for a reviewed host.
-    const exactId = params.credentials && !params.authorization && demandedIds?.size === 1 ? [...demandedIds][0] : undefined;
+    // A selected host uses the exact read under its incumbent credential;
+    // requester projections retain the admitted root and reviewed child proof.
+    const exactId = (params.credentials || params.authorization) && demandedIds?.size === 1 ? [...demandedIds][0] : undefined;
     const path = exactId === undefined ? '/v1/machines' : `/v1/machines/${encodeURIComponent(exactId)}`;
     const headers = projection ? await projection.createRequestHeaders({
       effectActionId: params.effectActionId ?? params.authorization!.binding.actionId, method: 'GET', path,
@@ -150,6 +153,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
           installationId: row.installationId,
           revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
           ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),
+          ...(row.presenceProtocolVersion === undefined ? {} : { presenceProtocolVersion: row.presenceProtocolVersion }),
           ...(metadata ? { platform: metadata.platform, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
           ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
           ...(row.access ? { access: row.access } : {}),
@@ -257,14 +261,14 @@ export async function resolveCurrentAccountMachineTarget(params: Readonly<{
       // an automatic current-daemon selection.
       .filter((row) => (
         row.kind === 'persistent'
-        && row.active && row.revokedAt === null && row.replacedByMachineId === null
+        && isMachineReachableV1({ machine: row }) && row.revokedAt === null && row.replacedByMachineId === null
         && (!row.access || row.access.accessState === 'ready')
       ))
       .map((row) => ({ machineId: row.id, machineLabel: row.label }));
     if (candidates.length === 0) {
       const currentMachines = inventory.filter(row => row.kind === 'persistent'
         && row.revokedAt === null && row.replacedByMachineId === null);
-      if (currentMachines.every(row => !row.active)) return {
+      if (currentMachines.every(row => !isMachineReachableV1({ machine: row }))) return {
         kind: 'unavailable', code: 'machine_offline', message: 'No active machine is available.',
         details: { machineIds: currentMachines.map(row => row.id) },
       };

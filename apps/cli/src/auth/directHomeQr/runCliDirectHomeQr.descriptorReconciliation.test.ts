@@ -76,6 +76,9 @@ describe('CLI direct Home QR descriptor reconciliation', () => {
       /** Let the requester claim the invite and drive the pairing through completion. */
       completePairing?: boolean;
       transientModeFailure?: boolean;
+      redirectPath?: string;
+      requests?: string[];
+      redirectedRequests?: Array<{ authorizationPresent: boolean; bodyPresent: boolean }>;
     }> = {},
   ) {
     return await withTempDir('happier-cli-direct-qr-descriptor-', async (homeDir) => {
@@ -155,6 +158,17 @@ describe('CLI direct Home QR descriptor reconciliation', () => {
       let modeFailurePending = options.transientModeFailure === true;
       vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const path = new URL(String(url)).pathname;
+        options.requests?.push(path);
+        const redirected = new URL(String(url)).origin === 'https://other.example.test';
+        if (path === options.redirectPath && !redirected) {
+          return new Response(null, { status: 307, headers: { Location: `https://other.example.test${path}` } });
+        }
+        if (redirected) {
+          options.redirectedRequests?.push({
+            authorizationPresent: new Headers(init?.headers).has('Authorization'),
+            bodyPresent: init?.body != null,
+          });
+        }
         if (path === '/v1/account/encryption/currentness') {
           if (modeFailurePending) { modeFailurePending = false; return new Response(null, { status: 503 }); }
           return Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
@@ -245,6 +259,32 @@ describe('CLI direct Home QR descriptor reconciliation', () => {
     const outcome = await runCase(stored, stored, true, { completePairing: true, transientModeFailure: true });
     expect(outcome.result).toEqual({ kind: 'completed', requestedDeviceLabel: 'Phone' });
     expect(outcome.accountResponseBodies).toEqual([expect.objectContaining({ responseKind: 'tokenOnly' })]);
+  });
+
+  it.each([
+    '/v1/auth/pairing/status',
+    '/v1/account/encryption/currentness',
+  ])('completes pairing after a redirected %s read without forwarding credentials', async redirectPath => {
+    const stored = descriptor({ revision: 2 });
+    const redirectedRequests: Array<{ authorizationPresent: boolean; bodyPresent: boolean }> = [];
+    const outcome = await runCase(stored, stored, true, { completePairing: true, redirectPath, redirectedRequests });
+    expect(outcome.result).toEqual({ kind: 'completed', requestedDeviceLabel: 'Phone' });
+    expect(redirectedRequests.length).toBeGreaterThan(0);
+    expect(redirectedRequests.every(request => !request.authorizationPresent && !request.bodyPresent)).toBe(true);
+    expect(carrierBoundary.close).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    '/v1/auth/pairing/start',
+    '/v1/auth/account/response',
+  ])('refuses a cross-origin %s secret-body replay without retrying', async (redirectPath) => {
+    const stored = descriptor({ revision: 2 });
+    const requests: string[] = [];
+    await expect(runCase(stored, stored, true, { completePairing: true, redirectPath, requests })).rejects.toMatchObject({
+      code: 'credential_request_redirect_refused', retryable: false, status: 307,
+    });
+    expect(requests.filter((path) => path === redirectPath)).toHaveLength(1);
+    expect(carrierBoundary.close).toHaveBeenCalledOnce();
   });
 
   it('completes an approved pairing for the pinned Home identity', async () => {

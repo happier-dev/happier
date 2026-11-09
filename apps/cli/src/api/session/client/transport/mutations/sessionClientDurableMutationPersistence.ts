@@ -1,4 +1,6 @@
 import * as z from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
 import { readFile, readdir, unlink } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +23,7 @@ import { SessionStateProviderSessionIdValueSchema } from '@happier-dev/protocol/
 import { RuntimeDescriptorV1Schema as SessionStateRuntimeDescriptorValueSchema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SessionStateTitleValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/title';
 import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionTurnProgressV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
@@ -277,6 +280,15 @@ function addDependencyMutationIds(
     }
 }
 
+async function readSessionMutationFile(filePath: string): Promise<string | null> {
+    try {
+        return await readFile(filePath, 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw error;
+    }
+}
+
 async function loadReferencedPrerequisiteMutationIds(
     sessionId: string,
     context?: SessionClientDurableMutationPersistenceContext,
@@ -292,11 +304,12 @@ async function loadReferencedPrerequisiteMutationIds(
         }
         mutationIds.add(mutationId);
     };
+    const fileContents = await readSessionMutationFile(
+        context?.paths.queuePath ?? resolveSessionClientDurableMutationOutboxPath(sessionId),
+    );
+    if (fileContents === null) return { mutationIds, overflowCount };
     try {
-        const parsed = JSON.parse(await readFile(
-            context?.paths.queuePath ?? resolveSessionClientDurableMutationOutboxPath(sessionId),
-            'utf8',
-        )) as unknown;
+        const parsed = JSON.parse(fileContents) as unknown;
         if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
             return { mutationIds, overflowCount };
         }
@@ -436,6 +449,9 @@ function parseTranscriptMessageAppendPayload(value: unknown, stored: boolean): P
     if (messageRole && !messageRole.success) {
         return null;
     }
+    const usageTimingV1 = value.usageTimingV1 === undefined || value.usageTimingV1 === null
+        ? undefined : (stored ? createStoredReadSchema(UsageTimingBoundsV1Schema) : UsageTimingBoundsV1Schema).safeParse(value.usageTimingV1);
+    if (usageTimingV1 && !usageTimingV1.success) return null;
     const provenance = value.provenance === undefined ? undefined
         : (stored ? createStoredReadSchema(SessionTranscriptObservationProvenanceV1Schema) : SessionTranscriptObservationProvenanceV1Schema).safeParse(value.provenance);
     if (provenance && !provenance.success) {
@@ -446,6 +462,8 @@ function parseTranscriptMessageAppendPayload(value: unknown, stored: boolean): P
     if (surfaceItemReference && !surfaceItemReference.success) {
         return null;
     }
+    if (value.approvalRequestArtifactId !== undefined
+        && (typeof value.approvalRequestArtifactId !== 'string' || !value.approvalRequestArtifactId.trim())) return null;
     const content = typeof value.content === 'string' ? undefined : SessionStoredMessageContentSchema.safeParse(value.content);
     if (content && !content.success) {
         return null;
@@ -468,10 +486,13 @@ function parseTranscriptMessageAppendPayload(value: unknown, stored: boolean): P
         createdAt: value.createdAt,
         updatedAt: value.updatedAt,
         content: typeof value.content === 'string' ? value.content : content!.data,
+        ...(value.usageTimingV1 === null ? { usageTimingV1: null }
+            : usageTimingV1?.success ? { usageTimingV1: usageTimingV1.data } : {}),
         ...(messageRole?.success ? { messageRole: messageRole.data } : {}),
         ...(typeof value.sidechainId === 'string' || value.sidechainId === null ? { sidechainId: value.sidechainId } : {}),
         ...(value.sessionEventType === 'ready' ? { sessionEventType: 'ready' as const } : {}),
         ...(surfaceItemReference?.success ? { surfaceItemReference: surfaceItemReference.data } : {}),
+        ...(typeof value.approvalRequestArtifactId === 'string' ? { approvalRequestArtifactId: value.approvalRequestArtifactId } : {}),
     };
     return provenance?.success ? { ...projected, provenance: provenance.data } : projected;
 }
@@ -597,7 +618,7 @@ function parseRegisteredSessionStateFieldPayload(value: unknown, stored: boolean
         || value.observedAt < 0
         || dependencies === null
         || !isRecord(value.op)
-        || ((fieldId.success && (fieldId.data === 'intent.context' || fieldId.data === 'intent.memoryEnabled' || fieldId.data === 'intent.voicePreference'))
+        || ((fieldId.success && (fieldId.data === 'intent.context' || fieldId.data === 'intent.memoryEnabled' || fieldId.data === 'intent.voicePreference' || fieldId.data === 'intent.approvalProfileId'))
             && (!Number.isSafeInteger(value.expectedMetadataRevision) || typeof value.expectedMetadataRevision !== 'number' || value.expectedMetadataRevision < 0))
     ) {
         return null;
@@ -687,6 +708,10 @@ function parseRegisteredSessionStateFieldValue(
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
     if (fieldId === 'intent.memoryEnabled') return typeof value === 'boolean' ? { ok: true, value } : { ok: false };
+    if (fieldId === 'intent.approvalProfileId') {
+        const parsed = z.nullable(ApprovalProfileIdV1Schema).safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
     if (fieldId === 'intent.voicePreference') {
         const parsed = z.nullable(StoredSessionVoicePreferenceV1Schema).safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
@@ -727,6 +752,10 @@ function parseRegisteredSessionStateFieldValue(
     }
     if (fieldId === 'runtime.workState') {
         const parsed = (stored ? createStoredReadSchema(SessionStateWorkStateValueSchema) : SessionStateWorkStateValueSchema).safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'runtime.turnProgress') {
+        const parsed = SessionTurnProgressV1Schema.safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
     if (fieldId === 'runtime.activity') {
@@ -1261,40 +1290,35 @@ export async function loadSessionClientDurableMutationOutbox(
     sessionId: string,
     context?: SessionClientDurableMutationPersistenceContext,
 ): Promise<QueuedSessionClientDurableMutation[]> {
-    try {
-        const parsed = JSON.parse(await readFile(
-            context?.paths.queuePath ?? resolveSessionClientDurableMutationOutboxPath(sessionId),
-            'utf8',
-        )) as unknown;
-        if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
-            const deadLetters = [createDeadLetterEntry({
-                sessionId,
-                kind: 'outbox_file',
-                reason: 'invalid_outbox_file',
-                payload: parsed,
-            })];
-            await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
-            await saveSessionClientDurableMutationOutbox(sessionId, [], context);
-            return [];
-        }
-        const mutations: QueuedSessionClientDurableMutation[] = [];
-        const deadLetters: SessionClientDurableMutationDeadLetterEntry[] = [];
-        for (const rawMutation of parsed.mutations) {
-            const parsedMutation = context?.parseQueuedMutation(rawMutation, sessionId, true)
-                ?? parseQueuedSessionClientDurableMutation(rawMutation, sessionId, true);
-            mutations.push(...parsedMutation.mutations);
-            deadLetters.push(...parsedMutation.deadLetters);
-        }
-        if (deadLetters.length > 0) {
-            await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
-            await saveSessionClientDurableMutationOutbox(sessionId, mutations, context);
-        }
-        return mutations;
-    } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err?.code === 'ENOENT') return [];
-        throw error;
+    const fileContents = await readSessionMutationFile(
+        context?.paths.queuePath ?? resolveSessionClientDurableMutationOutboxPath(sessionId),
+    );
+    if (fileContents === null) return [];
+    const parsed = JSON.parse(fileContents) as unknown;
+    if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
+        const deadLetters = [createDeadLetterEntry({
+            sessionId,
+            kind: 'outbox_file',
+            reason: 'invalid_outbox_file',
+            payload: parsed,
+        })];
+        await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
+        await saveSessionClientDurableMutationOutbox(sessionId, [], context);
+        return [];
     }
+    const mutations: QueuedSessionClientDurableMutation[] = [];
+    const deadLetters: SessionClientDurableMutationDeadLetterEntry[] = [];
+    for (const rawMutation of parsed.mutations) {
+        const parsedMutation = context?.parseQueuedMutation(rawMutation, sessionId, true)
+            ?? parseQueuedSessionClientDurableMutation(rawMutation, sessionId, true);
+        mutations.push(...parsedMutation.mutations);
+        deadLetters.push(...parsedMutation.deadLetters);
+    }
+    if (deadLetters.length > 0) {
+        await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
+        await saveSessionClientDurableMutationOutbox(sessionId, mutations, context);
+    }
+    return mutations;
 }
 
 async function unlinkIfExists(filePath: string): Promise<void> {
@@ -1318,8 +1342,10 @@ export async function saveSessionClientDurableMutationOutbox(
 }
 
 async function loadDeadLetterFile(filePath: string): Promise<SessionClientDurableMutationDeadLetterEntry[]> {
+    const fileContents = await readSessionMutationFile(filePath);
+    if (fileContents === null) return [];
     try {
-        const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+        const parsed = JSON.parse(fileContents) as unknown;
         if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.entries)) return [];
         return parsed.entries.filter((entry): entry is SessionClientDurableMutationDeadLetterEntry => (
             isRecord(entry) && entry.v === 1

@@ -14,6 +14,8 @@ import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approva
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
+import { SessionOrganizationFolderSchema, SessionSectionV1Schema } from '@happier-dev/protocol/sessions/organization/folders';
+import { CreateOrUpdateSessionOrganizationFolderRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 
 /**
  * The CLI reaches the Home it is already bound to. It never chooses a Home from
@@ -30,6 +32,78 @@ describe('Home family CLI adapter', () => {
     restore = installAxiosFastifyAdapter({ app, origin: 'http://home.test' });
   });
   afterEach(async () => { restore(); await app.close(); });
+
+  it('composes semantic section Actions over one captured Home and its retained folder transport', async () => {
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    const definitions = new Map<string, ReturnType<typeof SessionOrganizationFolderSchema.parse>>();
+    const assignments = new Map<string, string>();
+    const requests: { method: string; path: string }[] = [];
+    app.addHook('onRequest', async request => {
+      expect(request.headers.authorization).toBe('Bearer bound');
+      requests.push({ method: request.method, path: request.url });
+    });
+    app.get('/v2/session-organization', async request => {
+      const query = request.query as Record<string, string>;
+      const folderIds = (query.folderIds ?? '').split(',').filter(Boolean);
+      const sessionIds = (query.assignmentSessionIds ?? '').split(',').filter(Boolean);
+      return { snapshot: { schemaVersion: 1, version: 1, pins: [],
+        folders: query.includeFolders === 'false' ? [] : [...definitions.values()].filter(row => !folderIds.length || folderIds.includes(row.folderId)),
+        folderAssignments: [...assignments].filter(([sessionId, folderId]) => folderIds.includes(folderId) || sessionIds.includes(sessionId))
+          .map(([sessionId, folderId]) => ({ sessionId, folderId })),
+        tags: [], tagAssignments: [], orderEntries: [], labels: [],
+      } };
+    });
+    app.post('/v2/session-organization/folders', async request => {
+      const body = CreateOrUpdateSessionOrganizationFolderRequestSchema.parse(request.body);
+      expect(body.display?.t).toBe('plain');
+      const folder = SessionOrganizationFolderSchema.parse({ ...body, folderId: body.folderId ?? body.folderKey,
+        archivedAt: null, createdAt: 1, updatedAt: 1 });
+      definitions.set(folder.folderId, folder);
+      return { folder };
+    });
+    let assignmentAcknowledged = true;
+    app.put('/v2/session-organization/folder-assignments/:sessionId', async request => {
+      const { sessionId } = request.params as { sessionId: string };
+      const { folderId } = request.body as { folderId: string | null };
+      if (folderId) assignments.set(sessionId, folderId); else assignments.delete(sessionId);
+      return assignmentAcknowledged ? { sessionId, folderId } : { uncertain: true };
+    });
+    app.delete('/v2/session-organization/folders/:folderId', async request => {
+      const { folderId } = request.params as { folderId: string };
+      expect(request.body).toEqual({ folderId, assignmentBehavior: 'moveAssignmentsToParent' });
+      const removed = definitions.delete(folderId);
+      return { deletedFolderIds: removed ? [folderId] : [], assignmentTargetFolderId: null, affectedAssignmentCount: 0 };
+    });
+    const accountDeps = createAccountServerActionDeps({ token: 'bound', serverId: 'home', serverHttpBaseUrl: 'http://home.test' });
+    const { executor } = createCliActionExecutorHarness({ token: 'bound', sessionId: 'cli-global', serverId: 'home',
+      serverHttpBaseUrl: 'http://home.test', mode: 'plain', ctx: null },
+    accountDeps);
+    const context = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } } as const;
+    const created = await executor.execute('session.sections.create', { name: 'Launch', icon: 'rocket-outline' }, context);
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.errorCode);
+    const { sectionId } = SessionSectionV1Schema.parse((created.result as { section: unknown }).section);
+    expect(definitions.get(sectionId)).toMatchObject({ parentFolderId: null, parentFolderKey: null,
+      display: { t: 'plain', v: { name: 'Launch', icon: 'rocket-outline' } } });
+    expect(await executor.execute('session.sections.update', { sectionId, name: 'Release' }, context)).toMatchObject({ ok: true,
+      result: { section: { sectionId, displayState: { status: 'available', value: { name: 'Release', icon: 'rocket-outline' } } } } });
+    expect(await executor.execute('session.sections.list', {}, context)).toMatchObject({ ok: true, result: { sections: [{ sectionId }] } });
+    const displayReadsBeforeAssignment = requests.filter(request => request.path === '/v1/account/encryption').length;
+    expect(await executor.execute('session.section.set', { sessionId: 'unloaded', sectionId }, context)).toMatchObject({ ok: true,
+      result: { sessionId: 'unloaded', sectionId, previousSectionId: null } });
+    expect(await executor.execute('session.section.set', { sessionId: 'unloaded', sectionId: null }, context)).toMatchObject({ ok: true,
+      result: { sessionId: 'unloaded', sectionId: null, previousSectionId: sectionId } });
+    expect(requests.filter(request => request.path === '/v1/account/encryption')).toHaveLength(displayReadsBeforeAssignment);
+    assignmentAcknowledged = false;
+    expect(await executor.execute('session.section.set', { sessionId: 'unloaded', sectionId }, context)).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    expect(await executor.execute('session.sections.reorder', { sectionId, beforeSectionId: null }, context)).toMatchObject({ ok: true, result: { sectionId } });
+    expect(await executor.execute('session.sections.delete', { sectionId }, context)).toMatchObject({ ok: true,
+      result: { sectionId, removed: true, affectedAssignmentCount: 0 } });
+    const beforeForeign = requests.length;
+    expect(await accountDeps.homeDomainAction!({ actionId: 'session.sections.list', input: {}, context: { ...context, serverId: 'foreign-home' } })).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(requests).toHaveLength(beforeForeign);
+    expect(requests.some(request => request.path.startsWith('/v1/sessions'))).toBe(false);
+  });
 
   it.each([
     { payload: { error: 'credential_scope_denied' }, denied: true },

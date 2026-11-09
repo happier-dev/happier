@@ -3,7 +3,6 @@ const DEFAULT_CHECKPOINT_INTERVAL_MS = 2_000;
 const DEFAULT_CHECKPOINT_MIN_CHARS = 256;
 const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 40;
 const DEFAULT_LIVE_SNAPSHOT_MIN_CHARS = 1;
-const DEFAULT_LIVE_CHECKPOINT_INTERVAL_MS = 1_000;
 
 function resolveNonNegativeIntEnv(input: unknown, fallback: number): number {
   if (typeof input === 'number' && Number.isFinite(input) && input >= 0) return Math.trunc(input);
@@ -50,13 +49,14 @@ export function resolveLiveSnapshotMinChars(input: unknown): number {
 }
 
 /**
- * Interval between full-snapshot checkpoints on the live (ephemeral) stream when delta emission is
- * available. Between checkpoints, live emissions carry only the appended delta text. `0` disables
- * deltas entirely (every live emission is a full snapshot, the pre-delta behavior).
+ * Whether live emissions after a segment's first snapshot carry only the appended text. Full
+ * snapshots are sent only when a segment opens, its text is rewritten, a live send fails, or the
+ * connection epoch changes; receivers recover a gap from the durable message revision instead of
+ * a periodic full checkpoint. `HAPPIER_STREAM_LIVE_DELTAS=0` sends every live emission as a full
+ * snapshot (the pre-delta behavior).
  */
-export function resolveLiveCheckpointIntervalMs(input: unknown): number {
-  return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_LIVE_CHECKPOINT_MS,
-    DEFAULT_LIVE_CHECKPOINT_INTERVAL_MS,
-  );
+export function resolveLiveDeltasEnabled(input: unknown): boolean {
+  if (typeof input === 'boolean') return input;
+  const raw = (process.env.HAPPIER_STREAM_LIVE_DELTAS ?? '').toString().trim().toLowerCase();
+  return raw !== '0' && raw !== 'false';
 }

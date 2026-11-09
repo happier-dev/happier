@@ -1,7 +1,17 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini'
+import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execution/runs/activityV1';
+import type { ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { z as mini } from 'zod/mini'
 import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import {
+  SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT,
+  SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT,
+  type SessionHumanPresenceSnapshotV1,
+  type SessionHumanPresenceVisibleReplaceV1,
+  type SessionHumanPresenceVisibleReplaceResultV1,
+} from '@happier-dev/protocol/sessions';
 import type { SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
 import { StoredMachinePublishedMetadataV1Schema, MachinePublishedDaemonStateV1Schema, MachinePublishedTransferListenerV1Schema, MachinePublishedTransferRuntimeV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -28,7 +38,6 @@ import type {
   AcceptedPendingSettlementResponseV1,
   AgentModelOptionOverrideRule,
   ContentPublicKeyFingerprint,
-  ExecutionRunPublicState,
   MachineReplacementReason,
   MachineOperationProtocolCapabilitiesV1,
   PrimaryTurnStatusV1,
@@ -62,7 +71,19 @@ import type {
   SessionRunnerRuntimeStateV1,
   SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol'
-import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import type { PermissionMode } from './permissionModes';
+export {
+  PERMISSION_MODES,
+  CODEX_GEMINI_PERMISSION_MODES,
+  CODEX_PERMISSION_MODES,
+  isPermissionMode,
+  isCodexGeminiPermissionMode,
+  isCodexPermissionMode,
+  type PermissionMode,
+  type CodexGeminiPermissionMode,
+  type CodexPermissionMode,
+} from './permissionModes';
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -80,50 +101,6 @@ import type {
   UpdateMetadataAckResponse,
   UpdateStateAckResponse,
 } from '@happier-dev/protocol/updates'
-
-/**
- * Permission mode values - includes both Claude and Codex modes
- * Must match MessageMetaSchema.permissionMode enum values
- *
- * Claude modes: default, acceptEdits, bypassPermissions, plan
- * Codex modes: read-only, safe-yolo, yolo
- *
- * When calling Claude SDK, Codex modes are mapped at the SDK boundary:
- * - yolo → bypassPermissions
- * - safe-yolo → acceptEdits
- * - read-only → dontAsk
- */
-export const PERMISSION_MODES = SESSION_PERMISSION_MODES
-
-const CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES = ['read-only', 'safe-yolo', 'yolo'] as const
-export const CODEX_GEMINI_PERMISSION_MODES = ['default', ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES] as const
-
-export type PermissionMode = (typeof PERMISSION_MODES)[number]
-
-export function isPermissionMode(value: string): value is PermissionMode {
-  return PERMISSION_MODES.includes(value as PermissionMode)
-}
-
-export type CodexGeminiPermissionMode = (typeof CODEX_GEMINI_PERMISSION_MODES)[number]
-
-export function isCodexGeminiPermissionMode(value: PermissionMode): value is CodexGeminiPermissionMode {
-  return (CODEX_GEMINI_PERMISSION_MODES as readonly string[]).includes(value)
-}
-
-// Codex supports the Codex/Gemini subset, plus bypassPermissions as an alias for yolo/full access.
-export const CODEX_PERMISSION_MODES = [
-  'default',
-  'read-only',
-  'safe-yolo',
-  'yolo',
-  'bypassPermissions',
-] as const
-
-export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
-
-export function isCodexPermissionMode(value: PermissionMode): value is CodexPermissionMode {
-  return (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
-}
 
 /**
  * Usage data type from Claude
@@ -167,6 +144,7 @@ export interface SocketRpcCallResponse {
  * Socket events from server to client
  */
 export interface ServerToClientEvents {
+  [SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT]: (data: SessionHumanPresenceSnapshotV1) => void
   update: (data: Update) => void
   session: (data: SessionBroadcast) => void
   'server:restarting': (data: { retryAfterMs?: number }) => void
@@ -187,6 +165,10 @@ export interface ClientToServerEvents extends Record<typeof SESSION_FOLLOW_OBSER
     data: SessionFollowObservePendingRequestV1,
     cb: (answer: SessionFollowObservePendingResponseV1) => void,
   ) => void> {
+  [SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT]: (
+    data: SessionHumanPresenceVisibleReplaceV1,
+    cb: (answer: SessionHumanPresenceVisibleReplaceResultV1) => void,
+  ) => void;
   [DISCUSSION_AGENT_POST_EVENT_V1]: (
     data: DiscussionAgentPublisherPublicationV1,
     cb: (answer: DiscussionAgentPublisherResponseV1) => void,
@@ -267,8 +249,8 @@ export interface ClientToServerEvents extends Record<typeof SESSION_FOLLOW_OBSER
   ) => void,
   'execution-run-updated': (data: {
     sid: string;
-    run: ExecutionRunPublicState;
-  }) => void
+    run: ExecutionRunSessionUpdateState;
+  } | ExecutionRunMachineActivityV1) => void
   'transcript-stream-segment': (data: {
     sid: string;
     message: {
@@ -398,7 +380,7 @@ export { StoredMachinePublishedMetadataV1Schema as MachineMetadataSchema } from 
 
 export type MachineMetadata = z.infer<typeof StoredMachinePublishedMetadataV1Schema>
 
-export const MachineRegistrationIdentitySchema = z.object({
+export const MachineRegistrationIdentitySchema = lazyZodSchema(() => z.object({
   installationId: z.string().check(z.trim(), z.minLength(1)),
   installationPublicKey: MachineInstallationPublicKeySchema,
   installationProof: MachineInstallationProofV1Schema,
@@ -406,7 +388,7 @@ export const MachineRegistrationIdentitySchema = z.object({
   replacementReason: mini.optional(MachineReplacementReasonSchema),
   contentPublicKeyFingerprint: mini.optional(ContentPublicKeyFingerprintSchema),
   replacementCandidateAccountId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-})
+}))
 
 export type MachineRegistrationIdentity = Readonly<
   Omit<z.infer<typeof MachineRegistrationIdentitySchema>, 'replacementReason' | 'contentPublicKeyFingerprint'>
@@ -472,7 +454,7 @@ export type Machine = MachineCommon & (
 /**
  * Session message from API
  */
-export const SessionMessageSchema = z.looseObject({
+export const SessionMessageSchema = lazyZodSchema(() => z.looseObject({
   content: SessionMessageContentSchema,
   createdAt: z.number(),
   id: z.string(),
@@ -480,14 +462,14 @@ export const SessionMessageSchema = z.looseObject({
   seq: z.number(),
   sidechainId: z.nullable(z.string()),
   updatedAt: z.number()
-})
+}))
 
 export type SessionMessage = z.infer<typeof SessionMessageSchema>
 
 /**
  * Message metadata schema
  */
-export const MessageMetaSchema = z.looseObject({
+export const MessageMetaSchema = lazyZodSchema(() => z.looseObject({
   sentFrom: mini.optional(SentFromSchema), // Source identifier
   /**
    * High-level origin of the message. This is used to prevent reliability features
@@ -504,14 +486,14 @@ export const MessageMetaSchema = z.looseObject({
   appendSystemPrompt: z.optional(z.nullable(z.string())), // Append to system prompt for this message (null = reset)
   allowedTools: z.optional(z.nullable(z.array(z.string()))), // Allowed tools for this message (null = reset)
   disallowedTools: z.optional(z.nullable(z.array(z.string()))) // Disallowed tools for this message (null = reset)
-})
+}))
 
 export type MessageMeta = z.infer<typeof MessageMetaSchema>
 
 /**
  * API response types
  */
-export const CreateSessionResponseSchema = z.object({
+export const CreateSessionResponseSchema = lazyZodSchema(() => z.object({
   created: z.optional(z.boolean()),
   organizationPlacement: mini.optional(SessionOrganizationPlacementV1Schema),
   session: z.looseObject({
@@ -527,11 +509,11 @@ export const CreateSessionResponseSchema = z.object({
     agentStateVersion: z.number(),
     dataEncryptionKey: z.optional(z.nullable(z.string())),
   }),
-})
+}))
 
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
 
-export const UserMessageSchema = z.looseObject({
+export const UserMessageSchema = lazyZodSchema(() => z.looseObject({
   /** Native transport overwrites authored values; never carried inside Session content. */
   inputAdmissionReceipt: mini.optional(SessionInputAdmissionReceiptV1Schema),
   callerInputConstraints: mini.optional(CallerInputConstraintsV1Schema),
@@ -552,22 +534,22 @@ export const UserMessageSchema = z.looseObject({
   localId: z.optional(z.nullish(z.string())),
   localKey: z.optional(z.string()), // Mobile messages include this
   meta: z.optional(MessageMetaSchema)
-})
+}))
 
 export type UserMessage = z.infer<typeof UserMessageSchema>
 
-export const AgentMessageSchema = z.looseObject({
+export const AgentMessageSchema = lazyZodSchema(() => z.looseObject({
   role: z.literal('agent'),
   content: z.looseObject({
     type: z.literal('output'),
     data: z.any()
   }),
   meta: z.optional(MessageMetaSchema)
-})
+}))
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 
-export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSchema])
+export const MessageContentSchema = lazyZodSchema(() => z.union([UserMessageSchema, AgentMessageSchema]))
 
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
@@ -629,7 +611,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
   & SessionCapabilityMetadataV1
   & Pick<NonNullable<SessionOwnerMetadataV1['system']>, 'attestedContext'>
   & Pick<NonNullable<SessionOwnerMetadataV1['workspace']>, 'branch' | 'projectId' | 'workspaceId'>
-  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'agentRuntimeCapabilitiesV1' | 'agentRuntimeFacetsV1'>
+  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'approvalProfileId' | 'agentRuntimeCapabilitiesV1' | 'agentRuntimeFacetsV1' | 'mcpCapabilityNoticeV1'>
   & Pick<SessionOwnerCompatibilityViewV1, 'actionConfirmationsV1'> & {
   path: string,
   host: string,
@@ -741,100 +723,15 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
    *
    * NOTE: This is an UNSTABLE ACP feature and may be unsupported by some agents.
    */
-  acpSessionModelsV1?: {
-    v: 1,
-    agentId: string,
-    updatedAt: number,
-    currentModelId: string,
-    availableModels: Array<{
-      id: string,
-      name: string,
-      description?: string,
-      contextWindowTokens?: number,
-      extendedContextModelId?: string,
-      modelOptions?: Array<{
-        id: string,
-        name: string,
-        description?: string,
-        type: string,
-        currentValue: string | number | boolean | null,
-        options?: Array<{
-          value: string | number | boolean | null,
-          name: string,
-          description?: string,
-        }>,
-        overridesWhenOn?: SessionOptionOverrideRuleV1,
-      }>,
-    }>,
-  },
-  sessionModelsV1?: {
-    v: 1,
-    agentId: string,
-    updatedAt: number,
-    currentModelId: string,
-    activeSelectionV1?: import('@happier-dev/protocol/providers/selection/v2').SessionActiveModelSelection,
-    availableModels: Array<{
-      id: string,
-      name: string,
-      description?: string,
-      contextWindowTokens?: number,
-      extendedContextModelId?: string,
-      modelOptions?: Array<{
-        id: string,
-        name: string,
-        description?: string,
-        type: string,
-        currentValue: string | number | boolean | null,
-        options?: Array<{
-          value: string | number | boolean | null,
-          name: string,
-          description?: string,
-        }>,
-        overridesWhenOn?: SessionOptionOverrideRuleV1,
-      }>,
-    }>,
-  },
+  acpSessionModelsV1?: SessionOwnerCompatibilityViewV1['acpSessionModelsV1'],
+  sessionModelsV1?: SessionOwnerCompatibilityViewV1['sessionModelsV1'],
   /**
    * ACP session configuration options (if supported by the provider's ACP agent).
    *
    * Used to expose provider-native runtime configuration controls to the UI.
    */
-  acpConfigOptionsV1?: {
-    v: 1,
-    agentId: string,
-    updatedAt: number,
-    configOptions: Array<{
-      id: string,
-      name: string,
-      description?: string,
-      type: string,
-      currentValue: string | number | boolean | null,
-      options?: Array<{
-        value: string | number | boolean | null,
-        name: string,
-        description?: string,
-      }>,
-      overridesWhenOn?: SessionOptionOverrideRuleV1,
-    }>,
-  },
-  sessionConfigOptionsV1?: {
-    v: 1,
-    agentId: string,
-    updatedAt: number,
-    configOptions: Array<{
-      id: string,
-      name: string,
-      description?: string,
-      type: string,
-      currentValue: string | number | boolean | null,
-      options?: Array<{
-        value: string | number | boolean | null,
-        name: string,
-        description?: string,
-      }>,
-      overridesWhenOn?: SessionOptionOverrideRuleV1,
-    }>,
-  },
+  acpConfigOptionsV1?: SessionOwnerCompatibilityViewV1['acpConfigOptionsV1'],
+  sessionConfigOptionsV1?: SessionOwnerCompatibilityViewV1['sessionConfigOptionsV1'],
   /**
    * Desired ACP session mode override selected by the user (UI/CLI).
    *
@@ -907,6 +804,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
 export type InFlightSteerUnavailableReason = 'backend_unsupported' | 'unsafe_window' | 'turn_settling' | 'user_terminal_draft';
 
 export type AgentState = {
+  workStatus?: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionRuntimeWorkStatusV1 | null
   currentSessionPresentationV1?: import('@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1').CurrentSessionPresentationStateV1
   controlledByUser?: boolean | null | undefined
   localControl?: {

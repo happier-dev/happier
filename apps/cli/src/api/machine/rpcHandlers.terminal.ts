@@ -15,7 +15,6 @@ import { logger } from '@/ui/logger';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
-import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
@@ -160,24 +159,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   deps?: MachineTerminalRpcHandlerDeps;
 }>): MachineTerminalRpcRegistration {
-  const rpcHandlerManager: RpcHandlerRegistrar = {
-    registerHandler(method, handler) {
-      params.rpcHandlerManager.registerHandler(method, async (raw, context) => {
-        // A Machine grant admits placement, not a person identity. Admitted finite
-        // work is not interactive: its launch delegates to the existing finite
-        // Project Action, and its output byte read is decided by the PTY's retained
-        // custody alone. All other PTY discovery and control require host-stamped presence.
-        const finite = (method === RPC_METHODS.DAEMON_TERMINAL_ENSURE || method === RPC_METHODS.DAEMON_TERMINAL_RESTART)
-          && DaemonTerminalEnsureRequestSchema.safeParse(raw).data?.launch?.kind === 'package_script'
-          || method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES
-          && isFiniteOutputRead(TerminalStreamReadRequestSchema.safeParse(raw).data?.terminalId);
-        if (!finite && (context?.callerAuthority !== 'present_user' || context.sessionActionOrigin)) {
-          throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
-        }
-        return handler(raw, context);
-      });
-    },
-  };
+  const rpcHandlerManager = params.rpcHandlerManager;
   const env = params.deps?.env ?? process.env;
   const config = readDaemonTerminalPtyConfig(env);
   const workingDirectory =
@@ -397,11 +379,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const authorizeTerminal = async (terminalId: string, context?: RpcHandlerContext, purpose: 'control' | 'census' | 'retire' | 'finite_output' = 'control',
     admittedCensusCustody?: TerminalPtyCustody): Promise<boolean> => {
-    // Person provenance belongs to the canonical selector. Matching the
-    // requester key/root alone never isolates a legacy daemon-user payload.
+    // The canonical selector establishes the requester. Native material and
+    // retained custody below decide whether it can control this terminal.
     const requesterIdentity = purpose === 'control' ? (await resolveRequesterIdentity(context)).identity : undefined;
-    if (requesterIdentity && requesterIdentity.kind !== 'owner_person'
-      && (requesterIdentity.kind !== 'isolated' || !requesterIdentity.presentPerson)) return false;
+    if (requesterIdentity?.kind === 'unknown') return false;
     const manager = getSessionManager();
     const custody = manager.getCustody(terminalId);
     const terminal = manager.list().find(candidate => candidate.terminalId === terminalId);
@@ -715,12 +696,15 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
     const placement = requesterIdentity.kind === 'isolated'
       ? resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) : undefined;
-    if (requesterIdentity.kind === 'unknown' || requesterIdentity.kind !== 'owner_person'
-      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
+    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport();
     if (parsed.data.launch?.kind === 'service_shell') {
-      if (requesterIdentity.kind !== 'owner_person') return unavailableIdentityTransport();
+      // Service-native admission owns the shell's execution identity. A Session
+      // acting for another Account cannot borrow that identity for separation.
+      if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
     }
+    if (requesterIdentity.kind !== 'owner_person'
+      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
@@ -908,12 +892,13 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
     const placement = requesterIdentity.kind === 'isolated'
       ? resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) : undefined;
-    if (requesterIdentity.kind === 'unknown' || requesterIdentity.kind !== 'owner_person'
-      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
+    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport();
     if (parsed.data.launch?.kind === 'service_shell') {
-      if (requesterIdentity.kind !== 'owner_person') return unavailableIdentityTransport();
+      if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
     }
+    if (requesterIdentity.kind !== 'owner_person'
+      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;

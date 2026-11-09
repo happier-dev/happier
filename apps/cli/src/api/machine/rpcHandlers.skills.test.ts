@@ -146,7 +146,7 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
       if (!method) throw new Error('Machine skill Action has no registered method');
       expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
         serverRequiredReason: 'destructive_or_recovery_mutation', rpcClassification: 'action_spec_bound',
-        actionSpecId: actionId, sharedMachineAccess: 'manage', commandReceiptRequired: false });
+        actionSpecId: actionId, sharedMachineAccess: 'manage' });
       expect(resolveMachineRpcExternalActionEffectV1(method)).toBe(actionId);
     }
     const reply = await manager.invokeLocal('skills.machine.install', { skillId: 'happier:happier', machineId: 'machine', agents: ['codex'] }, context);
@@ -178,7 +178,10 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     const content = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.found.read'].parse(read.result);
     expect(content.files).toContainEqual(expect.objectContaining({ path: 'scripts/run.sh', unixMode: statSync(scriptPath).mode & 0o7777 }));
     expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(beforeRead);
-    await vi.waitFor(() => expect(wakes).toContainEqual(expect.objectContaining({ body: { t: 'account-change' } })));
+    await vi.waitFor(() => expect(wakes).toContainEqual(expect.objectContaining({ body: expect.objectContaining({
+      t: 'account-change', changeKinds: expect.arrayContaining(['account']),
+      entityIds: expect.arrayContaining([buildPromptLibraryPhysicalKeyV1('external-links')]),
+    }) })));
     const beforeAdoptWakeCount = wakes.length;
     const adopted = await accountExecutor.execute('skills.found.adopt', { machineId: 'machine', items: [{ name: 'happier', path: pluginPath }] }, { surface: 'ui', authority: 'present_user' });
     if (!adopted.ok) throw new Error(adopted.errorCode);
@@ -201,7 +204,10 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(beforeRead + 1);
     expect(readFileSync(join(pluginPath, 'SKILL.md'), 'utf8')).toContain('Plugin instructions');
     expect(readFileSync(scriptPath, 'utf8')).toBe('#!/bin/sh\nprintf plugin\n');
-    await vi.waitFor(() => expect(wakes.slice(beforeAdoptWakeCount)).toContainEqual(expect.objectContaining({ body: { t: 'account-change' } })));
+    await vi.waitFor(() => expect(wakes.slice(beforeAdoptWakeCount)).toContainEqual(expect.objectContaining({ body: expect.objectContaining({
+      t: 'account-change', changeKinds: expect.arrayContaining(['account']),
+      entityIds: expect.arrayContaining([buildPromptLibraryPhysicalKeyV1('skill-rules')]),
+    }) })));
     const revision = (await readReceiptRow()).revision;
     expect(await manager.invokeLocal('skills.machine.install', { skillId: 'happier:happier', machineId: 'foreign' }, context)).toMatchObject({ errorCode: 'machine_target_mismatch' });
     expect((await readReceiptRow()).revision).toBe(revision);

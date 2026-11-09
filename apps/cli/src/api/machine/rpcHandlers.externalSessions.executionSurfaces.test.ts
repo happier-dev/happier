@@ -171,6 +171,58 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     writeFollowStatusMock.mockResolvedValue(undefined);
   });
 
+  it.each([
+    { sessionId: 'session-follow-admission', enabled: false },
+    { sessionId: 'session-follow-admission', enabled: false, machineId: 'machine-1', agentId: 'codex',
+      remoteSessionId: 'native-session', source: { kind: 'codexHome', home: '/tmp/follow-home' } },
+    // Constructed from cli-v0.2.17 (a2c45c86804b24e60ac0b76146a3ef36dfcaa15b),
+    // packages/protocol/src/directSessions/daemonRpcV1.ts: DirectSessionFollowPolicySetRequestSchema.
+    { sessionId: 'session-follow-admission', enabled: false, machineId: 'machine-1', providerId: 'codex',
+      remoteSessionId: 'native-session', source: { kind: 'codexHome', home: '/tmp/follow-home' } },
+  ])('admits follow intent through real Machine registration before credential refusal: %j', async (request) => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      // The transport boundary records callbacks; registration and admission stay real.
+      rpcHandlerManager: rpcHandlerManager as never,
+      machineId: 'machine-1',
+    });
+    try {
+      readStoredCredentialsMock.mockClear();
+      await expect(rpcHandlerManager.handlers.get(
+        RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
+      )?.(request)).resolves.toMatchObject({
+        ok: false, errorCode: 'agent_unavailable', error: 'not_authenticated',
+      });
+      expect(readStoredCredentialsMock).toHaveBeenCalledOnce();
+    } finally {
+      await registration.dispose();
+    }
+  });
+
+  it.each([
+    { enabled: false },
+    { sessionId: 'session-follow-admission', enabled: false, agentId: 'codex' },
+    { sessionId: 'session-follow-admission', enabled: false, machineId: 'other-machine' },
+  ])('refuses missing or partial captured identity before follow admission: %j', async (request) => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      // The transport boundary records callbacks; registration and admission stay real.
+      rpcHandlerManager: rpcHandlerManager as never,
+      machineId: 'machine-1',
+    });
+    try {
+      readStoredCredentialsMock.mockClear();
+      await expect(rpcHandlerManager.handlers.get(
+        RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
+      )?.(request)).resolves.toMatchObject({
+        ok: false, errorCode: 'invalid_action_transport_input',
+      });
+      expect(readStoredCredentialsMock).not.toHaveBeenCalled();
+    } finally {
+      await registration.dispose();
+    }
+  });
+
   it('injects daemon device-local custody into secure transcript read-after validation', async () => {
     const deviceLocalSecretStorage = {
       sealJson: vi.fn(() => 'sealed'),
@@ -208,6 +260,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       rpcHandlerManager: rpcHandlerManager as never,
       deviceLocalSecretStorage,
     });
+    readStoredCredentialsMock.mockClear();
 
     const handler = rpcHandlerManager.handlers.get(
       RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
@@ -226,6 +279,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     readStoredCredentialsMock.mockClear();
     const noCustodyRpc = createRpcHandlerManager();
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager: noCustodyRpc as never });
+    readStoredCredentialsMock.mockClear();
     await expect(noCustodyRpc.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER)?.({
       v: 1,
       binding,

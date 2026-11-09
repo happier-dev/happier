@@ -14,10 +14,14 @@ export type StreamedTranscriptSegmentRuntime = {
   kind: StreamedTranscriptSegmentKind;
   sidechainId: string | null;
   segmentLocalId: string;
+  /** Captured when the segment starts; delayed writes keep that input's correlation. */
+  meta?: Readonly<Record<string, unknown>>;
   sourceMessageId?: string;
   startedAtMs: number;
   accumulatedText: string;
   textVersion: number;
+  /** Bumped by each non-append rewrite; receivers never splice text of different generations. */
+  textGeneration: number;
   didWriteDurable: boolean;
   appendOnlySinceLastDurableSnapshot: boolean;
   lastDurableText: string;
@@ -27,6 +31,8 @@ export type StreamedTranscriptSegmentRuntime = {
   lastCommittedState: StreamedTranscriptSegmentState | null;
   lastCommittedDelivered: boolean;
   lastCommittedSequence?: number;
+  /** Source `updatedAt` of the last Home-acknowledged commit: the base a durable append names. */
+  lastCommittedSourceUpdatedAtMs?: number;
   lastCommitFailedAtMs: number;
   durableCommitFailure: DurableCommitFailureIncident | null;
   durableRetryNotBeforeMs: number;

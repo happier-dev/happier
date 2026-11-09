@@ -262,6 +262,9 @@ async function configureProductionJourney(options: Readonly<{
   authenticatedObservationProvenance?: 'authenticated' | 'public';
   /** Redeem on the first attempt instead of requiring Home approval first. */
   immediateRedemption?: boolean;
+  redirectPath?: string;
+  requests?: string[];
+  redirectedRequests?: Array<{ authorizationPresent: boolean; bodyPresent: boolean }>;
 }> = {}): Promise<Readonly<{
   redemptionCount(): number;
   assertionRequestCount(): number;
@@ -355,6 +358,18 @@ async function configureProductionJourney(options: Readonly<{
   }>> = [];
   vi.stubGlobal('fetch', vi.fn(async (urlInput: string | URL | Request, init?: RequestInit) => {
     const url = String(urlInput);
+    const path = new URL(url).pathname;
+    options.requests?.push(path);
+    const redirected = new URL(url).origin === 'https://other.example.test';
+    if (path === options.redirectPath && !redirected) {
+      return new Response(null, { status: 307, headers: { Location: `https://other.example.test${path}` } });
+    }
+    if (redirected) {
+      options.redirectedRequests?.push({
+        authorizationPresent: new Headers(init?.headers).has('Authorization'),
+        bodyPresent: init?.body != null,
+      });
+    }
     if (url.endsWith('/v1/account-directory/me')) return Response.json({});
     if (url.endsWith('/v1/account-directory/homes')) {
       return Response.json({
@@ -552,6 +567,44 @@ describe('production CLI Account Service approval continuation', () => {
     )?.homeConnectionDescriptorAuthority).toBe('exact');
     expect(vi.getTimerCount()).toBe(0);
     expect(harness.continueMachineAndService).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    '/v1/account-directory/me',
+    '/v1/account-directory/homes',
+    '/v1/account/encryption',
+  ])('follows a redirected %s read without forwarding credentials', async redirectPath => {
+    const requests: string[] = [];
+    const redirectedRequests: Array<{ authorizationPresent: boolean; bodyPresent: boolean }> = [];
+    const harness = await configureProductionJourney({ immediateRedemption: true, redirectPath, requests, redirectedRequests });
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).resolves.toMatchObject({ kind: 'home_entered', homeServerIdentityId: home.homeServerIdentityId });
+    expect(requests.filter(path => path === redirectPath)).toHaveLength(2);
+    expect(redirectedRequests).toEqual([{ authorizationPresent: false, bodyPresent: false }]);
+    expect(harness.continueMachineAndService).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    `/v1/account-directory/homes/${home.homeServerIdentityId}/login-assertion`,
+    '/v1/auth/home-login',
+  ])('refuses cross-origin secret-body replay for %s without retrying', async (redirectPath) => {
+    const requests: string[] = [];
+    const harness = await configureProductionJourney({ immediateRedemption: true, redirectPath, requests });
+    await expect(runCliAccountServiceSetupEntry({
+      endpoint: accountService.endpoint,
+      promptInputFn: async () => 'k',
+      promptSecretInputFn: async () => encodeBase64(new Uint8Array(32), 'base64url'),
+      timeoutMs: 10_000,
+      continueMachineAndService: harness.continueMachineAndService,
+    })).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
+    expect(requests.filter((path) => path === redirectPath)).toHaveLength(1);
+    expect(harness.continueMachineAndService).not.toHaveBeenCalled();
+    expect(registerMachineWithAuthenticatedHomeRuntimeMock).not.toHaveBeenCalled();
   });
 
   it('preserves committed Home focus when the next settings read fails and caller cancellation races', async () => {

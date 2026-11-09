@@ -160,7 +160,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       syncChangesOnConnect: vi.fn(async () => {}),
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(async () => {}),
-      flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}),
       markConnected: () => 'connect',
     });
@@ -222,7 +221,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       syncChangesOnConnect: vi.fn(async () => {}),
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(async () => {}),
-      flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}),
       markConnected: () => ({ reason: 'connect', epoch: 1 }),
     });
@@ -247,7 +245,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}), markConnected: () => ({ reason: 'reconnect', epoch: 1 }),
     });
 
@@ -265,7 +263,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}), markConnected: () => ({ reason: 'reconnect', epoch: 1 }),
       onSessionFollowInvalidated,
     });
@@ -302,7 +300,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       syncChangesOnConnect: vi.fn(async () => {}),
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(async () => {}),
-      flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}),
       markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
@@ -347,7 +344,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect, markConnected: () => ({ reason: 'reconnect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
     });
@@ -395,7 +392,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       syncChangesOnConnect: vi.fn(async () => {}),
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(async () => {}),
-      flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect,
       markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
@@ -432,7 +428,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       socket: probe.socket,
     }));
     const syncChangesOnConnect = vi.fn(async () => {});
-    const flushQueuedSessionMessagesOnReconnect = vi.fn(async () => {});
     const flushDurableSessionMutationsOnReconnect = vi.fn(async () => {});
     const connection = initializeSessionClientConnection({
       transport: createAccountSessionClientTransport('token-1'),
@@ -452,7 +447,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       syncChangesOnConnect,
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(async () => {}),
-      flushQueuedSessionMessagesOnReconnect,
       flushDurableSessionMutationsOnReconnect,
       markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: vi.fn(),
@@ -467,7 +461,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       errorMessage: 'Session compatibility remained indeterminate after bounded probes',
     }, { epoch: 1 });
     expect(syncChangesOnConnect).not.toHaveBeenCalled();
-    expect(flushQueuedSessionMessagesOnReconnect).not.toHaveBeenCalled();
     expect(flushDurableSessionMutationsOnReconnect).not.toHaveBeenCalled();
   });
 
@@ -480,7 +473,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}), markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
     });
@@ -505,7 +498,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}),
       markConnected: () => ({ reason: epoch === 0 ? 'connect' : 'reconnect', epoch: ++epoch }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
@@ -535,7 +528,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect, markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
     });
@@ -572,7 +565,7 @@ describe('initializeSessionClientConnection diagnostics', () => {
       handleUserScopedUpdate: vi.fn(), installSessionSocketEventHandlers: vi.fn(), classifyTransportErrorToProbeResult: undefined,
       onStateChange: vi.fn(), shouldKeepUserSocketConnected: () => false, kickUserSocketConnect: vi.fn(),
       syncChangesOnConnect: vi.fn(async () => {}), shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: vi.fn(async () => {}), flushQueuedSessionMessagesOnReconnect: vi.fn(async () => {}),
+      syncSessionSnapshotFromServer: vi.fn(async () => {}),
       flushDurableSessionMutationsOnReconnect: vi.fn(async () => {}), markConnected: () => ({ reason: 'connect', epoch: 9 }),
       setSessionSyncPendingInputServerContractResult: setContractResult,
     });
@@ -611,9 +604,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
       },
       shouldSyncSessionSnapshotOnConnect: () => false,
       syncSessionSnapshotFromServer: vi.fn(),
-      flushQueuedSessionMessagesOnReconnect: async () => {
-        throw createSecretAxiosError('queued');
-      },
       flushDurableSessionMutationsOnReconnect: async () => {
         throw createSecretAxiosError('mutations');
       },
@@ -624,7 +614,6 @@ describe('initializeSessionClientConnection diagnostics', () => {
 
     const calls = JSON.stringify(debugSpy.mock.calls);
     expect(calls).toContain('[API] Session changes sync on connect failed');
-    expect(calls).toContain('[API] Failed to replay queued session messages on reconnect');
     expect(calls).toContain('[API] Failed to flush durable session mutations on reconnect');
     expect(calls).toContain('https://api.example.test/v2/changes');
     expect(calls).not.toContain('MESSAGE_SECRET');

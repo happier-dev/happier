@@ -1085,6 +1085,136 @@ function createDeltaSessionStub() {
   };
 }
 
+describe('createStreamedTranscriptWriter wire bytes per frame', () => {
+  it('keeps live and durable frame text flat while a long message grows, and both chains rebuild the exact text', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const liveFrames: Array<{ kind: 'snapshot' | 'delta'; text: string; baseLength?: number; state: unknown }> = [];
+      const durableFrames: Array<{ full: string; append?: { text: string; baseLength: number; baseUpdatedAt: number; length: number }; updatedAtMs: number }> = [];
+      const readText = (body: any) => String(body?.message ?? body?.text ?? '');
+      const readSegment = (meta: any) => meta?.happierStreamSegmentV1 ?? {};
+      const session = {
+        sendAgentMessageEphemeral: (_provider: any, body: any, opts: any) => {
+          liveFrames.push({ kind: 'snapshot', text: readText(body), state: readSegment(opts.meta).segmentState });
+          return { accepted: true as const, epoch: 1 };
+        },
+        sendAgentMessageEphemeralDelta: (_provider: any, body: any, opts: any) => {
+          liveFrames.push({ kind: 'delta', text: readText(body), baseLength: opts.baseLength, state: readSegment(opts.meta).segmentState });
+          return { accepted: true as const, epoch: 1 };
+        },
+        getEphemeralStreamConnectionEpoch: () => 1,
+        enqueueAgentMessageCommitted: async (_provider: any, body: any, opts: any) => {
+          durableFrames.push({
+            full: readText(body),
+            ...(opts.append ? { append: { text: readText(opts.append.body), baseLength: opts.append.baseLength, baseUpdatedAt: opts.append.baseUpdatedAt, length: opts.append.length } } : {}),
+            updatedAtMs: readSegment(opts.meta).updatedAtMs,
+          });
+          return { persisted: true as const, delivered: true as const, committedSequence: durableFrames.length };
+        },
+      };
+      const writer = createStreamedTranscriptWriter({
+        provider: 'codex' as any,
+        session: session as any,
+        makeLocalId: () => 'segment-1',
+        initialCheckpointDelayMs: 500,
+        checkpointIntervalMs: 2_000,
+        checkpointMinChars: 256,
+        liveSnapshotIntervalMs: 40,
+        liveSnapshotMinChars: 1,
+      });
+
+      const lines = Array.from({ length: 400 }, (_, index) => `${String(index + 1).padStart(3, '0')} numbered line\n`);
+      for (const line of lines) {
+        writer.appendAssistantDelta(line);
+        await settleCommittedSnapshot();
+        vi.advanceTimersByTime(40);
+        await settleCommittedSnapshot();
+      }
+      await writer.flushAll({ reason: 'turn-end' });
+      const finalText = lines.join('');
+
+      // Frames sent while the message is short vs long: what each frame carries must not grow with the message.
+      const transmitted = (frame: { kind: string; text: string }) => frame.text.length;
+      const liveEarly = liveFrames.slice(1, 60).map(transmitted);
+      const liveLate = liveFrames.slice(-60).map(transmitted);
+      const durableSent = durableFrames.map((frame) => frame.append ? frame.append.text.length : frame.full.length);
+      const counts = {
+        liveMaxEarly: Math.max(...liveEarly),
+        liveMaxLate: Math.max(...liveLate),
+        durableMaxEarly: Math.max(...durableSent.slice(1, 4)),
+        durableMaxLate: Math.max(...durableSent.slice(-3)),
+      };
+      expect(counts.liveMaxLate).toBeLessThanOrEqual(counts.liveMaxEarly);
+      expect(counts.durableMaxLate).toBeLessThanOrEqual(counts.durableMaxEarly * 2);
+      expect(durableFrames.length).toBeGreaterThan(4);
+
+      // Exactness: first snapshot + chained deltas rebuild the final text; each durable append names its acknowledged base.
+      let live = '';
+      for (const frame of liveFrames) {
+        if (frame.kind === 'snapshot') live = frame.text;
+        else { expect(frame.baseLength).toBe(live.length); live += frame.text; }
+      }
+      expect(live).toBe(finalText);
+      let durable = '';
+      let durableUpdatedAt = -1;
+      for (const frame of durableFrames) {
+        if (frame.append) {
+          expect(frame.append.baseLength).toBe(durable.length);
+          expect(frame.append.baseUpdatedAt).toBe(durableUpdatedAt);
+          expect(frame.full).toBe(durable + frame.append.text);
+          expect(frame.append.length).toBe(frame.full.length);
+        }
+        durable = frame.full;
+        durableUpdatedAt = frame.updatedAtMs;
+      }
+      expect(durable).toBe(finalText);
+      expect(durableFrames.slice(1).every((frame) => frame.append !== undefined)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('createStreamedTranscriptWriter rewrite generation', () => {
+  it('bumps the text generation on a rewrite so receivers never splice text across it, and names no append across it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const generations: Array<{ channel: string; generation: unknown; append: boolean }> = [];
+      const read = (meta: any) => meta?.happierStreamSegmentV1?.textGeneration;
+      const session = {
+        sendAgentMessageEphemeral: (_p: any, _b: any, opts: any) => { generations.push({ channel: 'snapshot', generation: read(opts.meta), append: false }); return { accepted: true as const, epoch: 1 }; },
+        sendAgentMessageEphemeralDelta: (_p: any, _b: any, opts: any) => { generations.push({ channel: 'delta', generation: read(opts.meta), append: false }); return { accepted: true as const, epoch: 1 }; },
+        getEphemeralStreamConnectionEpoch: () => 1,
+        enqueueAgentMessageCommitted: async (_p: any, _b: any, opts: any) => {
+          generations.push({ channel: 'durable', generation: read(opts.meta), append: opts.append !== undefined });
+          return { persisted: true as const, delivered: true as const, committedSequence: 1 };
+        },
+      };
+      const writer = createStreamedTranscriptWriter({
+        provider: 'codex' as any, session: session as any, makeLocalId: () => 'segment-1',
+        initialCheckpointDelayMs: 0, checkpointIntervalMs: 0, checkpointMinChars: 1, liveSnapshotIntervalMs: 0, liveSnapshotMinChars: 1,
+      });
+      writer.appendAssistantDelta('The answer is 42');
+      await settleCommittedSnapshot(); await settleCommittedSnapshot();
+      writer.overrideAssistantText('The answer: 41');
+      await settleCommittedSnapshot(); await settleCommittedSnapshot();
+      writer.appendAssistantDelta(' and more');
+      await settleCommittedSnapshot(); await settleCommittedSnapshot();
+
+      const rewriteAt = generations.findIndex((entry) => entry.channel === 'snapshot' && entry.generation === 1);
+      expect(rewriteAt).toBeGreaterThan(0);
+      expect(generations.slice(0, rewriteAt).every((entry) => (entry.generation ?? 0) === 0)).toBe(true);
+      expect(generations.slice(rewriteAt).every((entry) => entry.generation === 1)).toBe(true);
+      const firstDurableAfter = generations.slice(rewriteAt).find((entry) => entry.channel === 'durable');
+      expect(firstDurableAfter).toMatchObject({ append: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('createStreamedTranscriptWriter delta live streaming', () => {
   function createDeltaWriter(session: unknown, overrides: Record<string, unknown> = {}) {
     return createStreamedTranscriptWriter({
@@ -1096,7 +1226,6 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
       checkpointMinChars: 999,
       liveSnapshotIntervalMs: 40,
       liveSnapshotMinChars: 1,
-      liveCheckpointIntervalMs: 1_000,
       ...overrides,
     });
   }
@@ -1180,7 +1309,7 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     }
   });
 
-  it('emits a full-snapshot checkpoint once the live checkpoint interval elapses, then resumes deltas', async () => {
+  it('keeps appending deltas however long the segment streams (no periodic full snapshot)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
     try {
@@ -1192,28 +1321,16 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
       vi.advanceTimersByTime(40);
       writer.appendAssistantDelta(' world');
       await settleCommittedSnapshot();
-      expect(liveCalls).toHaveLength(1);
-      expect(deltaCalls).toHaveLength(1);
-
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(5_000);
       writer.appendAssistantDelta('!');
       await settleCommittedSnapshot();
 
-      expect(deltaCalls).toHaveLength(1);
-      expect(liveCalls).toHaveLength(2);
-      expect(liveCalls[1]).toMatchObject({
-        body: { type: 'message', message: 'Hello world!' },
-      });
-      expect(liveCalls[1]!.tick).toBe(3);
-
-      vi.advanceTimersByTime(40);
-      writer.appendAssistantDelta('?');
-      await settleCommittedSnapshot();
+      expect(liveCalls).toHaveLength(1);
       expect(deltaCalls).toHaveLength(2);
       expect(deltaCalls[1]).toMatchObject({
-        body: { type: 'message', message: '?' },
-        tick: 4,
-        baseLength: 12,
+        body: { type: 'message', message: '!' },
+        tick: 3,
+        baseLength: 11,
       });
     } finally {
       vi.useRealTimers();
@@ -1275,7 +1392,7 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     }
   });
 
-  it('ends segments with a full snapshot (never a delta) on flushAll state transitions', async () => {
+  it('ends an in-sync segment with a delta carrying the terminal state; the durable row keeps the full text', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
     try {
@@ -1292,10 +1409,13 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
       await writer.flushAll({ reason: 'turn-end' });
       await settleCommittedSnapshot();
 
-      expect(deltaCalls).toHaveLength(1);
-      const lastLive = liveCalls[liveCalls.length - 1]!;
+      expect(liveCalls).toHaveLength(1);
+      expect(deltaCalls).toHaveLength(2);
+      const lastLive = deltaCalls[1]!;
       expect(lastLive).toMatchObject({
-        body: { type: 'message', message: 'Hello world' },
+        body: { type: 'message', message: '' },
+        tick: 3,
+        baseLength: 11,
       });
       expect(lastLive.meta).toMatchObject({
         happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
@@ -1333,12 +1453,12 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     }
   });
 
-  it('disables deltas entirely when the live checkpoint interval is zero (snapshot-only mode)', async () => {
+  it('disables deltas entirely when live deltas are off (snapshot-only mode)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
     try {
       const { session, liveCalls, deltaCalls } = createDeltaSessionStub();
-      const writer = createDeltaWriter(session, { liveCheckpointIntervalMs: 0 });
+      const writer = createDeltaWriter(session, { liveDeltas: false });
 
       writer.appendAssistantDelta('Hello');
       await settleCommittedSnapshot();
@@ -1412,7 +1532,10 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
         }
         return { accepted: true as const, epoch: 1 };
       }),
-      sendAgentMessageEphemeralDelta: vi.fn(() => ({ accepted: true as const, epoch: 1 })),
+      sendAgentMessageEphemeralDelta: vi.fn((_provider: unknown, body: unknown) => {
+        order.push(`delta:${(body as { message: string }).message}`);
+        return { accepted: true as const, epoch: 1 };
+      }),
       enqueueAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown) => {
         order.push(`durable:${(body as { message: string }).message}`);
         return { persisted: true as const, delivered: false as const };
@@ -1432,11 +1555,8 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     resolveFirst({ accepted: true, epoch: 1 });
     await flush;
 
-    expect(liveBodies).toEqual([
-      { type: 'message', message: 'a' },
-      { type: 'message', message: 'abc' },
-    ]);
-    expect(order).toEqual(['live:a', 'live:abc', 'durable:abc']);
+    expect(liveBodies).toEqual([{ type: 'message', message: 'a' }]);
+    expect(order).toEqual(['live:a', 'delta:bc', 'durable:abc']);
   });
 
   it('starts a successor segment while the prior terminal live publication is draining', async () => {

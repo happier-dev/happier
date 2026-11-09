@@ -11,12 +11,13 @@ import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
-import { createSessionClientCommitQueueRuntime } from './client/transport/createSessionClientCommitQueueRuntime';
 // The boundary mocks above are hoisted and read their stubs lazily, so every
 // test can share one module instance. Re-importing sessionClient behind
 // vi.resetModules() per test instantiated its graph eleven times and exhausted
 // an 8 GiB heap before this file could report a result.
 import { ApiSessionClient } from './sessionClient';
+import { loadSessionClientDurableMutationOutbox } from './client/transport/mutations/sessionClientDurableMutationPersistence';
+import { createPluginSessionMediaHostAdapter } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionMedia';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -33,6 +34,13 @@ function readSessionMediaEnvelope(meta: Record<string, unknown>): unknown {
     return primary;
   }
   return meta.happierMedia;
+}
+
+async function readAdmittedMediaMessage(client: ApiSessionClient, localId: string) {
+  const records = await loadSessionClientDurableMutationOutbox(client.sessionId);
+  const record = records.find(record => record.kind === 'transcript_message_append' && record.payload.localId === localId);
+  if (!record || record.kind !== 'transcript_message_append') throw new Error('Missing durable media message');
+  return { localId: record.payload.localId, message: record.payload.content };
 }
 
 function trackClient<T extends { close: () => Promise<void> }>(client: T): T {
@@ -275,7 +283,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
 
 
-  it('persists assistant session media through the central bridge before committing byte-free transcript metadata', async () => {
+  it('persists plugin tool-result images locally through the central media service with byte-free, sidechain-scoped transcript metadata', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-bridge-'));
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'media-row-1', didWrite: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -286,26 +294,27 @@ describe('ApiSessionClient transcript vNext transport', () => {
       const client = trackClient(createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      })));
+      }), { durableMutationDeliveryInitiallyActive: false }));
 
-      await client.sendAgentSessionMediaCommitted('codex', {
-        localId: 'media-row-1',
-        role: 'output',
-        category: 'generated',
-        messageText: 'Generated image:',
-        media: [{
-          source: {
-            kind: 'base64',
-            data: pngBytes.toString('base64'),
-            mimeType: 'image/png',
-            fileNameHint: 'generated.png',
-          },
-          origin: { source: 'provider-generated' },
+      const adapter = createPluginSessionMediaHostAdapter({
+        agentId: 'claude',
+        readActiveScope: () => ({
+          sessionId: 's1', rootPath: workingDirectory,
+          sendAgentSessionMediaCommitted: client.sendAgentSessionMediaCommitted.bind(client),
+        }),
+      });
+      const service = adapter.forSession('s1');
+      expect(service.publishToolResultMedia).toBeTypeOf('function');
+      await service.publishToolResultMedia!({ localId: 'ordinary-result', toolCallId: 'text-1', content: [{ type: 'text', text: 'done' }] });
+      expect(sessionSocketStub.emitWithAck).not.toHaveBeenCalled();
+      await service.publishToolResultMedia!({
+        localId: 'media-row-1', toolCallId: 'read-image-1', sidechainId: 'child-1',
+        content: [{ type: 'text', text: 'Image read' }, {
+          type: 'image', source: { type: 'base64', data: pngBytes.toString('base64'), media_type: 'image/png' },
         }],
       });
 
-      expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-      const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
+      const payload = await readAdmittedMediaMessage(client, 'media-row-1');
       expect(payload).toMatchObject({
         localId: 'media-row-1',
         message: {
@@ -314,8 +323,8 @@ describe('ApiSessionClient transcript vNext transport', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              agentId: 'codex',
-              data: { type: 'message', message: 'Generated image:' },
+              agentId: 'claude',
+              data: { type: 'message', message: '', sidechainId: 'child-1' },
             },
             meta: {
               happier: {
@@ -323,11 +332,11 @@ describe('ApiSessionClient transcript vNext transport', () => {
                 payload: {
                   media: [expect.objectContaining({
                     role: 'output',
-                    category: 'generated',
+                    category: 'tool-artifact',
                     mediaKind: 'image',
                     mimeType: 'image/png',
-                    path: expect.stringMatching(/^\.happier\/uploads\/generated\/s1\/media-row-1\//),
-                    origin: { source: 'provider-generated' },
+                    path: expect.stringMatching(/^\.happier\/uploads\/artifacts\/s1\/media-row-1\//),
+                    origin: { source: 'tool-output', agentId: 'claude', toolCallId: 'read-image-1' },
                   })],
                 },
               },
@@ -338,6 +347,8 @@ describe('ApiSessionClient transcript vNext transport', () => {
       expect(JSON.stringify(payload)).not.toContain(pngBytes.toString('base64'));
       const media = (readSessionMediaEnvelope((payload as any).message.v.meta) as any).payload.media[0];
       await expect(readFile(resolve(workingDirectory, media.path))).resolves.toEqual(pngBytes);
+      adapter.dispose();
+      await expect(service.publishToolResultMedia!({ localId: 'retired', toolCallId: 'read-2', content: [] })).rejects.toThrow('media_adapter_disposed');
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }
@@ -355,7 +366,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
       const client = trackClient(createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      })));
+      }), { durableMutationDeliveryInitiallyActive: false }));
 
       await client.sendAgentSessionMediaCommitted('codex', {
         localId: 'media-row-partial',
@@ -402,8 +413,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
         ],
       });
 
-      expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-      const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
+      const payload = await readAdmittedMediaMessage(client, 'media-row-partial');
       const meta = (payload as any).message.v.meta;
       expect(meta.sentFrom).toBe('cli');
       const sessionMediaEnvelope = readSessionMediaEnvelope(meta);
@@ -459,7 +469,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
       const client = trackClient(createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      })));
+      }), { durableMutationDeliveryInitiallyActive: false }));
 
       await client.sendAgentSessionMediaCommitted('codex', {
         localId: 'media-row-failed',
@@ -480,8 +490,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
         }],
       });
 
-      expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-      const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
+      const payload = await readAdmittedMediaMessage(client, 'media-row-failed');
       expect(payload).toMatchObject({
         localId: 'media-row-failed',
         message: {
@@ -532,7 +541,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
     const client = trackClient(createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({
       id: 's1',
       metadata: createTestMetadata({ path: '' }),
-    })));
+    }), { durableMutationDeliveryInitiallyActive: false }));
 
     await expect(client.sendAgentSessionMediaCommitted('codex', {
       localId: 'media-row-no-wd',
@@ -549,8 +558,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
       }],
     })).resolves.toBeUndefined();
 
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-    const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
+    const payload = await readAdmittedMediaMessage(client, 'media-row-no-wd');
     const meta = (payload as any).message.v.meta;
     expect(readSessionMediaEnvelope(meta)).toMatchObject({
       kind: 'session_media.v1',

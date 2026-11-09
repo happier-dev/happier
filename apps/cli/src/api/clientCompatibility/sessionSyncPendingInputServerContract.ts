@@ -1,4 +1,5 @@
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3, PENDING_INPUT_PROTOCOL_VERSION_V4, SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY } from '@happier-dev/protocol/clientCompatibility/primitives';
 import {
     observeServerFeaturesSnapshot,
@@ -56,11 +57,11 @@ export function resolveMachinePendingResetStartCapability(
 /** The truthful target-admission leaf from the daemon-wide cached server snapshot. */
 export function resolveMachineSessionInputAdmissionCapability(
     snapshot: CliServerFeaturesSnapshot | undefined,
-): Readonly<{ protocolVersions: readonly [1] | readonly [1, 2] }> {
+): Readonly<{ protocolVersions: readonly [1] | readonly [1, 2, 3] }> {
     return snapshot?.status === 'ready'
         && (snapshot.features.capabilities.session?.pendingInput?.protocolVersion ?? 0)
             >= PENDING_INPUT_PROTOCOL_VERSION_V3
-        ? { protocolVersions: [1, 2] }
+        ? { protocolVersions: [1, 2, 3] }
         : { protocolVersions: [1] };
 }
 
@@ -194,7 +195,8 @@ export function createSessionSyncPendingInputServerContractController(options: R
                 return answer(probe, INDETERMINATE);
             }
             return answer(probe, selection);
-        } catch {
+        } catch (error) {
+            if (error instanceof CredentialRequestRedirectError) throw error;
             return answer(probe, INDETERMINATE);
         }
     }

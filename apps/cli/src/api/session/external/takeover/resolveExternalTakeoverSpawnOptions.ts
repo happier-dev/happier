@@ -20,7 +20,7 @@ import type {
   AgentRuntimeRegistrationLease,
 } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import {
   createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
   resolveSessionSpawnConnectedServicesDefaultsPayload,
@@ -218,6 +218,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
 }
 
 export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
+  credentials?: StoredCredentials;
   linked: LoadedLinkedExternalSession;
   sessionId: string;
   targetDirectory: string;
@@ -272,7 +273,7 @@ export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
   }
   if (!resolved.value.applyConnectedAccountDefaults) return resolved;
 
-  const credentials = await readStoredCredentials();
+  const credentials = params.credentials ?? await readStoredCredentials();
   if (!credentials) return resolved;
   const resolveTeamCredentialResourceCatalog =
     createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver(credentials);

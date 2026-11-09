@@ -584,7 +584,6 @@ describe('registerMachineRpcHandlers', () => {
     const operationExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'machine-rpc-operation-owner',
-      claimMutationLockAcquisitionTimeoutMs: 10_000,
     });
     const externalSessions = await import('./rpcHandlers.externalSessions');
     const sessionHandoff = await import('./sessionHandoff/handlers');
@@ -1751,6 +1750,7 @@ describe('registerMachineRpcHandlers', () => {
       })).resolves.toMatchObject({ status: 'current', occurrenceId: 'occurrence-live' });
       expect(resolveExecutionRunLiveBrokerAuthority).toHaveBeenCalledWith({
         sessionId: 'session-live-authority',
+        requestingAccountId: 'account-live',
         executionRunId: 'run-live-authority',
         expectedOccurrenceId: null,
       });
@@ -1773,6 +1773,7 @@ describe('registerMachineRpcHandlers', () => {
       });
       expect(resolveExecutionRunLiveBrokerAuthority).toHaveBeenLastCalledWith({
         sessionId: 'session-live-authority',
+        requestingAccountId: 'account-live',
         executionRunId: 'run-live-authority',
         expectedOccurrenceId: null,
         expectedDirectMaterialUse,
@@ -1842,7 +1843,7 @@ describe('registerMachineRpcHandlers', () => {
       runClass: 'long_lived',
       ioMode: 'request_response',
     });
-    expect(started.runId).toMatch(/^run_/);
+    expect(started).toMatchObject({ runId: expect.stringMatching(/^run_/) });
 
     const authorityRequest = {
       v: 1,

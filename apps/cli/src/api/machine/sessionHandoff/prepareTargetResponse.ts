@@ -10,10 +10,7 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 
-import {
-  missingHandoffMetadataV2,
-  waitForPrepareJobFastPath,
-} from './prepareTargetState';
+import { missingHandoffMetadataV2 } from './prepareTargetState';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
@@ -54,16 +51,9 @@ export async function resolvePrepareTargetDirectPeerMetadataPreflight(input: Rea
 function resolvePrepareTargetResponseFromJobRecord(input: Readonly<{
   handoffId: string;
   job: SessionHandoffPrepareTargetJobRecord;
-  pendingStatus: SessionHandoffStatus;
 }>): SessionHandoffPrepareTargetResponse {
   if (input.job.prepareTargetResult) {
     return input.job.prepareTargetResult;
-  }
-  if (input.job.status.status === 'awaiting_recovery' && input.job.lastErrorMessage) {
-    return {
-      handoffId: input.handoffId,
-      status: input.pendingStatus,
-    };
   }
   return {
     handoffId: input.handoffId,
@@ -71,31 +61,17 @@ function resolvePrepareTargetResponseFromJobRecord(input: Readonly<{
   };
 }
 
-export async function resolvePrepareTargetResponseAfterFastPath(input: Readonly<{
+export async function resolvePrepareTargetResponse(input: Readonly<{
   handoffId: string;
   jobId: string;
   pendingStatus: SessionHandoffStatus;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
-  runJob: Promise<void>;
 }>): Promise<SessionHandoffPrepareTargetResponse> {
-  const fastPathResult = await waitForPrepareJobFastPath(input.runJob);
-  if (fastPathResult === 'completed') {
-    const completedJob = await input.prepareJobStore.read(input.jobId);
-    if (completedJob) {
-      return resolvePrepareTargetResponseFromJobRecord({
-        handoffId: input.handoffId,
-        job: completedJob,
-        pendingStatus: input.pendingStatus,
-      });
-    }
-  }
-
-  const timedOutJob = await input.prepareJobStore.read(input.jobId);
-  if (timedOutJob && typeof timedOutJob.completedAtMs === 'number') {
+  const job = await input.prepareJobStore.read(input.jobId);
+  if (job) {
     return resolvePrepareTargetResponseFromJobRecord({
       handoffId: input.handoffId,
-      job: timedOutJob,
-      pendingStatus: input.pendingStatus,
+      job,
     });
   }
 

@@ -3,6 +3,8 @@ import { createServer, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import axios from 'axios';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { SessionMetadataOwnerPatchV1Schema, StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 import {
   buildLinkedExternalSessionQualifiedIdentityV1,
@@ -456,7 +458,7 @@ const FIRST_PARTY_AGENT_LINK_FIXTURES: readonly FirstPartyAgentLinkFixture[] = [
 ];
 
 describe('first-party Agent link identities and host owner metadata', () => {
-  it.each(['complete', 'cancel'] as const)('keeps native link creation under the admitted operation lifetime (%s)', async outcomeKind => {
+  it.each(['complete', 'cancel', 'accepted-project', 'project-refresh', 'creation-unconfirmed', 'project-unsupported', 'project-invalid', 'project-forbidden', 'project-mode-mismatch', 'project-retired'] as const)('keeps native link creation under the admitted operation lifetime (%s)', async outcomeKind => {
     await withTempDir('happier-native-link-lifetime-', async root => {
       const env = createEnvKeyScope(ENV_KEYS);
       const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
@@ -465,9 +467,38 @@ describe('first-party Agent link identities and host owner metadata', () => {
       let creationTimeout: number | undefined;
       let releaseCreation: (() => void) | undefined;
       let completed: Promise<void> | undefined;
+      let createdMetadata = '{}';
+      let createdOwnerMetadata: ReturnType<typeof StoredSessionOwnerMetadataEnvelopeV1Schema.parse> | undefined;
+      const metadataPatches: ReturnType<typeof SessionMetadataOwnerPatchV1Schema.parse>[] = [];
+      const projectReads: unknown[] = [];
+      let publisherCurrent = true;
+      let linkCreated = false;
+      let metadataVersion = 0;
+      const sessionRecord = () => createSessionRecordFixture({ id: 'native-linked-session',
+        encryptionMode: 'plain', currentStorageState: 'machine_only', metadataLayoutVersion: 1,
+        metadata: createdMetadata, metadataVersion, ownerMetadata: createdOwnerMetadata, share: null });
       const inventoryReads = { active: 0, archived: 0 };
       const interceptor = axios.interceptors.request.use(config => {
-        if (config.url?.endsWith('/v1/sessions')) creationTimeout = config.timeout;
+        if (config.url?.endsWith('/v1/sessions')) {
+          creationTimeout = config.timeout;
+          const data: unknown = config.data;
+          if (data && typeof data === 'object') {
+            const metadata: unknown = Reflect.get(data, 'sharedMetadata');
+            if (metadata && typeof metadata === 'object') {
+              const ciphertext: unknown = Reflect.get(metadata, 'ciphertext');
+              if (typeof ciphertext === 'string') createdMetadata = ciphertext;
+            }
+            createdOwnerMetadata = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(Reflect.get(data, 'ownerMetadata'));
+          }
+        }
+        if (config.method === 'patch') {
+          const patch = SessionMetadataOwnerPatchV1Schema.parse(config.data);
+          metadataPatches.push(patch);
+          createdMetadata = patch.sharedMetadata.ciphertext;
+          createdOwnerMetadata = patch.ownerMetadata;
+          metadataVersion += 1;
+        }
+        if (config.url?.endsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`)) projectReads.push(config.data);
         return config;
       });
       const server = createServer((request, response) => {
@@ -475,20 +506,49 @@ describe('first-party Agent link identities and host owner metadata', () => {
         request.resume();
         if (request.url === '/v1/account/encryption/currentness') {
           response.end(JSON.stringify(createAccountEncryptionCurrentnessFixture()));
-        } else if (request.url === '/v1/features') {
+        } else if (request.url === '/v1/account/encryption') {
+          response.end(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
+        } else if (request.url === '/v1/features' || request.url === '/v1/features/authenticated') {
           response.end(JSON.stringify(FeaturesResponseSchema.parse({ features: {}, capabilities: { encryption: {
             storagePolicy: 'optional', defaultAccountMode: 'plain', allowAccountOptOut: true,
-          } } })));
+          }, serverIdentity: { serverIdentityId: 'srv_native_link_home' } } })));
+        } else if (request.url === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+          if (outcomeKind === 'project-invalid') {
+            response.end(JSON.stringify({ status: 'listed', coverage: 'complete', rows: 'unreadable-census' }));
+            return;
+          }
+          if (outcomeKind === 'project-unsupported' || outcomeKind === 'project-forbidden') {
+            response.statusCode = outcomeKind === 'project-unsupported' ? 404 : 403;
+            response.end('{}');
+            return;
+          }
+          const key = { kind: 'workspace-ref', serverId: 'srv_native_link_home', id: 'accepted-native-checkout' };
+          if (outcomeKind === 'project-retired') publisherCurrent = false;
+          response.end(JSON.stringify({ status: 'listed', coverage: 'complete', rows: [{ key, revision: 0,
+            content: outcomeKind === 'project-mode-mismatch' ? { t: 'encrypted', c: 'unavailable-private-content' } : { t: 'plain', v: { key, value: { id: key.id, serverId: key.serverId,
+              machineId: 'fixture-machine', rootPath: root, projectKey: 'accepted-native-project', createdAtMs: 1 } } } }] }));
+        } else if (request.url?.includes('/sessions/native-linked-session')) {
+          if (request.method === 'PATCH') {
+            response.end(JSON.stringify({ success: true, metadataLayoutVersion: 1, sharedMetadata: { version: metadataVersion }, agentState: { version: 1 } }));
+          } else {
+            response.end(JSON.stringify({ session: sessionRecord() }));
+          }
         } else if (request.url === '/v2/sessions/lookup-by-tags') {
-          response.end(JSON.stringify({ sessions: [] }));
+          response.end(JSON.stringify({ sessions: outcomeKind === 'project-refresh' && linkCreated ? [sessionRecord()] : [] }));
         } else if (request.url && ['/v2/sessions', '/v2/sessions/archived'].includes(new URL(request.url, 'http://fixture').pathname)) {
           inventoryReads[new URL(request.url, 'http://fixture').pathname.endsWith('/archived') ? 'archived' : 'active'] += 1;
           response.end(JSON.stringify(createSessionListResponseFixture([])));
         } else if (request.url === '/v1/sessions') {
+          if (outcomeKind === 'project-refresh' && linkCreated) {
+            response.end(JSON.stringify({ created: false, session: sessionRecord() }));
+            return;
+          }
           creationResponse = response;
-          releaseCreation = () => { if (!response.writableEnded) response.end(JSON.stringify({ created: true, session: createSessionRecordFixture({
-            id: 'native-linked-session', encryptionMode: 'plain', currentStorageState: 'machine_only', metadata: '{}',
-          }) })); };
+          releaseCreation = () => { if (!response.writableEnded) { linkCreated = true; response.end(JSON.stringify({
+            ...(outcomeKind === 'creation-unconfirmed' ? {} : { created: true }), session: createSessionRecordFixture({
+            id: 'native-linked-session', encryptionMode: 'plain', currentStorageState: 'machine_only', metadataLayoutVersion: 1,
+            metadata: createdMetadata, ownerMetadata: createdOwnerMetadata, share: null,
+          }) })); } };
         } else {
           response.statusCode = 404;
           response.end('{}');
@@ -519,6 +579,8 @@ describe('first-party Agent link identities and host owner metadata', () => {
         completed = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => ensureExternalSessionLink({
           credentials: { token: 'synthetic-link-account', encryption: null }, machineId: 'fixture-machine', agentId: 'claude',
           source: ExternalSessionsSourceSchema.parse(probe.source), remoteSessionId: probe.remoteSessionId, linkData: probe.linkData, signal: controller.signal,
+          shouldCommit: () => publisherCurrent,
+          ...(outcomeKind !== 'complete' && outcomeKind !== 'cancel' && outcomeKind !== 'project-refresh' ? { directoryHint: root } : {}),
         }, {
           resolveExternalSessionProviderOps: async () => surface,
           resolveCurrentAgent: async () => ({ identity: { pluginId: fixture.pluginId, localId: fixture.agentId }, sourceKinds: ['claudeConfig'] }),
@@ -537,7 +599,38 @@ describe('first-party Agent link identities and host owner metadata', () => {
         } else {
           releaseCreation?.();
           await completed;
-          expect(outcome).toMatchObject({ sessionId: 'native-linked-session', created: true });
+          if (outcomeKind === 'project-forbidden') {
+            expect(outcome).toMatchObject({ response: { status: 403 } });
+          } else if (outcomeKind === 'project-mode-mismatch') {
+            expect(outcome).toMatchObject({ code: 'project_account_mode_mismatch' });
+          } else if (outcomeKind === 'project-retired') {
+            expect(outcome).toMatchObject({ code: 'cancelled' });
+          } else {
+            expect(outcome).toMatchObject({ sessionId: 'native-linked-session', created: true });
+          }
+          if (outcomeKind === 'accepted-project') {
+            expect(metadataPatches).toMatchObject([{ projectKey: 'accepted-native-project', ownerMetadata: { t: 'plain',
+              v: { workspace: { workspaceId: 'accepted-native-checkout', projectId: 'accepted-native-project' } } } }]);
+            expect(projectReads).toEqual([{ kinds: ['workspace-ref'], serverId: 'srv_native_link_home' }]);
+          } else {
+            expect(metadataPatches).toEqual([]);
+            if (outcomeKind === 'creation-unconfirmed') expect(projectReads).toEqual([]);
+          }
+          if (outcomeKind === 'project-refresh') {
+            expect(projectReads).toEqual([]);
+            await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => ensureExternalSessionLink({
+              credentials: { token: 'synthetic-link-account', encryption: null }, machineId: 'fixture-machine', agentId: 'claude',
+              source: ExternalSessionsSourceSchema.parse(probe.source), remoteSessionId: probe.remoteSessionId,
+              linkData: probe.linkData, directoryHint: root, signal: controller.signal, shouldCommit: () => publisherCurrent,
+            }, {
+              resolveExternalSessionProviderOps: async () => surface,
+              resolveCurrentAgent: async () => ({ identity: { pluginId: fixture.pluginId, localId: fixture.agentId }, sourceKinds: ['claudeConfig'] }),
+              resolveSourceKeyOwner: async (agentId, source) => createExternalSessionSourceKeyOwnerFromAgentProjection(contributes, agentId, source),
+            }));
+            expect(metadataPatches).toMatchObject([{ projectKey: 'accepted-native-project', ownerMetadata: { t: 'plain',
+              v: { workspace: { workspaceId: 'accepted-native-checkout', projectId: 'accepted-native-project' } } } }]);
+            expect(metadataPatches).toHaveLength(1);
+          }
         }
       } finally {
         releaseCreation?.();

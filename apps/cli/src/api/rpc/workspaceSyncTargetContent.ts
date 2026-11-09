@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import type { SocketRpcContent } from '@happier-dev/sync-client';
 import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceRoutingV1Schema,
+  WorkspaceSyncTargetRoutingV1Schema, type WorkspaceSyncTargetRoutingV1,
   WorkspaceSyncSeedRoutingV1Schema, type WorkspaceSyncSeedRoutingV1,
   type WorkspaceSyncSourceWriterTargetRoutingV1, type WorkspaceSyncSourceRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import type { MachineInstallationIdentityV1, MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -11,8 +12,9 @@ import { deriveBoxPublicKeyFromEd25519PublicKey, deriveBoxPublicKeyFromSeed, der
   openBoxBundleWithSecretKey, sealBoxBundle, isValidBoxBundlePublicKey } from '@happier-dev/protocol/crypto/boxBundle';
 
 const recipient = { v: z.literal(1), machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) };
-type InstalledWorkspaceRouting = WorkspaceSyncSourceWriterTargetRoutingV1 | WorkspaceSyncSourceRoutingV1 | WorkspaceSyncSeedRoutingV1;
-const installedRouting = z.union([WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSeedRoutingV1Schema]);
+type InstalledWorkspaceRouting = WorkspaceSyncSourceWriterTargetRoutingV1 | WorkspaceSyncSourceRoutingV1 | WorkspaceSyncSeedRoutingV1 | WorkspaceSyncTargetRoutingV1;
+const installedRouting = z.union([WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceRoutingV1Schema,
+  WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema]);
 const requestEnvelope = z.strictObject({ ...recipient, kind: z.literal('workspace_sync_target_request_v1'), ciphertext: z.string().check(z.minLength(1)) });
 const responseEnvelope = z.strictObject({ ...recipient, kind: z.literal('workspace_sync_target_response_v1'), ciphertext: z.string().check(z.minLength(1)) });
 const requestContent = z.strictObject({ ...recipient, kind: z.literal('workspace_sync_target_request_v1'), method: z.string().check(z.minLength(1)),

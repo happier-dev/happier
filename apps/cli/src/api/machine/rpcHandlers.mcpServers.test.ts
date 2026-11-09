@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonMcpServersTestResponseSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import type { McpServerCatalogEntryV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
-import { McpServerCatalogV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { McpServerCatalogRowMutationV1Schema, McpServerCatalogV1Schema, openMcpServerCatalogContentV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { projectMcpToolLaunchPolicyV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { createAgentLaunchObserver, type AgentLaunchObserverBoundaries } from '@happier-dev/plugin-sdk/testing';
@@ -19,6 +19,8 @@ import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/acco
 import * as executableBoundary from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
+import type { RpcHandler } from '@/api/rpc/types';
+import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
 
 // Only the Home HTTP/cache I/O boundaries are simulated. Reach, materialization,
 // the SDK probe and catalog CAS run their production implementations.
@@ -44,6 +46,9 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     return { content: [{ type: 'text', text: 'R39_NATIVE_TOOL_CALLED' }] };
   })() : { tools: [{ name: 'read_records', title: 'Read records', description: 'Lists records.',
     annotations: { readOnlyHint: true }, inputSchema: { type: 'object' } }] };
+  if (request.method === 'tools/list' && process.env.MI1_MCP_TOOLS_RECEIPT) {
+    require('node:fs').writeFileSync(process.env.MI1_MCP_TOOLS_RECEIPT, 'completed');
+  }
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n');
 });
 `;
@@ -52,28 +57,44 @@ const server: McpServerCatalogEntryV1 = { id: 'server', name: 'fixture', transpo
 const catalog = { v: 1 as const, servers: [server], bindings: [{ id: 'on', serverId: server.id,
   enabled: true, target: { t: 'allMachines' as const }, createdAt: 1, updatedAt: 1 }] };
 
-function register(conflict = false, env: NodeJS.ProcessEnv = process.env, storedCatalog: McpServerCatalogV1 = catalog) {
+function register(conflict = false, env: NodeJS.ProcessEnv = process.env, storedCatalog: McpServerCatalogV1 = catalog,
+  machineIsCurrent: () => boolean = () => true) {
   const writes: unknown[] = [];
+  const committed: McpServerCatalogV1[] = [];
+  let held = storedCatalog;
+  let revision = 3;
   vi.mocked(axios.get).mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
     if (path === '/v1/account/entity-rows/mcp') return { status: 200, data: {
-      status: 'present', revision: 3, content: { t: 'plain', v: storedCatalog } } };
+      status: 'present', revision, content: { t: 'plain', v: held } } };
     if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: {} } } };
     throw new Error(`Unexpected HTTP path: ${path}`);
   });
   vi.mocked(axios.post).mockImplementation(async (_url, body) => {
     writes.push(body);
-    return { status: conflict ? 409 : 200, data: conflict
-      ? { status: 'conflict', revision: 4 } : { status: 'updated', revision: 4, cursor: 1 } };
+    const mutation = McpServerCatalogRowMutationV1Schema.parse(body);
+    if (conflict && revision === 3) {
+      held = { ...held, servers: held.servers.map(entry => ({ ...entry,
+        stdio: { ...entry.stdio!, args: ['changed-while-probing'] }, updatedAt: 2 })) };
+      revision += 1;
+    }
+    if (mutation.expectedRevision !== revision) return { status: 409, data: { status: 'conflict', revision } };
+    const opened = openMcpServerCatalogContentV1({ content: mutation.content, mode: 'plain', material: null });
+    if (opened.status !== 'opened') throw new Error('Expected current catalog write');
+    held = opened.catalog;
+    committed.push(held);
+    revision += 1;
+    return { status: 200, data: { status: 'updated', revision, cursor: revision } };
   });
   const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
   registerMachineMcpServersRpcHandlers({
-    rpcHandlerManager: { registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
-      handlers.set(method, handler);
+    rpcHandlerManager: { registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => {
+      handlers.set(method, async raw => handler(raw, { ...createMcpOwnerRpcContext(),
+        verifyMachineAdmissionCurrent: async () => machineIsCurrent() }));
     } } as never,
-    deps: { env, readCredentials: async () => ({ token: 'rpc-mcp-account', encryption: null }),
+    deps: { env, hostHomeServerIdentityId: MCP_TEST_HOME_ID, readCredentials: async () => ({ token: 'rpc-mcp-account', encryption: null }),
       bootstrapAccountSettingsContext: input => bootstrapAccountSettingsContext({ ...input,
         honorAccountSettingsModeEnv: false, deps: { resolveCachePath: resolveAccountSettingsCachePath,
           readCache: async () => null, writeCache: async () => undefined,
@@ -81,13 +102,34 @@ function register(conflict = false, env: NodeJS.ProcessEnv = process.env, stored
         } }),
     },
   });
-  return { writes, test: async (request: unknown) => DaemonMcpServersTestResponseSchema.parse(
+  return { writes, committed, readStoredCatalog: () => held, test: async (request: unknown) => DaemonMcpServersTestResponseSchema.parse(
     await handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST)!(request)) };
 }
 
 describe('Machine MCP Test pipeline', () => {
   beforeEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); });
   afterEach(() => resetInMemoryAccountSettingsContextForTests());
+
+  it.each(['draft', 'byId'] as const)('withdraws %s admission during the credential read before disclosing configuration state', async t => {
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    let current = true;
+    let reads = 0;
+    registerMachineMcpServersRpcHandlers({
+      rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
+      deps: { hostHomeServerIdentityId: MCP_TEST_HOME_ID,
+        // Persistent credential-file I/O is the only substituted boundary.
+        // No Account/catalog or materialization owner is mocked.
+        readCredentials: async () => { reads++; await Promise.resolve(); current = false; return null; },
+      },
+    });
+    const request = t === 'draft' ? { t, machineId: 'm1', directory: tmpdir(), server, binding: null }
+      : { t, machineId: 'm1', directory: tmpdir(), serverId: server.id };
+    const test = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST);
+    if (!test) throw new Error('Missing registered MCP Test');
+    await expect(test(request, { ...createMcpOwnerRpcContext(), verifyMachineAdmissionCurrent: async () => current }))
+      .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+    expect(reads).toBe(1);
+  });
 
   it('writes metadata and token estimates through the captured catalog CAS', async () => {
     const { test, writes } = register();
@@ -103,11 +145,70 @@ describe('Machine MCP Test pipeline', () => {
     expect(JSON.stringify(result)).not.toContain('fixture-private-token');
   });
 
-  it('refuses a conflicting snapshot CAS without replacing concurrent configuration', async () => {
-    const { test, writes } = register(true);
+  it('rechecks Machine custody after Account preparation before the saved tools CAS (S0-6)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-mcp-cas-withdrawal-'));
+    const marker = join(directory, 'probe-completed');
+    let current = true;
+    let withdrew = false;
+    const { test, writes } = register(false, { ...process.env, MI1_MCP_TOOLS_RECEIPT: marker }, catalog, () => current);
+    const homeGet = vi.mocked(axios.get).getMockImplementation()!;
+    // Home Account-currentness HTTP is a genuine system boundary. Retire the
+    // original Machine admission only after the useful OS probe has completed.
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      const response = await homeGet(...args);
+      if (new URL(String(args[0])).pathname === '/v1/account/encryption/currentness'
+        && await readFile(marker, 'utf8').catch(() => null) === 'completed') {
+        // The handler's captured operation checks its retained Account lifetime
+        // locally. This fresh HTTP observation is inside the real store.
+        current = false;
+        withdrew = true;
+      }
+      return response;
+    });
+    try {
+      const outcome = await test({ t: 'byId', serverId: server.id, machineId: 'machine', directory })
+        .then(result => ({ result }), (error: unknown) => ({ error }));
+      // Prove the genuine boundary was reached before deciding the security
+      // assertion; a broken marker is setup failure, not an admission RED.
+      expect(await readFile(marker, 'utf8')).toBe('completed');
+      expect(withdrew).toBe(true);
+      expect(writes).toHaveLength(0);
+      expect(outcome).toMatchObject({ error: { code: 'agent_isolation_unavailable', retryable: false } });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it('refuses a configuration change committed while a healthy probe is in flight', async () => {
+    const { test, writes, readStoredCatalog } = register(true);
     expect(await test({ t: 'byId', serverId: server.id, machineId: 'machine', directory: tmpdir() }))
-      .toMatchObject({ ok: false, errorCode: 'materialization_failed' });
+      .toMatchObject({ ok: false, errorCode: 'materialization_failed', error: 'mcp_tools_snapshot_conflict' });
     expect(writes).toHaveLength(1);
+    expect(readStoredCatalog().servers[0]).toMatchObject({ stdio: { args: ['changed-while-probing'] } });
+    expect(readStoredCatalog().servers[0]?.toolsSnapshot).toBeUndefined();
+  });
+
+  it('persists all three concurrent healthy machine observations from the same catalog CAS', async () => {
+    const { test, writes, committed, readStoredCatalog } = register();
+    const post = vi.mocked(axios.post).getMockImplementation()!;
+    let arrivals = 0;
+    let release = () => {};
+    const allProbed = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(axios.post).mockImplementation(async (...args) => {
+      arrivals += 1;
+      if (arrivals === 3) release();
+      await allProbed;
+      return post(...args);
+    });
+    const machineIds = ['first-machine', 'second-machine', 'third-machine'];
+    const results = await Promise.all(machineIds.map(machineId => test({
+      t: 'byId', serverId: server.id, machineId, directory: tmpdir(),
+    })));
+    expect(results).toEqual([expect.objectContaining({ ok: true, toolCount: 1 }),
+      expect.objectContaining({ ok: true, toolCount: 1 }), expect.objectContaining({ ok: true, toolCount: 1 })]);
+    const mutations = writes.map(value => McpServerCatalogRowMutationV1Schema.parse(value));
+    expect(mutations.slice(0, 3).map(value => value.expectedRevision)).toEqual([3, 3, 3]);
+    expect(committed.map(value => value.servers[0]?.toolsSnapshot?.machineId).sort()).toEqual([...machineIds].sort());
+    expect(readStoredCatalog().servers[0]?.toolsSnapshot).toEqual(committed.at(-1)?.servers[0]?.toolsSnapshot);
+    expect(readStoredCatalog().servers[0]?.toolsSnapshot?.tools).toMatchObject([{ name: 'read_records' }]);
   });
 
   it.each(['ruleless', 'off'] as const)('checks an explicitly selected %s server without enabling its reach', async reach => {

@@ -4,7 +4,6 @@ import {
 } from '@happier-dev/protocol';
 
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
-import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -27,14 +26,12 @@ import { SessionHandoffPrepareTargetRequestSchema } from '@happier-dev/protocol/
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffTransportRouteCache = ReturnType<typeof createMachineTransferRouteCache>;
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   activePrepareJobs: Map<string, Promise<void>>;
   prepareTargetJobLeaseOwnerId: string;
-  prepareTargetJobLeaseTtlMs: number;
   runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
@@ -51,12 +48,6 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     resume: SessionHandoffResumePlan;
   }>>;
-  getTransferRouteCache: (
-    machineTransferChannel: MachineTransferChannel | undefined,
-  ) => SessionHandoffTransportRouteCache;
-  invalidateDirectPeerRouteCacheForHandoffMachines: (
-    machineIds: readonly (string | undefined)[],
-  ) => void;
 }>;
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerResult = Readonly<{

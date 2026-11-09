@@ -1,6 +1,7 @@
 import { ComposerContentHandleV1Schema, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { FoundSkillDownloadRequestV1Schema, type FoundSkillDownloadRequestV1 } from '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1';
 import type { RegistryDownloadRequestV1 } from '@happier-dev/protocol/registries';
+import { DaemonPluginUiArtifactBytesReadRequestSchema, type DaemonPluginUiArtifactBytesReadRequest } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncTargetConflictStageV1Schema, type WorkspaceSyncSeedExportPrepareV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ComposerContentHandleV1, TransferEndpointCandidate, WorkspaceSyncTargetConflictStageV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -10,10 +11,15 @@ import { extend } from 'zod/mini';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 import type { RpcHandlerRegistrar, RpcHandlerContext } from '../rpc/types';
-import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import { readFilesystemTransferErrorCode, type PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import type { FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 export type DirectTransferExportPrepareRequest =
+    | Readonly<{
+        t: 'plugin_ui_artifact_download_v1';
+        request: DaemonPluginUiArtifactBytesReadRequest;
+    }>
     | Readonly<{
         t: 'prompt_asset_download_v1';
     } & FoundSkillDownloadRequestV1>
@@ -37,6 +43,10 @@ export type DirectTransferExportPrepareRequest =
     }>;
 
 const DirectTransferExportPrepareRequestSchema = z.union([
+    z.strictObject({
+        t: z.literal('plugin_ui_artifact_download_v1'),
+        request: asHostProtocolZod(DaemonPluginUiArtifactBytesReadRequestSchema),
+    }),
     asHostProtocolZod(extend(FoundSkillDownloadRequestV1Schema, { t: z.literal('prompt_asset_download_v1') })),
     z.strictObject({
         t: z.literal('prompt_registry_download_v1'),
@@ -84,12 +94,14 @@ type DirectTransferExportPrepareResponse = Readonly<
         success: false;
         error: string;
         code?: string;
+        errorCode?: string;
     }
 >;
 
 export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<{
     admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
     rpcHandlerManager: RpcHandlerRegistrar;
+    effectAdmission?: FilesystemEffectAdmission;
     prepareExportSession: (input: DirectTransferExportPrepareRequest, filesystemScope?: PreparedFilesystemTransferScope, context?: RpcHandlerContext) => Promise<Readonly<{
         transferId: string;
         expiresAt: number;
@@ -98,7 +110,7 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
         sizeBytes?: number;
         manifestHash?: string;
     }>>;
-    releaseExportSession?: (transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null) => Promise<void> | void;
+    releaseExportSession?: (transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null, context?: RpcHandlerContext) => Promise<void> | void;
 }>): void {
     params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE, async (data: unknown, context) => {
         const parsed = DirectTransferExportPrepareRequestSchema.safeParse(data);
@@ -106,6 +118,10 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
             return { success: false, error: 'Invalid direct transfer export request' } satisfies DirectTransferExportPrepareResponse;
         }
         const request: DirectTransferExportPrepareRequest = parsed.data;
+        if (request.t === 'workspace_file_download_v1') {
+            const failure = await params.effectAdmission?.rpc(context);
+            if (failure) return { success: false, ...failure, code: failure.errorCode } satisfies DirectTransferExportPrepareResponse;
+        }
         if (context?.workspaceSyncSeedRouting && request.t !== 'workspace_sync_seed_v1') {
             return { success: false, error: 'Invalid workspace seed export purpose' } satisfies DirectTransferExportPrepareResponse;
         }
@@ -123,6 +139,10 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
                 ...prepared,
             } satisfies DirectTransferExportPrepareResponse;
         } catch (error) {
+            const errorCode = readFilesystemTransferErrorCode(error, '');
+            if (errorCode === 'filesystem_identity_custody_unavailable') return {
+                success: false, error: 'Direct transfer export is unavailable', errorCode, code: errorCode,
+            } satisfies DirectTransferExportPrepareResponse;
             return {
                 success: false,
                 error: error instanceof Error ? error.message : 'Direct transfer export prepare failed',
@@ -135,7 +155,9 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
     });
 
     if (params.releaseExportSession) {
-        params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, async (data: unknown) => {
+        params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, async (data: unknown, context) => {
+            const failure = await params.effectAdmission?.rpc(context);
+            if (failure) return { success: false, ...failure };
             const transferId = data && typeof data === 'object'
                 ? (data as { transferId?: unknown }).transferId
                 : null;
@@ -147,9 +169,14 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
                 return { success: false, error: 'Invalid direct transfer export release request' } as const;
             }
             try {
-                await params.releaseExportSession?.(transferId, null);
+                if (context) await params.releaseExportSession?.(transferId, null, context);
+                else await params.releaseExportSession?.(transferId, null);
                 return { success: true } as const;
             } catch (error) {
+                const errorCode = readFilesystemTransferErrorCode(error, '');
+                if (errorCode === 'filesystem_identity_custody_unavailable') return {
+                    success: false, error: 'Direct transfer export is unavailable', errorCode,
+                } as const;
                 return {
                     success: false,
                     error: error instanceof Error ? error.message : 'Direct transfer export release failed',

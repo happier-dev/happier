@@ -8,6 +8,8 @@ import { resolveAcpSessionMessageRole } from '../../messageRole';
 import { getToolCallNameKey } from '../../toolCallInputHints';
 import { resolveTranscriptVisualReference } from '@/session/board/resolveTranscriptVisualReference';
 import type { SessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { readTranscriptSessionBoardItemApprovalV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
+import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import type { SessionClientTranscriptSendPort } from './sendMessages';
 
@@ -25,7 +27,9 @@ export async function prepareCommittedAgentMessageViaPort(
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
   messageRole: SessionMessageRole;
+  openedContent: unknown;
   surfaceItemReference?: SessionTranscriptSurfaceItemReferencesV1;
+  approvalRequestArtifactId?: string;
 }>> {
   // The canonical normalizer consumes the call input at terminal result reconciliation.
   const key = body.type === 'tool-result' ? getToolCallNameKey(provider, body.callId) : null;
@@ -53,14 +57,19 @@ export async function prepareCommittedAgentMessageViaPort(
     ? { v: 1, references: [{ v: 1, itemId: reference.itemId, itemRevision: reference.itemRevision,
       sourceAddress: reference.address, sourceItemId: reference.itemId, sourceItemRevision: reference.itemRevision }] }
     : undefined;
+  const approval = normalizedBody.type === 'tool-result' && mapping && normalizedBody.isError !== true
+    ? readTranscriptSessionBoardItemApprovalV1({ toolName: mapping.rawToolName, input: acknowledgedInput,
+      result: normalizedBody.output }) : null;
 
   return {
     normalizedBody,
     localId,
     sidechainId,
     payload: port.buildOutboundSessionMessagePayload(content),
+    openedContent: content,
     messageRole: resolveAcpSessionMessageRole(normalizedBody),
     ...(surfaceItemReference ? { surfaceItemReference } : {}),
+    ...(approval ? { approvalRequestArtifactId: approval.artifactId } : {}),
   };
 }
 
@@ -71,11 +80,14 @@ export function prepareCommittedUserTextMessageViaPort(
 ): Readonly<{
   localId: string;
   payload: PlainOrEncryptedPayload;
+  usageTimingV1: UsageTimingBoundsV1 | null;
 }> {
   const content = buildUserTextMessageContent(text, opts.meta);
 
   return {
     localId: opts.localId,
     payload: port.buildOutboundSessionMessagePayload(content),
+    usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: port.sessionId,
+      message: { id: opts.localId, localId: opts.localId, content } }),
   };
 }

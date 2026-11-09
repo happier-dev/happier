@@ -16,6 +16,13 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
   machineId?: string, signal?: AbortSignal): ActionExecuteFailure {
   if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   const phase = `session.authorization.${refusal.phase}`;
+  // Home already refused the target before minting; retain that owner's
+  // result instead of inventing a missing Account authorization.
+  if (refusal.code === 'target_unavailable') return {
+    ok: false, errorCode: refusal.code, error: refusal.code,
+    ...(refusal.details === undefined ? {} : { details: refusal.details }),
+    failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: refusal.code }, phase),
+  };
   const ownerDetails = refusal.details && typeof refusal.details === 'object' ? refusal.details : {};
   const requiredFact = 'requiredFact' in ownerDetails && typeof ownerDetails.requiredFact === 'string'
     ? ownerDetails.requiredFact : refusal.requiredFact;

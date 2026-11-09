@@ -1,11 +1,11 @@
 import { publishAccountServiceHomeLink } from '@happier-dev/cli-common/accountService';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, ACCOUNT_DIRECTORY_ERROR_CODES_V1, AccountDirectoryHomePutRequestV1Schema, AccountDirectoryHomePutResponseV1Schema, AccountDirectoryLinkDeleteRequestV1Schema, AccountDirectoryLinkDeleteResponseV1Schema, AccountDirectoryLinkPutRequestV1Schema, AccountDirectoryLinkPutResponseV1Schema, AccountDirectoryMeResponseV1Schema, AccountDirectoryRouteErrorResponseV1Schema, buildAccountDirectoryHomeHttpPathV1, buildAccountDirectoryLinkHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
-import { buildTerminalAuthorityCeilingHttpHeaders } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentialsForServerId } from '@/persistence';
 import { getActiveServerProfile, getServerProfile, type ServerProfile } from '@/server/serverProfiles';
@@ -66,7 +66,6 @@ async function resolveExactHomeProfile(homeServerIdentityId: string | undefined)
 async function parsedRequest<T>(input: Readonly<{
   url: string;
   token: string;
-  serverHttpBaseUrl: string;
   schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } };
   init?: RequestInit;
   signal?: AbortSignal;
@@ -74,10 +73,7 @@ async function parsedRequest<T>(input: Readonly<{
   const headers = new Headers(input.init?.headers);
   headers.set('Accept', 'application/json');
   headers.set('Authorization', `Bearer ${input.token}`);
-  for (const [key, value] of Object.entries(buildTerminalAuthorityCeilingHttpHeaders({ token: input.token, serverHttpBaseUrl: input.serverHttpBaseUrl }))) {
-    headers.set(key, value);
-  }
-  const response = await fetch(input.url, { ...input.init, headers, signal: input.signal });
+  const response = await fetchWithCredentialRedirectRefusal(input.url, { ...input.init, headers, signal: input.signal });
   if (!response.ok) {
     if (response.status === 409) {
       const payload: unknown = await response.json().catch(() => null);
@@ -167,7 +163,6 @@ export async function linkCliHomeToAccountService(input: Readonly<{
       readAccountSubject: async (credential) => (await parsedRequest({
         url: endpointUrl(selection.endpoint, ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1),
         token: credential.token,
-        serverHttpBaseUrl: selection.endpoint,
         schema: AccountDirectoryMeResponseV1Schema,
         signal: input.signal,
       })).accountId,
@@ -186,7 +181,6 @@ export async function linkCliHomeToAccountService(input: Readonly<{
           await parsedRequest({
             url: endpointUrl(acquired.runtime.runtimeOrigin, buildAccountDirectoryLinkHttpPathV1(selection.serverIdentityId)),
             token: credential.token,
-            serverHttpBaseUrl: acquired.runtime.runtimeOrigin,
             schema: AccountDirectoryLinkPutResponseV1Schema,
             init: { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
             signal: input.signal,
@@ -204,7 +198,6 @@ export async function linkCliHomeToAccountService(input: Readonly<{
         await parsedRequest({
           url: endpointUrl(selection.endpoint, buildAccountDirectoryHomeHttpPathV1(home.homeServerIdentityId)),
           token: credential.token,
-          serverHttpBaseUrl: selection.endpoint,
           schema: AccountDirectoryHomePutResponseV1Schema,
           init: { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
         });
@@ -214,6 +207,7 @@ export async function linkCliHomeToAccountService(input: Readonly<{
   if (result.kind === 'linked') return result;
   if (result.kind === 'cancelled') return { kind: 'cancelled' };
   if (result.kind === 'unavailable') return { kind: 'unavailable', reason: result.reason };
+  if (result.error instanceof CredentialRequestRedirectError) throw result.error;
   if (result.error instanceof CliHomeRelinkConflictError && !input.relink) {
     return { kind: 'relink_required', homeServerIdentityId: descriptor.homeServerIdentityId };
   }
@@ -259,7 +253,6 @@ export async function unlinkCliHomeFromAccountService(input: Readonly<{
     await parsedRequest({
       url: endpointUrl(acquired.runtime.runtimeOrigin, buildAccountDirectoryLinkHttpPathV1(selection.serverIdentityId)),
       token: homeCredential.token,
-      serverHttpBaseUrl: acquired.runtime.runtimeOrigin,
       schema: AccountDirectoryLinkDeleteResponseV1Schema,
       init: {
         method: 'DELETE',
@@ -273,7 +266,8 @@ export async function unlinkCliHomeFromAccountService(input: Readonly<{
       homeServerIdentityId: linked.descriptor.homeServerIdentityId,
       issuerServerIdentityId: selection.serverIdentityId,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return input.signal?.aborted ? { kind: 'cancelled' } : { kind: 'failed' };
   } finally {
     await acquired.close().catch(() => undefined);

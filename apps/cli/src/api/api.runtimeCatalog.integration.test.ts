@@ -49,7 +49,8 @@ vi.mock('axios', () => ({
 
 vi.mock('@/ui/logger', () => ({
     logger: {
-        debug: vi.fn()
+        debug: vi.fn(),
+        warnLocalFile: vi.fn(),
     }
 }));
 
@@ -204,7 +205,7 @@ describe('Api server error handling', () => {
             let releaseBinding: (() => void) | undefined;
             const bindingCompletion = new Promise<void>((resolve) => { releaseBinding = resolve; });
             mockGet.mockImplementation(async (url: string) => url.includes('/v1/access-keys/')
-                ? { status: 200, data: { accessKey: null } }
+                ? (requests.push('access-key-read'), { status: 200, data: { accessKey: null } })
                 : {
                     status: 200,
                     data: {
@@ -217,7 +218,7 @@ describe('Api server error handling', () => {
             mockPost.mockImplementation(async (url: string) => {
                 if (url.endsWith('/v1/sessions')) {
                     requests.push('session');
-                    return { status: 201, data: { session: { id: 's1' } } };
+                    return { status: 201, data: { session: { id: 's1' }, created: true } };
                 }
                 if (url.includes('/v1/access-keys/s1/target-machine')) {
                     requests.push('access-key');
@@ -237,6 +238,7 @@ describe('Api server error handling', () => {
             expect(returned).toBe(false);
             releaseBinding?.();
             await expect(created).resolves.toMatchObject({ id: 's1' });
+            // A Session this call just created has no binding yet: one write, no lookup round trip.
             expect(requests).toEqual(['session', 'access-key']);
             expect(mockPost).toHaveBeenCalledWith('https://api.example.com/v1/sessions',
                 expect.not.objectContaining({ creationAuthorizationToken: 'host-signed-proof' }),
@@ -291,7 +293,7 @@ describe('Api server error handling', () => {
                 state: null
             })).rejects.toThrow(/Failed to get or create session/i);
 
-            const debugMock = (logger as any).debug as any;
+            const debugMock = vi.mocked(logger.debug);
             const serialized = JSON.stringify(debugMock.mock.calls);
             expect(serialized).not.toContain(leakedBearer);
             expect(serialized).not.toContain(leakedVendorKey);
@@ -547,22 +549,21 @@ describe('Api server error handling', () => {
     });
 
     describe('getOrCreateSession encryption-currentness preflight', () => {
-        it('returns null and enters offline mode when the Account currentness read is unreachable', async () => {
+        it('preserves the typed failure without declaring offline when Account currentness is unreachable', async () => {
             connectionState.reset();
             const output = captureConsoleText();
             try {
-                // The preflight read fails at the transport before the sessions
-                // request is ever attempted; it must classify like that request.
+                // No Session request was issued; a failed observation is not
+                // proof that the Home or a previously created Session is absent.
                 mockGet.mockRejectedValue({ code: 'ECONNREFUSED' });
 
-                const result = await api.getOrCreateSession({
+                await expect(api.getOrCreateSession({
                     tag: 'test-tag',
                     metadata: testMetadata,
                     state: null,
-                });
-
-                expect(result).toBeNull();
-                expect(connectionState.isOffline()).toBe(true);
+                })).rejects.toMatchObject({ code: 'account_encryption_currentness_unavailable',
+                    cause: { code: 'ECONNREFUSED' } });
+                expect(connectionState.isOffline()).toBe(false);
                 expect(mockPost).not.toHaveBeenCalled();
             } finally {
                 output.restore();
@@ -717,55 +718,6 @@ describe('Api server error handling', () => {
                 replacementReason: 'reauth',
                 contentPublicKeyFingerprint: 'content-public-key-sha256:' + 'a'.repeat(64),
             }));
-        });
-
-        it('keeps a replacement candidate when an old server ignores replacement fields', async () => {
-            writeApiTestSettings({
-                schemaVersion: 6,
-                onboardingCompleted: true,
-                activeServerId: 'cloud',
-                machineIdByServerId: { cloud: 'machine-new' },
-                machineReplacementCandidatesByServerIdByAccountId: {
-                    cloud: {
-                        'account-1': {
-                            machineId: 'machine-old',
-                            replacementReason: 'reauth',
-                            createdAt: 123,
-                        },
-                    },
-                },
-            });
-
-            mockPost.mockResolvedValue({
-                data: {
-                    machine: createMachineRegistrationFixture(),
-                },
-            });
-
-            await api.getOrCreateMachine({
-                machineId: 'test-machine',
-                metadata: testMachineMetadata,
-                registrationIdentity: {
-                    installationId: 'installation-1',
-                    installationPublicKey: testInstallationPublicKey,
-                    installationProof: {
-                        version: 1,
-                        algorithm: 'ed25519',
-                        signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
-                    },
-                    replacesMachineId: 'machine-old',
-                    replacementReason: 'reauth',
-                    replacementCandidateAccountId: 'account-1',
-                },
-            });
-
-            expect(
-                readApiTestSettings().machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1'],
-            ).toEqual({
-                machineId: 'machine-old',
-                replacementReason: 'reauth',
-                createdAt: 123,
-            });
         });
 
         it('consumes a replacement candidate after explicit server acknowledgement', async () => {

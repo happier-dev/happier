@@ -41,12 +41,12 @@ export function registerMachineWorkSummaryRpcHandlers(params: MachineWorkSummary
             || !await current(context) || !context) return refused();
         try {
             const access = MachineAccessGrantsListResponseV1Schema.safeParse(await params.readAccess(context.signal));
-            if (!await current(context)) return refused();
+            if (context.signal.aborted) return refused();
             if (!access.success || access.data.machineId !== params.target.machineId
                 || access.data.custodian.accountId !== params.custodianAccountId || !access.data.canManage
                 || access.data.access.accessState !== 'ready') return { kind: 'unavailable' };
             const inventory = await params.activity.read();
-            if (!await current(context)) return refused();
+            if (context.signal.aborted) return refused();
             const summary = projectMachineWorkSummary({ inventory, target: params.target, custodianAccountId: params.custodianAccountId,
                 requesterIdentities: new Map((access.data.currentRequesterDisplayIdentities ?? []).map(identity => [identity.accountId, identity])),
             });
@@ -55,10 +55,10 @@ export function registerMachineWorkSummaryRpcHandlers(params: MachineWorkSummary
                 const parsed = WorkerLoadObservationV1Schema.safeParse(await params.readFiniteLoad?.());
                 if (parsed.success) finiteLoad = parsed.data;
             } catch { /* A missing observation cannot manufacture zero or weaken access. */ }
-            if (!await current(context)) return refused();
+            if (context.signal.aborted) return refused();
             return { ...summary, finiteLoad };
         } catch {
-            return await current(context) ? { kind: 'unavailable' } : refused();
+            return context.signal.aborted ? refused() : { kind: 'unavailable' };
         }
     });
 }

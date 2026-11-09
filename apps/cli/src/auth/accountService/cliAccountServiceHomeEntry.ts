@@ -8,6 +8,7 @@
 
 import { enrollmentPollingBackoffMs } from '@happier-dev/cli-common/homeEnrollment';
 import type { AccountServiceDirectoryAdoptionTarget } from '@happier-dev/cli-common/accountService';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 
 export type CliAccountServiceRequestedMethod =
   | Readonly<{ kind: 'key'; action?: 'login' | 'provision'; mode?: 'keyed' }>
@@ -226,7 +227,8 @@ async function finalizeHomeEntered(
   let continued: Awaited<ReturnType<CliAccountServiceHomeEntryPorts['continueMachineAndService']>>;
   try {
     continued = await ports.continueMachineAndService(home);
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return committedEnterFailure(home);
   }
   if (continued.kind !== 'continued') {

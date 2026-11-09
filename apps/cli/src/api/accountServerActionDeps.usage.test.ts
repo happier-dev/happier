@@ -11,6 +11,7 @@ import { enforceExternalActionResponseEnvelopeLimitV1 } from '@happier-dev/proto
 import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -521,6 +522,11 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.post('/v2/usage/query', async request => {
       accountingRequests.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
       return native;
+    });
+    app.post(USAGE_SESSION_EVIDENCE_PATH, async request => {
+      const body = UsageSessionEvidenceRequestSchema.parse(request.body);
+      // This native-only fixture has no retained Happier Sessions to open.
+      return UsageSessionEvidenceResponseSchema.parse({ requests: body.requests.map(({ query }) => ({ query, sessionIds: [] })), results: [] });
     });
     app.get('/v1/account/profile', async (_request, reply) => denied ? reply.code(403).send({ error: 'denied' }) : ({ id: 'account', connectedAccountsV4: [{
       ref: source.ref, status: 'connected', authenticationModeId: null, revisionSemantics: 'revisioned',

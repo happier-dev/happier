@@ -1,0 +1,32 @@
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, DeploymentChildRpcV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { isReviewedDeploymentChild } from './externalActionExecutionAuthorization';
+
+type NativeDeploymentChild = Extract<DeploymentChildRpcV1, { kind: 'build' | 'member' }>;
+
+/** Private installed custody for the existing finite archive driver, never a path or byte grant. */
+export async function assertDeploymentArchiveChildCurrentForHost(input: Readonly<{
+    context: ActionExecutorContext; machineId: string; installationId: string;
+}>): Promise<Readonly<{ job: NativeDeploymentChild; execution: WorkspaceSyncSourceExecutionV1 }>> {
+    const refuse = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
+    input.context.signal?.throwIfAborted();
+    const authorization = input.context.externalActionExecutionAuthorization;
+    const requester = readRequesterAccountActionContext(authorization);
+    const execution = requester?.deploymentChildExecution;
+    const job = requester?.deploymentChild;
+    if (!authorization || !requester || !execution || !job || job.kind === 'prepare' || job.kind === 'review'
+        || job.kind === 'member' && job.phase === 'cleanup'
+        || job.machineId !== input.machineId || job.installationId !== input.installationId
+        || execution.externalActionExecution.authorization.token !== authorization.token
+        || !sameStrictJsonValue(execution.externalActionExecution.authorization.binding, authorization.binding)
+        || !sameStrictJsonValue(execution.externalActionExecution.deploymentChildRouting, projectDeploymentChildRoutingV1(job))
+        || !await requester.isCurrent()
+        || !await isReviewedDeploymentChild({ authorization, envelope: execution.originalActionEnvelope,
+            actionId: job.actionId, machineId: job.machineId, params: job, signal: input.context.signal })
+        || !await requester.isCurrent()) return refuse();
+    input.context.signal?.throwIfAborted();
+    return { job, execution };
+}

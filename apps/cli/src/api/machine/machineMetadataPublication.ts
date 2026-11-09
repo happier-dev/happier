@@ -1,5 +1,8 @@
 import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
-import type { Machine } from '../types';
+import { isDeepStrictEqual } from 'node:util';
+import type { Machine, MachineMetadata } from '../types';
+import type { MachinePublicationOutcome } from '../apiMachine';
+import { backoff } from '@/utils/time';
 import type { MachineUpdateMetadataRequest } from '@happier-dev/protocol/machines/metadataUpdate';
 import type { MachineContentCodec } from './machineStoredContent';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
@@ -17,7 +20,7 @@ export function projectMachineMetadataChange(previous: Machine['metadata'], next
   const serviceWatchesChanged = previous === null || next === null ? previous !== next
     : !MachineServiceWatchesFieldV1.equal(previous.serviceWatchesV1 ?? MachineServiceWatchesFieldV1.defaultValue(),
       next.serviceWatchesV1 ?? MachineServiceWatchesFieldV1.defaultValue());
-  return { metadata: !serviceWatchesChanged && previous && next
+  return { metadata: !serviceWatchesChanged && previous?.serviceWatchesV1 !== undefined && next?.serviceWatchesV1 !== undefined
     ? { ...next, serviceWatchesV1: previous.serviceWatchesV1 } : next,
     change: { serviceWatchesChanged } satisfies MachineMetadataChange };
 }
@@ -34,10 +37,44 @@ export type MachineMetadataPublicationContext = Readonly<{
 export function readOpenedMachineMetadataSnapshot(machine: Machine, contentReady: boolean): MachineMetadataFieldReadV1 {
   if (!contentReady) return { status: 'locked' };
   if (machine.metadata === null) return { status: 'unavailable' };
-  const metadata = StoredMachinePublishedMetadataV1Schema.safeParse(machine.metadata);
-  if (!metadata.success || !Number.isSafeInteger(machine.metadataVersion) || machine.metadataVersion < 0) return { status: 'invalid' };
-  return { status: 'ready', metadata: metadata.data, metadataVersion: machine.metadataVersion };
+  if (!Number.isSafeInteger(machine.metadataVersion) || machine.metadataVersion < 0) return { status: 'invalid' };
+  // Machine.metadata is the admitted ingress value, not an unopened envelope.
+  return { status: 'ready', metadata: machine.metadata, metadataVersion: machine.metadataVersion };
 }
+
+/** Keep uncertain writes on their original CAS basis. Only a newer foreign
+ * conflict rebases the reducer; equal committed content settles our demand. */
+export async function publishMachineMetadataUpdate(context: Readonly<{
+  getMachine(): Machine;
+  shouldSuppress(): boolean;
+  prepareWrite(): Promise<void>;
+  publishAttempt: MachineMetadataFieldPortV1['compareAndSwap'];
+}>, handler: (metadata: MachineMetadata | null) => MachineMetadata): Promise<MachinePublicationOutcome> {
+  let attempt: Parameters<MachineMetadataFieldPortV1['compareAndSwap']>[0] | undefined;
+  return backoff(async () => {
+    if (context.shouldSuppress()) return 'suppressed';
+    await context.prepareWrite();
+    if (!attempt) {
+      const machine = context.getMachine();
+      const expectedMetadataVersion = machine.metadataVersion;
+      const current = machine.metadata === null ? null : StoredMachinePublishedMetadataV1Schema.parse(machine.metadata);
+      const updated = parseMachinePublishedMetadataV1(handler(current));
+      if (isDeepStrictEqual(updated, machine.metadata)) return 'unchanged';
+      attempt = { metadata: updated, expectedMetadataVersion };
+    }
+    const answer = await context.publishAttempt(attempt);
+    if (answer.status === 'applied') return 'published';
+    if (answer.status === 'conflict') {
+      if (answer.metadataVersion > attempt.expectedMetadataVersion) {
+        if (isDeepStrictEqual(answer.metadata, attempt.metadata)) return 'published';
+        attempt = undefined;
+      }
+      throw new Error('Metadata version mismatch');
+    }
+    throw new Error('Unexpected machine metadata update acknowledgement');
+  });
+}
+
 /** One incumbent codec/key-bound socket write. Retry policy belongs to its caller. */
 export async function publishMachineMetadataOnce(context: MachineMetadataPublicationContext,
   input: Parameters<MachineMetadataFieldPortV1['compareAndSwap']>[0]): Promise<Awaited<ReturnType<MachineMetadataFieldPortV1['compareAndSwap']>>> {

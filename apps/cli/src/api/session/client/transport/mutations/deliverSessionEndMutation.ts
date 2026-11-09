@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { resolveSessionSnapshotRequestPurpose } from '@/api/session/sessionSnapshotRefreshReason';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -135,7 +136,7 @@ async function fetchSessionEndProof(params: Readonly<{
     const headers = {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
-        'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',
+        'X-Happier-Request-Purpose': resolveSessionSnapshotRequestPurpose('legacy-compat-proof'),
     };
     const urls = [
         `${params.serverUrl}/v2/sessions/${encodeURIComponent(params.mutation.sessionId)}`,

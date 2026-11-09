@@ -355,7 +355,7 @@ async function installCliProbe(f: Awaited<ReturnType<typeof fixture>>, agent: 'c
   } };
 }
 
-describe.skipIf(process.platform !== 'linux')('installed Machine filesystem native member receiver', () => {
+describe.skipIf(process.platform !== 'linux')('installed Machine filesystem native member receiver (simulated UIDs and RunAs)', () => {
   it('retains a shared Use requesters refused folder and worker UID in the daemon log', async () => {
     const f = await fixture({ legacy: true });
     const warnings = vi.spyOn(logger, 'warnLocalFile');

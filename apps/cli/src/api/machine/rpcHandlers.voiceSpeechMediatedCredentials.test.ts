@@ -35,6 +35,7 @@ beforeEach(() => {
 });
 
 import { registerMachineVoiceSpeechRpcHandlers } from './rpcHandlers.voiceSpeech';
+import type { PluginPermissionGrantListReader } from '@/plugins/runtime/credentials/rawCredentialMaterializer';
 
 const ORIGIN = 'https://speech.example.test';
 const SECRET = 'external-account-speech-secret';
@@ -96,6 +97,7 @@ function mediatedOnlySpeechManifest(options: Readonly<{
   declareProjection?: boolean;
   declareUnprojectedOperation?: boolean;
   declareRawAlternative?: boolean;
+  declareSavedSecretRaw?: boolean;
   connectedAccountMediation?: boolean;
 }> = {}) {
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
@@ -115,6 +117,7 @@ function mediatedOnlySpeechManifest(options: Readonly<{
             ...(options.connectedAccountMediation ? [] : [{
               kind: 'savedSecret',
               secretKinds: ['apiKey'],
+              ...(options.declareSavedSecretRaw ? { rawGrants: [rawSpeechGrant] } : {}),
               ...(options.declareProjection === false
                 ? {}
                 : {
@@ -264,6 +267,7 @@ async function registerCatalog(options: Readonly<{
   snapshot?: ReturnType<typeof accountSnapshot>;
   readSnapshot?: () => ReturnType<typeof accountSnapshot>;
   materializeAccount?: ConnectedAccountPurposeBindingOwnerDependencies['materializeAccount'];
+  grants?: PluginPermissionGrantListReader;
 }>) {
   const { handlers, registrar } = manager();
   const contribution = options.manifest.contributes.voiceProviders?.[0];
@@ -334,7 +338,9 @@ async function registerCatalog(options: Readonly<{
     rpcHandlerManager: registrar,
     machineId: 'machine-a',
     resolveRawCredentialDependencies: async () => ({
-      grants: { list: async () => ({ grants: [], pendingRequests: [] }) },
+      grants: options.grants ?? { list: async () => ({ grants: [], pendingRequests: [] }) },
+      // The daemon installation record is an OS/persistence boundary.
+      readCurrentGrantAuthoritySource: async () => ({ kind: 'machine_installation', machineId: 'machine-a', installationId: 'installation-a' }),
       getAccountSettingsSnapshot: readSnapshot,
     }),
   });
@@ -346,6 +352,36 @@ function jsonResponse(body: unknown) {
 }
 
 describe('daemon speech host-mediated Voice Account operations', () => {
+  it('inherits the shared link grant for an own speech key with zero grant reads and refuses the next acquisition after unlink', async () => {
+    const manifest = mediatedOnlySpeechManifest({ declareProjection: false, declareSavedSecretRaw: true });
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('Expected speech declaration');
+    let current = accountSnapshot({ contribution });
+    const listGrants = vi.fn(async () => ({ grants: [], pendingRequests: [] }));
+    let materialized = false;
+    const { handlers, registration } = await registerCatalog({ manifest, readSnapshot: () => current,
+      grants: { list: listGrants },
+      list: async (_request, context) => {
+        const raw = await context.credentials.raw!.materialize({ kind: 'httpHeaders', origin: ORIGIN,
+          headerNames: ['authorization'] }, { signal: context.signal });
+        materialized = raw.kind === 'httpHeaders' && raw.headers.authorization === SECRET;
+        return [];
+      },
+    });
+    try {
+      await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({ target, catalog: 'models' }))
+        .resolves.toMatchObject({ ok: true, items: [] });
+      expect(materialized).toBe(true);
+      expect(listGrants).not.toHaveBeenCalled();
+      current = accountSnapshot({ contribution, credentialSource: 'none', settingsVersion: 2 });
+      materialized = false;
+      const refused = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({ target, catalog: 'models' });
+      expect(refused).toMatchObject({ ok: false });
+      expect(materialized).toBe(false);
+      expect(JSON.stringify(refused)).not.toContain(SECRET);
+      expect(listGrants).not.toHaveBeenCalled();
+    } finally { await registration.dispose(); }
+  });
   it('selects a Connected Account by slot purpose and materializes it for the distinct operation purpose', async () => {
     transportMocks.request.mockReset();
     transportMocks.request.mockResolvedValueOnce(jsonResponse({
@@ -718,8 +754,11 @@ describe('daemon speech host-mediated Voice Account operations', () => {
     await registration.dispose();
   });
 
-  it('refuses the operation when the approved recipient contract no longer matches the declaration', async () => {
+  it('uses a linked own secret without a Voice recipient contract approval', async () => {
     transportMocks.request.mockReset();
+    transportMocks.request.mockResolvedValue(new Response('{"data":[]}', {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
     let observedCode: unknown = null;
     const manifest = mediatedOnlySpeechManifest();
     const contribution = manifest.contributes.voiceProviders?.[0];
@@ -746,8 +785,8 @@ describe('daemon speech host-mediated Voice Account operations', () => {
 
     await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({ target, catalog: 'models' });
 
-    expect(observedCode).toBe('plugin_voice_credential_unavailable');
-    expect(transportMocks.request).not.toHaveBeenCalled();
+    expect(observedCode).toBeNull();
+    expect(transportMocks.request).toHaveBeenCalledOnce();
     await registration.dispose();
   });
 

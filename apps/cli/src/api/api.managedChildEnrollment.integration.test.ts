@@ -37,16 +37,20 @@ describe('ordinary managed child Machine registration', () => {
     rowProjection = undefined;
     await expect(api.getMachine(machineId)).rejects.toMatchObject({ code: 'machine_unavailable' });
   });
-  it('publishes the actual child namespace and relation from the admitted resource with a distinct installation proof', async () => {
+  it.each([true, false])('registers an admitted managed Machine with controller present=%s without inventing a child relation', async (controllerPresent) => {
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(91));
     const machineId = 'enrolled-child';
     const installationId = 'child-installation';
     const devcontainerObservation = { nativeResourceId: 'native-child', user: 'custom-user', workspaceFolder: '/work/custom',
       storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: '/work/custom' } };
+    const controller = { machineId: 'physical-controller', installationId: 'host-installation' };
     const managedEnrollment = { homeId: 'srv_child_home', managedId: 'managed-child', expectedIntentRevision: 2,
-      requestId: 'approved-create', controller: { machineId: 'physical-controller', installationId: 'host-installation' },
-      resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
-        value: { containerId: 'native-child' }, devcontainerObservation } };
+      requestId: 'approved-create', ...(controllerPresent ? { controller } : {}),
+      resource: controllerPresent
+        ? { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
+          value: { containerId: 'native-child' }, devcontainerObservation }
+        : { contributionRef: { pluginId: 'fixture.cloud', localId: 'vm' }, schemaVersion: 1,
+          value: { nativeId: 'cloud-guest' } } };
     const metadata = { host: 'container', platform: 'linux', happyCliVersion: 'test',
       homeDir: '/home/custom-user', happyHomeDir: '/home/custom-user/.happier' };
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
@@ -60,8 +64,8 @@ describe('ordinary managed child Machine registration', () => {
       return { status: 200, data: { machine: {
       id: body.id, metadata: body.metadata, metadataVersion: 1, daemonState: null,
       daemonStateVersion: 0, storageMode: 'plain', dataEncryptionKey: null,
-      devcontainerChild: { relation: { managedMachineId: managedEnrollment.managedId, managedMachineKind: 'devcontainer',
-        parentMachineId: managedEnrollment.controller.machineId }, observation: devcontainerObservation },
+      devcontainerChild: controllerPresent ? { relation: { managedMachineId: managedEnrollment.managedId, managedMachineKind: 'devcontainer',
+        parentMachineId: controller.machineId }, observation: devcontainerObservation } : null,
     } } };
     });
     onTestFinished(() => { get.mockRestore(); post.mockRestore(); });
@@ -71,14 +75,17 @@ describe('ordinary managed child Machine registration', () => {
       registrationIdentity: { installationId, installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
         installationProof: signMachineInstallationProof({ payload: { version: 1, machineId, installationId, accountId: 'owner' },
           privateKey: keys.secretKey }) } });
-    const expected = { relation: { managedMachineId: managedEnrollment.managedId, managedMachineKind: 'devcontainer',
-      parentMachineId: managedEnrollment.controller.machineId }, observation: devcontainerObservation };
-    expect(registered).toMatchObject({ id: machineId, encryptionMode: 'plain', metadata: { devcontainerChild: expected } });
+    const expected = controllerPresent ? { relation: { managedMachineId: managedEnrollment.managedId, managedMachineKind: 'devcontainer',
+      parentMachineId: controller.machineId }, observation: devcontainerObservation } : undefined;
+    expect(registered).toMatchObject({ id: machineId, encryptionMode: 'plain' });
+    if (expected) expect(registered.metadata?.devcontainerChild).toEqual(expected);
+    else expect(registered.metadata).not.toHaveProperty('devcontainerChild');
     const body = post.mock.calls[0]?.[1];
     if (!body || typeof body !== 'object' || !('metadata' in body) || typeof body.metadata !== 'string'
       || !('installationId' in body)) throw new Error('Missing registered Machine carrier');
-    expect(decodePlainMachineStoredContent(body.metadata)).toMatchObject({ devcontainerChild: expected });
+    if (expected) expect(decodePlainMachineStoredContent(body.metadata)).toMatchObject({ devcontainerChild: expected });
+    else expect(decodePlainMachineStoredContent(body.metadata)).not.toHaveProperty('devcontainerChild');
     expect(body).toMatchObject({ id: machineId, installationId, managedEnrollment });
-    expect(body.installationId).not.toBe(managedEnrollment.controller.installationId);
+    expect(body.installationId).not.toBe(controller.installationId);
   });
 });

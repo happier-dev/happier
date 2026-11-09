@@ -11,7 +11,6 @@ import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import {
     bindApiSessionSocketPairMock,
     createApiSessionSocketStub,
-    flushApiSessionClientMessageCommitQueue,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { createMockSession, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -168,7 +167,7 @@ function expectLastSocketHandler(
 }
 
 async function flushClientQueue(client: ApiSessionClient): Promise<void> {
-    await flushApiSessionClientMessageCommitQueue(client as any);
+    await client.flushDurableMutationDelivery();
 }
 
 function getSocketMessageEmitCalls(socket: any): any[][] {

@@ -1,5 +1,6 @@
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { randomUUID } from 'node:crypto';
+import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import { logger } from '@/ui/logger';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
@@ -47,6 +48,7 @@ import {
     prepareSessionEventMessageViaPort,
     type SessionClientTranscriptSendPort,
 } from './sendMessages';
+import { SESSION_STREAM_APPEND_BINDING_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import {
     prepareCommittedAgentMessageViaPort,
     prepareCommittedUserTextMessageViaPort,
@@ -57,11 +59,9 @@ import type { SessionUsageObservationPublisher } from '../reactions/usagePublish
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import {
-    garbageCollectFailedSessionMediaCommit,
-    persistSessionMediaForTranscript,
+    commitSessionMediaForTranscript,
     type SendAgentSessionMediaCommittedRequest,
 } from './sessionMediaBridge';
-import { isDefinitiveSessionMessageCommitError } from '../transport/createSessionClientCommitQueueRuntime';
 import type { EphemeralSendOutcome } from './ephemeralSendOutcome';
 import {
     assertCommittedTranscriptAdmission,
@@ -110,6 +110,7 @@ function readSessionMediaMetadata(meta: Readonly<Record<string, unknown>>): Read
 }
 
 type EnqueueCommittedTranscriptMessageParams = Readonly<{
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
@@ -119,9 +120,11 @@ type EnqueueCommittedTranscriptMessageParams = Readonly<{
     updatedAt: number;
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferencesV1;
+    approvalRequestArtifactId?: string;
     admission?: CommittedTranscriptAdmission;
     observeCommitSignal?: AbortSignal;
     awaitDelivery?: boolean;
+    append?: Readonly<{ content: PlainOrEncryptedPayload; baseLength: number; baseUpdatedAt: number }>;
 }>;
 
 type EnqueueCommittedVoiceAgentTranscriptTurnParams = Readonly<{
@@ -262,7 +265,6 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         status: PrimaryTurnStatusV1;
         observedAt: number;
     }> | null;
-    getActiveLocalTurnProgressAt: () => number | null;
     onPresence?: (presence: SessionPresenceSnapshot) => void;
     getMetadataSnapshot: () => Metadata | null;
     updateAgentState: (handler: (metadata: AgentState) => AgentState) => Promise<void>;
@@ -387,7 +389,7 @@ export type SessionClientTranscriptApi = Readonly<{
     sendAgentMessageEphemeralDelta: (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+        opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; snapshotBody?: ACPMessageData },
     ) => EphemeralSendOutcome;
     fetchRecentTranscriptTextItemsForAcpImport: (
         opts?: { take?: number },
@@ -413,49 +415,6 @@ export function createSessionClientTranscriptApi(
     const serverUrl = deps.serverUrl ?? resolveServerHttpBaseUrl();
     let latestSessionPresence: SessionPresenceSnapshot | null = null;
     let hasPublishedSessionPresence = false;
-    let terminalThinkingEvidenceAtMs: number | null = null;
-    let reportedTerminalThinkingSelfHeal = false;
-
-    const resolveKeepAliveThinkingWithTerminalGuard = (thinking: boolean, nowMs: number): boolean => {
-        if (!thinking) {
-            terminalThinkingEvidenceAtMs = null;
-            reportedTerminalThinkingSelfHeal = false;
-            return false;
-        }
-        const turn = deps.getLatestTurnSnapshot();
-        const progressAt = deps.getActiveLocalTurnProgressAt();
-        if (!turn || isActiveLatestTurnStatus(turn.status)) {
-            terminalThinkingEvidenceAtMs = null;
-            reportedTerminalThinkingSelfHeal = false;
-            return true;
-        }
-
-        const normalizeEvidenceAt = (value: unknown): number | null =>
-            typeof value === 'number' && Number.isFinite(value)
-                ? Math.min(nowMs, Math.max(0, value))
-                : null;
-        const latestEvidenceAt = Math.max(
-            normalizeEvidenceAt(turn.observedAt) ?? 0,
-            normalizeEvidenceAt(progressAt) ?? 0,
-        );
-        if (terminalThinkingEvidenceAtMs === null) {
-            terminalThinkingEvidenceAtMs = latestEvidenceAt > 0 ? latestEvidenceAt : nowMs;
-        } else if (latestEvidenceAt > terminalThinkingEvidenceAtMs) {
-            terminalThinkingEvidenceAtMs = latestEvidenceAt;
-            reportedTerminalThinkingSelfHeal = false;
-        }
-        if (nowMs - terminalThinkingEvidenceAtMs < 15_000) return true;
-        if (!reportedTerminalThinkingSelfHeal) {
-            reportedTerminalThinkingSelfHeal = true;
-            logger.info('[API] Self-healing stuck thinking keepalive against terminal turn status', {
-                sessionId: deps.sessionId,
-                latestTurnStatus: turn.status,
-                latchedForMs: nowMs - terminalThinkingEvidenceAtMs,
-            });
-        }
-        return false;
-    };
-
     const createSessionAlivePayload = (presence: SessionPresenceSnapshot): SessionAlivePayload => {
         const payload: SessionAlivePayload = {
             sid: deps.sessionId,
@@ -652,7 +611,7 @@ export function createSessionClientTranscriptApi(
         opts: CommittedTranscriptMessageOptions,
     ): Promise<Readonly<{ persisted: boolean; delivered: boolean; committedSequence?: number;
         whenCommitted?: Promise<CommittedTranscriptOriginal | null> }>> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference } = await prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference, approvalRequestArtifactId, openedContent } = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
@@ -667,21 +626,38 @@ export function createSessionClientTranscriptApi(
 
         const streamSegmentMeta = opts.meta?.happierStreamSegmentV1;
         const metaRecord = streamSegmentMeta && typeof streamSegmentMeta === 'object'
-            ? streamSegmentMeta as Record<string, unknown>
-            : null;
+            ? streamSegmentMeta as Record<string, unknown> : null;
         const createdAt = typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
             ? Math.max(0, Math.trunc(opts.createdAt))
             : metaRecord && typeof metaRecord.startedAtMs === 'number' && Number.isFinite(metaRecord.startedAtMs)
-                ? Math.max(0, Math.trunc(metaRecord.startedAtMs))
-                : Date.now();
+                ? Math.max(0, Math.trunc(metaRecord.startedAtMs)) : Date.now();
         const updatedAt = typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
             ? Math.max(createdAt, Math.trunc(opts.updatedAt))
             : metaRecord && typeof metaRecord.updatedAtMs === 'number' && Number.isFinite(metaRecord.updatedAtMs)
                 ? Math.max(createdAt, Math.trunc(metaRecord.updatedAtMs))
                 : createdAt;
         assertCommittedTranscriptAdmission(opts.admission);
+        // The append crosses the same envelope/encryption choke point as the full body, with its
+        // binding (message, base, result) sealed inside so Home cannot splice it elsewhere.
+        const append = opts.append
+            ? {
+                content: (await prepareCommittedAgentMessageViaPort(getTranscriptSendPort(), provider, opts.append.body, {
+                    localId,
+                    meta: {
+                        ...opts.meta,
+                        [SESSION_STREAM_APPEND_BINDING_META_KEY]: {
+                            v: 1, localId, baseLength: opts.append.baseLength, length: opts.append.length,
+                        },
+                    },
+                })).payload,
+                baseLength: opts.append.baseLength,
+                baseUpdatedAt: opts.append.baseUpdatedAt,
+            }
+            : undefined;
         const result = await deps.enqueueCommittedTranscriptMessage({
             message: payload,
+            usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: deps.sessionId,
+                message: { id: localId, localId, content: openedContent, createdAt } }),
             localId,
             sidechainId,
             messageRole,
@@ -689,8 +665,10 @@ export function createSessionClientTranscriptApi(
             updatedAt,
             provenance: opts.provenance,
             ...(surfaceItemReference === undefined ? {} : { surfaceItemReference }),
+            ...(approvalRequestArtifactId === undefined ? {} : { approvalRequestArtifactId }),
             ...(opts.admission === undefined ? {} : { admission: opts.admission }),
             ...(opts.observeCommitSignal === undefined ? {} : { observeCommitSignal: opts.observeCommitSignal }),
+            ...(append ? { append } : {}),
         });
         if (result.delivered) {
             const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
@@ -738,6 +716,7 @@ export function createSessionClientTranscriptApi(
             turnId: params.turnId,
             user: {
                 message: user.payload,
+                usageTimingV1: user.usageTimingV1,
                 localId: user.localId,
                 sidechainId: null,
                 messageRole: 'user',
@@ -747,6 +726,8 @@ export function createSessionClientTranscriptApi(
             },
             assistant: {
                 message: assistant.payload,
+                usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: deps.sessionId,
+                    message: { id: assistant.localId, localId: assistant.localId, content: assistant.openedContent, createdAt: assistantCreatedAt } }),
                 localId: assistant.localId,
                 sidechainId: assistant.sidechainId,
                 messageRole: assistant.messageRole,
@@ -844,6 +825,21 @@ export function createSessionClientTranscriptApi(
         });
     };
 
+    const enqueueUserTextMessageCommitted: SessionClientTranscriptApi['enqueueUserTextMessageCommitted'] = async (text, opts) => {
+        const prepared = prepareCommittedUserTextMessageViaPort(getTranscriptSendPort(), text, opts);
+        const createdAt = typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+            ? Math.max(0, Math.trunc(opts.createdAt)) : Date.now();
+        const updatedAt = typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+            ? Math.max(createdAt, Math.trunc(opts.updatedAt)) : createdAt;
+        assertCommittedTranscriptAdmission(opts.admission);
+        return await deps.enqueueCommittedTranscriptMessage({
+            message: prepared.payload, localId: prepared.localId, sidechainId: opts.sidechainId ?? null,
+            usageTimingV1: prepared.usageTimingV1,
+            messageRole: 'user', createdAt, updatedAt, provenance: opts.provenance,
+            ...(opts.admission === undefined ? {} : { admission: opts.admission }),
+        });
+    };
+
     return {
         async preparePendingMessageComposerAdmission(params) {
             const raw = RawIngressStructuredInputV1Schema.safeParse(params.meta[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]);
@@ -925,6 +921,7 @@ export function createSessionClientTranscriptApi(
             const now = Date.now();
             return await deps.enqueueCommittedTranscriptMessage({
                 message: prepared.payload,
+                usageTimingV1: prepared.usageTimingV1,
                 localId: prepared.localId,
                 sidechainId: null,
                 messageRole: prepared.messageRole,
@@ -937,30 +934,7 @@ export function createSessionClientTranscriptApi(
             });
         },
 
-        async enqueueUserTextMessageCommitted(text, opts) {
-            const prepared = prepareCommittedUserTextMessageViaPort(
-                getTranscriptSendPort(),
-                text,
-                opts,
-            );
-            const createdAt = typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
-                ? Math.max(0, Math.trunc(opts.createdAt))
-                : Date.now();
-            const updatedAt = typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
-                ? Math.max(createdAt, Math.trunc(opts.updatedAt))
-                : createdAt;
-            assertCommittedTranscriptAdmission(opts.admission);
-            return await deps.enqueueCommittedTranscriptMessage({
-                message: prepared.payload,
-                localId: prepared.localId,
-                sidechainId: opts.sidechainId ?? null,
-                messageRole: 'user',
-                createdAt,
-                updatedAt,
-                provenance: opts.provenance,
-                ...(opts.admission === undefined ? {} : { admission: opts.admission }),
-            });
-        },
+        enqueueUserTextMessageCommitted,
 
         async enqueueSessionUserMessage(params) {
             const originalText = String(params.text ?? '');
@@ -981,47 +955,16 @@ export function createSessionClientTranscriptApi(
         enqueueVoiceAgentTranscriptTurnCommitted,
 
         async sendAgentSessionMediaCommitted(provider, request) {
-            const workingDirectory = deps.getMetadataSnapshot()?.path;
-            const persisted = await persistSessionMediaForTranscript({
+            await commitSessionMediaForTranscript({
                 sessionId: deps.sessionId,
-                workingDirectory,
+                workingDirectory: deps.getMetadataSnapshot()?.path,
                 request,
                 logger,
+                provider,
+                enqueueUser: enqueueUserTextMessageCommitted,
+                enqueueAgent: enqueueAgentMessageCommitted,
+                clearAssistantSnapshot: () => deps.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'media_only_commit' }),
             });
-            const messageText = request.messageText ?? '';
-
-            try {
-                const admission = await enqueueAgentMessageCommitted(
-                    provider,
-                    { type: 'message', message: messageText },
-                    {
-                        localId: request.localId,
-                        meta: persisted.meta,
-                        provenance: { kind: 'non_dependent', source: 'external' },
-                    },
-                );
-                if (!admission.persisted) {
-                    throw new Error('Session media transcript descriptor was not admitted to durable custody');
-                }
-            } catch (error) {
-                if (
-                    isDefinitiveSessionMessageCommitError(error)
-                    &&
-                    typeof workingDirectory === 'string'
-                    && workingDirectory.trim().length > 0
-                    && persisted.createdWorkspaceRelativePaths.length > 0
-                ) {
-                    await garbageCollectFailedSessionMediaCommit({
-                        workingDirectory,
-                        persisted,
-                        logger,
-                    });
-                }
-                throw error;
-            }
-            if (messageText.trim().length === 0) {
-                deps.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'media_only_commit' });
-            }
         },
 
         sendAgentMessageEphemeral(provider, body, opts) {
@@ -1076,7 +1019,7 @@ export function createSessionClientTranscriptApi(
             if (process.env.DEBUG) {
                 logger.debug(`[API] Sending keep alive message: ${thinking}`);
             }
-            latestSessionPresence = { thinking: resolveKeepAliveThinkingWithTerminalGuard(thinking, Date.now()), mode };
+            latestSessionPresence = { thinking, mode };
             deps.onPresence?.(latestSessionPresence);
             // An open canonical turn keeps publisher presence reliable even when the provider's
             // foreground thinking projection is idle. The payload retains the original thinking

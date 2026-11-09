@@ -340,6 +340,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
               voiceProviders,
               provider: target,
               kind: 'speech',
+              realm: 'daemon',
               phase,
               credentialResolver,
               ...(connectedAccounts ? { connectedAccounts } : {}),

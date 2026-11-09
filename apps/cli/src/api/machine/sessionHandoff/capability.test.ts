@@ -24,7 +24,7 @@ describe('installed handoff capability publication', () => {
       expect(await manager.handleRequest({ method: `target:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET}`, params: {} }))
         .toMatchObject({ protocolVersion: 3, atomicTargetResume: false, targetCleanup: false, sameMachineHandoff: true, existingState: enabled });
       expect(await manager.handleRequest({ method: `target:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET}`, params: {} }))
-        .toEqual({ protocolVersion: 2, atomicTargetResume: false, targetCleanup: false });
+        .toEqual({ ok: false, errorCode: 'handoff_update_required', error: 'Update both computers to move this Session' });
       expect(await manager.handleRequest({ method: `target:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET}`,
         params: { sessionId: 'session', sourceMachineId: 'source', targetMachineId: 'target', targetPath: '/target',
           sourceSessionStorageMode: 'persisted' } }))

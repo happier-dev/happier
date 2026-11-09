@@ -1956,12 +1956,16 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             if (overriddenDelivery !== undefined) {
                 return { delivered: overriddenDelivery };
             }
+            // The append is a live-delivery hint that roughly doubles the frame: send it on the first
+            // attempt only, so a retry (a socket refusal of an oversized frame included) is the
+            // plain full-body write that worked before appends existed.
+            const { append: _append, ...withoutAppend } = mutation.payload as TranscriptMessageAppendMutationV1;
             const result = await runWithServerHttpBaseUrl(serverUrl, async () => deliverTranscriptMessageMutation({
                 signal: params.signal,
                 token: params.token,
                 socket: params.getSocket(),
                 connectionContract: sessionSyncPendingInputServerContractResult,
-                mutation: mutation.payload,
+                mutation: mutation.attempts === 0 ? mutation.payload : withoutAppend,
             }));
             if (!result.delivered && result.reason === 'transcript_message_transport_unavailable') {
                 return { delivered: false, unsupportedCapability: true };

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { readUnsupportedContentMeta } from '@happier-dev/session-core/messages';
 

@@ -1,5 +1,6 @@
 import { AUTH_ENTRY_RESPONSE_MAX_UTF8_BYTES_V1, AuthEntryProjectionV1Schema, AuthEntryRequestV1Schema } from '@happier-dev/protocol/auth/entry';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
 import { decodeBoundedJsonResponseBody } from '@/features/serverFeaturesParse';
@@ -45,7 +46,7 @@ export async function fetchCliHomeAuthEntry(input: Readonly<{
     });
     const response = await withAbortTimeout(
       input.timeoutMs ?? 6_000,
-      async (signal) => await fetch(`${normalizeBaseUrl(input.serverUrl)}/v1/auth/entry`, {
+      async (signal) => await fetchWithCredentialRedirectRefusal(`${normalizeBaseUrl(input.serverUrl)}/v1/auth/entry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -65,7 +66,8 @@ export async function fetchCliHomeAuthEntry(input: Readonly<{
     return parsed.success && isCliHomeAuthEntryProjection(parsed.data)
       ? { kind: 'ready', projection: parsed.data }
       : { kind: 'incompatible' };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     if (input.signal?.aborted) input.signal.throwIfAborted();
     return { kind: 'unavailable' };
   }

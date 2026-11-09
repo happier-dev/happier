@@ -20,6 +20,8 @@ import {
 } from '@/session/media/names';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { SessionMediaFailureV1 } from '@happier-dev/protocol';
+import type { ACPProvider } from '../../sessionMessageTypes';
+import type { TranscriptSessionPort } from '../../transcriptPort';
 import type {
     SessionMediaIngestionSource,
     SessionMediaItemV1,
@@ -42,6 +44,9 @@ export type SendAgentSessionMediaCommittedRequest = Readonly<{
     media: readonly SessionMediaBridgeInput[];
     meta?: Record<string, unknown>;
     messageText?: string;
+    sidechainId?: string;
+    provenanceSource?: 'history' | 'sidechain' | 'external';
+    failures?: readonly SessionMediaFailureV1[];
 }>;
 
 type LoggerLike = Readonly<{
@@ -309,7 +314,7 @@ export async function persistSessionMediaForTranscript(
 ): Promise<SessionMediaBridgePersistResult> {
     const items: SessionMediaItemV1[] = [];
     const createdWorkspaceRelativePaths: string[] = [];
-    const failures: SessionMediaFailureV1[] = [];
+    const failures: SessionMediaFailureV1[] = [...(deps.request.failures ?? [])];
     const workingDirectory = typeof deps.workingDirectory === 'string' && deps.workingDirectory.trim().length > 0
         ? deps.workingDirectory
         : null;
@@ -372,4 +377,28 @@ export async function persistSessionMediaForTranscript(
         failures,
         meta,
     };
+}
+
+/** Commit the descriptor through the same role-specific durable transcript owners as text. */
+export async function commitSessionMediaForTranscript(deps: SessionMediaBridgePersistDeps & Readonly<{
+    provider: ACPProvider;
+    enqueueUser: NonNullable<TranscriptSessionPort['enqueueUserTextMessageCommitted']>;
+    enqueueAgent: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
+    clearAssistantSnapshot: () => void;
+}>): Promise<void> {
+    const persisted = await persistSessionMediaForTranscript(deps);
+    const request = deps.request;
+    const messageText = request.messageText ?? '';
+    const opts = {
+        localId: request.localId,
+        meta: { ...persisted.meta, ...(persisted.failures.length ? { importedHistoryCoverage: 'partial' } : {}) },
+        provenance: { kind: 'non_dependent' as const, source: request.provenanceSource ?? 'external' },
+        ...(request.sidechainId ? { sidechainId: request.sidechainId } : {}),
+    };
+    const admission = request.role === 'input'
+        ? await deps.enqueueUser(messageText, opts)
+        : await deps.enqueueAgent(deps.provider,
+            { type: 'message', message: messageText, ...(request.sidechainId ? { sidechainId: request.sidechainId } : {}) }, opts);
+    if (!admission.persisted) throw new Error('Session media transcript descriptor was not admitted to durable custody');
+    if (request.role === 'output' && !messageText.trim()) deps.clearAssistantSnapshot();
 }

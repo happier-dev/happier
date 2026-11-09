@@ -1,4 +1,3 @@
-import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
 import { createExternalSessionActionOperationOwner, projectExternalSessionActionOperation } from '@/session/actions/externalSessions/actionOperationOwner';
 import { createExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
 import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
@@ -13,8 +12,15 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { acknowledgeExternalSessionOperationProgressProjection, compactExternalSessionOperationRecordToTerminalReceipt, mutateExternalSessionOperationRecordAtRevision, writeExternalSessionOperationRecord } from '@/session/actions/externalSessions/operationRecordStore';
 import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
+import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 
-const environment = vi.hoisted(() => ({ activeServerDir: '', accountId: 'account-1' as string | null }));
+const environment = vi.hoisted(() => ({ activeServerDir: '', accountId: 'account-1' as string | null,
+  afterCredentialRead: null as (() => void) | null,
+  session: null as null | { id: string; metadata: string; metadataVersion: number; metadataLayoutVersion: 1;
+    ownerMetadata: import('@happier-dev/protocol').SessionOwnerMetadataEnvelopeV1;
+    agentState: string | null; agentStateVersion: number; encryptionMode: 'plain' },
+}));
 // Configuration and credential storage are genuine environment boundaries.
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
@@ -22,21 +28,52 @@ vi.mock('@/configuration', async (importOriginal) => {
 });
 vi.mock('@/persistence', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/persistence')>();
-  return { ...actual, readStoredCredentials: async () => environment.accountId ? ({
-    token: `e30.${Buffer.from(JSON.stringify({ sub: environment.accountId })).toString('base64url')}.signature`,
-    encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-  }) : null };
+  return { ...actual, readStoredCredentials: async () => {
+    const credentials = environment.accountId ? ({
+      token: `e30.${Buffer.from(JSON.stringify({ sub: environment.accountId })).toString('base64url')}.signature`,
+      encryption: null,
+    }) : null;
+    environment.afterCredentialRead?.();
+    return credentials;
+  } };
 });
 
 // The boot/reconnect repair path runs real owner logic; HTTP session lookup is offline in this fixture.
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
-  return { ...actual, fetchSessionById: async () => null };
+  return { ...actual, fetchSessionById: async (request: Parameters<typeof actual.fetchSessionById>[0]) => {
+      if (environment.session && request.token !== 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature') throw new Error('Wrong Account Session read');
+      return environment.session;
+    },
+    patchSessionMetadataEnvelopeTuple: async (request: Parameters<typeof actual.patchSessionMetadataEnvelopeTuple>[0]) => {
+      const session = environment.session;
+      if (!session || request.patch.mode !== 'owner') throw new Error('Unexpected Session tuple write');
+      if (request.token !== 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature') throw new Error('Wrong Account Session write');
+      session.metadata = request.patch.sharedMetadata.ciphertext;
+      session.ownerMetadata = request.patch.ownerMetadata;
+      session.agentState = request.patch.agentState.ciphertext;
+      session.metadataVersion += 1;
+      session.agentStateVersion += 1;
+      return { success: true as const, metadataLayoutVersion: 1 as const,
+        sharedMetadata: { version: session.metadataVersion }, ownerMetadata: { version: session.metadataVersion },
+        agentState: { version: session.agentStateVersion } };
+    },
+  };
+});
+
+vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/client/connectedServiceCredentialApi')>();
+  return { ...actual, fetchAccountEncryptionCurrentness: async () => ({
+    mode: 'plain' as const, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+  }) };
 });
 
 const roots: string[] = [];
 const registrations: ReturnType<typeof registerMachineExternalSessionsRpcHandlers>[] = [];
 afterEach(async () => {
+  environment.afterCredentialRead = null;
+  environment.accountId = 'account-1';
+  environment.session = null;
   for (const registration of registrations.splice(0)) await registration.dispose();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -84,6 +121,29 @@ async function register(retainedDirectory?: string) {
 }
 
 describe('durable external operations in shared Action Operations', () => {
+  it('keeps shared Stop in its admitted Account when the selected Account changes before local dispatch', async () => {
+    const { owner } = await register();
+    const initial = record();
+    const scopeA = { activeServerDir: environment.activeServerDir, accountSubject: 'account-1' };
+    await writeExternalSessionOperationRecord(environment.activeServerDir, initial, { accountScope: scopeA });
+    const fields = buildSessionMetadataEnvelopeFields({
+      credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null },
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', metadata: {}, agentState: null,
+    });
+    environment.session = { id: initial.request.sessionId, metadata: fields.sharedMetadata.ciphertext,
+      metadataVersion: 1, metadataLayoutVersion: 1, ownerMetadata: fields.ownerMetadata,
+      agentState: fields.agentState, agentStateVersion: 0, encryptionMode: 'plain' };
+    environment.afterCredentialRead = () => {
+      environment.afterCredentialRead = null;
+      environment.accountId = 'account-2';
+    };
+    await expect(owner.cancel({ accountId: 'account-1', machineId: 'machine-1' }, initial.operationId))
+      .resolves.toEqual({ kind: 'requested' });
+    await expect(readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId, scopeA))
+      .resolves.toMatchObject({ status: 'cancelled' });
+    await expect(owner.get({ accountId: 'account-2', machineId: 'machine-1' }, initial.operationId)).resolves.toBeNull();
+  });
+
   it('keeps a foreign requester Browser operation readable without probing the custodian external-session partition', async () => {
     const { runtime } = await register();
     const initial = record();
@@ -210,12 +270,20 @@ describe('durable external operations in shared Action Operations', () => {
       sendHistoricalCommand: async () => { throw new Error('No import job exists to send a network command'); },
     });
     const runtime = createHostActionOperationRuntime({ machineId: 'machine-1', resolveAccountId: async () => 'account-1' });
+    await expect(executor.cancel({ sessionId: 'foreign-session', operationId: initial.operationId, revision: 0 }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'operation_not_found' } });
+    await expect(executor.cancel({ sessionId: 'session-1', operationId: 'another-operation', revision: 0 }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'operation_not_found' } });
+    await expect(readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId))
+      .resolves.toMatchObject({ status: 'awaiting_user_resume', revision: 0 });
     let racedProgressCommit = false;
+    let cancelRequests = 0;
     const detach = runtime.attachOwner(createExternalSessionActionOperationOwner({
       activeServerDir: environment.activeServerDir,
       // A transport adapter to the real domain executor, with no fabricated lifecycle outcomes.
       execute: async (actionId, input) => {
         if (actionId !== 'sessions.external.operation.cancel') throw new Error('Unexpected Action');
+        cancelRequests += 1;
         // A progress commit while the transport delivers Stop must use the owner's stale-revision response.
         if (!racedProgressCommit) {
           racedProgressCommit = true;
@@ -228,6 +296,8 @@ describe('durable external operations in shared Action Operations', () => {
     }));
     try {
       await expect(runtime.handlers.cancel({ operationId: initial.operationId })).resolves.toEqual({ kind: 'requested' });
+      // Stop is one semantic request; progress does not make a consumer re-admit it.
+      expect(cancelRequests).toBe(1);
       await expect(readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId)).resolves.toMatchObject({ status: 'cancelled', currentStorageState: 'machine_only', cancellation: { requestedAtRevision: 1 } });
       await expect(runtime.handlers.get({ operationId: initial.operationId })).resolves.toMatchObject({ kind: 'found', operation: { state: 'cancelled', cancellation: 'unsupported' } });
     } finally { detach(); }

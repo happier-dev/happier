@@ -10,7 +10,6 @@ import { createSessionHandoffPrepareTargetJobStore } from '../../../session/hand
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
 import { createWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
-import { createMachineTransferRouteCache } from '@/machines/transfer/transferRouteCache';
 
 describe('runSessionHandoffPrepareTargetJob typed native-import failures', () => {
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
@@ -18,6 +17,81 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
     runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
   });
   afterAll(async () => { await runtime?.dispose(); });
+  it('expands a same-machine target using the canonical environment home rather than the state-directory spelling', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'handoff-target-home-'));
+    const homeDir = join(root, 'canonical-home');
+    const activeServerDir = join(root, 'other-home', '.happier', 'server');
+    const handoffId = 'canonical_home';
+    const jobId = 'prepare_canonical_home';
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', homeDir);
+    try {
+      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
+      const agentBundle = await sourceExportStore.writeAgentBundleFile({ handoffId,
+        agentBundle: { agentId: 'claude', remoteSessionId: 'remote_source', transcriptBase64: 'e30K' },
+      });
+      await sourceExportStore.save({ handoffId, exportedAtMs: 1, agentBundle });
+      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      let importedPath: string | undefined;
+      await runSessionHandoffPrepareTargetJob({
+        activeServerDir, runtimeConfig: { activeServerDir }, handoffId, jobId, createdAtMs: 1,
+        request: { handoffId, sourceMachineId: 'machine', targetMachineId: 'machine', targetPath: '~/workspace',
+          sourceSessionStorageMode: 'persisted', negotiatedTransportStrategy: 'direct_peer', endpointCandidates: [] },
+        actualTransportStrategy: 'direct_peer',
+        pendingStatus: { handoffId, jobId, status: 'pending', phase: 'staging_target', recoveryActions: [] },
+        prepareJobStore, sourceExportStore, prepareTargetJobLeaseOwnerId: `home:${process.pid}`,
+        machineTransferChannel: undefined, directPeerTransfer: undefined,
+        importSessionBundle: async (_bundle, targetPath) => {
+          importedPath = targetPath;
+          return { remoteSessionId: 'remote_target', directSource: { kind: 'claudeConfig', configDir: activeServerDir },
+            resume: { agent: 'claude', directory: targetPath, resume: 'remote_target',
+              approvedNewDirectoryCreation: true, transcriptStorage: 'persisted' } };
+        },
+      });
+      expect(importedPath).toBe(join(homeDir, 'workspace'));
+      expect((await prepareJobStore.read(jobId))?.prepareTargetResult?.resume.directory).toBe(join(homeDir, 'workspace'));
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    ['persisted', 'direct', 'direct'],
+    ['direct', 'persisted', 'persisted'],
+    ['persisted', undefined, 'persisted'],
+    ['direct', undefined, 'direct'],
+  ] as const)('imports %s source storage with target %s as %s', async (sourceSessionStorageMode, targetSessionStorageMode, expectedStorage) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-target-storage-'));
+    try {
+      const handoffId = 'storage';
+      const jobId = 'prepare_storage';
+      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
+      const agentBundle = await sourceExportStore.writeAgentBundleFile({ handoffId,
+        agentBundle: { agentId: 'claude', remoteSessionId: 'remote_source', transcriptBase64: 'e30K' },
+      });
+      await sourceExportStore.save({ handoffId, exportedAtMs: 1, agentBundle });
+      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      let importedStorage: string | undefined;
+      await runSessionHandoffPrepareTargetJob({
+        activeServerDir, runtimeConfig: { activeServerDir }, handoffId, jobId, createdAtMs: 1,
+        request: { handoffId, sourceMachineId: 'source', targetMachineId: 'target', targetPath: activeServerDir,
+          sourceSessionStorageMode, ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
+          negotiatedTransportStrategy: 'direct_peer', endpointCandidates: [],
+        },
+        actualTransportStrategy: 'direct_peer',
+        pendingStatus: { handoffId, jobId, status: 'pending', phase: 'staging_target', recoveryActions: [] },
+        prepareJobStore, sourceExportStore, prepareTargetJobLeaseOwnerId: `storage:${process.pid}`,
+        machineTransferChannel: undefined, directPeerTransfer: undefined,
+        importSessionBundle: async (_bundle, targetPath, sessionStorageMode) => {
+          importedStorage = sessionStorageMode;
+          return { remoteSessionId: 'remote_target', directSource: { kind: 'claudeConfig', configDir: activeServerDir },
+            resume: { agent: 'claude', directory: targetPath, resume: 'remote_target',
+              approvedNewDirectoryCreation: true, transcriptStorage: sessionStorageMode } };
+        },
+      });
+      expect(importedStorage).toBe(expectedStorage);
+      expect((await prepareJobStore.read(jobId))?.prepareTargetResult?.resume.transcriptStorage).toBe(expectedStorage);
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it('materializes the managed source files before native import without WorkspaceRefs', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-seed-target-'));
     const sourcePath = await mkdtemp(join(tmpdir(), 'happier-managed-seed-source-'));
@@ -44,7 +118,7 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
           } },
         }, actualTransportStrategy: 'direct_peer', pendingStatus: { handoffId, jobId, status: 'pending', phase: 'staging_target', transportStrategy: 'direct_peer', recoveryActions: [] },
         prepareJobStore: createSessionHandoffPrepareTargetJobStore({ activeServerDir }), sourceExportStore,
-        prepareTargetJobLeaseOwnerId: `seed-test:${process.pid}`, prepareTargetJobLeaseTtlMs: 5_000, machineTransferChannel: undefined,
+        prepareTargetJobLeaseOwnerId: `seed-test:${process.pid}`, machineTransferChannel: undefined,
         directPeerTransfer: { publishTransfer: () => [], clearPublishedTransfer: () => undefined,
           requestPayloadFile: async (request) => {
             const payload = request.transferId === transferId ? seed.payloadSource : await seed.onDemandScope.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: undefined });
@@ -58,7 +132,7 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
           importedPath = targetPath;
           observedFiles = await readFile(join(targetPath, 'notes.txt'), 'utf8').catch(() => null);
           throw Object.assign(new Error('Observed native import boundary'), { code: 'agent_version_unsupported' });
-        }, getTransferRouteCache: () => createMachineTransferRouteCache({ serverId: 'target-server' }), invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
+        },
       });
       expect(observedFiles).toBe('source workspace');
       expect(importedPath.startsWith(join(activeServerDir, 'session-directories') + '/')).toBe(true);
@@ -127,12 +201,9 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
           )),
         } as never,
         prepareTargetJobLeaseOwnerId: `cli-daemon:${process.pid}:typed-import-failure`,
-        prepareTargetJobLeaseTtlMs: 5_000,
         machineTransferChannel: undefined,
         directPeerTransfer: undefined,
         importSessionBundle,
-        getTransferRouteCache: () => ({} as never),
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
       });
 
       expect(importSessionBundle).toHaveBeenCalledTimes(1);
@@ -275,12 +346,9 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
           )),
         } as never,
         prepareTargetJobLeaseOwnerId: `cli-daemon:${process.pid}:crash-convergence`,
-        prepareTargetJobLeaseTtlMs: 5_000,
         machineTransferChannel: undefined,
         directPeerTransfer: undefined,
         importSessionBundle,
-        getTransferRouteCache: () => ({} as never),
-        invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
       });
 
       expect(importSessionBundle).toHaveBeenCalledTimes(1);

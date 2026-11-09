@@ -32,7 +32,7 @@ import {
     resolveExternalSessionSourceConnectedServiceProfile,
 } from '@/plugins/projection/registry/externalSessionSources';
 import { fetchAccountProfile } from '@/api/accountProfile';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 
 import type {
     ExternalSessionObservationLinkIdentity,
@@ -57,6 +57,7 @@ type ResolveExternalSessionObservationLinkInputParams = Readonly<{
     signal?: AbortSignal;
     deadlineAtMs?: number;
     accountProjection?: ExternalSessionConnectedServiceAccountProjection | null;
+    credentials?: StoredCredentials;
 }>;
 
 type ExternalSessionConnectedServiceAccountProjection = Readonly<{
@@ -84,8 +85,9 @@ function isConnectedServiceProfileCurrent(
 
 async function readCurrentAccountProjection(
     signal: AbortSignal,
+    capturedCredentials?: StoredCredentials,
 ): Promise<ExternalSessionConnectedServiceAccountProjection | null> {
-    const credentials = await readStoredCredentials();
+    const credentials = capturedCredentials ?? await readStoredCredentials();
     if (!credentials || signal.aborted) return null;
     return await fetchAccountProfile({
         token: credentials.token,
@@ -214,7 +216,7 @@ export async function resolveExternalSessionObservationLinkInput(
         if (connectedServiceProfile.kind === 'resolved') {
             const accountProjection = Object.hasOwn(params, 'accountProjection')
                 ? params.accountProjection ?? null
-                : await readCurrentAccountProjection(signal);
+                : await readCurrentAccountProjection(signal, params.credentials);
             if (
                 !accountProjection
                 || !isConnectedServiceProfileCurrent(
