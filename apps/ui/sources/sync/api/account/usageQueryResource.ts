@@ -1599,6 +1599,7 @@ type UsageAccountingAnswer = {
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]): void; readSessionInput: SessionInputReader;
     readSessionSelection: SessionInputSelectionReader;
     projectSessionSelection: SessionInputSelectionProjector;
+    retrySessionInputFailures: ReturnType<typeof createUsageQuerySessionInputs>['retryFailures'];
     history: Map<string, UsageHistoryEntry>;
     /** The instant this read resolves its accounting windows at. */
     readAccountingInstant(query: UsageQuery): number;
@@ -1637,12 +1638,14 @@ export function cancelUiUsageHistory(context: UsageQueryAccountContext, query: U
 export async function readUiUsageHistory(context: UsageQueryAccountContext, input: Readonly<{ query: UsageQuery }>,
     options?: Readonly<{ signal?: AbortSignal; onProgress?: (state: UsageHistoryReadState) => void }>): Promise<UsageHistoryReadState> {
     requireCurrent(context);
-    const entry = readUsageHistoryEntry(usageHistoryOwner(context), input.query);
+    const owner = usageHistoryOwner(context);
+    const entry = readUsageHistoryEntry(owner, input.query);
     const notify = () => options?.onProgress?.(entry.state);
     entry.listeners.add(notify);
     let removeCancellation: (() => void) | undefined;
     try {
         if (!entry.pending) {
+            owner.retrySessionInputFailures(new Set([getUsageQueryKey(input.query)]));
             const controller = new AbortController();
             entry.controller = controller;
             const retirement = context.accountLifetime.onRetire(() => controller.abort());
@@ -1821,6 +1824,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     const owner: AccountResourceOwner = {
         projectionDocuments,
         history,
+        retrySessionInputFailures: sessionInputs.retryFailures,
         readAccountingInstant(query) {
             const nowMs = Date.now();
             if (!query.includeAccounting) return nowMs;
@@ -2289,7 +2293,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             if (typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query') {
                 const queries = normalizeUsageQueryBatchInput(reference.input).queries.filter(query => query.includeAccounting
                     && (query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence));
-                sessionInputs.retryFailures(new Set(queries.map(getUsageQueryKey)));
+                owner.retrySessionInputFailures(new Set(queries.map(getUsageQueryKey)));
             }
             // An explicit refresh asks the server again at a new instant.
             replaceAccounting();

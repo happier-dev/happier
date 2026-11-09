@@ -14,7 +14,7 @@ import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolve
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
-import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
@@ -466,11 +466,13 @@ describe('CLI and MCP personal usage Account transport', () => {
       incarnation: 'pool-lifetime', displayName: null, policy: {}, activeConnectedAccountId: 'work', generation: 1,
       runtimeStateRevision: 1, state: {}, createdAt: 100, updatedAt: 150,
       members: [{ v: 1, connectedAccountId: 'work', state: {}, createdAt: 100, updatedAt: 150 }] });
-    const legacySuppression = { kind: 'dismissed', evidenceKey: 'previous-native-finding' };
-    let raw: Record<string, unknown> = { usageCoachPreferencesV1: { v: 1, suppressions: [legacySuppression] }, usagePacingTargetsV1: targets };
+    const retainedSuppression = { kind: 'dismissed', evidenceKey: 'previous-native-finding' };
+    let raw: Record<string, unknown> = { usageCoachPreferencesV1: { v: 1 }, usagePacingTargetsV1: targets };
     let version = 1;
     let settingsWrites = 0;
     const kvRows = new Map<string, { key: string; value: string; version: number }>();
+    kvRows.set(USAGE_COACH_SUPPRESSIONS_KV_KEY, { key: USAGE_COACH_SUPPRESSIONS_KV_KEY, version: 0,
+      value: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { v: 1, suppressions: [retainedSuppression] } }))) });
     // Opaque HTTP persistence is the boundary; encryption, CAS client and Coach owner stay real.
     app.get('/v1/kv/:key', async (request, reply) => {
       const { key } = z.object({ key: z.string() }).parse(request.params);
@@ -648,11 +650,11 @@ describe('CLI and MCP personal usage Account transport', () => {
       { surface: 'cli', serverId: 'home', authority: 'present_user' });
     expect(dismissed, JSON.stringify(dismissed)).toMatchObject({ ok: true, result: { kind: 'preference_updated' } });
     expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
-    expect(suppressions()).toEqual([legacySuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
+    expect(suppressions()).toEqual([retainedSuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
     expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: false },
       { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
     expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
-    expect(suppressions()).toEqual([legacySuppression]);
+    expect(suppressions()).toEqual([retainedSuppression]);
     expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: true },
       { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
     expect(settingsWrites).toBe(0);
@@ -664,7 +666,7 @@ describe('CLI and MCP personal usage Account transport', () => {
       value: { v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' },
       expectedSettingsVersion: version }, { surface: 'cli', serverId: 'home', authority: 'present_user' });
     expect(configured).toMatchObject({ ok: true });
-    expect(suppressions()).toEqual([legacySuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
+    expect(suppressions()).toEqual([retainedSuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
     expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' });
     expect((await read()).coach!.evaluations.find(row => row.detectorId === 'outside_usage')?.status).toBe('disabled');
     expect((await read()).coach!.findings).toEqual([]);

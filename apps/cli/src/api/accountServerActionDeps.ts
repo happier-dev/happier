@@ -84,7 +84,7 @@ import { buildUsageCoachRemedies } from '@happier-dev/protocol/usage/coach/build
 import { loadMcpServerCatalogV1, type McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
-import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { ActionExecuteFailureSchema, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -617,6 +617,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         let quotaSources: UsageQuerySourceState[] = [];
         let pools: UsagePoolSourceSnapshot[] | undefined;
         let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
+        let suppressionState: UsageCoachSuppressionStateV1 | undefined;
         let pricingOverrides: ReturnType<typeof accountSettingsParse>['usageModelPriceOverridesV1'] | undefined;
         let accountSettings: ReturnType<typeof accountSettingsParse> | undefined;
         let accountEncryptionMode: 'plain' | 'e2ee' | null = null;
@@ -639,7 +640,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           accountSettings = parsedSettings;
           preferences = parsedSettings.usageCoachPreferencesV1;
           if (request.queries.some(query => query.includeAccounting && query.includeSessionEvidence)) {
-            preferences = { ...preferences, suppressions: (await coachSuppressions(context, 'usage.query').read()).suppressions };
+            suppressionState = await coachSuppressions(context, 'usage.query').read();
           }
           pricingOverrides = parsedSettings.usageModelPriceOverridesV1;
           const profileRequest = bindHomeDomainActionHttpRequestV1('account.profile.get', {});
@@ -745,7 +746,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const admitted = admitUsageCoachRemedies(slice.coach, buildUsageCoachRemedies({ findings: slice.coach.findings,
             composition: evidence?.composition ?? [], mcpUsage: evidence?.detail?.mcpUsage,
             mcpCatalog, sessions: detail.sessions, serverId, accountId }));
-          return { ...slice, coach: preferences ? applyUsageCoachPreferences(admitted, preferences, nowMs) : admitted };
+          return { ...slice, coach: suppressionState ? applyUsageCoachPreferences(admitted, suppressionState, nowMs) : admitted };
         }) };
       },
     },

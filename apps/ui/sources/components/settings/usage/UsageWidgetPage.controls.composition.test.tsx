@@ -15,7 +15,7 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { CurrentUiContextCommandsProvider } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -32,14 +32,29 @@ import type { UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageHistoryModel } from './useUsageHistory';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { useUsageWorkDisclosures } from './widgets/UsageWorkParts';
-import { UsageModelPricesEditor } from './widgets/UsageModelPrices';
+import { UsageModelPricesEditor, UsageModelPricesLine } from './widgets/UsageModelPrices';
 import { UsageNightShiftWidget } from './widgets/UsageNightShiftWidget';
 import { UsageBodyInsufficient, UsageCoverageLine } from './widgets/usageBodyKit';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { Modal, ModalProvider } from '@/modal';
+import { BaseModal } from '@/modal/components/BaseModal';
+import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'] }).module;
+});
+
+// Portals and browser focus/event listeners are platform boundaries; modal and command owners stay real.
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
+vi.mock('@/utils/web/radixCjs', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
+    const Inline = (props: Readonly<{ children?: React.ReactNode }>) => props.children;
+    return { ...actual, requireRadixDismissableLayer: () => ({ Root: Inline, Branch: Inline }),
+        requireRadixFocusScope: () => ({ Root: Inline }) };
 });
 
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
@@ -88,18 +103,23 @@ function ControlsPage(props: Readonly<{ children: React.ReactNode; retireOnSelec
         <Publication retireOnSelection={props.retireOnSelection} />{props.children}
     </CurrentUiContextCommandsProvider></PluginSurfaceFocusEligibilityProvider>;
 }
-async function mount(children: React.ReactNode, retireOnSelection = false) {
+async function mount(children: React.ReactNode, retireOnSelection = false, withModalProvider = false) {
     home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-body-controls.test', accountId: 'account-a' }],
         route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
-    const tree = (content: React.ReactNode) => <InjectedAuthProvider credentials={credentials}>
-        <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+    const tree = (content: React.ReactNode) => {
+        const context = <CurrentUiContextProvider>
             <ControlsPage retireOnSelection={retireOnSelection}>{content}</ControlsPage>
-        </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
-    </InjectedAuthProvider>;
+        </CurrentUiContextProvider>;
+        return <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider>
+                {withModalProvider ? <ModalProvider>{context}</ModalProvider> : context}
+            </AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+    };
     const screen = await renderScreen(tree(children));
     return { screen, retire: () => screen.update(tree(null)) };
 }
@@ -126,6 +146,38 @@ function WorkDetails() {
     return <><Text testID="project-details" onPress={() => details.toggle('project')}>{String(details.isOpen('project'))}</Text>
         <Text testID="branch-details">{String(details.isOpen('branch'))}</Text></>;
 }
+
+function CardOpener() {
+    const bridge = useCurrentUiContextCommandBridge();
+    return <Text testID="open-card" onPress={() => Modal.show({ commandBridge: bridge,
+        component: () => <Text>Card content</Text>, chrome: { kind: 'card', title: 'Shared card' } })}>Open card</Text>;
+}
+
+it.each(['button', 'escape', 'scrim', 'agent'] as const)('dismisses a page-opened card through its shared %s command and retires it', async surface => {
+    const { screen } = await mount(<CardOpener />, false, true);
+    await screen.pressByTestIdAsync('open-card');
+    const visibleCards = () => screen.findAllByType(BaseModal).filter(node => node.props.visible);
+    expect(visibleCards()).toHaveLength(1);
+    expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === 'Agent: Codex')).toBe(false);
+    const close = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.close'));
+    if (surface === 'button') await screen.pressByTestIdAsync('modal-card-close');
+    else if (surface === 'escape') {
+        await act(async () => { expect(dispatchEscapeToLayerStack({ key: 'Escape' })).toBe(true); });
+    } else if (surface === 'scrim') {
+        const shell = screen.findAllByType('div').find(node => node.props.role === 'dialog')!;
+        await act(async () => { shell.props.onClick({ target: null, preventDefault() {}, stopPropagation() {} }); });
+    } else {
+        expect(close).toBeDefined();
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: close!.id },
+            { surface: 'agent', serverId: home!.homes.a!.id })).toMatchObject({ ok: true }); });
+    }
+    await flushHookEffects({ cycles: 10 });
+    expect(visibleCards()).toHaveLength(0);
+    expect(close).toBeDefined();
+    expect(reader!.resolveCurrentUiCommand(close!.id)).toBeNull();
+    expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === 'Agent: Codex')).toBe(true);
+});
 
 it('publishes descendant command changes without rerendering unchanged page content', async () => {
     const { screen } = await mount(<WorkDetails />);
@@ -183,7 +235,7 @@ it('opens the exact Work detail from the mounted command and closes it from the 
         context: { surface: 'agent' } })).toMatchObject({ ok: false });
 });
 
-it('exposes model price disclosure and its editable draft through the same mounted command owner', async () => {
+it.each(['page', 'sheet'] as const)('exposes model price disclosure and its editable draft through the same mounted command owner (%s)', async entry => {
     const query = normalizeUsageQuery({});
     const tokens = { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 };
     const props = bodyProps({ queries: [query], accounting: [{ query, status: 'available', value: { v: 1,
@@ -192,21 +244,30 @@ it('exposes model price disclosure and its editable draft through the same mount
             machineId: null, projectKey: null, workspaceId: null, source: null, tokens,
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
         }] } }] });
-    const { screen } = await mount(<UsageModelPricesEditor slice={props.slice} serverId="home" testID="price-controls" />);
-    const command = reader!.readCurrentUiContext()!.commands.find(command => command.title.startsWith('parity-private-model'));
-    expect(command).toBeDefined();
-    await invoke(command!.id);
-    expect(screen.findByTestId('price-controls.model.parity-private-model.input')).not.toBeNull();
+    const { screen } = await mount(entry === 'sheet'
+        ? <UsageModelPricesLine slice={props.slice} serverId="home" testID="price-controls" />
+        : <UsageModelPricesEditor slice={props.slice} serverId="home" testID="price-controls" />, false, entry === 'sheet');
+    if (entry === 'sheet') await screen.pressByTestIdAsync('price-controls.open');
+    const rowId = `${entry === 'sheet' ? 'price-controls.editor' : 'price-controls'}.model.parity-private-model`;
+    await screen.pressByTestIdAsync(`${rowId}.set`);
+    expect(screen.findByTestId(`${rowId}.input`)).not.toBeNull();
     const rate = reader!.readCurrentUiContext()!.commands.find(command => command.title === `parity-private-model: ${t('usage.board.page.priceInput')}`);
     expect(rate).toBeDefined();
     await act(async () => {
         expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
             input: { commandId: rate!.id, input: '2.5' }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
     });
-    expect(screen.findByTestId('price-controls.model.parity-private-model.input')!.props.value).toBe('2.5');
-    await screen.pressByTestIdAsync('price-controls.model.parity-private-model.cancel');
-    expect(screen.findAllByType(ExpandableItem).find(row => row.props.testID === 'price-controls.model.parity-private-model')?.props.expanded).toBe(false);
+    expect(screen.findByTestId(`${rowId}.input`)!.props.value).toBe('2.5');
+    await screen.pressByTestIdAsync(`${rowId}.cancel`);
+    expect(screen.findAllByType(ExpandableItem).find(row => row.props.testID === rowId)?.props.expanded).toBe(false);
     expect(reader!.resolveCurrentUiCommand(rate!.id)).toBeNull();
+    const reopen = reader!.readCurrentUiContext()!.commands.find(command => command.title.startsWith('parity-private-model'));
+    const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+    await act(async () => {
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: reopen!.id },
+            { surface: 'agent', serverId: home!.homes.a!.id })).toMatchObject({ ok: true });
+    });
+    expect(screen.findByTestId(`${rowId}.input`)).not.toBeNull();
 });
 
 it('changes the night-hour draft through the same mounted option as its visible picker', async () => {

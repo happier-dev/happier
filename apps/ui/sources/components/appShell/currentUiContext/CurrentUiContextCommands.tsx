@@ -44,6 +44,8 @@ type ComposedCommands = NonNullable<CurrentUiContextMountedEnrichment['commands'
 type CommandComposition = Readonly<{
     authority: ServerAccountScopeLifetime | null;
     execution: CurrentUiContextMountedCommandExecution;
+    /** The existing root composer still publishes while a page withdraws behind a modal. */
+    modalOwner: CommandComposition | null;
     isCurrent(): boolean;
     register(owner: object, commands: ComposedCommands): () => void;
     focus(owner: object, commands: ComposedCommands, onRetire: () => void): () => void;
@@ -52,9 +54,10 @@ const EMPTY_COMMANDS: ComposedCommands = Object.freeze([]);
 const CompositionContext = React.createContext<CommandComposition | null>(null);
 const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
 
-/** Re-provide the same command owner and reader when a host reparents a modal outside AppShell. */
+/** Reparent modal commands into the existing root composer, retaining its Account lifetime and reader. */
 export function useCurrentUiContextCommandBridge() {
-    const composition = React.useContext(CompositionContext);
+    const pageComposition = React.useContext(CompositionContext);
+    const composition = pageComposition?.modalOwner ?? pageComposition;
     const reader = useOptionalCurrentUiContextReader();
     const publisher = useCurrentUiContextMountPublisher();
     return React.useMemo(() => function CommandBridge(props: ModalCommandBridgeProps) {
@@ -77,6 +80,8 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     active?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
+    const parentComposition = React.useContext(CompositionContext);
+    const modalOwner = parentComposition?.modalOwner ?? parentComposition;
     const { execute, executeForCaller, binding } = useMountedActionExecution(props.authority?.scope);
     const execution = React.useMemo(() => ({ execute, executeForCaller, binding }), [execute, executeForCaller, binding]);
     const entries = React.useRef<Map<object, ComposedCommands> | null>(null);
@@ -109,11 +114,12 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     const composition = React.useMemo<CommandComposition>(() => ({
         authority: props.authority,
         execution,
+        modalOwner,
         isCurrent: () => mounted.current && latest.current.active !== false
             && latest.current.authority === props.authority && props.authority?.isCurrent() === true,
         register,
         focus,
-    }), [props.authority, execution, register, focus]);
+    }), [props.authority, execution, modalOwner, register, focus]);
     const [retired, setRetired] = React.useState<ServerAccountScopeLifetime | null>(null);
     React.useLayoutEffect(() => {
         const authority = props.authority;

@@ -601,7 +601,8 @@ describe('Work and Coach widget bodies', () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
     const branch = { ref: 'refs/heads/master', headSha: 'b'.repeat(40) };
     const linked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
-      contributions: [contribution('with-commit', 's1', 't1'), contribution('bare', 's1', 't2')], evidence: [],
+      contributions: [contribution('with-commit', 's1', 't1'), contribution('bare', 's1', 't2'), contribution('with-pr', 's1', 't3')],
+      evidence: [{ ...evidence('s1', 't3', 2493), commitSha: 'c'.repeat(40) }],
       branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'opaque-repo', checkpointRef: 'checkpoint/s1/t1',
         checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] }));
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
