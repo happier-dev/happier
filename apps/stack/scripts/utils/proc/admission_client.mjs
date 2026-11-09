@@ -244,8 +244,10 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' };
             if (selectedWorkers !== undefined) acquiredEnv.GOMAXPROCS = String(selectedWorkers);
             if (selectedCpuCores !== undefined) {
-              acquiredEnv.GOMAXPROCS ??= String(selectedCpuCores);
-              acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS ??= String(selectedCpuCores);
+              if (!acquiredEnv.GOMAXPROCS) acquiredEnv.GOMAXPROCS = String(selectedCpuCores);
+              if (!acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS) {
+                acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = String(selectedCpuCores);
+              }
             }
             payload = run(acquiredEnv);
             payload.then(() => control?.destroy(), () => control?.destroy());

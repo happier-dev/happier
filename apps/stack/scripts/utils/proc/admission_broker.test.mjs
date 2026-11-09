@@ -26,10 +26,10 @@ test('CPU admission grants reach the real payload worker controls', linux, async
   const resultPath = join(root, 'worker-controls.json');
   for (const env of [{}, { GOMAXPROCS: '', HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '' }]) {
     const status = await runAdmissionCommand({ root, className: 'native-source-test', floorKiB: 1,
-    machine: 'fixture', repoDir: root, cacheBaseDir: root, env, command: process.execPath,
-    args: ['--input-type=module', '-e',
-      'import{writeFileSync}from"node:fs";writeFileSync(process.argv[1],JSON.stringify({go:process.env.GOMAXPROCS,vitest:process.env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS}))',
-      resultPath] });
+      machine: 'fixture', repoDir: root, cacheBaseDir: root, env, command: process.execPath,
+      args: ['--input-type=module', '-e',
+        'import{writeFileSync}from"node:fs";writeFileSync(process.argv[1],JSON.stringify({go:process.env.GOMAXPROCS,vitest:process.env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS}))',
+        resultPath] });
     assert.equal(status, 0);
     assert.deepEqual(JSON.parse(await readFile(resultPath, 'utf8')), { go: '1', vitest: '1' });
   }
