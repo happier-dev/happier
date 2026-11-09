@@ -3,7 +3,7 @@ import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/tes
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import type { SessionSendRequest, SessionSpawnNewInputV2, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
-import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
+import { getActionSpec, parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
 import { createScmCapabilities } from '@happier-dev/plugin-sdk/scm';
 import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -21,6 +21,7 @@ import {
   type PluginCollectionBatchMeasurement,
   type PluginCollectionLimits,
   type PluginCollectionMutation,
+  type PluginCollectionQuery,
 } from '@happier-dev/plugin-sdk/collections';
 import {
   compilePluginJsonSchema,
@@ -1019,12 +1020,8 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
       return row?.deleted === true ? null : row ?? null;
     },
     put,
-    async query(request: Readonly<{
-      index: string;
-      prefix?: readonly unknown[];
+    async query(request: PluginCollectionQuery & Readonly<{
       range?: Readonly<{ lower?: number; upper?: number }>;
-      order?: 'asc' | 'desc';
-      cursor?: string;
       limit: number;
     }>) {
       assertChannelsTestCollectionQueryLimit(request.limit);
@@ -6724,21 +6721,22 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
     const occurredAt = Date.now();
     const endpoint = { kind: 'githubPullRequest' as const, audience: 'shared' as const,
       id: 'github:repo:77:issue:5', parentId: '77', pullRequest: { repository: 'acme/widgets', number: 5 } };
-    const entries = ['2', '1'].map((id): ConversationProviderObservationIngestInputV1['entry'] => {
+    const entries = ['2', '1'].map(id => {
       const input = observation({ occurrenceId: `automation-pr-${id}`, messageId: id,
         messageRevision: '1', occurredAt, messageText: `Automation original ${id}` });
       const original = fullTextIngress(input);
+      const event: SessionPullRequestUpdateEventV1 = ciOnly ? {
+        kind: 'check', id, revision: '1', logicalCheckId: id, occurredAt: original.occurredAt,
+        author: { kind: 'process', principalId: null }, state: 'failed', name: `Check ${id}`,
+        failure: { kind: 'unavailable', reason: 'nativeSelectionUnavailable' },
+      } : {
+        kind: 'comment', id, revision: '1', occurredAt: original.occurredAt,
+        author: { kind: 'person', principalId: '99' }, body: `Automation original ${id}`,
+      };
       return { ...input.entry, observation: { kind: 'fullText' as const, observation: {
         ...original, endpoint, scopedTriggerKind: ciOnly ? 'ciFailed' as const : 'prComment' as const,
         actor: { ...original.actor, principalId: '99', ...(ciOnly ? { kind: 'integration' as const, isIntegrationSelf: true } : {}), repositoryWriteAccess: true },
-        pullRequestUpdate: { head: { sha: 'head-original', ref: 'fix/widgets' }, event: ciOnly ? {
-          kind: 'check' as const, id, revision: '1', logicalCheckId: id, occurredAt: original.occurredAt,
-          author: { kind: 'process' as const, principalId: null }, state: 'failed' as const, name: `Check ${id}`,
-          failure: { kind: 'unavailable' as const, reason: 'nativeSelectionUnavailable' },
-        } : {
-          kind: 'comment' as const, id, revision: '1', occurredAt: original.occurredAt,
-          author: { kind: 'person' as const, principalId: '99' }, body: `Automation original ${id}`,
-        } },
+        pullRequestUpdate: { head: { sha: 'head-original', ref: 'fix/widgets' }, event },
       } } };
     });
     let polls = 0;
@@ -7474,10 +7472,13 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
         }
-        if (actionId === 'session.transcript.get') return {
-          ok: true, projection: 'externalShareableV1', sessionId: getActionSpec('session.transcript.get').inputSchema.parse(input).sessionId,
-          items: [], scannedThroughSeq: 0, hasMore: false,
-        };
+        if (actionId === 'session.transcript.get') {
+          const request = record(parsePluginHostActionInvocation(actionId, input).input);
+          const sessionId = request.sessionId;
+          if (typeof sessionId !== 'string') throw new Error('Expected transcript Session id.');
+          return { ok: true, projection: 'externalShareableV1', sessionId,
+            items: [], scannedThroughSeq: 0, hasMore: false };
+        }
         throw new Error(`Unexpected Action ${actionId}.`);
       },
     });

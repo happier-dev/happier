@@ -21,8 +21,8 @@ export type ConversationPendingPermissionSource = Readonly<{
 export type ConversationPendingPermissionProjection = Readonly<{
   requests: readonly ConversationPendingPermissionRequest[];
   /**
-   * A durable source-matched request the canonical owner cannot answer for
-   * yet. Absence from `requests` is never proof of absence while this is set.
+   * The canonical owner projection could not be read completely. Absence from
+   * `requests` is never proof of absence while this is set.
    */
   truncated: boolean;
 }>;
@@ -55,14 +55,14 @@ export async function readConversationPendingPermissions(input: Readonly<{
       },
       { signal: input.signal },
     ).catch((error: unknown) => {
-      // Pending state belongs to the live Session process. A stopped or
-      // unreachable Session has no pending requests to project.
+      // Pending state belongs to the live Session process. An unreachable
+      // owner cannot establish that a previously pending request is gone.
       if (!input.signal.aborted && isPluginError(error) && error.code === 'ownerMachineUnavailable') {
         return null;
       }
       throw error;
     });
-    if (listed === null) return { requests: [], truncated: false };
+    if (listed === null) return { requests, truncated: true };
     // A policy deferral means this page was never read. The projection keeps
     // what it already has and reports itself incomplete rather than presenting
     // a short list as the whole pending set.
