@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { runNodeCapture } from '../testkit/core/run_node_capture.mjs';
-import { ENTRY_GRAPHS } from './entry-load.mjs';
+import { ENTRY_GRAPHS, loadEntryGraph } from './entry-load.mjs';
 
 const entry = fileURLToPath(new URL('./entry-load.mjs', import.meta.url));
 
@@ -69,6 +69,19 @@ test('an early successful process exit fails explicitly for zero or partial grap
       assert.equal(result.code, 1, `exit after ${completed} results must fail: ${result.stderr}`);
       assert.match(result.stderr, new RegExp(`Entry loads incomplete: ${completed}/${ENTRY_GRAPHS.length} graph results`));
       for (const graph of ENTRY_GRAPHS.slice(completed)) assert.ok(result.stderr.includes(graph.id), `missing graph ${graph.id} must be named`);
+    });
+  }
+});
+
+// Fresh processes preserve each failing cycle root: the Stack browser wrapper,
+// plugin UI producer, service placement and managed credential delivery.
+test('browser-start preflight and cyclic Protocol schema maps load from their real roots', async t => {
+  for (const id of ['source-plugin-ui-producer', 'stack-browser-start', 'protocol-service-placement', 'protocol-service-placement-actions', 'protocol-managed-credential-delivery']) {
+    await t.test(id, async () => {
+      const graph = ENTRY_GRAPHS.find(graph => graph.id === id);
+      assert.ok(graph, `missing startup graph: ${id}`);
+      const result = await loadEntryGraph(graph, { signal: t.signal });
+      assert.equal(result.status, 'passed', JSON.stringify(result));
     });
   }
 });

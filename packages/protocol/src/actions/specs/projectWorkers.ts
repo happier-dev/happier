@@ -90,7 +90,9 @@ export const ProjectWorkerCopyRetireResultV1Schema = lazyZodSchema(() => z.stric
 export type ProjectWorkerCopyRetireInputV1 = z.infer<typeof ProjectWorkerCopyRetireInputV1Schema>;
 export type ProjectWorkerCopyRetireResultV1 = z.infer<typeof ProjectWorkerCopyRetireResultV1Schema>;
 
-export const ProjectWorkerActionInputSchemasV1 = {
+// Preferences and service placement can enter Actions before their own exports
+// initialize. Defer both imported schemas and map spreads until consumption.
+export const ProjectWorkerActionInputSchemasV1 = lazyDefinition(() => ({
   ...ProjectServicePlacementActionInputSchemasV1,
   'projects.worker.preferences.get': WorkspaceWorkerPreferenceGetInputV1Schema,
   'projects.worker.preferences.set': WorkspaceWorkerPreferenceSetInputV1Schema,
@@ -100,8 +102,8 @@ export const ProjectWorkerActionInputSchemasV1 = {
   'projects.worker.status': ProjectWorkerStatusInputV1Schema,
   'projects.worker.copy.inspect': ProjectWorkerCopyInspectInputV1Schema,
   'projects.worker.copy.retire': ProjectWorkerCopyRetireInputV1Schema,
-} as const satisfies Record<ProjectWorkerActionIdV1, z.ZodMiniType>;
-export const ProjectWorkerActionOutputSchemasV1 = {
+} as const satisfies Record<ProjectWorkerActionIdV1, z.ZodMiniType>));
+export const ProjectWorkerActionOutputSchemasV1 = lazyDefinition(() => ({
   ...ProjectServicePlacementActionOutputSchemasV1,
   'projects.worker.preferences.get': WorkspaceWorkerPreferenceReadResultV1Schema,
   'projects.worker.preferences.set': WorkspaceWorkerPreferenceMutationResultV1Schema,
@@ -111,7 +113,7 @@ export const ProjectWorkerActionOutputSchemasV1 = {
   'projects.worker.status': ProjectWorkerStatusResultV1Schema,
   'projects.worker.copy.inspect': ProjectWorkerCopyInspectResultV1Schema,
   'projects.worker.copy.retire': ProjectWorkerCopyRetireResultV1Schema,
-} as const satisfies Record<ProjectWorkerActionIdV1, z.ZodMiniType>;
+} as const satisfies Record<ProjectWorkerActionIdV1, z.ZodMiniType>));
 export type ProjectWorkerActionInputV1<TActionId extends ProjectWorkerActionIdV1 = ProjectWorkerActionIdV1> =
   z.infer<typeof ProjectWorkerActionInputSchemasV1[TActionId]>;
 export type ProjectWorkerActionOutputV1<TActionId extends ProjectWorkerActionIdV1 = ProjectWorkerActionIdV1> =

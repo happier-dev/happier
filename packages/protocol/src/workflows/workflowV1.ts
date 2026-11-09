@@ -619,9 +619,11 @@ function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInse
   return schema;
 }
 
-export const WorkflowBlockSchema = defineStoredReadProjection(createWorkflowBlockSchema<WorkflowBlock>('canonical'),
+// Union construction inspects leaf shapes; keep all block dialects cold until
+// cyclic composer/attachment imports have finished initializing.
+export const WorkflowBlockSchema = defineStoredReadProjection(lazyZodSchema(() => createWorkflowBlockSchema<WorkflowBlock>('canonical')),
   () => createWorkflowBlockSchema<WorkflowBlock>('stored'));
-export const WorkflowInsertBlockV1Schema = createWorkflowBlockSchema<WorkflowInsertBlockV1>('insert');
+export const WorkflowInsertBlockV1Schema = lazyZodSchema(() => createWorkflowBlockSchema<WorkflowInsertBlockV1>('insert'));
 
 export const WorkflowDefinitionBaseSchema = lazyZodSchema(() => z.strictObject({
   version: z.literal(1),
@@ -676,7 +678,7 @@ export type WorkflowIngressBlock =
     otherwise: readonly WorkflowIngressBlock[];
   }>);
 
-export const WorkflowIngressBlockSchema = createWorkflowBlockSchema<WorkflowIngressBlock>('ingress');
+export const WorkflowIngressBlockSchema = lazyZodSchema(() => createWorkflowBlockSchema<WorkflowIngressBlock>('ingress'));
 
 export const WorkflowIngressSchema = lazyZodSchema(() => z.strictObject({
   version: z.optional(z.literal(1)),

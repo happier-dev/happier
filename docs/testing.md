@@ -88,6 +88,30 @@ cross their physical-worker boundary.
 
 ## Choose checks by the changed contract
 
+### Fresh entry graph loads (0.3 development)
+
+Run `pnpm run check:entry-loads` from the root
+to load daemon, CLI, Server, UI catalog, SDK browser, Stack browser-start preflight
+and cycle-sensitive Protocol schema graphs in separate fresh processes through hstack-exec AUTO. Each JSON line names the graph, source entry,
+status, elapsed milliseconds and, on failure, the first module location and typed
+loader error. Any failed graph makes the command exit nonzero; other graphs still run.
+The existing root-script equivalent is `pnpm run exec -- node apps/stack/scripts/perf/entry-load.mjs`.
+The command reads current source without rebuilding shared outputs. It reuses the
+CLI source preload, Server's import-only startup path, the UI catalog's platform
+harness, and the import-only phase of the SDK's browser bundle/evaluation validator. It does not start Stack
+services or request a shared Metro bundle. The browser-start graph runs the real
+`repo_local.mjs dev-targets browser start` wrapper with `--dry-run`, covering its
+startup imports without launching Chromium. The source-plugin UI producer graph imports
+`apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs` under its production
+`happier-source` condition without invoking its artifact-writing main. Protocol graphs enter service placement
+and managed credential delivery directly so alternate import orders remain covered.
+UI catalog coverage includes the harness's
+native-platform substitutions; it is not device rendering proof. Separate process
+module maps are cold on every run; repeated timings can still benefit from OS caches.
+The SDK's separate Action/cancellation/cleanup scenario still runs in its existing
+validator suite. Existing package import-order, semantic and performance tests remain necessary for
+their narrower contracts.
+
 ### Primary workload standby preparation (0.3 development)
 
 `host.mjs` owns `hstack dev-vm primary status` and

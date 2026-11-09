@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { ProjectServicePlacementGetV1Schema, ProjectServicePlacementSetV1Schema,
   ProjectServicePlacementGetResultV1Schema, ProjectServicePlacementMutationResultV1Schema,
@@ -14,13 +15,15 @@ type ProjectServicePlacementActionOutputSchemas = Readonly<{
   'projects.service.placement.get': typeof ProjectServicePlacementGetResultV1Schema;
   'projects.service.placement.set': typeof ProjectServicePlacementMutationResultV1Schema;
 }>;
+// The placement model reaches Actions through its shared workspace dependencies.
+// Keep imported bindings cold until a consumer uses the schema.
 export const ProjectServicePlacementActionInputSchemasV1: ProjectServicePlacementActionInputSchemas = {
-  'projects.service.placement.get': ProjectServicePlacementGetV1Schema,
-  'projects.service.placement.set': ProjectServicePlacementSetV1Schema,
+  'projects.service.placement.get': lazyZodSchema(() => ProjectServicePlacementGetV1Schema),
+  'projects.service.placement.set': lazyZodSchema(() => ProjectServicePlacementSetV1Schema),
 } as const;
 export const ProjectServicePlacementActionOutputSchemasV1: ProjectServicePlacementActionOutputSchemas = {
-  'projects.service.placement.get': ProjectServicePlacementGetResultV1Schema,
-  'projects.service.placement.set': ProjectServicePlacementMutationResultV1Schema,
+  'projects.service.placement.get': lazyZodSchema(() => ProjectServicePlacementGetResultV1Schema),
+  'projects.service.placement.set': lazyZodSchema(() => ProjectServicePlacementMutationResultV1Schema),
 } as const;
 const targetFields = [
   { path: 'workspace', title: 'Workspace', widget: 'json', required: true },

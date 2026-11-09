@@ -20,6 +20,13 @@ export const ENTRY_GRAPHS = Object.freeze([
   { id: 'voice-inference-worker', entry: 'apps/cli/src/daemon/voiceInference/forkedWorker/workerEntry.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   { id: 'server', entry: 'apps/server/sources/flavors/light/main.ts', cwd: 'apps/server', tsconfig: 'apps/server/tsconfig.json' },
   { id: 'ui-catalog', entry: 'apps/ui/sources/agents/catalog/catalog.test.ts', cwd: 'apps/ui' },
+  { id: 'source-plugin-ui-producer', entry: 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs', cwd: '.',
+    conditions: ['happier-source'] },
+  { id: 'stack-browser-start', entry: 'apps/stack/scripts/repo_local.mjs', cwd: '.',
+    args: ['dev-targets', 'browser', 'start', 'entry-load', '--dry-run'] },
+  { id: 'protocol-service-placement-actions', entry: 'packages/protocol/src/actions/specs/projectServicePlacement.ts', cwd: 'packages/protocol' },
+  { id: 'protocol-managed-credential-delivery', entry: 'packages/protocol/src/machines/managed/credentialDeliveryV1.ts', cwd: 'packages/protocol' },
+  { id: 'protocol-service-placement', entry: 'packages/protocol/src/workspaces/projectServicePlacementV1.ts', cwd: 'packages/protocol' },
   { id: 'sdk-browser', entry: 'packages/sdk/scripts/validateBrowserConsumer.mjs', cwd: 'packages/sdk' },
 ]);
 
@@ -30,7 +37,8 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
     // Release between graphs so a queued refresh can publish before the next.
     return await withDependencyConsumption({ installDir: repoDir, env, signal }, async readerEnv => {
       const ui = graph.id === 'ui-catalog';
-      let nodeArgs = ui ? [] : ['--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs')];
+      let nodeArgs = ui ? [] : ['--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'),
+        ...(graph.conditions ?? []).map(condition => `--conditions=${condition}`)];
       let sourceEnv = {};
       if (graph.id === 'voice-inference-worker') {
         const { createCliSourceLoader } = await import(pathToFileURL(join(repoDir,
@@ -52,14 +60,14 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
           sourceEnv = invocation.env ?? {};
         } finally { await loader.unregister(); }
       }
-      const entrypoint = ui
+      const entrypoint = graph.args ? join(repoDir, graph.entry) : ui
         ? createRequire(join(repo, 'apps/ui/package.json')).resolve('vitest/vitest.mjs') : self;
       const result = await probeRuntimeImport({ entrypoint,
-        args: ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'), 'sources/agents/catalog/catalog.test.ts']
-          : [`--child=${graph.id}`, `--repo-dir=${repoDir}`],
+        args: graph.args ?? (ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'), 'sources/agents/catalog/catalog.test.ts']
+          : [`--child=${graph.id}`, `--repo-dir=${repoDir}`]),
         nodeArgs,
         cwd: join(repoDir, graph.cwd), signal,
-        env: { ...readerEnv, ...sourceEnv, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
+        env: { ...readerEnv, ...sourceEnv, HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_HOME_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home,
           HAPPIER_SERVER_LIGHT_DATA_DIR: home, TSX_DISABLE_CACHE: '1',
           ...(graph.tsconfig ? { TSX_TSCONFIG_PATH: join(repoDir, graph.tsconfig) } : {}),
           HAPPIER_CLI_DIST_INTEGRITY_PROBE: '1', HAPPIER_CLI_RUNTIME_DISABLE: '1', HAPPIER_CLI_UPDATE_CHECK: '0' },
