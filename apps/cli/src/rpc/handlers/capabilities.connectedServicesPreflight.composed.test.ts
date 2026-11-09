@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 
@@ -11,6 +11,7 @@ import {
   sealAccountScopedBlobCiphertext,
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountGroupV4Schema,
   PluginManifestV2Schema,
   buildBackendTargetKeyV2,
@@ -18,6 +19,10 @@ import {
   type TeamResourceConnectedServiceSelectionV2,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { QualifiedConnectedAccountCredentialPayloadV1Schema, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema,
+  PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 import type { ApiClient } from '@/api/api';
 import type { StoredCredentials } from '@/persistence';
@@ -28,6 +33,7 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authoring/sourceModule';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { writeKimiNativeProcessFixture } from '@/daemon/connectedServices/materialize/kimiNativeProcess.testkit';
 
 // Device storage is outside the inventory contract; reuse the UI's native boundary.
 await vi.hoisted(async () => {
@@ -51,6 +57,35 @@ const malformedSelectionModules = [
   await import('./capabilities'), await import('./encryptedRpc.testkit'),
   await import('@/configuration'), await import('@/persistence'),
 ] as const;
+
+async function createAdmittedCapabilityClient(
+  registerCapabilitiesHandlers: typeof import('./capabilities')['registerCapabilitiesHandlers'],
+  dependencies: Parameters<typeof registerCapabilitiesHandlers>[1] = {},
+  scopePrefix = 'machine-test',
+) {
+  const [{ createEncryptedRpcTestClient }, { RpcHandlerManager }, { authorizeMachineRpcRequest }, { createFilesystemEffectAdmission }] = await Promise.all([
+    import('./encryptedRpc.testkit'), import('@/api/rpc/RpcHandlerManager'),
+    import('@/api/machine/machineRpcAuthorization'), import('./fileSystem/accessPolicy/filesystemEffectAdmission'),
+  ]);
+  return createEncryptedRpcTestClient({
+    scopePrefix, encryptionKey: new Uint8Array(32).fill(7), logger: () => undefined,
+    callerAuthority: 'present_user',
+    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: scopePrefix,
+      installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+    manager: new RpcHandlerManager({ scopePrefix, encryptionKey: new Uint8Array(32).fill(7),
+      encryptionVariant: 'legacy', logger: () => undefined,
+      authorizeRequest: request => authorizeMachineRpcRequest(request, {
+        machineId: scopePrefix, resolveCustodianAccountId: async () => 'owner',
+        resolveInstallationId: () => 'installation', resolveHomeServerIdentityId: async () => 'home',
+        // Home-authenticated ingress is the transport boundary; admission stays real.
+        verifyMachineAdmission: async () => true,
+      }) }),
+    registerHandlers: manager => registerCapabilitiesHandlers(manager, {
+      ...dependencies,
+      filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
+    }),
+  });
+}
 // Load only the admitted probe adapter, below the UI Action executor/component graph.
 const { probeAgentModelsForActions } = await import('../../../../ui/sources/sync/ops/actions/agentInventoryProbe');
 const { parseCapabilitiesInvokeResponse } = await import('../../../../ui/sources/sync/api/capabilities/capabilitiesProtocol');
@@ -68,6 +103,7 @@ afterEach(async () => {
   vi.doUnmock('@/persistence');
   vi.doUnmock('@/settings/accountSettings/bootstrapAccountSettingsContext');
   vi.doUnmock('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn');
+  vi.doUnmock('undici');
   uiCapabilityTransport.invoke.mockReset();
   vi.resetModules();
   process.env = { ...originalEnv };
@@ -81,13 +117,12 @@ describe('capabilities.invoke connected-service preflight', () => {
   it('refuses a selected account on an unsupported Agent for every discovery method without using native auth', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-unsupported-selection-'));
     process.env = { ...originalEnv, HAPPIER_HOME_DIR: tempDir, OPENAI_API_KEY: 'ambient-must-not-be-used' };
-    const [capabilities, rpc, config, persistence] = malformedSelectionModules;
+    const [capabilities, , config, persistence] = malformedSelectionModules;
     const readStoredCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
     config.reloadConfiguration();
-    const { call } = rpc.createEncryptedRpcTestClient({
-      scopePrefix: 'unsupported-selected-probe', encryptionKey: new Uint8Array(32).fill(7), logger: () => undefined,
-      registerHandlers: (manager) => capabilities.registerCapabilitiesHandlers(manager),
-    });
+    const { call } = await createAdmittedCapabilityClient(capabilities.registerCapabilitiesHandlers, {}, 'unsupported-selected-probe');
+    await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+    readStoredCredentials.mockClear();
     for (const method of ['probeConfigOptions', 'probeModes', 'probeModels', 'probeCatalogs']) {
       const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.auggie', method,
@@ -103,13 +138,12 @@ describe('capabilities.invoke connected-service preflight', () => {
   it('refuses malformed selected-account bindings for every discovery method before provider effects', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-invalid-selection-'));
     process.env = { ...originalEnv, HAPPIER_HOME_DIR: tempDir, OPENAI_API_KEY: 'ambient-must-not-be-used' };
-    const [capabilities, rpc, config, persistence] = malformedSelectionModules;
+    const [capabilities, , config, persistence] = malformedSelectionModules;
     const readStoredCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
     config.reloadConfiguration();
-    const { call } = rpc.createEncryptedRpcTestClient({
-      scopePrefix: 'invalid-selected-probe', encryptionKey: new Uint8Array(32).fill(7), logger: () => undefined,
-      registerHandlers: (manager) => capabilities.registerCapabilitiesHandlers(manager),
-    });
+    const { call } = await createAdmittedCapabilityClient(capabilities.registerCapabilitiesHandlers, {}, 'invalid-selected-probe');
+    await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+    readStoredCredentials.mockClear();
     for (const method of ['probeConfigOptions', 'probeModes', 'probeModels', 'probeCatalogs']) {
       const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.codex', method,
@@ -153,12 +187,9 @@ describe('capabilities.invoke connected-service preflight', () => {
       const { reloadConfiguration } = await import('@/configuration');
       reloadConfiguration();
       const { registerCapabilitiesHandlers } = await import('./capabilities');
-      const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-      const { call } = createEncryptedRpcTestClient({
-        scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7),
-        logger: () => undefined,
-        registerHandlers: (manager) => registerCapabilitiesHandlers(manager, { createApiClient }),
-      });
+      const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, { createApiClient });
+      await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+      readStoredCredentials.mockClear();
       for (const method of ['probeModels', 'probeConfigOptions', 'probeModes', 'probeCatalogs']) {
         const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
           id: 'cli.codex', method,
@@ -187,7 +218,7 @@ describe('capabilities.invoke connected-service preflight', () => {
     },
   );
 
-  it.each(['codex', 'opencode', 'external', 'codex-pool-refusal'] as const)('materializes the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
+  it.each(['codex', 'opencode', 'external', 'codex-pool-refusal', 'kimi'] as const)('materializes the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
     let phase = 'prepare native fixture';
     let complete = false;
     onTestFinished(() => { if (!complete) console.error('Native catalog fixture failure phase', targetId, phase); });
@@ -235,11 +266,34 @@ describe('capabilities.invoke connected-service preflight', () => {
       `);
     }
     const captureFile = join(tempDir, 'captured-env.json');
+    if (targetId === 'kimi') {
+      const script = writeKimiNativeProcessFixture(tempDir, 'inventory', captureFile);
+      writeFileSync(fixture, `#!${process.execPath}\nawait import(${JSON.stringify(pathToFileURL(script).href)});\n`);
+      writeFileSync(join(nativeHome, 'config.toml'), 'default_model = "native-other"\n[models.native-other]\nmodel = "other-account"\n');
+      // Vendor HTTP is the boundary; real Kimi parsing and launch preparation run.
+      vi.doMock('undici', async importOriginal => {
+        const transport = await importOriginal<typeof import('undici')>();
+        return { ...transport, fetch: async (input: Parameters<typeof transport.fetch>[0], init: Parameters<typeof transport.fetch>[1]) => {
+          if (String(input) !== 'https://api.kimi.ai/coding/v1/models') throw new Error('Unexpected Kimi vendor request');
+          if (new transport.Headers(init?.headers).get('authorization') !== 'Bearer selected-access-token') {
+            throw new Error('Kimi catalog requires the selected Account credential');
+          }
+          return new transport.Response(JSON.stringify({ data: [
+            { id: 'selected-account', limit: { context: 32768 } },
+            { id: 'selected-account-next', limit: { context: 65536 } },
+          ] }), {
+            status: 200, headers: { 'content-type': 'application/json' },
+          });
+        } };
+      });
+    }
     process.env = {
       ...originalEnv,
       HAPPIER_HOME_DIR: tempDir,
       HAPPIER_CODEX_PATH: fixture,
       HAPPIER_OPENCODE_PATH: fixture,
+      ...(targetId === 'kimi' ? { HAPPIER_KIMI_PATH: fixture, KIMI_CODE_HOME: nativeHome,
+        HAPPIER_KIMI_ACCESS_TOKEN: undefined, KIMI_API_KEY: undefined, MOONSHOT_API_KEY: undefined } : {}),
       OPENAI_API_KEY: undefined,
       CODEX_API_KEY: undefined,
       CODEX_HOME: nativeHome,
@@ -297,26 +351,43 @@ describe('capabilities.invoke connected-service preflight', () => {
     const ciphertext = sealAccountScopedBlobCiphertext({
       kind: 'connected_service_credential',
       material: { type: 'legacy', secret: credentials.encryption.secret },
-      payload: record,
+      payload: targetId === 'kimi' ? QualifiedConnectedAccountCredentialPayloadV1Schema.parse({ v: 1, values: {
+        accessToken: 'selected-access-token', refreshToken: 'selected-refresh-token', credentialKind: 'oauth',
+        apiBase: 'https://api.kimi.ai/coding/v1', deviceId: 'fake-kimi-device',
+      } }) : record,
       randomBytes: (length) => randomBytes(length),
     });
-    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+    const service = targetId === 'kimi'
+      ? { pluginId: 'happier.agent.kimi', localId: 'kimi-code' } as const
+      : { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+    const serviceKey = `${service.pluginId}/${service.localId}`;
+    const authenticationModeId = targetId === 'kimi' ? 'device' : 'oauth';
     const account = { service, accountId: 'leeroy' };
     const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const configurationRevision = targetId === 'kimi' ? 'kimi-region-global-1' : null;
     const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({
       service,
-      accounts: [{ ref: account, authenticationModeId: 'oauth', status: 'connected',
+      accounts: [{ ref: account, authenticationModeId, status: 'connected',
         revisionSemantics: 'revisioned', credentialRevision: revision,
-        configurationReady: true, configurationRevision: null, scopes: [] },
-        { ref: { service, accountId: 'unselected' }, authenticationModeId: 'oauth', status: 'connected',
+        configurationReady: true, configurationRevision, scopes: [] },
+        { ref: { service, accountId: 'unselected' }, authenticationModeId, status: 'connected',
           revisionSemantics: 'revisioned', credentialRevision: revision,
-          configurationReady: true, configurationRevision: null, scopes: [] }],
+          configurationReady: true, configurationRevision, scopes: [] }],
     });
     const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
-      ref: account, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
-      credentialRevision: revision, configurationRevision: null,
+      ref: account, authenticationModeId, revisionSemantics: 'revisioned',
+      credentialRevision: revision, configurationRevision,
       content: { t: 'encrypted', c: ciphertext }, metadata: { scopes: [] },
     });
+    const configurationSnapshot = targetId === 'kimi' ? QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
+      target: { kind: 'account', ref: account }, authenticationModeId, revisionSemantics: 'revisioned',
+      credentialRevision: revision, configurationRevision,
+      configurationContent: sealQualifiedConnectedAccountContentEnvelope({
+        kind: 'configuration', accountMode: 'e2ee',
+        material: { type: 'legacy', secret: credentials.encryption.secret },
+        payload: { values: { region: 'global' }, secretRefs: {} }, randomBytes,
+      }),
+    }) : null;
     // HTTP is the external boundary. V4 parsing, encrypted credential opening,
     // purpose authority, plugin invocation and launch-file materialization stay real.
     const credentialReads: string[] = [];
@@ -334,7 +405,8 @@ describe('capabilities.invoke connected-service preflight', () => {
       if (path === '/v4/connect/qualified/accounts' || path === '/v4/connect/qualified/group') metadataReads.push(path);
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {
         schemaVersion: 6, connectedServicesProviderStateSharingSettingsV1: {
-          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: { codex: { stateMode: 'shared' } },
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' },
+          byAgentId: { codex: { stateMode: 'shared' }, ...(targetId === 'kimi' ? { kimi: { configMode: 'copied' } } : {}) },
         },
       } } } };
       if (path === '/v4/connect/qualified/accounts') return { status: 200, data: poolRefusal === 'reauth' || poolRefusal === 'switch-required'
@@ -349,8 +421,25 @@ describe('capabilities.invoke connected-service preflight', () => {
         credentialReads.push(path);
         return { status: 200, data: snapshot };
       }
+      if (path === '/v4/connect/qualified/configuration' && configurationSnapshot) return { status: 200, data: configurationSnapshot };
       throw new Error(`Unexpected capability HTTP read: ${path}`);
     });
+    {
+      // Account availability is an HTTP boundary. Keep its real admission owner
+      // while supplying an authoritative absent intent for each requested plugin.
+      vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        if (new URL(String(url)).pathname !== PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+          throw new Error('Unexpected Account HTTP mutation');
+        }
+        const pluginIds = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
+        return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+          availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
+            response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null,
+              uiArtifacts: [], packageAssets: [] },
+          })),
+        }) };
+      });
+    }
     const api = {
       getAccountEncryptionMode: async () => 'e2ee' as const,
     } as unknown as ApiClient;
@@ -423,7 +512,8 @@ describe('capabilities.invoke connected-service preflight', () => {
     });
     const purposeRuntime = createPurposeRuntime();
     phase = 'admit plugin runtime';
-    const selectedPluginIds = ['happier.agent.codex', 'happier.agent.opencode', ...(targetId === 'external' ? [SAMPLE_PLUGIN_ID] : [])];
+    const selectedPluginIds = targetId === 'kimi' ? ['happier.agent.kimi']
+      : ['happier.agent.codex', 'happier.agent.opencode', ...(targetId === 'external' ? [SAMPLE_PLUGIN_ID] : [])];
     const lease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: async () => {
         const base = await resolveMergedContributionRegistry({ happyHomeDir: tempDir! });
@@ -459,39 +549,14 @@ describe('capabilities.invoke connected-service preflight', () => {
       await pluginReloadController.shutdown();
     };
     if (agentId === 'opencode') {
-      expect(await lease.registry.acquireAgentCatalogEntry?.(agentId), JSON.stringify(lease.registry.pluginDiagnosticsByPluginId['happier.agent.opencode']))
-        .toHaveProperty('preparePreflightLaunchEnvironment', expect.any(Function));
+      const entry = await lease.registry.acquireAgentCatalogEntry?.(agentId);
+      expect({ entry, diagnostics: lease.registry.pluginDiagnosticsByPluginId['happier.agent.opencode'] })
+        .toMatchObject({ entry: { preparePreflightLaunchEnvironment: expect.any(Function) } });
     }
     const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-    const [{ RpcHandlerManager }, { authorizeMachineRpcRequest }, { createFilesystemEffectAdmission }] = await Promise.all([
-      import('@/api/rpc/RpcHandlerManager'), import('@/api/machine/machineRpcAuthorization'),
-      import('./fileSystem/accessPolicy/filesystemEffectAdmission'),
-    ]);
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      ...(targetId === 'codex-pool-refusal' ? {
-        callerAuthority: 'present_user' as const,
-        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-test',
-          installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
-        manager: new RpcHandlerManager({ scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7),
-          encryptionVariant: 'legacy', logger: () => undefined,
-          authorizeRequest: request => authorizeMachineRpcRequest(request, {
-            machineId: 'machine-test', resolveCustodianAccountId: async () => 'owner',
-            resolveInstallationId: () => 'installation', resolveHomeServerIdentityId: async () => 'home',
-            // Home-authenticated ingress is the transport boundary; admission stays real.
-            verifyMachineAdmission: async () => true,
-          }) }),
-      } : {}),
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager, {
-        createApiClient: async () => api,
-        activatePurposeBindings: purposeRuntime.activatePurposeBindings,
-        ...(targetId === 'codex-pool-refusal' ? { filesystemEffectAdmission: createFilesystemEffectAdmission({
-          resolveHomeServerIdentityId: async () => 'home',
-        }) } : {}),
-      }),
+    const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, {
+      createApiClient: async () => api,
+      activatePurposeBindings: purposeRuntime.activatePurposeBindings,
     });
 
     if (targetId === 'codex-pool-refusal') {
@@ -535,7 +600,7 @@ describe('capabilities.invoke connected-service preflight', () => {
         connectedServices: {
           v: 2,
           bindingsByServiceId: {
-            'happier.agent.codex/openai-codex': {
+            [serviceKey]: {
               source: 'connected',
               selection: 'profile',
               profileId: 'leeroy',
@@ -545,6 +610,40 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
 
+    if (targetId === 'kimi') {
+      const connectedServices = { v: 2, bindingsByServiceId: {
+        [serviceKey]: { source: 'connected', selection: 'profile', profileId: account.accountId },
+      } } as const;
+      const input = { agentId, machineId: 'selected-machine', probe: { cwd: tempDir, connectedServices } };
+      const inventory = createCliActionInventoryDeps({ token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
+        callMachineAction: async request => call(request.method, request.request) });
+      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
+      const selectedIds = ['kimi-code/selected-account', 'kimi-code/selected-account-next'];
+      expect(response, JSON.stringify({ response, metadataReads, credentialReads })).toMatchObject({ ok: true, result: { source: 'dynamic',
+        availableModels: expect.arrayContaining(selectedIds.map(id => expect.objectContaining({ id }))) } });
+      const capability = parseCapabilitiesInvokeResponse(response);
+      if (!capability?.ok) throw new Error('Selected Kimi capability unavailable');
+      const observation = AgentModelsProbeObservationSchema.parse(capability.result);
+      expect(observation.availableModels.map(model => model.id).filter(id => id !== 'default').sort()).toEqual(selectedIds);
+      phase = 'Kimi model-list Action through selected preflight';
+      const listed = await executor.execute('agents.models.list', input, { surface: 'cli', authority: 'present_user' });
+      expect(listed).toMatchObject({ ok: true });
+      if (!listed.ok || !listed.result || typeof listed.result !== 'object' || !('items' in listed.result)
+        || !Array.isArray(listed.result.items)) throw new Error('Selected Kimi model inventory unavailable');
+      expect(listed.result.items.map((item: unknown) => {
+        if (!item || typeof item !== 'object' || !('id' in item)) throw new Error('Model inventory item is missing its id');
+        return item.id;
+      }).filter(id => id !== 'default').sort()).toEqual(selectedIds);
+      const captured = JSON.parse(readFileSync(captureFile, 'utf8'));
+      expect(captured).toMatchObject({ accessToken: 'selected-access-token', credentialsExist: false });
+      expect(captured.home).not.toBe(nativeHome);
+      expect(captured.config).toContain('kimi-code/selected-account');
+      expect(captured.config).not.toContain('selected-refresh-token');
+      expect(captured.config).not.toContain('native-other');
+      expect(readFileSync(join(nativeHome, 'config.toml'), 'utf8')).toContain('native-other');
+      complete = true;
+      return;
+    }
     if (targetId !== 'codex') {
       phase = 'CLI inventory';
       const { createCliActionInventoryDeps } = await import('@/session/actions/cliActionDeps/createCliActionInventoryDeps');
@@ -558,9 +657,9 @@ describe('capabilities.invoke connected-service preflight', () => {
         'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'leeroy' },
       } } as const;
       const input = { agentId, machineId: 'selected-machine', probe: { cwd: tempDir, connectedServices } };
-      expect(response).toMatchObject({ ok: true, result: { source: 'dynamic',
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { source: 'dynamic',
         availableModels: expect.arrayContaining([expect.objectContaining({ id: 'native/selected-account' })]) } });
-      expect(response).toMatchObject({ result: { availableModels: expect.not.arrayContaining([
+      expect(response, JSON.stringify(response)).toMatchObject({ result: { availableModels: expect.not.arrayContaining([
         expect.objectContaining({ id: 'native/other-account' }),
       ]) } });
       expect(await inventory.agentsModelsList(input)).toMatchObject({ items: expect.arrayContaining([
@@ -617,7 +716,7 @@ describe('capabilities.invoke connected-service preflight', () => {
       complete = true;
       return;
     }
-    expect(response).toMatchObject({
+    expect(response, JSON.stringify(response)).toMatchObject({
       ok: true,
       result: { source: 'dynamic', availableModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-6-luna' })]) },
     });
@@ -771,16 +870,10 @@ describe('capabilities.invoke connected-service preflight', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager, {
-        createApiClient: async () => ({} as ApiClient),
-        activatePurposeBindings,
-        isAgentRegistryCurrent: () => true,
-      }),
+    const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, {
+      createApiClient: async () => ({} as ApiClient),
+      activatePurposeBindings,
+      isAgentRegistryCurrent: () => true,
     });
 
     const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
@@ -802,7 +895,7 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
 
-    expect(response).toMatchObject({ ok: true });
+    expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
     expect(resolveAuthForSpawn).toHaveBeenCalledOnce();
     expect(activatePurposeBindings).toHaveBeenCalledWith(expect.objectContaining({
       subject: expect.objectContaining({
@@ -841,13 +934,7 @@ describe('capabilities.invoke connected-service preflight', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
     const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
-    });
+    const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers);
 
     const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
