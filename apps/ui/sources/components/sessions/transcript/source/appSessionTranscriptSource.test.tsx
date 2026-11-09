@@ -3,7 +3,7 @@ import { Text } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { resolveMessageRouteIdForDisplay, type Message } from '@happier-dev/session-core/messages';
+import type { Message } from '@happier-dev/session-core/messages';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import {
     createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture, createSessionMessagesFixture, createToolCallMessageFixture,
@@ -20,12 +20,15 @@ import { AppSessionTranscriptSourceProvider, TranscriptOriginSourceProvider, use
 import { useSessionTranscriptSource } from './SessionTranscriptSourceContext';
 import type { SessionTranscriptSource } from './types';
 import { useChatListRootState } from '../useChatListRootState';
-import { useTranscriptSessionCommon } from '../transcriptSessionCommon';
+import { resolveTranscriptToolRouteMessageId, useTranscriptSessionCommon } from '../transcriptSessionCommon';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { nowServerMs } from '@/sync/runtime/time';
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
 import { SessionCompanionContent } from '@/components/sessions/companion/SessionCompanionContent';
 import { SessionCompanionScreen } from '@/components/sessions/companion/SessionCompanionScreen';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useSessionCompanionController } from '@/components/sessions/companion/state/useSessionCompanionController';
 import { SESSION_SUMMARY_COMPANION_ITEM } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { TranscriptNavigationRailPreview } from '../navigation/TranscriptNavigationRailPreview';
@@ -57,6 +60,35 @@ beforeEach(async () => {
 });
 
 describe('app transcript source', () => {
+    it('publishes current native choice availability and the authorized owner label to transcript controls', async () => {
+        const previous = storage.getState();
+        const nativeChoices = { requirementId: 'native-owner', source: 'native', choices: [
+            { id: 'once', label: 'Allow once', decision: 'approved' as const, scope: 'once' as const, response: { approved: true } },
+            { id: 'remember', label: 'Remember', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true } },
+        ] };
+        const session = createSessionFixture({ id: 'source-native-owner', serverId: getActiveServerSnapshot().serverId,
+            active: true, access: createSessionAccessFixture('edit', { approveRuntimePermissions: true }),
+            ownerProfile: { firstName: ' Ada ', lastName: ' Lovelace ', username: 'ada', avatarUrl: null },
+            agentState: { requests: { request: { tool: 'Shell', arguments: {}, nativeChoices } } } });
+        try {
+            storage.getState().applySessions([session]);
+            const hook = await renderHook(() => useSessionTranscriptSource().usePendingRequests(), {
+                wrapper: props => <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={session.serverId}>{props.children}</AppSessionTranscriptSourceProvider>,
+            });
+            expect(hook.getCurrent().permissionRequests).toEqual([expect.objectContaining({
+                permissionOwnerLabel: 'Ada Lovelace', nativeChoices, nativeChoiceAvailability: [
+                    { choiceId: 'once', allowed: true }, { choiceId: 'remember', allowed: false, reason: 'owner_required' },
+                ],
+            })]);
+            await act(async () => { storage.getState().applySessions([{ ...session, access: createSessionAccessFixture('owner') }]); });
+            expect(hook.getCurrent().permissionRequests).toEqual([expect.objectContaining({
+                permissionOwnerLabel: 'Ada Lovelace', nativeChoiceAvailability: [
+                    { choiceId: 'once', allowed: true }, { choiceId: 'remember', allowed: true },
+                ],
+            })]);
+            await hook.unmount();
+        } finally { storage.setState(previous); }
+    });
     it.each([false, true])('keeps history consumers quiet on message arrivals but publishes loading changes (ancestor=%s)', async (ancestor) => {
         const previous = storage.getState();
         const session = createSessionFixture({ id: 'source-history-locality', metadata: null });
@@ -183,9 +215,10 @@ describe('app transcript source', () => {
                 else expect(screen.findByTestId('transcript-navigation-rail.preview.body')!.props.children).toBe(`Progress ${tick}`);
                 expect(screen.findByTestId('root-order')!.props.children).toBe(order);
             }
+            // Thinking deltas keep the root's freshness selector true; text belongs to the live row.
             expect({ rootRenders: rootRenders - before.rootRenders, derivations: derivations() - before.derivations,
                 rowRenders: rowRenders - before.rowRenders, historyReads: historyReads - before.historyReads })
-                .toEqual({ rootRenders: thinking ? 5 : 0, derivations: 0, rowRenders: 5, historyReads: 0 });
+                .toEqual({ rootRenders: 0, derivations: 0, rowRenders: 5, historyReads: 0 });
             await act(async () => { storage.getState().applyMessages(session.id, [stream('Finished', 8, 'complete')]); });
             expect(rootRenders).toBeGreaterThan(before.rootRenders);
             expect(screen.findByTestId('stream-text')!.props.children).toBe('Finished');
@@ -444,35 +477,37 @@ describe('app transcript source', () => {
             storage.getState().applySessions([session]);
             storage.getState().applyMessages(session.id, [parentCall, nestedCall]);
             storage.getState().applyMessagesLoaded(session.id);
-            const hook = await renderHook(() => useTranscriptSessionCommon().toolRoute, {
+            const parentMessageId = Object.values(storage.getState().sessionMessages[session.id]!.messagesById)
+                .find(message => message.kind === 'tool-call' && message.tool.id === 'parent-tool')?.id;
+            if (!parentMessageId) throw new Error('The real parent tool must be present');
+            const hook = await renderHook(() => ({ toolRoute: useTranscriptSessionCommon().toolRoute,
+                parent: useTranscriptMessage(parentMessageId) }), {
                 wrapper: props => <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={session.serverId}>{props.children}</AppSessionTranscriptSourceProvider>,
             });
             const readNested = () => {
-                const parent = Object.values(hook.getCurrent().messagesById).find(message => message.kind === 'tool-call'
-                    && message.tool.id === 'parent-tool');
+                const parent = hook.getCurrent().parent;
                 if (parent?.kind !== 'tool-call') throw new Error('The real parent tool must be present');
                 const nested = parent.children.find(message => message.kind === 'tool-call' && message.tool.id === 'nested-tool');
                 if (nested?.kind !== 'tool-call') throw new Error('The real nested tool must be present');
                 return nested;
             };
-            const routeBefore = resolveMessageRouteIdForDisplay({ message: readNested(), ...hook.getCurrent() });
+            const routeBefore = resolveTranscriptToolRouteMessageId(readNested(), hook.getCurrent().toolRoute);
             expect(routeBefore).toBe('server:nested-call');
             expect(readNested().tool.state).toBe('running');
-            const initial = hook.getCurrent();
+            const initial = hook.getCurrent().toolRoute;
             await act(async () => {
                 storage.getState().applyMessages(session.id, [{ id: 'ordinary-text', role: 'agent', localId: null,
                     createdAt: 3, seq: 3, isSidechain: false,
                     content: [{ type: 'text', text: 'Progress update', uuid: 'ordinary-text', parentUUID: null }] }]);
             });
-            expect(hook.getCurrent()).toBe(initial);
+            expect(hook.getCurrent().toolRoute).toBe(initial);
             await act(async () => {
                 storage.getState().applyMessages(session.id, [{ id: 'nested-result', role: 'agent', localId: null,
                     createdAt: 4, seq: 4, isSidechain: true, sidechainId: 'parent-tool', content: [{ type: 'tool-result',
                         tool_use_id: 'nested-tool', content: 'done', is_error: false, uuid: 'nested-result', parentUUID: null }] }]);
             });
-            expect(hook.getCurrent()).not.toBe(initial);
             expect(readNested().tool.state).toBe('completed');
-            expect(resolveMessageRouteIdForDisplay({ message: readNested(), ...hook.getCurrent() })).toBe(routeBefore);
+            expect(resolveTranscriptToolRouteMessageId(readNested(), hook.getCurrent().toolRoute)).toBe(routeBefore);
             await hook.unmount();
         } finally { storage.setState(previous); }
     });
@@ -676,10 +711,12 @@ describe('app transcript source', () => {
             await controller.unmount();
             // Deliberately no transcript provider: the standalone surface binds
             // the shared app action owner directly to its exact Session.
-            const screen = await renderScreen(<SessionCompanionScreen
+            const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.session.serverUrl);
+            if (!credentials) throw new Error('Companion fixture requires its served Home credentials');
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><AppPaneProvider><SessionCompanionScreen
                 sessionId={session.id} address={{ sessionId: session.id, serverId }}
                 onRevealBoardItem={routerPush} onRequestClose={routerPush}
-            />);
+            /></AppPaneProvider></InjectedAuthProvider>);
             expect(screen.findByTestId('session-companion-content-summary-allow')).not.toBeNull();
             await screen.pressByTestIdAsync('session-companion-content-summary-allow');
             expect(sessionRpcTransport).toHaveBeenLastCalledWith(expect.objectContaining({

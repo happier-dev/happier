@@ -29,6 +29,7 @@ it('keeps supported, native unsupported and unknown compact evidence distinct in
   ] as const) {
     const session = createSessionFixture({ id, encryptionMode: 'plain', access: createSessionAccessFixture('owner'),
       metadata: { ...createSessionFixture().metadata, flavor: 'external/agent',
+        runtimeDescriptorV1: { v: 1, agentId: 'external/agent', agent: {} },
         ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } });
     homes.answer(serverId, `/v2/sessions/${id}`, { body: createPlainSessionByIdResponseFixture(session) });
     const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: id },
@@ -66,6 +67,7 @@ it('WF44 reaches exact managed-subtree proof through the default Action executor
   installHomeGovernanceBoundaries(homes);
   const serverId = await homes.addHome({ name: 'Managed', serverUrl: 'https://managed.test', accountId: 'alice', currentAccount: true });
   const session = createSessionFixture({ id: 'managed-child', encryptionMode: 'plain', access: createSessionAccessFixture('owner') });
+  const callerSession = createSessionFixture({ id: 'lead', encryptionMode: 'plain', access: createSessionAccessFixture('owner') });
   const context = { surface: 'agent' as const, serverId, expectedAccountId: 'alice', defaultSessionId: 'lead',
     sessionListAccess: 'led_subtree' as const, authority: 'account_automation' as const,
     actionCaller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
@@ -74,9 +76,10 @@ it('WF44 reaches exact managed-subtree proof through the default Action executor
       ledSubtreeSessionIds: [], workDepthLimit: 4 } };
   homes.answer(serverId, '/v2/sessions/read-batch', { select: input => {
     const demand = SessionReadBatchRequestV1Schema.parse(input);
-    return { body: SessionReadBatchResponseV1Schema.parse({ results: [{ sessionId: session.id,
-      detail: { status: 200, body: createPlainSessionByIdResponseFixture(session) },
-      ...(demand.includeTurns !== false ? { turns: { status: 200, body: { v: 1, sessionId: session.id, updatedAt: 1, turns: [] } } } : {}),
+    const target = demand.sessionIds[0] === callerSession.id ? callerSession : session;
+    return { body: SessionReadBatchResponseV1Schema.parse({ results: [{ sessionId: target.id,
+      detail: { status: 200, body: createPlainSessionByIdResponseFixture(target) },
+      ...(demand.includeTurns !== false ? { turns: { status: 200, body: { v: 1, sessionId: target.id, updatedAt: 1, turns: [] } } } : {}),
     }] }) };
   } });
   const executor = createDefaultActionExecutor();
@@ -87,16 +90,19 @@ it('WF44 reaches exact managed-subtree proof through the default Action executor
     .map(request => SessionReadBatchRequestV1Schema.parse(request.input)).filter(demand => demand.underSessionId !== undefined);
   const expectedProof = { sessionIds: [session.id], underSessionId: 'lead', accessProjectionVersion: 1,
     includeSnapshot: true, includeTurns: false, includeMessages: false };
-  // Core currently fences scope at preparation and dispatch. Each consumes one
-  // exact proof; collapsing those authority fences is separate owner work.
-  expect(proofs).toEqual([expectedProof, expectedProof]);
-  homes.answer(serverId, '/v2/sessions/read-batch', { body: { results: [{ sessionId: session.id,
-    detail: { status: 404, body: { error: 'not_found' } } }] } });
+  // The exact subtree observation admits this invocation once.
+  expect(proofs).toEqual([expectedProof]);
+  homes.answer(serverId, '/v2/sessions/read-batch', { select: input => {
+    const demand = SessionReadBatchRequestV1Schema.parse(input);
+    return { body: { results: [demand.sessionIds[0] === callerSession.id
+      ? { sessionId: callerSession.id, detail: { status: 200, body: createPlainSessionByIdResponseFixture(callerSession) } }
+      : { sessionId: session.id, detail: { status: 404, body: { error: 'not_found' } } }] } };
+  } });
   expect(await executor.execute('session.status.get', { sessionId: session.id }, context))
     .toMatchObject({ ok: false, details: { cause: 'target_outside_led_subtree' } });
   expect(homes.requests.filter(request => request.path === '/v2/sessions/read-batch')
     .map(request => SessionReadBatchRequestV1Schema.parse(request.input)).filter(demand => demand.underSessionId !== undefined))
-    .toEqual([expectedProof, expectedProof, expectedProof]);
+    .toEqual([expectedProof, expectedProof]);
   expect(homes.requests.some(request => request.path === '/v2/sessions/query')).toBe(false);
 });
 

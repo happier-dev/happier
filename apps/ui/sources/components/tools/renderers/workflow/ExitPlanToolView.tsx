@@ -376,6 +376,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                     // A native occurrence offers its own choices, verbatim and in its order (lab mb B).
                     <PermissionFooterOfferedChoices
                         choices={nativePermissionChoices.filter(isOfferedPermissionChoice)}
+                        permissionOwnerLabel={pendingRequest?.permissionOwnerLabel}
                         primaryId={selectPrimaryOfferedChoice(nativePermissionChoices.filter(isOfferedPermissionChoice))}
                         disabled={isApproving || isRejecting}
                         busyChoiceId={nativeBusyChoiceId}
