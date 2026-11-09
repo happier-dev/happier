@@ -18,7 +18,7 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
     const mutation = operation.mutation;
     const changesSelection = mutation.op === 'create' || mutation.op === 'delete';
     const defaultId = getDefaultCollectionSpaceIdV1(entityKind);
-    const needsDefault = mutation.op === 'resetDefault' || (mutation.op === 'edit' || mutation.op === 'associateTag') && mutation.spaceId === defaultId
+    const needsDefault = mutation.op === 'resetDefault' || mutation.op === 'edit' && mutation.spaceId === defaultId
         || mutation.op === 'reorder' && (mutation.spaceId === defaultId || mutation.beforeSpaceId === defaultId);
     const defaultSpace = needsDefault
         ? readCollectionSpaceDefaultV1(entityKind, await context.readSettings()) : undefined;

@@ -9,7 +9,6 @@ import { DiscussionListFilterV1Schema, DEFAULT_DISCUSSION_LIST_FILTER_V1, discus
 import type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
 import { getUnsupportedEntityFilterFieldsV1 } from '../filter/fieldRegistryV1.js';
 export type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
-
 export { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1, CollectionSpacesEnabledV1Schema } from './collectionSpaceEnablementV1.js';
 
 /** V1 persisted identities and mutation envelopes are closed; settings owns byte bounds and sealing. */
@@ -66,8 +65,7 @@ export type CollectionSpaceMutationV1<K extends CollectionEntityKindV1> =
     | Readonly<{ op: 'edit'; spaceId: string; changes: Partial<Pick<CollectionSpaceV1<K>, 'name' | 'icon' | 'filter' | 'includeNeedsYouEverywhere'>> & { membership?: K extends 'sessionWork' ? Pick<SessionSpaceMembershipV1, 'mode'> : never } }>
     | Readonly<{ op: 'delete'; spaceId: string }>
     | Readonly<{ op: 'reorder'; spaceId: string; beforeSpaceId: string | null }>
-    | Readonly<{ op: 'resetDefault' }>
-    | (K extends 'sessionWork' ? Readonly<{ op: 'associateTag'; spaceId: string; tag: QualifiedSessionSpaceTagV1 }> : never);
+    | Readonly<{ op: 'resetDefault' }>;
 export type CollectionSpaceOperationV1 = { [K in CollectionEntityKindV1]: Readonly<{
     kind: 'collection_space'; entityKind: K; mutation: CollectionSpaceMutationV1<K>;
 }> }[CollectionEntityKindV1];
@@ -89,12 +87,10 @@ function mutationVariants<ChangesSchema extends z.core.$ZodType, SpaceSchema ext
     ] as const;
 }
 export const CollectionSpaceOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('entityKind', [
-    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('sessionWork'), mutation: z.discriminatedUnion('op', [
-        ...mutationVariants(z.strictObject({ ...editChangesFields(SessionListFilterV1Schema),
+    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('sessionWork'), mutation: z.discriminatedUnion('op',
+        mutationVariants(z.strictObject({ ...editChangesFields(SessionListFilterV1Schema),
             membership: z.optional(z.strictObject({ mode: SessionSpaceMembershipV1Schema.shape.mode })),
-        }), SessionSpaceSchema, 'sessionWork'),
-        z.strictObject({ op: z.literal('associateTag'), spaceId: IdSchema.check(z.refine(id => belongsToKind(id, 'sessionWork'))), tag: QualifiedSessionSpaceTagV1Schema }),
-    ]) }),
+        }), SessionSpaceSchema, 'sessionWork')) }),
     z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('workflow'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(WorkflowListFilterV1Schema)), WorkflowSpaceSchema, 'workflow')) }),
     z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('discussion'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(DiscussionListFilterV1Schema)), DiscussionSpaceSchema, 'discussion')) }),
 ]));
@@ -120,7 +116,7 @@ export type CollectionSpaceDefaultBasisV1 = Partial<Readonly<{ [K in CollectionE
 
 function changedFilter<Filter>(mutation: Readonly<{ op: 'create'; space: Readonly<{ filter: Filter }> }>
     | Readonly<{ op: 'edit'; changes: Readonly<{ filter?: Filter }> }>
-    | Readonly<{ op: 'delete' | 'reorder' | 'resetDefault' | 'associateTag' }>): Filter | undefined {
+    | Readonly<{ op: 'delete' | 'reorder' | 'resetDefault' }>): Filter | undefined {
     return mutation.op === 'create' ? mutation.space.filter : mutation.op === 'edit' ? mutation.changes.filter : undefined;
 }
 /** Only new membership selections are admitted; unrelated edits retain stored unavailable narrowing. */
@@ -177,17 +173,6 @@ export function reduceCollectionSpacesV1(catalog: CollectionSpacesV1, operation:
         }
         return { ...space, ...mutation.changes } as CollectionSpaceV1;
     }));
-    if (mutation.op === 'associateTag') {
-        const current = spaces.find(space => space.id === spaceId);
-        if (current?.entityKind !== 'sessionWork') return { ok: false, reason: 'space_entity_mismatch' };
-        const tags = current.membership?.tags ?? [];
-        const existing = tags.find(tag => tag.serverId === mutation.tag.serverId && tag.accountId === mutation.tag.accountId);
-        // An overlapping first use must retain the tag already assigned to earlier Sessions.
-        if (existing) return ok(catalog.spaces);
-        const membership: SessionSpaceMembershipV1 = { mode: current.membership?.mode ?? 'filter_or_manual',
-            tags: [...tags, mutation.tag] };
-        return ok(spaces.map(space => space === current ? { ...current, membership } : space));
-    }
     const entitySpaces = spaces.filter(space => space.entityKind === entityKind);
     if (mutation.beforeSpaceId !== null && !entitySpaces.some(space => space.id === mutation.beforeSpaceId)) return { ok: false, reason: 'space_not_found' };
     if (mutation.beforeSpaceId === spaceId) return ok(catalog.spaces);

@@ -16,29 +16,30 @@ const empty: CollectionSpacesV1 = { v: 1, spaces: [] };
 const custom = (id: string) => ({ ...createDefaultCollectionSpaceV1('sessionWork'), id, name: id });
 
 describe('collection spaces', () => {
-    it('rebases a membership mode edit without replacing associations added while the editor was open', () => {
+    it('rebases a membership mode edit without replacing historical links in the current catalog', () => {
         const admitted = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse({ anchor: 'session.list.spaces', input: {
             kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'edit', spaceId: 'mixed', changes: { membership: { mode: 'manual_only' } } },
         } });
         if (admitted.input?.kind !== 'collection_space') throw new Error('Expected space intent');
-        const tag = { serverId: 'home-a', accountId: 'alice', tagId: 'new-while-editing' };
-        const current = invoke({ v: 1, spaces: [custom('mixed')] }, { kind: 'collection_space', entityKind: 'sessionWork',
-            mutation: { op: 'associateTag', spaceId: 'mixed', tag } });
+        const tag = { serverId: 'home-a', accountId: 'alice', tagId: 'historical-link' };
+        const current = CollectionSpacesStoredReadV1Schema.parse({ v: 1, spaces: [{ ...custom('mixed'),
+            membership: { mode: 'filter_or_manual', tags: [tag] } }] });
         expect(reduceCollectionSpacesV1(current, admitted.input)).toMatchObject({ ok: true, value: {
             spaces: [{ membership: { mode: 'manual_only', tags: [tag] } }],
         } });
     });
-    it('rebases qualified membership association without losing other authorities or manual-only mode', () => {
+    it('preserves qualified historical links and manual-only mode on edits while refusing automatic association', () => {
         const tag = { serverId: 'home-a', accountId: 'alice', tagId: 'internal-a' };
         const other = { serverId: 'home-b', accountId: 'alice', tagId: 'internal-b' };
-        const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ ...custom('manual'), membership: { mode: 'manual_only', tags: [other] } }] });
-        const associated = invoke(catalog, { kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'associateTag', spaceId: 'manual', tag } });
-        expect(associated.spaces[0]).toMatchObject({ membership: { mode: 'manual_only', tags: [other, tag] } });
-        expect(invoke(associated, { kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'associateTag', spaceId: 'manual', tag } })).toBe(associated);
-        const competing = invoke(associated, { kind: 'collection_space', entityKind: 'sessionWork', mutation: {
-            op: 'associateTag', spaceId: 'manual', tag: { ...tag, tagId: 'overlapping-first-use' },
+        const catalog = CollectionSpacesStoredReadV1Schema.parse({ v: 1, spaces: [{ ...custom('manual'),
+            membership: { mode: 'manual_only', tags: [other, tag] } }] });
+        const edited = invoke(catalog, { kind: 'collection_space', entityKind: 'sessionWork', mutation: {
+            op: 'edit', spaceId: 'manual', changes: { name: 'Renamed' },
         } });
-        expect(competing.spaces[0]).toMatchObject({ membership: { mode: 'manual_only', tags: [other, tag] } });
+        expect(edited.spaces[0]).toMatchObject({ name: 'Renamed', membership: { mode: 'manual_only', tags: [other, tag] } });
+        expect(SettingsDeclarationActionInputSchemasV1['settings.invoke'].safeParse({ anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'associateTag', spaceId: 'manual', tag },
+        } }).success).toBe(false);
         expect(CollectionSpacesV1Schema.safeParse({ v: 1, spaces: [{ ...createDefaultCollectionSpaceV1('workflow'), membership: { mode: 'manual_only', tags: [] } }] }).success).toBe(false);
     });
     it('derives all entity defaults without materializing settings and preserves empty selection sets', () => {
