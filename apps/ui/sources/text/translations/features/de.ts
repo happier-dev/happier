@@ -2323,6 +2323,7 @@ const de: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · Empfohlen`,
     setupCatalogTitle: 'Dienst verbinden',
     setupCatalogPurpose: 'Die Anmeldung läuft auf dem Rechner deiner Wahl. Danach funktioniert das Konto auf all deinen Rechnern.',
+    setupCatalogPurposeNoMachine: "In deinem Konto gespeichert, daher funktioniert es auf all deinen Rechnern.",
     setupServiceTitle: ({ service }) => `${service} verbinden`,
     setupReconnectTitle: ({ service }) => `Erneut bei ${service} anmelden`,
     setupServicePurpose: ({ agents, service }) => `${agents} nutzen dein ${service}-Konto auf jedem Rechner.`,

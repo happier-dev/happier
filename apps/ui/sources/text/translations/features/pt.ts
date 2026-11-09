@@ -2329,6 +2329,7 @@ const pt: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · Recomendado`,
     setupCatalogTitle: 'Conectar um serviço',
     setupCatalogPurpose: 'O login é feito na máquina que você escolher. Depois a conta funciona em todas as suas máquinas.',
+    setupCatalogPurposeNoMachine: "Salvo na sua conta, então funciona em todas as suas máquinas.",
     setupServiceTitle: ({ service }) => `Conectar ${service}`,
     setupReconnectTitle: ({ service }) => `Entrar de novo no ${service}`,
     setupServicePurpose: ({ agents, service }) => `${agents} usarão sua conta do ${service} em todas as máquinas.`,

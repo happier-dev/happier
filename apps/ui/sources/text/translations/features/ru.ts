@@ -2351,6 +2351,7 @@ const ru: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · Рекомендуется`,
     setupCatalogTitle: 'Подключить сервис',
     setupCatalogPurpose: 'Вход выполняется на выбранной машине. Затем аккаунт работает на всех ваших машинах.',
+    setupCatalogPurposeNoMachine: "Сохраняется в вашем аккаунте, поэтому работает на всех ваших машинах.",
     setupServiceTitle: ({ service }) => `Подключить ${service}`,
     setupReconnectTitle: ({ service }) => `Снова войти в ${service}`,
     setupServicePurpose: ({ agents, service }) => `${agents} будут использовать ваш аккаунт ${service} на каждой машине.`,

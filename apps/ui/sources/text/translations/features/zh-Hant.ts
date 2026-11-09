@@ -2324,6 +2324,7 @@ const zhHant: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · 推薦`,
     setupCatalogTitle: '連接服務',
     setupCatalogPurpose: '登入在你選擇的機器上進行。之後該帳號可在你所有的機器上使用。',
+    setupCatalogPurposeNoMachine: "儲存到你的帳號，因此可在你所有的機器上使用。",
     setupServiceTitle: ({ service }) => `連接 ${service}`,
     setupReconnectTitle: ({ service }) => `重新登入 ${service}`,
     setupServicePurpose: ({ agents, service }) => `${agents} 將在每台機器上使用你的 ${service} 帳號。`,

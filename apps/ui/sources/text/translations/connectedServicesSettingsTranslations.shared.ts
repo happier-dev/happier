@@ -122,6 +122,7 @@ export const en = {
     setupRecommendedMethod: ({ method }: { method: string }) => `${method} · Recommended`,
     setupCatalogTitle: 'Connect a service',
     setupCatalogPurpose: 'Sign-in runs on the machine you pick. The account then works on all your machines.',
+    setupCatalogPurposeNoMachine: "Saved to your account, so it works on all your machines.",
     setupServiceTitle: ({ service }: { service: string }) => `Connect ${service}`,
     setupReconnectTitle: ({ service }: { service: string }) => `Sign in to ${service} again`,
     setupServicePurpose: ({ agents, service }: { agents: string; service: string }) => `${agents} will use your ${service} account, on every machine.`,

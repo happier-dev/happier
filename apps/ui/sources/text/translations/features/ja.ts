@@ -2329,6 +2329,7 @@ const ja: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · おすすめ`,
     setupCatalogTitle: 'サービスを接続',
     setupCatalogPurpose: 'サインインは選んだマシンで行われます。その後、アカウントはすべてのマシンで使えます。',
+    setupCatalogPurposeNoMachine: "アカウントに保存されるので、すべてのマシンで使えます。",
     setupServiceTitle: ({ service }) => `${service} を接続`,
     setupReconnectTitle: ({ service }) => `${service} に再サインイン`,
     setupServicePurpose: ({ agents, service }) => `${agents} がすべてのマシンで ${service} アカウントを使います。`,

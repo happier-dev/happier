@@ -2329,6 +2329,7 @@ const ca: ConnectedServicesSettingsCopy = {
     setupRecommendedMethod: ({ method }) => `${method} · Recomanat`,
     setupCatalogTitle: 'Connecta un servei',
     setupCatalogPurpose: 'L’inici de sessió s’executa a la màquina que triïs. Després el compte funciona a totes les teves màquines.',
+    setupCatalogPurposeNoMachine: "Es desa al teu compte, així que funciona a totes les teves màquines.",
     setupServiceTitle: ({ service }) => `Connecta ${service}`,
     setupReconnectTitle: ({ service }) => `Torna a iniciar la sessió a ${service}`,
     setupServicePurpose: ({ agents, service }) => `${agents} faran servir el teu compte de ${service} a totes les màquines.`,

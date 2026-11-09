@@ -150,6 +150,7 @@ function ConnectAccountSheetLeaf(
     targetKind: target.kind,
     scope: 'all',
     chrome: 'sheet',
+    machineRequired: model.machineRequired,
   });
 
   // A purpose request (a configurator's account row) chooses through the existing purpose chooser and

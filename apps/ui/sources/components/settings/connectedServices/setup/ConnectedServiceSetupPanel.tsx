@@ -105,6 +105,8 @@ export function presentConnectedServiceSetupHeading(input: Readonly<{
     targetKind: ConnectedServiceSetupTarget['kind'];
     scope: 'all' | 'home';
     chrome?: ConnectedServiceSetupPanelProps['chrome'];
+    /** The chosen method's own demand: the same fact that shows the Machine chip. */
+    machineRequired: boolean;
 }>): Readonly<{ title: string; purpose: string }> {
     const { selected, scope } = input;
     const title = !selected
@@ -116,7 +118,7 @@ export function presentConnectedServiceSetupHeading(input: Readonly<{
                 ? presentNewConnectedAccountDraftTitle(selected)
                 : t('connectedServicesSettings.setupServiceTitle', { service: selected.label });
     const purpose = !selected
-        ? scope === 'home' ? t('connectedServicesSetup.homeCatalogPurpose') : t('connectedServicesSettings.setupCatalogPurpose')
+        ? scope === 'home' ? t('connectedServicesSetup.homeCatalogPurpose') : t(input.machineRequired ? 'connectedServicesSettings.setupCatalogPurpose' : 'connectedServicesSettings.setupCatalogPurposeNoMachine')
         : selected.usedBy.length > 0 && namedByWhatYouPaste(selected)
             // A key is not "your account": who can use it, as its Connect card says.
             ? t('connectedServicesSetup.serviceCanUse', { agents: formatAgentNames(selected.usedBy) })
@@ -273,7 +275,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         else onClose();
     }, [onClose, onTargetChange, showBack]);
 
-    const { title, purpose } = presentConnectedServiceSetupHeading({ selected, targetKind: target.kind, scope, chrome: props.chrome });
+    const { title, purpose } = presentConnectedServiceSetupHeading({ selected, targetKind: target.kind, scope, chrome: props.chrome, machineRequired });
 
     const handleConnected = React.useCallback((account: QualifiedConnectedAccountRef) => {
         if (selectedKey) onConnected?.(account, selectedKey);

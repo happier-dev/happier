@@ -80,7 +80,7 @@ describe('presentConnectedServiceSetupHeading', () => {
             service: { pluginId: 'happier.machine.hetzner', localId: 'hetzner-account' }, legacyServiceId: null, label: 'Hetzner cloud account',
             entry: { serviceId: 'hetzner-account', connectCommand: '', supportsOauth: false,
                 projectedDescription: 'Run coding sessions on Hetzner Cloud servers.' } as ConnectedServiceSetupCatalogEntry['entry'] };
-        expect(presentConnectedServiceSetupHeading({ selected: hetzner, targetKind: 'service', scope: 'all', chrome: 'sheet' }).purpose)
+        expect(presentConnectedServiceSetupHeading({ selected: hetzner, targetKind: 'service', scope: 'all', chrome: 'sheet', machineRequired: false }).purpose)
             .toBe('Run coding sessions on Hetzner Cloud servers.');
     });
 });
@@ -140,6 +140,11 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
             onTargetChange={() => {}} onClose={() => {}} renderServiceFlow={() => null}
         />);
         expect(chips(screen)).toHaveLength(0);
+        // The purpose line follows the same decision: it never says sign-in runs on a machine you pick.
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.setupCatalogPurposeNoMachine');
+        expect(screen.getTextContent()).not.toMatch(/setupCatalogPurpose(?!NoMachine)/);
+        expect(presentConnectedServiceSetupHeading({ selected: null, targetKind: 'catalog', scope: 'all', machineRequired: true }).purpose)
+            .toBe('connectedServicesSettings.setupCatalogPurpose');
     });
 
     it('leaves the Providers pointer to the open catalog, not to a page locked to one requested purpose', async () => {
