@@ -21,6 +21,16 @@ export type SessionPermissionChoice = Readonly<{
     catalog?: Readonly<{ identity: ResolvedMcpToolIdentityV1; source?: string }>;
 }>;
 
+/** A plain Yes grants only this occurrence; No declines without stopping the run. */
+export function selectSessionPermissionChoiceForDecision(
+    choices: readonly SessionPermissionChoice[],
+    decision: 'approved' | 'denied',
+): SessionPermissionChoice | undefined {
+    return choices.find(choice => choice.decision === decision
+        && (decision === 'denied' || choice.scope === 'once')
+        && choice.availability?.allowed !== false);
+}
+
 /** Catalog consent is available only for the existing external, persistent request scope. */
 export function canPersistSessionMcpPermission(input: Readonly<{
     identity?: ResolvedMcpToolIdentityV1 | null; source?: string; canWriteCatalog: boolean;
@@ -70,7 +80,7 @@ function resolveStoredSessionPermissionChoices(input: SessionPermissionChoicesIn
     const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
     if (copy.protocol === 'unavailable') return [deny];
     const choices: SessionPermissionChoice[] = [{ id: 'allow', label: t('settingsDesktop.overlay.notchAllowOnce'),
-        response: { approved: true, decision: 'approved' } }];
+        response: { approved: true, ...(copy.protocol === 'codexDecision' ? { decision: 'approved' as const } : {}) } }];
     const persistent = supportsSessionPermissionPersistence(input.source);
     if (copy.protocol === 'codexDecision') {
         const raw = input.toolInput && typeof input.toolInput === 'object' ? input.toolInput as Record<string, unknown> : {};
@@ -85,13 +95,13 @@ function resolveStoredSessionPermissionChoices(input: SessionPermissionChoicesIn
     } else {
         if (persistent && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(toolName)) {
             choices.push({ id: 'allow_all_edits', label: t(copy.yesAllowAllEditsKey), response: {
-                approved: true, decision: 'approved', mode: 'acceptEdits',
+                approved: true, mode: 'acceptEdits',
                 ...(policy.usePermissionUpdates ? { updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] } : {}),
             } });
         }
         const toolRule = (id: SessionPermissionChoice['id'], label: string, identifier: string) => {
             const parsed = parseParenIdentifier(identifier);
-            choices.push({ id, label, response: { approved: true, decision: 'approved', allowedTools: [identifier],
+            choices.push({ id, label, response: { approved: true, allowedTools: [identifier],
                 ...(policy.usePermissionUpdates ? { updatedPermissions: [{ type: 'addRules',
                     rules: [parsed ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) } : { toolName: identifier }],
                     behavior: 'allow', destination: 'session' }] } : {}),

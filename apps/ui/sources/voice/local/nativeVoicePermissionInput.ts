@@ -6,6 +6,7 @@ import { subscribeRegisteredStorageState } from '@/sync/domains/state/storageSta
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from '@/sync/ops/sessionPermissionChoices';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
@@ -166,10 +167,20 @@ export function createNativeVoicePermissionInput(params: Readonly<{
               prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired'), true);
             return;
           }
+          const request = selected.request;
+          const response = request.nativeChoices === undefined ? { decision }
+            : selectSessionPermissionChoiceForDecision(resolveSessionPermissionChoices({
+              toolName: request.tool, toolInput: request.arguments, nativeChoices: request.nativeChoices,
+              nativeChoiceAvailability: request.nativeChoiceAvailability,
+            }), decision)?.response;
+          if (!response) {
+            await readPrompt(selected, t('voice.readiness.permissionTapRequired'), true);
+            return;
+          }
           params.onResponding();
           const responding = execute('session.permission.respond', {
             sessionId: selected.address.sessionId, requestId: selected.request.id,
-            ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), decision,
+            ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), ...response,
           }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal });
           // The native turn can finish before the permission RPC acknowledges.
           // Report the Action's settled decision to the turn lifecycle owner.
