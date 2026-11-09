@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,7 +29,6 @@ import type { StoredCredentials } from '@/persistence';
 import type {
   ConnectedAccountPurposeBindingOwner,
 } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authoring/sourceModule';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
@@ -102,7 +101,6 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.doUnmock('@/persistence');
   vi.doUnmock('@/settings/accountSettings/bootstrapAccountSettingsContext');
-  vi.doUnmock('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn');
   vi.doUnmock('undici');
   uiCapabilityTransport.invoke.mockReset();
   vi.resetModules();
@@ -218,7 +216,7 @@ describe('capabilities.invoke connected-service preflight', () => {
     },
   );
 
-  it.each(['codex', 'opencode', 'external', 'codex-pool-refusal', 'kimi'] as const)('materializes the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
+  it.each(['codex', 'opencode', 'external', 'codex-pool-refusal', 'kimi'] as const)('prepares or refuses the selected personal account for %s native model inventory without borrowing an unselected catalog', async (targetId) => {
     let phase = 'prepare native fixture';
     let complete = false;
     onTestFinished(() => { if (!complete) console.error('Native catalog fixture failure phase', targetId, phase); });
@@ -244,6 +242,8 @@ describe('capabilities.invoke connected-service preflight', () => {
       // auth/config it supplies to a bound Session before this catalog is visible.
       writeFileSync(fixture, `#!${process.execPath}
         import { createServer } from 'node:http';
+        import { writeFileSync } from 'node:fs';
+        writeFileSync(${JSON.stringify(join(tempDir, 'opencode-native-started'))}, 'started');
         const auth = JSON.parse(process.env.OPENCODE_AUTH_CONTENT || '{}');
         const ids = ['free', ...Array.from({length: 40}, (_, index) => 'model-' + index), ...(auth.openai ? ['selected-account'] : [])];
         const models = ids.map(id => ({
@@ -511,6 +511,13 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
     const purposeRuntime = createPurposeRuntime();
+    const purposeActivations: Array<{ input: ActivatePurposeBindingsInput;
+      lease: ReturnType<ConnectedAccountPurposeBindingOwner['activatePurposeBindings']> }> = [];
+    const activatePurposeBindings = (input: ActivatePurposeBindingsInput) => {
+      const lease = purposeRuntime.activatePurposeBindings(input);
+      purposeActivations.push({ input, lease });
+      return lease;
+    };
     phase = 'admit plugin runtime';
     const selectedPluginIds = targetId === 'kimi' ? ['happier.agent.kimi']
       : ['happier.agent.codex', 'happier.agent.opencode', ...(targetId === 'external' ? [SAMPLE_PLUGIN_ID] : [])];
@@ -556,7 +563,7 @@ describe('capabilities.invoke connected-service preflight', () => {
     const { registerCapabilitiesHandlers } = await import('./capabilities');
     const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, {
       createApiClient: async () => api,
-      activatePurposeBindings: purposeRuntime.activatePurposeBindings,
+      activatePurposeBindings,
     });
 
     if (targetId === 'codex-pool-refusal') {
@@ -610,6 +617,17 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
 
+    if (targetId === 'opencode') {
+      // Model-less discovery consumes the same selected-account preparation as
+      // Session launch. It must refuse before credentials or a native catalog.
+      expect(response).toMatchObject({ ok: false, error: {
+        code: 'agent_startup_model_reconciliation_failed', retryable: false,
+      } });
+      expect(credentialReads).toEqual([]);
+      expect(existsSync(join(tempDir, 'opencode-native-started'))).toBe(false);
+      complete = true;
+      return;
+    }
     if (targetId === 'kimi') {
       const connectedServices = { v: 2, bindingsByServiceId: {
         [serviceKey]: { source: 'connected', selection: 'profile', profileId: account.accountId },
@@ -720,6 +738,22 @@ describe('capabilities.invoke connected-service preflight', () => {
       ok: true,
       result: { source: 'dynamic', availableModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-6-luna' })]) },
     });
+    expect(purposeActivations).toEqual(expect.arrayContaining([expect.objectContaining({
+      input: expect.objectContaining({ subject: expect.objectContaining({ kind: 'operation',
+        consumer: { pluginId: 'happier.agent.codex', localId: 'codex' } }),
+        purposes: expect.arrayContaining([{ consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          purpose: 'primary' }]),
+        bindings: expect.arrayContaining([expect.objectContaining({ target: {
+          kind: 'account', account: { service, accountId: 'leeroy' },
+        } })]),
+      }),
+    })]));
+    for (const activation of purposeActivations) {
+      if (activation.input.subject.kind !== 'operation') throw new Error('Expected a capability operation subject');
+      expect(activation.input.subject.isCurrent()).toBe(true);
+      expect(activation.lease.isCurrent()).toBe(false);
+      expect(activation.lease.listPurposeBindings()).toEqual([]);
+    }
     phase = 'selected-account structured Run admission';
     const { assertExecutionRunStructuredOutputModelAllowed } = await import('@/agent/runtime/bridges/executionRun/structuredOutputAdmission');
     const { createRunnerExecutionRunSnapshots } = await import('@/daemon/agentRuntime/runnerExecutionRunSnapshots');
@@ -777,142 +811,6 @@ describe('capabilities.invoke connected-service preflight', () => {
     expect(methods).toContain('model/list');
     expect(methods.some((method) => method.startsWith('thread/') || method.startsWith('realtime/'))).toBe(false);
     complete = true;
-  }, 90_000);
-
-  it('threads the canonical purpose owner into a qualified capability preflight and disposes its exact lease', async () => {
-    vi.resetModules();
-    tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-qualified-purpose-'));
-    const fixture = fileURLToPath(new URL('./__fixtures__/fakeCodexPreflightAppServer.mjs', import.meta.url));
-    chmodSync(fixture, 0o755);
-    process.env = {
-      ...originalEnv,
-      HAPPIER_HOME_DIR: tempDir,
-      HAPPIER_CODEX_PATH: fixture,
-      OPENAI_API_KEY: undefined,
-      CODEX_API_KEY: undefined,
-      CODEX_HOME: undefined,
-      CODEX_SQLITE_HOME: undefined,
-    };
-
-    const credentials: StoredCredentials = {
-      token: 'test-happier-token',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
-    vi.doMock('@/persistence', async (importOriginal) => ({
-      ...(await importOriginal<typeof import('@/persistence')>()),
-      readStoredCredentials: vi.fn(async () => credentials),
-    }));
-    vi.doMock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
-      bootstrapAccountSettingsContext: vi.fn(async () => ({
-        settings: { codexBackendMode: 'appServer' },
-      })),
-    }));
-
-    const disposePurposeLease = vi.fn();
-    const unavailableMaterial = async (): Promise<never> => { throw new Error('No credential materialization is requested by this capability fixture'); };
-    const purposeOwner = createConnectedAccountPurposeBindingOwner({
-      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableMaterial, subscribe: () => ({ dispose() {} }) },
-      selectTarget: unavailableMaterial, resolveTarget: async () => null, materializeAccount: unavailableMaterial,
-      projectTargetAccounts: unavailableMaterial, assertTargetAccountMaterializable: unavailableMaterial,
-    });
-    const activatePurposeBindings = vi.fn((input: ActivatePurposeBindingsInput) => {
-      const lease = purposeOwner.activatePurposeBindings(input);
-      return { ...lease, dispose() { disposePurposeLease(); lease.dispose(); } };
-    });
-    const purpose = {
-      consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
-      purpose: 'codex-native-auth',
-    } as const;
-    const binding = {
-      purpose,
-      target: {
-        kind: 'account',
-        account: {
-          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-          accountId: 'leeroy',
-        },
-      },
-    } as const;
-    const resolveAuthForSpawn = vi.fn(async (input: Readonly<{
-      activateQualifiedPurposeBindings?: (snapshot: unknown) => Readonly<{
-        subjectId: string;
-        dispose(): void | Promise<void>;
-      }>;
-      connectedServicesBindingsRaw: unknown;
-    }>) => {
-      const snapshot = {
-        purposes: [purpose],
-        bindings: [binding],
-        authorizedPurposes: [],
-        fileMaterializationPurposes: [],
-        requestAuthUses: [],
-        fileEnvironmentUses: [],
-        environmentUses: [],
-      } as const;
-      const materializationPurposeLease = input.activateQualifiedPurposeBindings?.(snapshot);
-      if (!materializationPurposeLease) {
-        throw new Error('qualified capability purpose activation missing');
-      }
-      return {
-        env: { CODEX_HOME: tempDir! },
-        cleanupOnFailure: null,
-        cleanupOnExit: null,
-        connectedServicesBindings: input.connectedServicesBindingsRaw,
-        qualifiedPurposeBindingSnapshot: snapshot,
-        requestAuthPurposeBindings: [],
-        materializationPurposeLease,
-      };
-    });
-    vi.doMock('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn', () => ({
-      resolveConnectedServiceAuthForSpawn: resolveAuthForSpawn,
-    }));
-
-    const { reloadConfiguration } = await import('@/configuration');
-    reloadConfiguration();
-    const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, {
-      createApiClient: async () => ({} as ApiClient),
-      activatePurposeBindings,
-      isAgentRegistryCurrent: () => true,
-    });
-
-    const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
-      id: 'cli.codex',
-      method: 'probeModels',
-      params: {
-        cwd: tempDir,
-        timeoutMs: 5_000,
-        connectedServices: {
-          v: 1,
-          bindingsByServiceId: {
-            'happier.agent.codex/openai-codex': {
-              source: 'connected',
-              selection: 'profile',
-              profileId: 'leeroy',
-            },
-          },
-        },
-      },
-    });
-
-    expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
-    expect(resolveAuthForSpawn).toHaveBeenCalledOnce();
-    expect(activatePurposeBindings).toHaveBeenCalledWith(expect.objectContaining({
-      subject: expect.objectContaining({
-        kind: 'operation',
-        consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
-      }),
-      purposes: [purpose],
-      bindings: [binding],
-    }));
-    const activationSubject = activatePurposeBindings.mock.calls[0]?.[0].subject;
-    // The capability probe owns one correlation-scoped operation subject; its
-    // currentness must be live rather than a constant.
-    if (activationSubject?.kind !== 'operation') {
-      throw new Error(`capability_probe_subject_kind:${activationSubject?.kind ?? 'missing'}`);
-    }
-    expect(activationSubject.isCurrent()).toBe(true);
-    expect(disposePurposeLease).toHaveBeenCalledOnce();
   }, 90_000);
 
   it('fails closed instead of probing ambient auth when selected credentials are unavailable', async () => {

@@ -145,6 +145,7 @@ import { createAdmittedFollowInputFixture, installFollowHomeReadinessBoundary } 
 import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { createSessionRunnerRespawnManager } from '@/daemon/processSupervision/sessionRunnerRespawn';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { SESSION_RUNNER_EXIT_CODES } from '@/session/shared/spawnSessionContract';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { buildCommittedLaunchMetadata, type CreateSessionMetadataOptions } from '@/agent/runtime/createSessionMetadata';
 import type { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
@@ -9193,7 +9194,7 @@ describe('runHostSessionRuntime', () => {
     const selection = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'same-model' } as const;
     harness.config.policyAgentId = 'claude';
     harness.opts.modelSelection = { v: 1, updatedAt: 10, ref: selection };
-    let metadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default',
+    let metadata: Record<string, unknown> = { ...harness.session.getMetadataSnapshot(), path: '/tmp/workspace', permissionMode: 'default',
       modelSelectionIntentV1: { v: 1, updatedAt: 10, selection } };
     harness.session.getMetadataSnapshot = () => metadata;
     harness.session.updateMetadata.mockImplementation(async (update: unknown) => {
@@ -9203,20 +9204,27 @@ describe('runHostSessionRuntime', () => {
       kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-1',
       expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
     });
+    // A failed receiver retains custody until the caller offers its original.
+    // Exercise that real input boundary before asserting runner retirement.
+    harness.queue.pushIsolate({ text: 'Original startup prompt', localId: 'startup-model-refusal' }, { permissionMode: 'default' });
     const log = vi.spyOn(logger, 'infoFile');
     let failure: unknown;
     try { await runHostSessionRuntime(harness.opts, harness.config, harness.deps); }
     catch (error) { failure = error; }
-    expect(failure).toMatchObject({ code: 'agent_startup_model_reconciliation_failed', message: expect.stringContaining('restart_required') });
+    expect(failure).toMatchObject({ code: 'provider_binding_changed', message: expect.stringContaining('restart_required') });
+    expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+      localId: 'startup-model-refusal', kind: 'rejected_before_effect',
+      diagnostic: expect.objectContaining({ code: 'provider_binding_changed' }),
+    }));
     expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'fail', issue: expect.objectContaining({ code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error' }),
+      action: 'fail', issue: expect.objectContaining({ code: 'provider_binding_changed', source: 'agent_session_error' }),
     }));
     const { SessionTurnMutationV1Schema } = await import('@happier-dev/protocol/sessions/turns/sessionTurnMutationV1');
     const mutations = harness.session.enqueueSessionTurnMutation.mock.calls.map(([mutation]: readonly unknown[]) => SessionTurnMutationV1Schema.parse(mutation));
-    expect(mutations.some(mutation => mutation.action === 'fail' && mutation.issue.code === 'agent_startup_model_reconciliation_failed')).toBe(true);
+    expect(mutations.some(mutation => mutation.action === 'fail' && mutation.issue.code === 'provider_binding_changed')).toBe(true);
     const { reportSessionRunnerFailure } = await import('@/cli/resolveSessionRunnerFailureExitCode');
-    expect(reportSessionRunnerFailure(failure)).toBe(1);
-    expect(log).toHaveBeenCalledWith('[Session] Runner failed', expect.objectContaining({ errorCode: 'agent_startup_model_reconciliation_failed' }));
+    expect(reportSessionRunnerFailure(failure)).toBe(SESSION_RUNNER_EXIT_CODES.TERMINAL_FOLLOW_ADMISSION_FAILED);
+    expect(log).toHaveBeenCalledWith('[Session] Runner failed', expect.objectContaining({ errorCode: 'provider_binding_changed' }));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Startup authority phase'), expect.objectContaining({
       phase: 'model_intent_reconciliation', status: 'failed',
     }));
