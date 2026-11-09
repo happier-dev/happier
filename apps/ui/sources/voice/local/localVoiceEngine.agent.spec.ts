@@ -29,8 +29,9 @@ import {
 } from './localVoiceEngine.testHarness';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import { VOICE_TOOL_RESULTS_JSON_PREFIX, type VoiceAssistantAction } from '@happier-dev/protocol';
-import { ExecutionRunEnsureOrStartResponseSchema, ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX} from '@happier-dev/protocol/voice/toolResultsChannel';
+import { type VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
+import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureOrStartResponseSchema, ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
 import { ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions';
 import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
@@ -741,7 +742,7 @@ describe('local voice engine agent behavior', () => {
         { mode: 'on_first_turn', prewarmOnConnect: true },
         { mode: 'off', prewarmOnConnect: false },
         { mode: 'off', prewarmOnConnect: true },
-    ] as const)('connect schedules one immediate welcome independently of prewarm (mode=$mode, prewarm=$prewarmOnConnect)', async ({ mode, prewarmOnConnect }) => {
+    ] as const)('explicit Start acquires one Run and keeps welcome and readiness work opt-in (mode=$mode, prewarm=$prewarmOnConnect)', async ({ mode, prewarmOnConnect }) => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -783,19 +784,38 @@ describe('local voice engine agent behavior', () => {
         ensureAgentRpc.mockResolvedValueOnce({ ok: true, runId: 'local-agent-run', created: true });
         welcomeActionRpc.mockResolvedValueOnce(ExecutionRunActionResponseSchema.parse({ ok: true, result: { assistantText: 'Welcome!' } }));
 
+        const currentUi = await mountCurrentUi({ commands: [] });
+        expect(ensureAgentRpc).not.toHaveBeenCalled();
+        expect(startTurnRpc).not.toHaveBeenCalled();
+        expect(welcomeActionRpc).not.toHaveBeenCalled();
+
         const { toggleLocalVoiceTurn } = localVoiceEngine;
-        await toggleLocalVoiceTurn('s1');
+        await act(async () => { await toggleLocalVoiceTurn('s1', currentUi.port); });
 
         if (mode === 'immediate') {
             await waitForLocalVoiceBoundaryEvent('speech');
-        } else if (prewarmOnConnect) {
+        } else {
             await waitForLocalVoiceBoundaryEvent('agent-start');
         }
         await flushMicrotasks();
 
-        expect(ensureAgentRpc).toHaveBeenCalledTimes(mode === 'immediate' || prewarmOnConnect ? 1 : 0);
+        expect(ensureAgentRpc).toHaveBeenCalledTimes(1);
+        const acquisition = ExecutionRunEnsureOrStartRequestSchema.parse(ensureAgentRpc.mock.calls[0]?.[0].payload);
+        expect(acquisition.start?.bootstrapMode).toBe(prewarmOnConnect && mode !== 'immediate' ? 'ready_handshake' : 'none');
+        expect(startTurnRpc).not.toHaveBeenCalled();
         expect(welcomeActionRpc).toHaveBeenCalledTimes(mode === 'immediate' ? 1 : 0);
         expect(expoSpeechSpeak).toHaveBeenCalledTimes(mode === 'immediate' ? 1 : 0);
+
+        if (!prewarmOnConnect && mode !== 'immediate') {
+            localVoiceSpeechTranscription.mockResolvedValueOnce('hello world');
+            await act(async () => { await toggleLocalVoiceTurn('s1'); });
+            expect(startTurnRpc).toHaveBeenCalledTimes(1);
+            expect(startTurnRpc.mock.calls[0]?.[0].payload).toMatchObject({
+                runId: 'local-agent-run',
+                message: expect.stringContaining('hello world'),
+            });
+            expect(ensureAgentRpc).toHaveBeenCalledTimes(1);
+        }
     });
 
     it('prewarmOnConnect warms daemon inference when voice home becomes active', async () => {

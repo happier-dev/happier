@@ -2,7 +2,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
+import { presentVoiceUsageLimitMessage } from '@/voice/runtime/machine/voiceMachineErrorCopy';
+import { classifyVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -852,7 +853,6 @@ async function readNativeTurnMessage(
   const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
   if (config?.tts?.autoSpeakReplies === false) return;
   let spoken = false;
-  let failed = false;
   let interrupted = false;
   const registerPlaybackStopper = playbackController.registerStopper.captureAttempt?.() ?? playbackController.registerStopper;
   try {
@@ -866,12 +866,21 @@ async function readNativeTurnMessage(
         noteTtsStarted(text, assistantEntryId);
         voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: sessionId });
       },
-      onTtsFailed: () => { failed = true; },
+    });
+  } catch (error) {
+    if (!isCurrent() || interrupted) return;
+    // Retire the waiting turn through Stop so Retry does not join it before
+    // reading the still-pending Session request on the replacement attempt.
+    await stopLocalVoiceSession();
+    if (captureAdmission || voiceConversationRuntimeMachine.getSnapshot().controlSessionId !== sessionId) return;
+    voiceConversationRuntimeMachine.transitionToDisconnected({
+      controlSessionId: sessionId,
+      error: classifyVoiceMachineError(error, { kind: 'tts_failed', reason: 'tts_failed' }),
     });
   } finally { noteTtsStopped(); }
   if (!isCurrent() || interrupted) return;
   voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
-  if (!listen || !spoken || failed) return;
+  if (!listen || !spoken) return;
   onReady();
   await voiceConversationRuntimeMachine.rearmListening({
     controlSessionId: sessionId,
@@ -966,7 +975,7 @@ async function runVoiceTurnWithSendFailureHandling(
         // Read the same localized refusal that remains in the compact surface.
         // The native Run owns any retained recovery; Voice retires only capture.
         await readNativeTurnMessage(admission, captureAttempt,
-          t(resolveVoiceMachineErrorTranslationKey('provider_error', code)), false, () => true, () => {});
+          presentVoiceUsageLimitMessage(classifyVoiceMachineError(error, { kind: 'provider_error' }).usageLimit), false, () => true, () => {});
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
         throw error;
       } else if (code !== 'claude_error_during_execution'
@@ -1464,8 +1473,7 @@ export async function toggleLocalVoiceTurn(
 
     const welcome = voiceSettingsParse(params.settings?.voice).welcome;
     const shouldWelcome = welcome.enabled && welcome.mode === 'immediate' && config?.tts?.autoSpeakReplies !== false;
-    // Immediate welcome is requested work; prewarm only opts into otherwise idle startup.
-    if (!shouldWelcome && config?.agent?.prewarmOnConnect !== true) return;
+    // Explicit Start acquires the Run; prewarm controls its readiness handshake.
 
     fireAndForget(
       (async () => {
