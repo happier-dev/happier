@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
@@ -21,6 +21,10 @@ import {
 import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
+import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
+import type { PluginUiDataClient, PluginUiAccountCollectionForDefinition } from '@happier-dev/plugin-ui/data';
+import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
+import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
@@ -225,6 +229,22 @@ async function executeAction(
     throw new Error(`unexpected action ${action}`);
 }
 
+/** Real Account Collections with no stored rows: a completed configured-sources read that finds none. */
+function testAccountDataClient(): PluginUiDataClient {
+    const { collections } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
+    return {
+        collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {
+            const collection = definition.id === 'source-instances' ? collections.sourceInstances
+                : definition.id === 'session-links' ? collections.sessionLinks
+                : definition.id === 'user-marks' ? collections.userMarks : null;
+            if (collection === null) throw new Error(`Undeclared test Collection: ${definition.id}`);
+            return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
+        },
+        accountKv: createTestkitAccountKv().kv,
+        openCollectionQuery: async () => { throw new Error('This mount opens no UI query'); },
+    };
+}
+
 const mounted: PluginUiTestkit[] = [];
 let opened: PluginUiTestkitOpenSurfaceInput[] = [];
 
@@ -242,15 +262,22 @@ async function mountShell(options: Readonly<{
     durableUnreachable?: boolean;
     /** Mount the Tasks page over no tasks, with only the personal list or with a tracker connected too. */
     tasks?: 'personalOnly' | 'trackerConnected';
+    /** The Account's Collections are readable, so configured sources settle (here: none are stored). */
+    accountData?: boolean;
 }> = {}): Promise<PluginUiTestkit> {
     opened = [];
+    const accountDataClient = options.accountData === true ? testAccountDataClient() : null;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-182', mountNonce: 'fixture-mount-182' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: options.tasks === undefined ? renderShellSurface
+            surface: accountDataClient !== null
+                ? defineUiSurface((context) => React.cloneElement(
+                    renderShellSurface(context) as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>,
+                    { dataClient: accountDataClient }))
+                : options.tasks === undefined ? renderShellSurface
                 : defineUiSurface(() => <TriageListShell tasksPage subPath="tasks,mine" />),
             surfaceContext: createSurfaceContextFixture({
                 mount: {
@@ -364,6 +391,26 @@ describe('the unconfigured PRs & Issues screen', () => {
         await act(async () => { await Promise.resolve(); });
         expect(durableReads.pins).toBeGreaterThan(pinsBefore);
         expect(durableReads.views).toBeGreaterThan(viewsBefore);
+    });
+
+    it('says unavailable, not empty, in Manage sources while the Account cannot be read, with one Retry', async () => {
+        // Live READY156: "No configured sources" and Add a source sat under "Account data is unavailable".
+        const shell = await mountShell({ settingsPageId: 'triage-sources', configured: true, durableUnreachable: true });
+        const manage = await toolbarMenuItem(shell, 'More', 'menuitem', { name: 'Manage sources' });
+        await act(async () => { await shell.press(manage); });
+        await expect(shell.getByText('Account data is unavailable')).resolves.toBeDefined();
+        await expect(shell.queryByText('No configured sources')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Add a source' })).resolves.toBeUndefined();
+        await expect(shell.queryAllByRole('button', { name: 'Retry' })).resolves.toHaveLength(1);
+    });
+
+    it('lists what the Account holds and keeps adding a source once the configured sources were read', async () => {
+        const shell = await mountShell({ settingsPageId: 'triage-sources', configured: true, accountData: true });
+        const manage = await toolbarMenuItem(shell, 'More', 'menuitem', { name: 'Manage sources' });
+        await act(async () => { await shell.press(manage); });
+        await act(async () => { await vi.waitFor(() => { expect(document.body.textContent).toContain('Happier tasks'); }); });
+        await expect(shell.queryByText('Account data is unavailable')).resolves.toBeUndefined();
+        await expect(shell.getByRole('button', { name: 'Configure Example Forge' })).resolves.toBeDefined();
     });
 
     it('shows no search box while there is nothing to search', async () => {
@@ -481,7 +528,7 @@ describe('the first run of Tasks', () => {
 
 describe('Manage sources on the ordinary list screen', () => {
     it('reaches the source-owned settings page beside the sources it lists', async () => {
-        const shell = await mountShell({ settingsPageId: 'triage-sources', configured: true });
+        const shell = await mountShell({ settingsPageId: 'triage-sources', configured: true, accountData: true });
 
         // The unconfigured screen — and its own Configure offer — is gone.
         await expect(shell.queryByText('No sources are configured')).resolves.toBeUndefined();
@@ -509,6 +556,7 @@ describe('Manage sources on the ordinary list screen', () => {
             settingsPageId: 'triage-sources',
             configured: true,
             openRefuses: true,
+            accountData: true,
         });
 
         await act(async () => {

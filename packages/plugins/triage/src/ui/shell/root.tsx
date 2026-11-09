@@ -1554,6 +1554,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const mountId = React.useId();
   const viewsUnreachable = savedViews.unavailableReason !== null;
   const pinsUnreachable = marks.unavailableReason !== null;
+  const sourcesUnreachable = configuredSources.unavailableReason !== null;
+  const retryConfiguredSources = configuredSources.retry;
   const sourcePanel = useTriageSourcePanelActionsV1(sharedScope, mountId, selectedKey, surfaceActivity.active, hostApi);
   const runMountedOperation = React.useCallback(async (
     operation: TriageMountedUiOperationV1, signal: AbortSignal,
@@ -1641,9 +1643,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         break;
       }
       case 'retryAccountData':
-        if (!viewsUnreachable && !pinsUnreachable) return { status: 'unavailable' };
+        if (!viewsUnreachable && !pinsUnreachable && !sourcesUnreachable) return { status: 'unavailable' };
         if (viewsUnreachable) savedViews.retry();
         if (pinsUnreachable) marks.retry();
+        if (sourcesUnreachable) retryConfiguredSources();
         break;
       case 'retrySessionActivity':
         if (!sessionActivityUnavailable) return { status: 'unavailable' };
@@ -1681,7 +1684,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
+  }, [retryConfiguredSources, sourcesUnreachable, bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
@@ -2092,7 +2095,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         'Happier cannot reach your account right now, so pins and saved views cannot be changed.',
       )
     : savedViews.unavailableReason ?? marks.unavailableReason;
-  const accountNotice = accountNoticeLabel === null ? null : (
+  // Manage sources says the same cause with its own banner and Retry: one message while it is open.
+  const accountNotice = accountNoticeLabel === null || (editingSources && sourcesUnreachable) ? null : (
     <Status
       tone="warning"
       label={accountNoticeLabel}
@@ -2742,6 +2746,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   tone="warning"
                   title={text('plugins.triage.surface.sources.unavailableTitle', 'Account data is unavailable')}
                   description={configuredSources.unavailableReason}
+                  action={<Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="plain" size="small"
+                    onPress={() => executeMountedOperation({ kind: 'retryAccountData' })} />}
                 />
               )}
               {configuredSources.notice === null ? null : (
@@ -2756,12 +2762,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   description={configuredSources.notice.kind === 'refused' ? undefined : configuredSources.notice.message}
                 />
               )}
-              {configuredSources.sources.length === 0 ? (
+              {/* Unavailable or still reading is not empty: only a completed read may say there are none. */}
+              {configuredSources.sources.length === 0 ? (!configuredSources.loaded || sourcesUnreachable ? null : (
                 <Status
                   tone="muted"
                   label={text('plugins.triage.surface.sources.none', 'No configured sources')}
                 />
-              ) : (
+              )) : (
                 <ItemGroup accessibilityLabel={text('plugins.triage.surface.sources.title', 'Configured sources')}>
                   {configuredSources.sources.map((source) => {
                     // A bare account name ("leeroybrun") does not say what it is: the source's own name does.
@@ -2831,7 +2838,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 one, and they are the SAME destinations the unconfigured screen
                 offers — one builder above, so the two cannot drift.
               */}
-              {renderConfigureSourceOffers()}
+              {sourcesUnreachable ? null : renderConfigureSourceOffers()}
             </Stack>
           ) : null}
 

@@ -25,6 +25,8 @@ export type TriageMountedConfiguredSourcesV1 = Readonly<{
   busySourceInstanceId: string | null;
   notice: TriageConfiguredSourcesNoticeV1 | null;
   unavailableReason: string | null;
+  /** Reads the configured sources again after an unavailable read. */
+  retry(): void;
   remove(sourceInstanceId: string): Promise<boolean>;
 }>;
 
@@ -165,12 +167,15 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
     }
   }, [busySourceInstanceId, durable.collections, host, loaded, read, setUnavailableReason, text, unavailableReason]);
 
+  const retry = useCallback(() => { void read(new AbortController().signal); }, [read]);
+
   return useMemo(() => Object.freeze({
     sources,
     loaded,
     busySourceInstanceId,
     notice,
     unavailableReason,
+    retry,
     remove,
-  }), [busySourceInstanceId, loaded, notice, remove, sources, unavailableReason]);
+  }), [busySourceInstanceId, loaded, notice, remove, retry, sources, unavailableReason]);
 }
