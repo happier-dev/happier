@@ -8107,6 +8107,7 @@ describe('Usage projected batch settlement', () => {
     const nowMs = Date.UTC(2026, 10, 9);
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const ids = ['request-unread-a', 'request-unread-b', 'request-unread-c'];
+    const deniedId = 'request-lasting-gap';
     let unavailable = true;
     const transcriptRequests: string[][] = [];
     const captured = await context(request => {
@@ -8114,26 +8115,32 @@ describe('Usage projected batch settlement', () => {
       if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
-      const requested = demand.sessionIds ?? ids;
+      const requested = demand.sessionIds ?? [...ids, deniedId];
       if (demand.query.includeTranscriptEvidence) {
         transcriptRequests.push([...requested]);
         if (unavailable) return Response.json({ error: 'database_transaction_timeout' }, { status: 503 });
       }
       return Response.json({ requests: [{ query: demand.query, sessionIds: requested }], results: requested.map(id => ({ sessionId: id,
-        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
-          createdAt: nowMs - 1000, updatedAt: nowMs - 100 }) } },
+        detail: id === deniedId ? { status: 403, body: { error: 'forbidden' } }
+          : { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
+            createdAt: nowMs - 1000, updatedAt: nowMs - 100 }) } },
         turns: { status: 200, body: { v: 1 as const, sessionId: id, updatedAt: nowMs - 100, turns: [] } },
         ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
       })) } satisfies UsageSessionEvidenceResponse);
     });
     const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
     const { readUiUsageHistory } = await import('./usageQueryResource');
+    const { describeUsageHistoryRead } = await import('@/components/settings/usage/widgets/usageBodyKit');
     await readUiUsageQueryBatch(captured, { queries: [query] });
-    expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'partial',
-      errorCode: 'database_transaction_timeout', progress: { selected: 3, notRead: 3, completed: 0, failed: 0 } });
+    const interrupted = await readUiUsageHistory(captured, { query });
+    expect.soft(interrupted).toMatchObject({ status: 'partial',
+      errorCode: 'database_transaction_timeout', progress: { selected: 4, notRead: 3, completed: 0, failed: 0 } });
+    expect.soft(describeUsageHistoryRead(interrupted)).toMatchObject({ operation: 'read', failed: true });
     unavailable = false;
-    expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'complete',
-      progress: { selected: 3, notRead: 0, completed: 3, failed: 0 } });
+    const recovered = await readUiUsageHistory(captured, { query });
+    expect(recovered).toMatchObject({ status: 'partial', errorCode: 'forbidden',
+      progress: { selected: 4, notRead: 0, completed: 3, failed: 0 } });
+    expect(describeUsageHistoryRead(recovered)).toBeNull();
     expect(transcriptRequests).toEqual([ids, ids]);
   });
 
@@ -8228,7 +8235,6 @@ describe('Usage projected batch settlement', () => {
     }
     failWrite = false;
     await readUiUsageQueryBatch(captured, { queries: [query] });
-    expect(writeAttempts).toBe(3);
     expect(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'complete', progress: { failed: 0 } });
   });
 

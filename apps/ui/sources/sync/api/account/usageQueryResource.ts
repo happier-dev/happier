@@ -1460,6 +1460,8 @@ export async function readUiUsageQueryBatch(
             // comparison or sibling query must not delay this slice's detail.
             await accountingTasks.get(getUsageQueryKey(query));
             requireCurrent(context, signal);
+            const history = readUsageHistoryEntry(accountOwner, query);
+            history.beginRead();
             let snapshots: Awaited<ReturnType<typeof readHowYouWorkEvidence>>;
             try {
                 snapshots = await readHowYouWorkEvidence(context, query, [...accounting.values()], sessionInputReader, accountOwner.readSessionSelection, accountOwner.projectSessionSelection, readSessionCurrentness,
@@ -1476,17 +1478,17 @@ export async function readUiUsageQueryBatch(
                         }
                         publish();
                     }, { readUnconverted: options?.readUnconvertedHistory,
-                        coverage: (selected, notRead) => readUsageHistoryEntry(accountOwner, query).coverage(selected,
+                        coverage: (selected, notRead) => history.coverage(selected,
                             readsUnconvertedTranscriptsOnOpen(query) ? 0 : notRead),
-                        converted: id => readUsageHistoryEntry(accountOwner, query).converted(id),
-                        succeeded: id => readUsageHistoryEntry(accountOwner, query).succeeded(id),
-                        failed: (code, id, retryable) => readUsageHistoryEntry(accountOwner, query).failed(code, id, retryable) }, priorSlices.get(getUsageQueryKey(query)));
+                        converted: id => history.converted(id),
+                        succeeded: id => history.succeeded(id),
+                        failed: (code, id, retryable) => history.failed(code, id, retryable) }, priorSlices.get(getUsageQueryKey(query)));
             } catch (error) {
                 requireCurrent(context, signal);
                 if (!isTransientConnectivityError(error)) throw error;
                 const key = getUsageQueryKey(query);
-                const errorCode = error instanceof SessionEvidenceBatchReadError ? error.errorCode : 'usage_session_evidence_read_failed';
-                readUsageHistoryEntry(accountOwner, query).failed(errorCode);
+                const errorCode = readUsageHistoryFailure(error).errorCode;
+                history.failed(errorCode);
                 // Keep any actual partial admission/refusal already published.
                 // Otherwise the shared aggregation owner retains the prior facts.
                 howYouWorkByQuery.set(key, { ...(howYouWorkByQuery.get(key) ?? { query }), errorCode });
@@ -1688,10 +1690,8 @@ export async function readUiUsageHistory(context: UsageQueryAccountContext, inpu
                             : entry.state.errorCode || entry.state.progress.notRead || entry.state.progress.failed ? 'partial' : 'complete' });
                     invalidateUsageQueryResources(resolveUsageOwnerLifetime(context));
                 } catch (error) {
-                    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-                        ? error.code : 'usage_history_read_failed';
-                    entry.publish({ ...entry.state, status: controller.signal.aborted ? 'cancelled' : 'partial',
-                        ...(controller.signal.aborted ? {} : { errorCode: entry.state.errorCode ?? code }) });
+                    if (!controller.signal.aborted) entry.failed(readUsageHistoryFailure(error).errorCode);
+                    entry.publish({ ...entry.state, status: controller.signal.aborted ? 'cancelled' : 'partial' });
                 } finally {
                     retirement.dispose();
                     entry.controller = undefined;

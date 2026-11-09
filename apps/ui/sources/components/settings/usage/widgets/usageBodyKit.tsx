@@ -31,6 +31,7 @@ import { type UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAn
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { formatUsageCalendarPeriod, formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
+import { getUsageHistoryReadOperation } from '@/sync/api/account/usageHistoryReadState';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
 import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
@@ -706,15 +707,16 @@ export function describeUsageHistoryRead(state: UsageHistoryReadState | null): R
   /** A settled read failed and can be retried, independently of the unread count. */
   failed: boolean;
 }> | null {
-  if (!state) return null;
+  const operation = getUsageHistoryReadOperation(state);
+  if (!state || !operation) return null;
   const { notRead, completed, failed } = state.progress;
-  if (state.status === 'reading')
+  if (operation === 'cancel')
     return { text: t('usage.board.page.historyReading', { done: formatExactCount(completed), total: formatExactCount(completed + notRead) }), label: t('common.cancel'), operation: 'cancel', failed: false };
-  if (failed > 0)
-    return { text: t('usage.board.page.historyFailed', { count: formatExactCount(failed) }), label: t('common.retry'), operation: 'read', failed: true };
-  if (notRead > 0)
-    return { text: t('usage.board.page.historyNotRead', { count: formatExactCount(notRead) }), label: t('usage.board.page.historyReadNow'), operation: 'read', failed: false };
-  return null;
+  if (operation === 'retry')
+    return { text: failed > 0 ? t('usage.board.page.historyFailed', { count: formatExactCount(failed) })
+      : t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }),
+      label: t('common.retry'), operation: 'read', failed: true };
+  return { text: t('usage.board.page.historyNotRead', { count: formatExactCount(notRead) }), label: t('usage.board.page.historyReadNow'), operation: 'read', failed: false };
 }
 
 /**

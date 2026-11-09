@@ -52,7 +52,16 @@ export function readUsageHistoryFailure(error: unknown): Readonly<{
         ...(httpStatus !== undefined ? { httpStatus } : {}) };
 }
 
-/** The Account resource's history projection; failures belong to Sessions, not attempts. */
+/** One recovery decision for the visible history control and its mounted command. */
+export function getUsageHistoryReadOperation(state: UsageHistoryReadState | null): 'read' | 'retry' | 'cancel' | null {
+    if (!state) return null;
+    if (state.status === 'reading') return 'cancel';
+    if (state.progress.failed > 0 || state.status === 'partial' && state.errorCode
+        && readUsageHistoryFailure({ errorCode: state.errorCode }).retryable) return 'retry';
+    return state.progress.notRead > 0 ? 'read' : null;
+}
+
+/** The Account resource's history projection; request failures never invent failed Sessions. */
 export class UsageHistoryEntry {
     state: UsageHistoryReadState = { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } };
     readonly listeners: Set<() => void> = new Set();
@@ -60,6 +69,13 @@ export class UsageHistoryEntry {
     pending?: Promise<UsageHistoryReadState>;
     private readonly failures = new Map<string, string>();
     private readonly coverageGaps = new Map<string, string>();
+    private operationFailure?: string;
+
+    /** A new physical read replaces the prior request outcome, retaining Session coverage facts. */
+    beginRead(): void {
+        this.operationFailure = undefined;
+        this.update(this.state.progress);
+    }
 
     publish(state: UsageHistoryReadState): void {
         if (sameStrictJsonValue(this.state, state)) return;
@@ -67,7 +83,8 @@ export class UsageHistoryEntry {
         for (const listener of this.listeners) listener();
     }
 
-    private update(progress: UsageHistoryReadState['progress'], errorCode = this.failures.values().next().value ?? this.coverageGaps.values().next().value): void {
+    private update(progress: UsageHistoryReadState['progress']): void {
+        const errorCode = this.operationFailure ?? this.failures.values().next().value ?? this.coverageGaps.values().next().value;
         this.publish({ progress: { ...progress, failed: this.failures.size },
             status: this.state.status === 'reading' ? 'reading' : errorCode ? 'partial' : progress.notRead ? 'idle' : 'complete',
             ...(errorCode ? { errorCode } : {}) });
@@ -97,8 +114,8 @@ export class UsageHistoryEntry {
             const lasting = !retryable;
             (lasting ? this.failures : this.coverageGaps).delete(sessionId);
             (lasting ? this.coverageGaps : this.failures).set(sessionId, errorCode);
-        }
-        // An aggregate transport error has no Session identity to count.
-        this.update(this.state.progress, this.failures.values().next().value ?? this.coverageGaps.values().next().value ?? errorCode);
+        } else this.operationFailure = errorCode;
+        // Keep the request outcome through later coverage publications, without counting Sessions it did not identify.
+        this.update(this.state.progress);
     }
 }
