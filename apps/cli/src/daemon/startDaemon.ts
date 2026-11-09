@@ -117,6 +117,7 @@ import { startDaemonRuntimeBootstrap } from './startup/startDaemonRuntimeBootstr
 import { captureNativePublicProfileRefresh } from './account/nativePublicProfileRefreshActions';
 import type { SingleFlightIntervalLoopHandle } from './lifecycle/singleFlightIntervalLoop';
 import { createRequesterSessionRuntimeContext } from './sessionEncryption/createRequesterSessionRuntimeContext';
+import { resolveRequesterSessionRuntimeDirectories } from './sessionEncryption/requesterSessionRuntimeDirectories';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from './sessionEncryption/requesterSessionCredentials';
 import { createRequesterSessionRuntimeContextResolver, resolveRequesterSessionBootstrapFromCustody, bindRequesterSessionRuntimeMachineAdmissionCurrentness, listRequesterSessionCredentialBindings, releaseUnretainedRequesterSessionRuntimeContext } from './sessionEncryption/requesterSessionCredentials';
 import { notifyActiveAccountConnectedServicesProjection } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -1341,6 +1342,10 @@ export async function startDaemon(
     };
     const connectedServiceGroupHomeCleanupScheduler = createConnectedServiceGroupHomeCleanupScheduler({
       activeServerDir: configuration.activeServerDir,
+      additionalAccountHomeRoots: externalActionAccountId ? [resolveRequesterSessionRuntimeDirectories({
+        activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
+        attribution: { accountId: externalActionAccountId },
+      }).activeServerDir] : [],
       runtimeRegistry: connectedServiceRuntimeRegistry,
       pidToTrackedSession,
       resolveGroupDeletionAuthority,

@@ -24,6 +24,21 @@ function serviceHomeSegment(serviceId: ConnectedAccountServiceKey): string {
     ?? `qualified-${normalizeMaterializationKeyForPath(serviceId)}`;
 }
 
+export function resolveConnectedServiceAccountHomesDir(params: Readonly<{
+  activeServerDir: string;
+  serviceId: ConnectedAccountServiceKey;
+  profileId: string;
+  pathJoin?: JoinPath;
+}>): string {
+  const pathJoin = params.pathJoin ?? join;
+  return pathJoin(
+    resolveConnectedServiceHomesDir(params.activeServerDir, pathJoin),
+    serviceHomeSegment(params.serviceId),
+    ConnectedServiceProfileIdSchema.safeParse(params.profileId).success
+      ? params.profileId : normalizeMaterializationKeyForPath(params.profileId),
+  );
+}
+
 export function resolveConnectedServiceHomeDir(params: Readonly<{
   activeServerDir: string;
   serviceId: ConnectedAccountServiceKey;
@@ -34,10 +49,7 @@ export function resolveConnectedServiceHomeDir(params: Readonly<{
 }>): string {
   const pathJoin = params.pathJoin ?? join;
   const base = pathJoin(
-    resolveConnectedServiceHomesDir(params.activeServerDir, pathJoin),
-    serviceHomeSegment(params.serviceId),
-    ConnectedServiceProfileIdSchema.safeParse(params.profileId).success
-      ? params.profileId : normalizeMaterializationKeyForPath(params.profileId),
+    resolveConnectedServiceAccountHomesDir(params),
     params.agentId,
   );
   const providerScopedKey = typeof params.providerScopedKey === 'string' ? params.providerScopedKey.trim() : '';

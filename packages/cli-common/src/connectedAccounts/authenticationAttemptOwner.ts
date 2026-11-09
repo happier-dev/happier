@@ -15,13 +15,14 @@ import type {
 } from './authenticationTypes.js';
 import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
 import type { ConnectedAccountAttemptTransactionRecord, PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountConfigurationFieldV2, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import { ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -120,6 +121,8 @@ export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     accountId: string;
     authenticationModeId: string;
     credentialKind?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['kind'];
+    includesApiKey?: true;
+    accessMode?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['accessMode'];
     directExportContract?: typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 | null;
     contributionContractVersion?: string;
     expectedCredentialRevision: string | null;
@@ -133,6 +136,8 @@ export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     stagedAccountConfigurationContent?: unknown;
     providerIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
     authenticationProvenance?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['authenticationProvenance'];
+    /** Invocation-local only; the prepared durable settlement never contains this observation. */
+    completionObservation?: Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>['completionObservation'];
     displayName: string;
     scopes: readonly string[];
 }>;
@@ -156,7 +161,7 @@ export type ConnectedAccountDeviceTransactionSnapshot = Readonly<{
     userCode: string;
     stagedCredentials: Readonly<Record<string, string>>;
     stagedAccountConfigurationContent?: unknown;
-    preparedSettlement?: ConnectedAccountAttemptSettlementRequest;
+    preparedSettlement?: Omit<ConnectedAccountAttemptSettlementRequest, 'completionObservation'>;
 }>;
 
 export type ConnectedAccountOAuthTransactionSnapshot = Readonly<{
@@ -179,7 +184,7 @@ export type ConnectedAccountOAuthTransactionSnapshot = Readonly<{
     expiresAtMs?: number;
     stagedCredentials: Readonly<Record<string, string>>;
     stagedAccountConfigurationContent?: unknown;
-    preparedSettlement?: ConnectedAccountAttemptSettlementRequest;
+    preparedSettlement?: Omit<ConnectedAccountAttemptSettlementRequest, 'completionObservation'>;
 }>;
 
 export type ConnectedAccountOAuthTransaction = Readonly<{
@@ -274,7 +279,8 @@ export type ConnectedAccountAttemptResponse =
     | Readonly<{ status: 'pending'; attemptId: string; retryAfterMs: number }>
     | Readonly<{ status: 'outcomeUnknown'; attemptId: string; diagnostic: unknown }>
     | Readonly<{ status: 'reconnectRequired'; attemptId: string; code: string; diagnostic?: unknown }>
-    | Readonly<{ status: 'connected'; attemptId: string; account: PluginConnectedAccountRef }>
+    | Readonly<{ status: 'connected'; attemptId: string; account: PluginConnectedAccountRef; includesApiKey?: true;
+        accessMode?: ConnectedAccountAttemptSettlementRequest['accessMode'] }>
     | Readonly<{ status: 'cancelled'; attemptId: string }>
     | Readonly<{
         status: 'cleanupPending';
@@ -311,7 +317,8 @@ type ActiveStoredAttempt = {
     credentials: ReturnType<typeof createAttemptCredentialStore>;
     selectedSecrets?: NonNullable<ConnectedAccountManualInput['selectedSecrets']>;
     pendingDurableOperations: number;
-    preparedSettlement: ConnectedAccountAttemptSettlementRequest | null;
+    preparedSettlement: Omit<ConnectedAccountAttemptSettlementRequest, 'completionObservation'> | null;
+    completionObservation?: ConnectedAccountAttemptSettlementRequest['completionObservation'];
     preparedSettlementAcknowledged: boolean;
     decisiveSettlement: Promise<AttemptResponse> | null;
     providerStart?: Readonly<{ promise: Promise<AttemptResponse>; settle(response: AttemptResponse): void }>;
@@ -475,7 +482,7 @@ function diagnosticCode(diagnostic: unknown, fallback: string): string {
         && typeof diagnostic.code === 'string'
         && diagnostic.code.length > 0
     ) {
-        return diagnostic.code;
+        return normalizeLegacyConnectedServiceUxDiagnosticCode(diagnostic.code);
     }
     return fallback;
 }
@@ -1810,7 +1817,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
         let settlement: Awaited<ReturnType<typeof params.settlement.settle>>;
         try {
-            settlement = await operation(request);
+            settlement = await operation(attempt.completionObservation
+                ? { ...request, completionObservation: attempt.completionObservation }
+                : request);
         } catch {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
@@ -1865,6 +1874,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             status: 'connected',
             attemptId: attempt.id,
             account: settlement.account,
+            ...(request.includesApiKey ? { includesApiKey: request.includesApiKey } : {}),
+            ...(request.accessMode ? { accessMode: request.accessMode } : {}),
         };
         attempt.lastResponse = response;
         await destroyAttempt(attempt, response);
@@ -2058,12 +2069,17 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             const title = typeof field?.title === 'string' ? field.title : field?.title?.fallback;
             secretResources[key] = { resourceId: params.createSavedSecretResourceId(), displayName: (title ?? key).slice(0, 100) };
         }
+        attempt.completionObservation = result.completionObservation;
+        const accessMode = result.accessMode
+            ?? (isConnectedAccountApiKeyModeV1(attempt.admission.descriptor) ? 'apiKey' : undefined);
         attempt.preparedSettlement = Object.freeze({
             intent: attempt.intent,
             service: attempt.admission.service,
             accountId,
             authenticationModeId: attempt.admission.modeId,
             ...(result.credentialKind ? { credentialKind: result.credentialKind } : {}),
+            ...(result.includesApiKey ? { includesApiKey: result.includesApiKey } : {}),
+            ...(accessMode ? { accessMode } : {}),
             directExportContract:
                 attempt.admission.descriptor.kind === 'manual'
                     ? attempt.admission.descriptor.directExport?.contractVersion ?? null

@@ -64,11 +64,10 @@ import { resolveConnectedServiceTargetMaterializedRoot } from './resolveConnecte
 import { resolveConnectedServiceNativeHomeTarget } from './resolveConnectedServiceNativeHomeTarget';
 import { observeConnectedServiceMaterializationPhase, startConnectedServiceMaterializationPhase } from './materializationPhase';
 import { ensurePrivateConnectedServiceMaterializedRoot, isCanonicalConnectedServiceMaterializedRoot } from './privateMaterializedRoot';
-import { materializeQualifiedConnectedAccountLaunchUses } from './materializeQualifiedConnectedAccountLaunchUses';
+import { assertQualifiedConnectedAccountLaunchUsesProduced, materializeQualifiedConnectedAccountLaunchUses } from './materializeQualifiedConnectedAccountLaunchUses';
 import { preserveConnectedAccountRequestAuthCapabilityDuringRootReplacement } from '../requestAuth/capabilityFile';
 import {
   createExactV021ConnectedServiceMaterializationOwner,
-  isExactV021GeminiOauthLaunchProjection,
   materializeExactV021AgentLaunchProjection,
 } from '../compatibility/exactV021ConnectedServiceMaterialization';
 import { runSerializedMaterialization, runSerializedMaterializationPromotion } from './rootQueue';
@@ -233,19 +232,17 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     if (!snapshot && !params.legacyV021 && !params.nativeHomeOnly) {
       throw new Error('Connected Account launch declaration is unavailable');
     }
-    const projectionOnlyGeminiOauth = params.legacyV021
-      && [...params.recordsByServiceId.values()].some((record) =>
-        isExactV021GeminiOauthLaunchProjection({
-          agentId: params.agentId,
-          record,
-        }));
-    const connectedAccountsOwner = params.legacyV021
+    const exactV021Owner = params.legacyV021
       ? createExactV021ConnectedServiceMaterializationOwner({
+          agentId: params.agentId,
           registry: lease.registry,
           purposeBindings: snapshot?.bindings ?? Object.freeze([]),
           recordsByServiceId: params.recordsByServiceId,
         })
-      : params.connectedAccountsOwner ?? lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+      : null;
+    const projectionOnly = exactV021Owner?.projectionOnly === true;
+    const connectedAccountsOwner = exactV021Owner
+      ?? params.connectedAccountsOwner ?? lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
     if (!connectedAccountsOwner && !params.nativeHomeOnly) {
       throw new Error('Connected Account launch authority is unavailable');
     }
@@ -280,7 +277,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           : []
       )),
     );
-    if (!projectionOnlyGeminiOauth && stateSharingDescriptor?.providerSupportStatus === 'supported'
+    if (!projectionOnly && stateSharingDescriptor?.providerSupportStatus === 'supported'
       && stateSharingDescriptor.nativeHome) {
       const capturedPurposes = new Set<string>();
       for (const scope of snapshot?.fileMaterializationPurposes ?? []) {
@@ -318,7 +315,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       }
     }
     let memberAccountSettingsApplication: import('@/daemon/agentIsolation/agentLaunchFrame').AgentLaunchAccountSettingsApplication | undefined;
-    const launchEnvironment: Awaited<ReturnType<typeof materializeQualifiedConnectedAccountLaunchUses>> = snapshot && connectedAccountsOwner && !projectionOnlyGeminiOauth
+    const launchEnvironment: Awaited<ReturnType<typeof materializeQualifiedConnectedAccountLaunchUses>> = snapshot && connectedAccountsOwner && !projectionOnly
       ? await observeConnectedServiceMaterializationPhase(params, 'launch_credentials', () => materializeQualifiedConnectedAccountLaunchUses({
         connectedAccountsOwner: {
           getBinding: input => connectedAccountsOwner.getBinding(input),
@@ -355,7 +352,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             }
           : {}),
       }))
-      : Object.freeze({ env: Object.freeze({}), unsetEnvKeys: Object.freeze([]) });
+      : Object.freeze({ env: Object.freeze({}), unsetEnvKeys: Object.freeze([]), producedPurposeKeys: Object.freeze([]) });
 
     signalController.signal.throwIfAborted();
     const env: Record<string, string> = { ...launchEnvironment.env };
@@ -389,12 +386,11 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         nativeHome, snapshot, expectedAccountsByPurposeKey, probePurpose: params.probePurpose,
       });
       if (durableTarget) {
-        targetMaterializedRoot = durableTarget;
         if (!homesRootIsOwned || !await isCanonicalConnectedServiceMaterializedRoot({
-          baseDir: homesRoot, rootDir: targetMaterializedRoot, allowMissing: true,
+          baseDir: homesRoot, rootDir: durableTarget, allowMissing: true,
         })) throw new Error('connected_service_materialization_root_unsafe');
       }
-      const nativeRoot = targetMaterializedRoot;
+      const nativeRoot = durableTarget ?? targetMaterializedRoot;
       const durableNativeHome = nativeRoot !== params.rootDir;
       const prepareNativeHome = async () => {
         signalController.signal.throwIfAborted();
@@ -631,15 +627,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       };
 
       const materializeNativeHome = async () => {
-        // Prepare this serialized home as one filesystem effect. Each helper
-        // already writes multiple files; repeated Home verification between
-        // those dependent substeps adds network latency while holding the home
-        // queue. Credentials and promotion keep their separate fresh fences.
-        const applyNativeHome = await prepareNativeHome();
-        await writeArtifacts(applyNativeHome);
-
         const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
-        for (const scope of projectionOnlyGeminiOauth
+        const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
+        for (const scope of projectionOnly
           ? []
           : snapshot?.fileMaterializationPurposes ?? []) {
           if (!snapshot?.bindings.some((binding) => (
@@ -690,8 +680,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           }
           if (!Object.entries(materialization.files).some(([fileId, contents]) =>
             stateSharingDescriptor.authIsolation.secretEntries.includes(fileId) && contents.byteLength > 0)) {
-            throw new Error('Connected Account native-home credential file is unavailable');
+            continue;
           }
+          producedPurposeKeys.add(qualifiedPurposeKey(scope.purpose));
           for (const [fileId, contents] of Object.entries(materialization.files)) {
             if (Object.prototype.hasOwnProperty.call(nativeHomeFiles, fileId)) {
               throw new Error(
@@ -701,6 +692,16 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             nativeHomeFiles[fileId] = contents;
           }
         }
+        if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
+          snapshot, producedPurposeKeys, includeNativeHomeUses: true,
+        });
+        if (Object.keys(nativeHomeFiles).length === 0 && !params.nativeHomeOnly
+          && !params.legacyV021 && !projectionOnly) return;
+
+        targetMaterializedRoot = nativeRoot;
+        // Prepare only when this invocation actually needs a private native home.
+        const applyNativeHome = await prepareNativeHome();
+        await writeArtifacts(applyNativeHome);
         await observeConnectedServiceMaterializationPhase(params, 'native_home_credential_write', () => writeArtifacts(() => materializeConnectedServiceNativeHomeCredentials({
           targetRoot: nativeRoot,
           declaredSecretEntries:
@@ -752,7 +753,8 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         runtimeHome: params.agentLaunchTarget.runtimeHome,
         ...(params.agentLaunchTarget.memberIdentity ? { memberIdentity: params.agentLaunchTarget.memberIdentity } : {}),
         environment: Object.freeze(Object.fromEntries(Object.entries(agentEnvironment)
-          .filter(([key]) => !key.startsWith('HAPPIER_')))),
+          .filter(([key]) => !key.startsWith('HAPPIER_')
+            || snapshot?.environmentUses?.some(use => use.environmentKey === key)))),
         selectedMaterials: Object.freeze(agentSelectedMaterials),
         ...(memberAccountSettingsApplication ? { accountSettingsApplication: memberAccountSettingsApplication } : {}),
       }) } : {}),
@@ -777,6 +779,8 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
 }
 
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
+  /** A Provider-only launch still needs the Agent's declared private native home. */
+  nativeHomeOnly?: boolean;
   agentLaunchTarget?: AgentLaunchMaterializationTarget;
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
@@ -824,6 +828,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
 }
 
 async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
+  nativeHomeOnly?: boolean;
   agentLaunchTarget?: AgentLaunchMaterializationTarget;
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
@@ -921,9 +926,9 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       : null;
   const legacyV021Authority =
     params.connectedAccountMaterializationAuthority?.kind === 'legacy_unfenced_one_shot';
-  const nativeHomeOnly = params.connectedAccountMaterializationAuthority === undefined
+  const nativeHomeOnly = params.nativeHomeOnly === true || (params.connectedAccountMaterializationAuthority === undefined
     && params.allowNativeAccountState === false && params.recordsByServiceId.size === 0
-    && !params.qualifiedPurposeBindingSnapshot;
+    && !params.qualifiedPurposeBindingSnapshot);
   const qualifiedPurposeBindingSnapshot =
     params.qualifiedPurposeBindingSnapshot ?? null;
   const exactPurposeBindingSubjectId =

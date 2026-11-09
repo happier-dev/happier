@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,9 @@ import { resolveMergedContributionRegistry } from '@/plugins/projection/registry
 import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authoring/sourceModule';
 import { listQualifiedConnectedAccountsV4, QualifiedConnectedAccountCredentialConflictError, type deleteQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { ConnectedServiceGroupHomeCleanupScheduler } from './homes/ConnectedServiceGroupHomeCleanupScheduler';
+import { resolveConnectedServiceHomeDir } from './homes/resolveConnectedServiceHomeDir';
+import { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
 import {
@@ -124,6 +127,47 @@ async function createHarness(retireOnRelease = false, afterRelease?: () => void)
 }
 
 describe('revokeQualifiedConnectedAccount', () => {
+  it.each([false, true])('removes only the revoked account home after its finite use ends (live=%s)', async live => {
+    const harness = await createHarness();
+    const root = await mkdtemp(join(tmpdir(), 'happier-revoke-native-home-'));
+    createdDirectories.push(root);
+    const serviceKey = `${account.service.pluginId}/${account.service.localId}`;
+    const home = resolveConnectedServiceHomeDir({ activeServerDir: root, serviceId: serviceKey, profileId: account.accountId, agentId: 'codex' });
+    const otherHome = resolveConnectedServiceHomeDir({ activeServerDir: root, serviceId: serviceKey, profileId: 'personal', agentId: 'codex' });
+    const native = join(root, 'unmanaged');
+    for (const directory of [home, otherHome, native]) {
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'auth.json'), directory === home ? 'selected-B' : 'preserve-A');
+      await writeFile(join(directory, 'settings.json'), 'deliberate-settings');
+      await writeFile(join(directory, 'trust.json'), 'deliberate-trust');
+    }
+    await symlink(native, join(home, 'inherited-tool-config'), process.platform === 'win32' ? 'junction' : 'dir');
+    const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+    if (live) runtimeRegistry.registerRunTarget({ runKey: 'execution_run:finite', pid: 4567, agentId: 'codex',
+      materializationKey: 'execution_run:finite', connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+        [serviceKey]: { source: 'connected', selection: 'profile', profileId: account.accountId },
+      } } });
+    const cleanup = new ConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, runtimeRegistry, hasLiveTarget: () => false });
+    await expect(revokeQualifiedConnectedAccount({ account, cleanupGroupReferences: true, token: harness.credentials.token,
+      resolveV4Support: () => 'advertised', resolveRemovalReviewSupport: () => 'advertised',
+      establishedRuntimeOwner: harness.owner, deleteCredential: harness.deleteCredential,
+      cleanupAccountHomes: account => cleanup.scheduleDeletedAccountCleanup({ account }),
+    })).resolves.toMatchObject({ status: 'deleted' });
+    if (live) {
+      expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe('selected-B');
+      expect(await cleanup.cleanupPendingDeletedGroupHomes()).toEqual([]);
+      runtimeRegistry.unregisterRunKey('execution_run:finite');
+      await cleanup.cleanupPendingDeletedGroupHomes();
+    }
+    await expect(lstat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readdir(dirname(dirname(home)))).not.toContain('.quarantine');
+    for (const directory of [otherHome, native]) {
+      expect(await readFile(join(directory, 'auth.json'), 'utf8')).toBe('preserve-A');
+      expect(await readFile(join(directory, 'settings.json'), 'utf8')).toBe('deliberate-settings');
+      expect(await readFile(join(directory, 'trust.json'), 'utf8')).toBe('deliberate-trust');
+    }
+  });
+
   it.each(['timeout', 'internal', 'rollback'] as const)('preserves the actual credential-delete disposition after %s at the Home HTTP boundary', async failure => {
     const harness = await createHarness();
     let localCredentialPresent = true;

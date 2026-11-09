@@ -69,6 +69,7 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
   resolveV4Support: () => QualifiedConnectedAccountV4Support;
   resolveRemovalReviewSupport?: () => QualifiedConnectedAccountV4Support;
   deleteCredential?: typeof deleteQualifiedConnectedAccountCredentialV4;
+  cleanupAccountHomes?: (account: QualifiedConnectedAccountRef) => Promise<unknown>;
 }>): Promise<
   | Readonly<{
       status: 'deleted';
@@ -91,13 +92,14 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
   const settleLocalDeletion = async (deletion: Parameters<typeof deleteCredential>[0]['deletion']) => {
     try {
       await deleteCredential({ token: input.token, deletion });
-      return true;
     } catch (error) {
       // The HTTP owner has the dispatch witness. Preserve its uncertainty as
       // the existing revoke result instead of reporting a definite refusal.
       if (error && typeof error === 'object' && 'code' in error && error.code === 'outcome_unknown') return false;
       throw error;
     }
+    await input.cleanupAccountHomes?.(input.account);
+    return true;
   };
   const currentRevision = removalSupport === 'advertised' || input.emergencyRevoke || input.expectedCredentialRevision !== undefined
     ? await input.establishedRuntimeOwner.readCredentialRevision({ account: input.account,

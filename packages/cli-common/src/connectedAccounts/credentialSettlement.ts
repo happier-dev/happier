@@ -12,7 +12,8 @@ type AccountMode = 'plain' | 'e2ee';
 type SettlementResult = Readonly<{ status: 'connected'; account: QualifiedConnectedAccountRef }>
     | Readonly<{ status: 'conflict' | 'rejected' | 'unavailable'; code: string }>;
 type SettledAccount = Readonly<{ account: QualifiedConnectedAccountRef; accountMode: AccountMode;
-    credentialRevision: string; configurationRevision: string | null }>;
+    credentialRevision: string; configurationRevision: string | null;
+    completionObservation?: ConnectedAccountAttemptSettlementRequest['completionObservation'] }>;
 
 /** Credential CAS and lost-ack reconciliation, shared by portable and native hosts. */
 export function createConnectedAccountCredentialSettlement(params: Readonly<{
@@ -53,13 +54,17 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                 expectedConfigurationRevision: input.configurationRevision,
                 health: { v: 1, status: 'connected', reconnectRequired: false } });
         }
-        try { await params.onSettled?.(input); } catch { params.onPublicationFailure?.(); }
+        try { await params.onSettled?.({ ...input,
+            ...(request.completionObservation ? { completionObservation: request.completionObservation } : {}),
+        }); } catch { params.onPublicationFailure?.(); }
         return { status: 'connected', account: input.account };
     };
     const settle = async (request: ConnectedAccountAttemptSettlementRequest, reconciliation: boolean): Promise<SettlementResult> => {
         const account = { service: request.service, accountId: request.accountId };
         const metadata = QualifiedConnectedAccountCredentialMetadataV4Schema.parse({
             ...(request.credentialKind ? { kind: request.credentialKind } : {}),
+            ...(request.includesApiKey ? { includesApiKey: request.includesApiKey } : {}),
+            ...(request.accessMode ? { accessMode: request.accessMode } : {}),
             ...(request.providerIdentity ? { providerIdentity: request.providerIdentity } : {}),
             ...(request.authenticationProvenance ? { authenticationProvenance: request.authenticationProvenance } : {}),
             displayName: request.displayName, scopes: request.scopes,

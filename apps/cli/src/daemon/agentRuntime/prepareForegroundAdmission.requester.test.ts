@@ -2,7 +2,7 @@ import { createProviderAccountUsageStore } from '@/daemon/connectedServices/acco
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { AccountSettingsSchema, FeaturesResponseSchema, SavedSecretResourceMaterialsResponseV1Schema,
   sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
@@ -18,7 +18,7 @@ import { createRequesterSessionCredentialCustody, resolveRequesterSessionBootstr
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { createExternalConnectedAccountForegroundFixture, createForegroundPurposeOwnerFixture } from './prepareForegroundAdmission.connectedServices.testkit';
 import type { PrepareForegroundAgentRuntimeAdmissionDependencies } from './prepareForegroundAdmission';
-import { createRequesterSessionRuntimeContext } from '../sessionEncryption/createRequesterSessionRuntimeContext';
+import { createRequesterSessionRuntimeContext, resolveRequesterSessionRuntimeDirectories } from '../sessionEncryption/createRequesterSessionRuntimeContext';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
@@ -39,7 +39,7 @@ describe('foreground requester Account admission through protected custody', () 
         config: { supported: true, modes: ['copied'], entries: [{ path: 'config.toml', mode: 'force_copied' }] },
         state: { supported: true, modes: ['isolated'], entries: [], symlinkUnavailableDegradePolicy: 'degrade_to_isolated' },
         authIsolation: { mode: 'materialized_home', secretEntries: ['auth.json'] },
-        nativeHome: { environmentKey: 'ACME_NATIVE_HOME', defaultRelativePath: '.acme-native-home' } } },
+        nativeHome: { environmentKey: 'ACME_NATIVE_HOME', defaultRelativePath: '.acme-native-home', materializedDirectoryName: 'native' } } },
       materializeAccount: async () => { throw new Error('Bob foreground must never open Alice native Account'); } });
     let bobFile = '';
     const bobPurpose = createForegroundPurposeOwnerFixture({ consumer: alicePurpose.purpose.consumer,
@@ -181,6 +181,11 @@ describe('foreground requester Account admission through protected custody', () 
         if (!claim.ok) throw new Error('Bob native Account claim refused');
         const nativeHome = claim.environment.ACME_NATIVE_HOME;
         if (!nativeHome) throw new Error('Bob isolated native Account home unavailable');
+        const requesterDirectories = resolveRequesterSessionRuntimeDirectories({ activeServerDir,
+          connectedServicesMaterializationBaseDir: dependencies.connectedServicesMaterializationBaseDir!, attribution });
+        const requesterNativeHomePath = relative(requesterDirectories.activeServerDir, nativeHome);
+        expect(isAbsolute(requesterNativeHomePath)).toBe(false);
+        expect(requesterNativeHomePath.split(/[\\/]/)).not.toContain('..');
         expect(await readFile(join(nativeHome, 'auth.json'))).toEqual(Buffer.from([0, 255, 17, 99]));
         await expect(readFile(join(nativeHome, 'config.toml'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(await readFile(join(aliceNativeHome, 'config.toml'), 'utf8')).toBe('alice-private-config');
@@ -213,7 +218,7 @@ describe('foreground requester Account admission through protected custody', () 
             registry: runtimeRegistry, trackedSessions, getRequester: () => runtime,
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures) });
           runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: runtimeBootstrap,
-            activeServerDir, connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-runtime-materialized'),
+            activeServerDir: join(fixture.home, 'bob-runtime-server'), connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-runtime-materialized'),
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures), coordinatorInput: {
               machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'foreground-runtime', happyHomeDir: fixture.home,
               logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: {
@@ -245,9 +250,30 @@ describe('foreground requester Account admission through protected custody', () 
           expect(promotedMarker).not.toHaveProperty('requesterSessionRuntimeContext');
           expect(JSON.stringify(promotedMarker)).not.toContain(credentials.token);
           expect(JSON.stringify(promotedMarker)).not.toContain(Buffer.from(keyPair.secretKey).toString('base64'));
+          await prepared.prepared.cleanup();
+          const contextAdmission = await fixture.prepare({ ...request, attemptId: 'bob-runtime-native-home' }, {
+            ...dependencies, requesterSessionBootstrap: runtime.bootstrap, requesterSessionRuntimeContext: runtime,
+          });
+          expect(contextAdmission.ok, contextAdmission.ok ? undefined : contextAdmission.error.code).toBe(true);
+          if (!contextAdmission.ok) throw new Error('Real requester runtime admission refused');
+          const contextClaim = await contextAdmission.prepared.claim({ canonicalSessionId: sessionId, httpPort: 43127,
+            foregroundSatisfiedProfileSecretRequirementNames: [], nativeHomeSourceEnvironmentValue: aliceNativeHome });
+          expect(contextClaim.ok, contextClaim.ok ? undefined : contextClaim.error.code).toBe(true);
+          if (!contextClaim.ok) throw new Error('Real requester runtime native-home claim refused');
+          const contextNativeHome = contextClaim.environment.ACME_NATIVE_HOME;
+          if (!contextNativeHome) throw new Error('Real requester runtime native home unavailable');
+          const contextNativeHomePath = relative(runtime.activeServerDir, contextNativeHome);
+          expect(isAbsolute(contextNativeHomePath)).toBe(false);
+          expect(contextNativeHomePath.split(/[\\/]/)).not.toContain('..');
+          const contextPromotion = { ...promotion,
+            authorityFilePath: contextAdmission.prepared.authorization.authorityFilePath,
+            retainedAgent: contextClaim.authority.retainedAgent, runner: contextClaim.authority.runner,
+            capabilityDigest: contextClaim.authority.capabilityDigest, invocationContext: contextClaim.invocationContext };
+          expect(await promoteForegroundDaemonServiceAuthority(contextPromotion)).toBe(true);
           await runtime.dispose();
           expect(await bootstrap.isCurrent()).toBe(true);
-          expect(await promoteForegroundDaemonServiceAuthority(promotion)).toBe(false);
+          expect(await promoteForegroundDaemonServiceAuthority(contextPromotion)).toBe(false);
+          await contextAdmission.prepared.cleanup();
           expect(await fixture.prepare({ ...request, attemptId: 'disposed-runtime' }, {
             ...dependencies, requesterSessionRuntimeContext: runtime,
           })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });

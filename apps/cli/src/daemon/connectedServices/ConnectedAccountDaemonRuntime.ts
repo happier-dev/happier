@@ -245,6 +245,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         | 'deleteCredential'
         | 'resolveV4Support'
         | 'resolveRemovalReviewSupport'
+        | 'cleanupAccountHomes'
     > & Readonly<{
         legacyCredentialApi?: RevisionedLegacyRevocationInput['api'];
     }>;
@@ -748,6 +749,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         result = command.emergencyRevoke
                             ? Object.freeze({ ...legacyResult, remoteStatus: 'remoteNotAttempted' as const })
                             : legacyResult;
+                        if (result.status === 'deleted') await params.revocation.cleanupAccountHomes?.(command.account);
                     } else {
                         result = await revokeQualifiedConnectedAccount({
                             ...params.revocation,

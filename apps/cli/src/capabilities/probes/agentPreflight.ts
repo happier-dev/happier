@@ -1,6 +1,7 @@
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
+import type { ResolveContributedProviderCatalogParsers } from '@/providers/probe/runtimeServices';
 import { projectNativeCatalogModels } from './nativeCatalogModels';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -9,7 +10,7 @@ import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScop
 import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
-import { CodexPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+import { AgentPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/agentPassiveRealtimeSetup';
 import { ProbedCatalogOptionValueSchema } from '@happier-dev/protocol/capabilities';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { z } from 'zod/mini';
@@ -19,6 +20,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { buildScopedProcessEnv, stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readDeclaredCatalogConnectedServiceIds, resolveCatalogAgentConnectedServiceIds, readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
@@ -65,6 +67,7 @@ export type CliProbeDependencies = Readonly<{
         service: AgentProviderCatalogObservationService;
     }> | null;
     agentRegistrySnapshot?: ResolvedContributionRegistry;
+    resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     connectedAccountsOwner?: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['connectedAccountsOwner'];
     isAgentRegistryCurrent?: () => boolean;
@@ -82,6 +85,7 @@ export type CliProbeRequestContext = Readonly<{
 type ConnectedServiceProbeEnvironment = Readonly<{
     exactPurposeBindingSubjectId?: string;
     materializedEnv: Readonly<Record<string, string>> | null;
+    unsetEnvKeys: readonly string[];
     connectedServiceSelectionCacheKey: string | null;
     cleanup: (() => Promise<void>) | null;
 }>;
@@ -102,6 +106,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     if (!params.requiresMaterializedAuth || !params.connectedServices) {
         return {
             materializedEnv: null,
+            unsetEnvKeys: [],
             connectedServiceSelectionCacheKey: null,
             cleanup: null,
         };
@@ -210,6 +215,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     });
     return {
         materializedEnv: resolved.env,
+        unsetEnvKeys: resolved.unsetEnvKeys ?? [],
         exactPurposeBindingSubjectId: resolved.materializationPurposeLease?.subjectId,
         connectedServiceSelectionCacheKey:
             resolved.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] ?? null,
@@ -248,6 +254,7 @@ export async function invokeCliPreflightMethod(
     requestContext: CliProbeRequestContext,
 ): Promise<CapabilitiesInvokeResponse> {
     const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
+    const registrySnapshot = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
     const probeDeadlineAtMs = requestContext.deadlineAtMs ?? Date.now() + timeoutMs;
     const configOverrides = params?.configOptionOverrides === undefined ? null
         : ConfigOptionOverridesSchema.safeParse(params.configOptionOverrides);
@@ -311,7 +318,7 @@ export async function invokeCliPreflightMethod(
         return { ok: true, result: await probeAgentModelsBestEffort({
             agentId,
             catalogEntry: dependencies.agentCatalogEntry,
-            registrySnapshot: dependencies.agentRegistrySnapshot,
+            registrySnapshot,
             runtimeCacheKey: dependencies.agentRuntimeCacheKey,
             savedSecretOperationContext: dependencies.savedSecretOperationContext,
             secretSources: dependencies.secretSources,
@@ -385,6 +392,7 @@ export async function invokeCliPreflightMethod(
     };
     let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment = {
         materializedEnv: null,
+        unsetEnvKeys: [],
         connectedServiceSelectionCacheKey: null,
         cleanup: null,
     };
@@ -431,12 +439,16 @@ export async function invokeCliPreflightMethod(
         ? AbortSignal.any([requestContext.signal, preparationLifetime.signal]) : preparationLifetime.signal;
     try {
     requestContext.signal?.throwIfAborted();
-    let materializedEnv = {
-        ...nativeLaunchEnvironment,
-        ...explicitEnvironment,
-        ...(profileProbeEnvironment?.env ?? {}),
-        ...(connectedServiceProbeEnvironment.materializedEnv ?? {}),
-    };
+    const ambientEnv = stripUnsetEnvironmentVariables(process.env, connectedServiceProbeEnvironment.unsetEnvKeys);
+    let materializedEnv = buildScopedProcessEnv({
+        baseEnv: {
+            ...nativeLaunchEnvironment,
+            ...explicitEnvironment,
+            ...(profileProbeEnvironment?.env ?? {}),
+        },
+        explicitEnv: connectedServiceProbeEnvironment.materializedEnv ?? {},
+        unsetEnvKeys: connectedServiceProbeEnvironment.unsetEnvKeys,
+    });
     if (requiresMaterializedAuth && dependencies.agentCatalogEntry?.preparePreflightLaunchEnvironment) {
         const agent = dependencies.agentRegistrySnapshot?.agentDefinitionsById.get(agentId);
         const identity = agent?.identity;
@@ -445,7 +457,7 @@ export async function invokeCliPreflightMethod(
             || !connectedServiceProbeEnvironment.exactPurposeBindingSubjectId) {
             return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Native account preparation is unavailable for this probe.' } };
         }
-        const environment = (await resolvePreflightSessionControlsProbeEnvironment({ agentId, processEnv: process.env, materializedEnv })).env;
+        const environment = (await resolvePreflightSessionControlsProbeEnvironment({ agentId, registrySnapshot, catalogEntry: dependencies.agentCatalogEntry, processEnv: ambientEnv, materializedEnv })).env;
         const values = Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
         const services = await dependencies.createAgentInvocationServices({
             pluginId: identity.pluginId, pluginVersion: target.manifest.version, agentId,
@@ -462,15 +474,17 @@ export async function invokeCliPreflightMethod(
     }
     const probeProcessEnv = (await resolvePreflightSessionControlsProbeEnvironment({
         agentId,
+        registrySnapshot,
+        catalogEntry: dependencies.agentCatalogEntry,
         // Preparation receives the complete cold launch environment. Do not
         // reintroduce an inherited native home/key that it explicitly removed.
-        processEnv: preparedLaunchEnvironment ? {} : process.env,
+        processEnv: preparedLaunchEnvironment ? {} : ambientEnv,
         materializedEnv,
     })).env;
     const commonProbeArgs = {
         agentId,
         catalogEntry: dependencies.agentCatalogEntry,
-        registrySnapshot: dependencies.agentRegistrySnapshot,
+        registrySnapshot,
         runtimeCacheKey: dependencies.agentRuntimeCacheKey,
         savedSecretOperationContext: dependencies.savedSecretOperationContext,
         secretSources: dependencies.secretSources,
@@ -501,6 +515,8 @@ export async function invokeCliPreflightMethod(
       if (method === 'probePassiveRealtimeSetup') {
         const result = await withPreflightSessionControlsProbeEnvironment({
           agentId,
+          registrySnapshot,
+          catalogEntry: dependencies.agentCatalogEntry,
           processEnv: probeProcessEnv,
           materializedEnv: commonProbeArgs.materializedEnv,
         }, async ({ env }) => {
@@ -519,7 +535,7 @@ export async function invokeCliPreflightMethod(
             ...(requestContext.deadlineSignal ? { deadlineSignal: requestContext.deadlineSignal } : {}),
             ...(requestContext.cleanupScope ? { cleanupScope: requestContext.cleanupScope } : {}),
           });
-          const parsed = CodexPassiveRealtimeSetupResultV1Schema.safeParse(raw);
+          const parsed = AgentPassiveRealtimeSetupResultV1Schema.safeParse(raw);
           return parsed.success ? parsed.data : { v: 1, status: 'unavailable' } as const;
         }).catch(() => ({ v: 1, status: 'unavailable' } as const));
         if (dependencies.isAgentRegistryCurrent?.() === false) {
@@ -533,6 +549,7 @@ export async function invokeCliPreflightMethod(
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
         if (observation && observationRuntime) {
             const registry = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
+            const resolveContributedCatalogParsers = dependencies.resolveContributedCatalogParsers;
             const isCurrent = (): boolean => requestContext.signal?.aborted !== true
                 && (dependencies.isAgentRegistryCurrent?.() ?? true);
             const agent = registry.agentDefinitionsById.get(agentId);
@@ -566,6 +583,9 @@ export async function invokeCliPreflightMethod(
                     binding,
                     requestAuthUse,
                     provider: provider.definition,
+                    ...(resolveContributedCatalogParsers ? {
+                        resolveContributedCatalogParsers: () => resolveContributedCatalogParsers(provider.identity),
+                    } : {}),
                     trigger: params?.bypassCache === true ? 'manual_refresh' : 'picker_open',
                     currentOnly: params?.currentOnly === true,
                     isCurrent,
@@ -624,6 +644,9 @@ export async function invokeCliPreflightMethod(
                         purpose: nativeContext.purpose,
                         requestAuthUse: nativeContext.requestAuthUse,
                         provider: nativeContext.provider,
+                        ...(resolveContributedCatalogParsers ? {
+                            resolveContributedCatalogParsers: () => resolveContributedCatalogParsers(nativeContext.providerIdentity),
+                        } : {}),
                         service: { pluginId: nativeContext.consumer.pluginId, localId: observation.connectedServiceId },
                         target,
                         wallDeadlineAtMs: probeDeadlineAtMs,

@@ -9,6 +9,28 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe('linkDirectoryChildren', () => {
+  it.each(['win32', 'darwin'] as const)('keeps private entries isolated across native name casing on %s', async platform => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-link-private-case-'));
+    roots.push(root);
+    const source = join(root, 'source');
+    const destination = join(root, 'private');
+    await mkdir(join(source, 'Agent'), { recursive: true });
+    await writeFile(join(source, 'Agent', 'auth.json'), 'unmanaged-account-A');
+    const platformProperty = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    try {
+      // The platform is the OS boundary; real filesystem links and private writes remain exercised.
+      Object.defineProperty(process, 'platform', { value: platform });
+      await linkDirectoryChildren({ source, destination, exclude: ['agent'] });
+    } finally {
+      Object.defineProperty(process, 'platform', platformProperty);
+    }
+    expect(await readdir(destination)).toEqual([]);
+    await mkdir(join(destination, 'agent'));
+    await writeFile(join(destination, 'agent', 'auth.json'), 'selected-account-B');
+    expect(await readFile(join(destination, 'agent', 'auth.json'), 'utf8')).toBe('selected-account-B');
+    expect(await readFile(join(source, 'Agent', 'auth.json'), 'utf8')).toBe('unmanaged-account-A');
+  });
+
   it('preserves existing destination entries, skips exclusions, and supports repeated linking', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-link-children-'));
     roots.push(root);

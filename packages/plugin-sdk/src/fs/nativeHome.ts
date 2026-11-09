@@ -1,16 +1,35 @@
 /** @moduleRealm daemon */
 import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { expandHomePath, isCanonicalAbsolutePathInsideRoot, resolveHomeDirFromEnvironment } from '../sessions/fileStores/paths.js';
+import { isAbsolute, join, resolve } from 'node:path';
+import { isCanonicalAbsolutePathInsideRoot, resolveHomeDirFromEnvironment } from '../sessions/fileStores/paths.js';
 
 export function resolveConfiguredNativeHomePath(
-  declaration: Readonly<{ environmentKey: string; defaultRelativePath: string }>,
+  declaration: Readonly<{
+    environmentKey: string;
+    defaultRelativePath: string;
+    sourceEnvironmentKey?: string;
+    fallbackEnvironmentKeys?: readonly string[];
+  }>,
   env: Readonly<Record<string, string | undefined>>,
+  homeDir = resolveHomeDirFromEnvironment(env),
 ): string {
-  const override = env[declaration.environmentKey]?.trim();
-  const home = resolveHomeDirFromEnvironment(env);
-  return override ? resolve(expandHomePath(override, home)) : resolve(home, declaration.defaultRelativePath);
+  const environmentKeys = [
+    ...(declaration.sourceEnvironmentKey ? [declaration.sourceEnvironmentKey] : []),
+    declaration.environmentKey,
+    ...(declaration.fallbackEnvironmentKeys ?? []),
+  ];
+  const override = environmentKeys.map(key => env[key]?.trim()).find(Boolean);
+  if (override) {
+    if (!isAbsolute(override)) throw new Error('connected_service_native_home_environment_must_be_absolute');
+    return resolve(override);
+  }
+  const home = resolve(homeDir);
+  const root = resolve(home, declaration.defaultRelativePath);
+  if (root !== home && !isCanonicalAbsolutePathInsideRoot(home, root)) {
+    throw new Error('connected_service_native_home_default_must_be_home_relative');
+  }
+  return root;
 }
 
 /** Physical custody stops at the home: shared state inside it may intentionally be symlinked. */

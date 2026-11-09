@@ -1,12 +1,23 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { invokeCliPreflightMethod } from './agentPreflight';
 import { preflightCatalogEntryFixture } from './preflightSessionControlsProbeAdapter.testkit';
+import { createExternalConnectedAccountForegroundFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { reloadConfiguration } from '@/configuration';
+import type { ApiClient } from '@/api/api';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+
+afterAll(async () => { await pluginReloadController.shutdown(); });
 
 describe('native Agent preflight home directory intent', () => {
     it('expands the default home in the executing process and preserves an explicit directory', async () => {
@@ -61,4 +72,99 @@ describe('native Agent preflight home directory intent', () => {
             await rm(root, { recursive: true, force: true });
         }
     }, 60_000);
+    it.each(['files_ambient', 'files_explicit', 'environment', 'native'] as const)(
+        'uses the selected materialization environment in a real catalog process (%s)', async (mode) => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-preflight-account-env-')));
+        const observed = join(root, 'observed.json');
+        const nativeHome = join(root, 'native-home');
+        await mkdir(nativeHome);
+        vi.stubEnv('HAPPIER_HOME_DIR', join(root, 'home'));
+        vi.stubEnv('HAPPIER_SERVER_URL', 'https://preflight-account.example.test');
+        vi.stubEnv('ACME_NATIVE_HOME', nativeHome);
+        vi.stubEnv('ACME_TOKEN', 'fake-ambient-token');
+        reloadConfiguration();
+        const accountHttp = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (new URL(url).pathname.endsWith('/qualified/accounts')) return { status: 200, data: {
+                service: { pluginId: 'acme.preflight-account', localId: 'credential' },
+                accounts: [{ ref: { service: { pluginId: 'acme.preflight-account', localId: 'credential' }, accountId: 'selected-account' },
+                    status: 'connected', authenticationModeId: 'fixture', revisionSemantics: 'revisioned',
+                    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
+                    displayName: 'Selected Account', scopes: [] }],
+            } };
+            throw new Error(`Unexpected preflight HTTP GET ${new URL(url).pathname}`);
+        });
+        let runtime: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
+        const auth = new Uint8Array([0, 255, 17, 99]);
+        try {
+            const account = createExternalConnectedAccountForegroundFixture({
+                service: { pluginId: 'acme.preflight-account', localId: 'credential' },
+                materializationKinds: ['files', 'environment'],
+                launch: {
+                    stateSharingDescriptor: { providerSupportStatus: 'supported',
+                        config: { supported: false, modes: [], entries: [] },
+                        state: { supported: false, modes: [], entries: [], symlinkUnavailableDegradePolicy: 'degrade_to_isolated' },
+                        authIsolation: { mode: 'materialized_home', secretEntries: ['auth.json'] },
+                        nativeHome: { environmentKey: 'ACME_NATIVE_HOME', defaultRelativePath: '.acme-native-home', fallbackEnvironmentKeys: ['ACME_TOKEN'] } },
+                    environmentUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
+                    environmentUnsetUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
+                },
+                materializeAccount: async ({ request }) => request.kind === 'environment'
+                    ? { kind: 'environment', env: mode === 'environment' ? { ACME_TOKEN: 'fake-selected-token' } : {} }
+                    : { kind: 'files', files: mode.startsWith('files_') ? { 'auth.json': auth } : {} },
+            });
+            runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: account.plugins,
+                happyHomeDir: join(root, 'home'), controller: pluginReloadController, runtimeOptions: { connectedAccounts: account.owner },
+                resolveContributes: async happyHomeDir => createResolvedContributionRegistry(await resolvePluginContributes({ happyHomeDir })),
+            });
+            const { agentId } = account.requestFor(runtime.registry);
+            const entry = runtime.registry.contributes.agentDefinitionsById.get(agentId)?.catalogEntry;
+            if (!entry) throw new Error('Missing admitted preflight Agent');
+            const script = join(root, 'probe.cjs');
+            await writeFile(script, `const fs = require('node:fs'); const home = process.env.ACME_NATIVE_HOME; const auth = home && require('node:path').join(home, 'auth.json'); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ key: process.env.ACME_TOKEN ?? null, home: home ?? null, cwd: process.cwd(), auth: auth && fs.existsSync(auth) ? [...fs.readFileSync(auth)] : null }));`);
+            const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+            const executable = writeExecutableShimSync({ dir: root,
+                fileName: process.platform === 'win32' ? 'catalog.cmd' : 'catalog',
+                contents: process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+                    : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+            });
+            const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId,
+                systemTools: [{ id: 'native-env', title: 'Native environment', executableNames: [executable] }],
+                preflightSessionControls: { catalogs: { command: { toolId: 'native-env', args: [] },
+                    parseOutput: () => ({ commands: [], skills: [] }) } },
+                retirementSignal: new AbortController().signal, isCurrent: () => true,
+            });
+            const response = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeCatalogs', {
+                cwd: root, bypassCache: true,
+                ...(mode === 'files_ambient' ? {} : { environmentVariables: { ACME_TOKEN: 'fake-explicit-token' } }),
+                ...(mode === 'native' ? {} : { connectedServices: { v: 2, bindingsByServiceId: {
+                    'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+                } } }),
+            }, {
+                agentCatalogEntry: { ...entry, ...projected }, agentRegistrySnapshot: runtime.registry.contributes,
+                accountContext: { credentials: { token: 'fake-account-token', encryption: null }, accountSettings: null },
+                // The API is an external transport; the real purpose owner supplies the selected Account.
+                createApiClient: async () => ({} as ApiClient), connectedAccountsOwner: account.owner,
+                activatePurposeBindings: account.owner.activatePurposeBindings, isAgentRegistryCurrent: () => true,
+            }, {}));
+            expect(response).toMatchObject({ ok: true });
+            const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; auth: number[] | null };
+            expect(environment.cwd).toBe(root);
+            if (mode.startsWith('files_')) {
+                expect(environment.key).toBeNull();
+                expect(environment.home).not.toBe(nativeHome);
+                expect(environment.auth).toEqual([...auth]);
+            } else {
+                expect(environment.key).toBe(mode === 'environment' ? 'fake-selected-token' : 'fake-explicit-token');
+                expect(environment.home).toBe(nativeHome);
+            }
+        } finally {
+            await runtime?.dispose();
+            accountHttp.mockRestore();
+            vi.unstubAllEnvs();
+            reloadConfiguration();
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60_000);
+
+
 });

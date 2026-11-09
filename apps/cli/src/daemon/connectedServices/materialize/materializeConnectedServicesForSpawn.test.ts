@@ -22,7 +22,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: vi.fn(actual.homedir) };
 });
 
-import { AccountSettingsSchema, buildConnectedServiceCredentialRecord, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
+import { AccountSettingsSchema, buildConnectedServiceCredentialRecord, buildQualifiedPluginContributionKey, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
 import * as nativeFilesystem from '@happier-dev/plugin-sdk/fs';
 import { resolveCodexRuntimeHomeEnvironment } from '../../../../../../packages/plugins/codex/src/agent/auth/services/state/sharing/files';
 import { ApiClient } from '@/api/api';
@@ -49,6 +49,8 @@ import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agen
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createMergedContributionRegistry, createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveSelectedBuiltInContributions } from '@/plugins/projection/registry/selected';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import {
   resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
@@ -89,6 +91,103 @@ function isMaterializationPhase(fields: unknown, materializationKey: string, pha
     && 'phase' in fields && fields.phase === phase
     && 'status' in fields && fields.status === status;
 }
+
+it.each(['files', 'environment'] as const)('applies only the %s leaves produced for a selected Account credential mode', async mode => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-mode-materialization-'));
+  let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+  let bindingLease: { dispose(): void } | undefined;
+  try {
+    const native = join(root, 'native');
+    await mkdir(native);
+    await writeFile(join(native, '.credentials.json'), 'unmanaged-account-A');
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const scope = declaration.fileMaterializationPurposes[0]!;
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+      // The Account-store boundary chooses the credential mode; host orchestration stays real.
+      materializeAccount: async ({ request }) => request.kind === 'environment'
+        ? { kind: 'environment', env: mode === 'environment' ? { TEST_SELECTED_API_KEY: 'selected-key-B' } : {} }
+        : { kind: 'files', files: mode === 'files' ? { '.credentials.json': Buffer.from('{"token":"selected-B"}') } : {} },
+    });
+    bindingLease = fixture.owner.activateSessionPurposeBindings({
+      sessionId: `mode-${mode}`, purposes: declaration.purposes, bindings: [fixture.binding],
+    });
+    result = await materializeConnectedServicesForSpawnProduction({
+      agentId: 'claude', materializationKey: `mode-${mode}`, purposeBindingSessionId: `mode-${mode}`,
+      activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+      connectedAccountsOwner: fixture.owner,
+      connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [] },
+      qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding], environmentUses: [
+        { purpose: scope.purpose, serviceRefs: scope.serviceRefs, environmentKey: 'TEST_SELECTED_API_KEY' },
+      ], environmentUnsetUses: [
+        { purpose: scope.purpose, serviceRefs: scope.serviceRefs, environmentKey: 'TEST_SELECTED_API_KEY' },
+      ] },
+      processEnv: { CLAUDE_CONFIG_DIR: native },
+      accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+        v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+      } },
+    });
+    expect(result).not.toBeNull();
+    expect(result?.unsetEnvKeys).toContain('TEST_SELECTED_API_KEY');
+    if (mode === 'files') {
+      expect(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, '.credentials.json'), 'utf8')).toBe('{"token":"selected-B"}');
+      expect(result?.env.TEST_SELECTED_API_KEY).toBeUndefined();
+    } else {
+      expect(result?.env.TEST_SELECTED_API_KEY).toBe('selected-key-B');
+      expect(result?.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+      expect(result?.env.HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBeUndefined();
+      const home = resolveConnectedServiceHomeDir({ activeServerDir: join(root, 'server'),
+        serviceId: buildQualifiedPluginContributionKey(scope.serviceRefs[0]!), profileId: 'selected-account', agentId: 'claude' });
+      await expect(lstat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(await readFile(join(native, '.credentials.json'), 'utf8')).toBe('unmanaged-account-A');
+  } finally {
+    bindingLease?.dispose();
+    await result?.cleanupOnExit?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it.each([false, true])('refuses a selected Account with no usable leaves (unrelated usable Account=%s)', async withUnrelated => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-empty-mode-materialization-'));
+  let bindingLease: { dispose(): void } | undefined;
+  try {
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const scope = declaration.fileMaterializationPurposes[0]!;
+    const otherPurpose = { consumer: scope.purpose.consumer, purpose: 'unrelated' };
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+      materializeAccount: async ({ account, request }) => request.kind === 'environment'
+        ? { kind: 'environment', env: account.accountId === 'unrelated-account' ? { TEST_UNRELATED_API_KEY: 'unrelated-key' } : {} }
+        : { kind: 'files', files: {} },
+    });
+    const bindings = [fixture.binding, ...(withUnrelated ? [{ purpose: otherPurpose, target: { kind: 'account' as const,
+      account: { service: scope.serviceRefs[0]!, accountId: 'unrelated-account' } } }] : [])];
+    await fixture.store.update(() => ({ v: 1, bindings }));
+    bindingLease = fixture.owner.activateSessionPurposeBindings({
+      sessionId: 'empty-mode', purposes: [...declaration.purposes, ...(withUnrelated ? [otherPurpose] : [])], bindings,
+    });
+    await expect(materializeConnectedServicesForSpawnProduction({
+      agentId: 'claude', materializationKey: 'empty-mode', purposeBindingSessionId: 'empty-mode',
+      activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+      connectedAccountsOwner: fixture.owner,
+      connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: bindings, requestAuthPurposeBindings: [] },
+      qualifiedPurposeBindingSnapshot: { ...declaration, bindings,
+        purposes: [...declaration.purposes, ...(withUnrelated ? [otherPurpose] : [])], environmentUses: [
+          { purpose: scope.purpose, serviceRefs: scope.serviceRefs, environmentKey: 'TEST_SELECTED_API_KEY' },
+          ...(withUnrelated ? [{ purpose: otherPurpose, serviceRefs: scope.serviceRefs, environmentKey: 'TEST_UNRELATED_API_KEY' }] : []),
+        ] },
+      processEnv: { CLAUDE_CONFIG_DIR: join(root, 'native') },
+    })).rejects.toThrow();
+  } finally {
+    bindingLease?.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it('materializes native configuration from the supplied environment home', async () => {
   const root = await mkdtemp(join(tmpdir(), 'claude-environment-native-home-'));
@@ -454,9 +553,15 @@ it.each([
 });
 
 beforeAll(async () => {
+  const agentIds = ['claude', 'codex', 'gemini', 'opencode', 'pi', 'antigravity'] as const;
+  const contributes = agentIds.reduce((registry, localId) => createMergedContributionRegistry(
+    resolveSelectedBuiltInContributions({ agentIdentity: { pluginId: `happier.agent.${localId}`, localId } }),
+    registry,
+  ), createResolvedContributionRegistry({}));
   runtimeFixture = await createAdmittedPluginRuntimeFixture({
     controller: pluginReloadController,
     runtimeOptions: {
+      contributes,
       // The Account database is the only substituted boundary; Agent admission,
       // scoped settings validation, descriptor copies and the native editor stay real.
       accountSettingsRecordAdapter: {
@@ -467,14 +572,7 @@ beforeAll(async () => {
           writeRecord: async () => { throw new Error('Materialization must not write Account preferences'); },
         }),
       },
-      pluginIds: [
-        'happier.agent.claude',
-        'happier.agent.codex',
-        'happier.agent.gemini',
-        'happier.agent.opencode',
-        'happier.agent.pi',
-        'happier.agent.antigravity',
-      ],
+      pluginIds: agentIds.map(localId => `happier.agent.${localId}`),
     },
   });
 });
@@ -668,12 +766,17 @@ describe('materializeConnectedServicesForSpawn', () => {
       const selectedNative = Buffer.from('{"selected":"native-home"}');
       const selectedFile = Buffer.from([0, 255, 10, 128]);
       const fileId = 'selected-file-environment';
+      const selectedEnvironmentKey = 'HAPPIER_TEST_SELECTED_ACCESS_TOKEN';
       const fixture = createForegroundPurposeOwnerFixture({
         consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!,
         purpose: scope.purpose.purpose,
         // Genuine credential boundary; selection/currentness and both materializers stay real.
         materializeAccount: async ({ request }) => {
-          if (request.kind !== 'files') throw new Error('This fixture admits file material only');
+          if (request.kind === 'environment') return { kind: 'environment', env: {
+            [selectedEnvironmentKey]: 'selected-access-token',
+            HAPPIER_TEST_UNDECLARED_ACCESS_TOKEN: 'unselected-access-token',
+          } };
+          if (request.kind !== 'files') throw new Error('Unexpected selected Account materialization request');
           return { kind: 'files', files: Object.fromEntries((request.fileIds ?? [nativeFile])
             .filter(id => id === fileId || id === nativeFile).map(id => [
             id, id === fileId ? selectedFile : selectedNative,
@@ -702,6 +805,10 @@ describe('materializeConnectedServicesForSpawn', () => {
         },
         qualifiedPurposeBindingSnapshot: {
           ...declaration, bindings: [fixture.binding],
+          environmentUses: [{
+            purpose: scope.purpose, serviceRefs: scope.serviceRefs,
+            environmentKey: selectedEnvironmentKey,
+          }],
           fileEnvironmentUses: [{
             purpose: scope.purpose, serviceRefs: scope.serviceRefs, fileId,
             environmentKey: 'SELECTED_AUTH_FILE',
@@ -728,6 +835,7 @@ describe('materializeConnectedServicesForSpawn', () => {
           environment: {
             [environmentKey]: join(agentLaunchTarget.runtimeHome, 'native-home'),
             SELECTED_AUTH_FILE: join(agentLaunchTarget.runtimeHome, 'files', '0'),
+            [selectedEnvironmentKey]: 'selected-access-token',
           },
           selectedMaterials: expect.arrayContaining([
             { relativePath: `native-home/${nativeFile}`, contentBase64: selectedNative.toString('base64') },
@@ -738,6 +846,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       expect(JSON.stringify(result?.agentLaunchMaterials?.environment)).not.toContain(daemonHome);
       expect(result?.agentLaunchMaterials?.environment).not.toHaveProperty('HAPPIER_HOME_DIR');
       expect(result?.agentLaunchMaterials?.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
+      expect(result?.agentLaunchMaterials?.environment).not.toHaveProperty('HAPPIER_TEST_UNDECLARED_ACCESS_TOKEN');
       expect(JSON.stringify(result)).not.toContain('never-selected');
       expect(JSON.parse(await readFile(join(daemonHome, 'settings.json'), 'utf8'))).toEqual({ cleanupPeriodDays: 365 });
       const selectedHome = result?.env[environmentKey];

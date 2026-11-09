@@ -1,5 +1,4 @@
 import { createRequesterPluginSettingsSource } from './requesterPluginSettings';
-import { join } from 'node:path';
 import type { ActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { randomBytes } from 'node:crypto';
 import { ApiClient } from '@/api/api';
@@ -18,7 +17,6 @@ import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connected
 import { startDaemonConnectedServiceRuntime } from '../startup/startDaemonRuntimeBootstrap';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from './requesterSessionCredentials';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
-import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
 import { ProfileCatalogUnavailableError, readProfilesFromAccountSettings,
   readProfileSettingsFromAccountSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
@@ -28,6 +26,9 @@ import { createAccountSessionFollowRuleCache } from '@/agent/runtime/session/fol
 import { createObservedAccountRunFollowRoutes } from '@/agent/runtime/session/follow/accountRunFollowRoutes';
 import { createRequesterSessionFollowSourceReconciliation } from './requesterSessionFollowSourceReconciliation';
 import { stopRequesterSessionBackgroundLoops } from './stopRequesterSessionBackgroundLoops';
+import { resolveRequesterSessionRuntimeDirectories } from './requesterSessionRuntimeDirectories';
+
+export { resolveRequesterSessionRuntimeDirectories } from './requesterSessionRuntimeDirectories';
 
 type CoordinatorInput = Parameters<typeof startDaemonConnectedServiceRuntime>[0];
 
@@ -36,16 +37,6 @@ function requesterAccountContextUnavailable() {
   return Object.assign(new Error('requester_account_context_unavailable'), {
     code: 'requester_account_context_unavailable' as const,
   });
-}
-
-/** Same Account-qualified native roots for runtime and exact retained-resource cleanup. */
-export function resolveRequesterSessionRuntimeDirectories(input: Readonly<{
-  activeServerDir: string; connectedServicesMaterializationBaseDir: string;
-  attribution: Pick<RequesterWorkAttributionV1, 'accountId'>;
-}>): Readonly<{ activeServerDir: string; connectedServicesMaterializationBaseDir: string }> {
-  const accountPath = `account-${encodeURIComponent(input.attribution.accountId)}`;
-  return { activeServerDir: join(input.activeServerDir, 'requester-accounts', accountPath),
-    connectedServicesMaterializationBaseDir: join(input.connectedServicesMaterializationBaseDir, 'requester-accounts', accountPath) };
 }
 
 /** Reuses ordinary Account owners with invocation custody; never publishes Bob as the daemon Account. */

@@ -17,7 +17,7 @@ export async function requestDeviceGrantStep<T>(
   input: DeviceGrantStepInput<T>,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<T | Exclude<ConnectedAccountDevicePollResult, { status: 'connected' | 'configurationRequired' }>> {
-  const failure = (status: 'unavailable' | 'rejected', code: string, message: string) => ({
+  const failure = <TStatus extends 'unavailable' | 'rejected'>(status: TStatus, code: string, message: string) => ({
     status, diagnostic: { code, severity: 'error' as const, message },
   });
   options?.signal?.throwIfAborted();

@@ -3,11 +3,12 @@ import { basename, dirname, join } from 'node:path';
 
 import { AGENT_IDS } from '@happier-dev/agents';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
-import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
+import { resolveConnectedServiceAccountHomesDir, resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
 import { listExistingConnectedServiceHomeSelections, readConnectedServiceHomeDirectoryNames } from './inventory';
 
 type DeletedGroupCleanupTarget = Readonly<{
@@ -17,7 +18,14 @@ type DeletedGroupCleanupTarget = Readonly<{
   path: string;
 }>;
 
-type DeletedGroupCleanupResult = Readonly<{
+type DeletedAccountCleanupTarget = Readonly<{
+  account: QualifiedConnectedAccountRef;
+  path: string;
+}>;
+
+type DeletedHomeCleanupTarget = DeletedGroupCleanupTarget | DeletedAccountCleanupTarget;
+
+type DeletedHomeCleanupResult = Readonly<{
   cleaned: boolean;
   pending?: boolean;
   path: string;
@@ -67,19 +75,21 @@ function hasNodeErrorCode(error: unknown, code: string): boolean {
 }
 
 export class ConnectedServiceGroupHomeCleanupScheduler {
-  private readonly pendingDeletedTargetsByKey = new Map<string, DeletedGroupCleanupTarget>();
+  private readonly pendingDeletedTargetsByKey = new Map<string, DeletedHomeCleanupTarget>();
   private readonly removePath: RemoveGroupHomePath;
   private readonly renamePath: typeof rename;
   private readonly nowMs: () => number;
 
   constructor(private readonly deps: Readonly<{
     activeServerDir: string;
+    additionalAccountHomeRoots?: readonly string[];
     runtimeRegistry?: ConnectedServiceRuntimeRegistry;
     hasLiveTarget(input: Readonly<{
       serviceId: ConnectedServiceId;
       groupId: string;
       agentId: CatalogAgentId;
     }>): boolean;
+    hasLiveAccountTarget?(account: QualifiedConnectedAccountRef): boolean;
     groupExists?: GroupExists;
     resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
     removePath?: RemoveGroupHomePath;
@@ -110,14 +120,38 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     }
   }
 
-  private async removeGroupHome(key: string, target: DeletedGroupCleanupTarget): Promise<void> {
+  private async removeHome(key: string, target: DeletedHomeCleanupTarget): Promise<void> {
     try {
-      await this.removePath(target.path, { recursive: true, force: true });
+      // Revoked selected credentials are removed, never retained in the group-history quarantine.
+      await ('account' in target ? this.deps.removePath ?? rm : this.removePath)(target.path, { recursive: true, force: true });
       this.pendingDeletedTargetsByKey.delete(key);
     } catch (error) {
       this.pendingDeletedTargetsByKey.set(key, target);
       throw error;
     }
+  }
+
+  private hasLiveAccountTarget(account: QualifiedConnectedAccountRef): boolean {
+    const serviceKey = buildQualifiedPluginContributionKey(account.service);
+    return this.deps.runtimeRegistry?.listTargets().some(target => target.activeBindings.some(binding => (
+      binding.serviceId === serviceKey && binding.profileId === account.accountId
+    ))) === true || this.deps.hasLiveAccountTarget?.(account) === true;
+  }
+
+  async scheduleDeletedAccountCleanup(input: Readonly<{ account: QualifiedConnectedAccountRef }>): Promise<DeletedHomeCleanupResult> {
+    const serviceId = buildQualifiedPluginContributionKey(input.account.service);
+    const targets = [this.deps.activeServerDir, ...(this.deps.additionalAccountHomeRoots ?? [])].map(activeServerDir => {
+      const path = resolveConnectedServiceAccountHomesDir({ activeServerDir, serviceId, profileId: input.account.accountId });
+      return { key: `account\0${path}`, target: { account: input.account, path } };
+    });
+    const path = targets[0]!.target.path;
+    // A failed removal leaves every remaining known root in the existing cleanup queue.
+    for (const { key, target } of targets) this.pendingDeletedTargetsByKey.set(key, target);
+    if (this.hasLiveAccountTarget(input.account)) {
+      return { cleaned: false, pending: true, path };
+    }
+    for (const { key, target } of targets) await this.removeHome(key, target);
+    return { cleaned: true, path };
   }
 
   private hasLiveTarget(target: GroupHomeTarget): boolean {
@@ -134,7 +168,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     serviceId: ConnectedServiceId;
     groupId: string;
     agentId: CatalogAgentId;
-  }>): Promise<DeletedGroupCleanupResult> {
+  }>): Promise<DeletedHomeCleanupResult> {
     const path = resolveConnectedServiceGroupHomeDir({
       activeServerDir: this.deps.activeServerDir,
       serviceId: input.serviceId,
@@ -145,7 +179,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
       this.pendingDeletedTargetsByKey.set(targetKey(input), { ...input, path });
       return { cleaned: false, pending: true, path };
     }
-    await this.removeGroupHome(targetKey(input), { ...input, path });
+    await this.removeHome(targetKey(input), { ...input, path });
     return { cleaned: true, path };
   }
 
@@ -166,11 +200,11 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
   async reconcileDeletedGroupHomes(input: Readonly<{
     groupExists?: GroupExists;
     resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
-  }>): Promise<ReadonlyArray<DeletedGroupCleanupResult>> {
+  }>): Promise<ReadonlyArray<DeletedHomeCleanupResult>> {
     const resolveGroupDeletionAuthority = input.resolveGroupDeletionAuthority ?? this.deps.resolveGroupDeletionAuthority;
     const groupExists = input.groupExists ?? this.deps.groupExists;
     if (!resolveGroupDeletionAuthority && !groupExists) return [];
-    const results: DeletedGroupCleanupResult[] = [];
+    const results: DeletedHomeCleanupResult[] = [];
     for (const target of await this.listExistingGroupHomeTargets()) {
       const authority = resolveGroupDeletionAuthority
         ? await resolveGroupDeletionAuthority(target)
@@ -184,6 +218,12 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
   async cleanupPendingDeletedGroupHomes(): Promise<ReadonlyArray<Readonly<{ cleaned: true; path: string }>>> {
     const cleaned: Array<Readonly<{ cleaned: true; path: string }>> = [];
     for (const [key, target] of this.pendingDeletedTargetsByKey.entries()) {
+      if ('account' in target) {
+        if (this.hasLiveAccountTarget(target.account)) continue;
+        await this.removeHome(key, target);
+        cleaned.push({ cleaned: true, path: target.path });
+        continue;
+      }
       if (this.hasLiveTarget(target)) continue;
       if (this.deps.resolveGroupDeletionAuthority) {
         const authority = await this.deps.resolveGroupDeletionAuthority(target);
@@ -200,7 +240,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
         }
         if (authority.status === 'unknown') continue;
       }
-      await this.removeGroupHome(key, target);
+      await this.removeHome(key, target);
       cleaned.push({ cleaned: true, path: target.path });
     }
     return cleaned;

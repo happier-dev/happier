@@ -137,8 +137,21 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
         bindings: { v: 2, bindingsByServiceId: { [buildQualifiedPluginContributionKey(service)]: source === 'connected'
           ? { source, selection: 'profile', profileId: account.accountId } : { source } } } });
       if (!snapshot) throw new Error('Cursor launch declaration unavailable');
-      const materialized = await materializeQualifiedConnectedAccountLaunchUses({ connectedAccountsOwner: owner, snapshot, signal: new AbortController().signal });
-      return { ...stripUnsetEnvironmentVariables(inherited, materialized.unsetEnvKeys), ...materialized.env };
+      const lease = owner.activatePurposeBindings({
+        subject: { kind: 'operation', operationId: `cursor-launch-${source}`, consumer: identity,
+          sessionId: 'cursor-session', isCurrent: () => true },
+        purposes: snapshot.purposes,
+        bindings: snapshot.bindings,
+      });
+      try {
+        const materialized = await materializeQualifiedConnectedAccountLaunchUses({
+          connectedAccountsOwner: owner, snapshot, exactPurposeBindingSubjectId: lease.subjectId,
+          expectedAccountsByPurposeKey: new Map(snapshot.bindings.flatMap(binding => binding.target.kind === 'account'
+            ? [[qualifiedPurposeKey(binding.purpose), binding.target.account] as const] : [])),
+          signal: new AbortController().signal,
+        });
+        return { ...stripUnsetEnvironmentVariables(inherited, materialized.unsetEnvKeys), ...materialized.env };
+      } finally { lease.dispose(); }
     };
     expect(await launch('connected')).toEqual({ ...inherited, CURSOR_API_KEY: 'fixture-selected-key' });
     expect(await launch('native')).toEqual(inherited);

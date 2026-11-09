@@ -1,6 +1,5 @@
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
-import { realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   resolveConnectedAccountRequestAuthCapabilityPath,
@@ -106,24 +105,15 @@ import { normalizeMaterializationKeyForPath } from '@/daemon/connectedServices/m
 import { createBestEffortCleanupDirectory, type ConnectedServiceMaterializedStateObservationBinding } from '@/daemon/connectedServices/materialization/materializer';
 import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
 import {
-  HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import {
-  applyConnectedServiceStateSharingDescriptor,
-  resolveConnectedServiceNativeHomeRoot,
-} from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/registry/engineRegistry/stateSharingPolicy';
 import { preflightProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
-import { materializeConnectedServiceNativeHomeCredentials } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
 import { materializeQualifiedConnectedAccountLaunchUses } from '@/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
 import { materializeConnectedServicesForSpawn } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
+import { resolveRequesterSessionRuntimeDirectories } from '@/daemon/sessionEncryption/requesterSessionRuntimeDirectories';
 import { createAccountPluginSettingsRecordStorage } from '@/plugins/runtime/context/accountPluginSettingsRecordStorage';
-import { resolveAgentAccountSettingsApplicationContext } from '@/plugins/runtime/agentPluginSettings';
-import { notifyProviderAccountSettingsMaterialization } from '@/daemon/lifecycle/providerAccountSettingsMaterializations';
-import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 
 import type {
   ForegroundAgentRuntimeAdmissionOwnerRequestV1,
@@ -267,7 +257,6 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
   const environment: Record<string, string> = Object.assign(
     Object.create(null),
     copyStringEnvironmentValues(input.profile),
-    copyStringEnvironmentValues(input.connectedService),
   );
   const unsetByIdentity = new Map<string, string>();
   const applyUnset = (name: string) => {
@@ -286,6 +275,9 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
     environment[name] = value;
   };
   for (const name of input.connectedServiceUnset) applyUnset(name);
+  for (const [name, value] of Object.entries(copyStringEnvironmentValues(input.connectedService))) {
+    applyValue(name, value);
+  }
   for (const [name, value] of Object.entries(copyStringEnvironmentValues(input.provider))) {
     applyValue(name, value);
   }
@@ -1401,7 +1393,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   exactPurposeBindingSubjectId:
                     sessionPurposeBindingLease.subjectId,
                   sessionId: canonicalSessionId,
-                  async listener() {
+                  async listener(change) {
+                    if (!change.authorityChanged) return;
                     connectedAccountLaunchCurrent = false;
                     if (connectedAccountLaunchCommitted) {
                       void connectedServiceLaunchScope.retire().catch((error) => {
@@ -1420,9 +1413,21 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 ownsConnectedServiceLaunchScope = true;
               }
             }
+            const boundNativeHomeFilePurposes = sessionPurposeBindingLease
+              ? (sessionPurposeBindingSnapshot?.fileMaterializationPurposes ?? [])
+                  .filter(scope => sessionPurposeBindingLease?.resolvePurposeBinding(scope.purpose) !== null)
+              : [];
+            const providerRequiresNativeHome = !agentLaunchTarget
+              && boundNativeHomeFilePurposes.length === 0
+              && stateSharingDescriptor?.providerSupportStatus === 'supported'
+              && Boolean(stateSharingDescriptor.nativeHome)
+              && Boolean(activeProviderLaunch);
             if (
               sessionPurposeBindingSnapshot
               && !agentLaunchTarget
+              && !connectedServiceAuth
+              && boundNativeHomeFilePurposes.length === 0
+              && !providerRequiresNativeHome
               && sessionPurposeBindingLease
               && (
                 (sessionPurposeBindingSnapshot.environmentUses?.length ?? 0) > 0
@@ -1491,20 +1496,21 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 ...launchEnvironment.unsetEnvKeys,
               ]);
             }
-            const existingMaterializedRoot =
-              connectedServiceEnvironment[
-                HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY
-              ];
-            const boundNativeHomeFilePurposes = sessionPurposeBindingLease
-              ? (sessionPurposeBindingSnapshot?.fileMaterializationPurposes ?? [])
-                  .filter((scope) => (
-                    sessionPurposeBindingLease?.resolvePurposeBinding(scope.purpose) !== null
-                  ))
-              : [];
-            if (agentLaunchTarget && !connectedServiceAuth) {
+            if (!connectedServiceAuth && (
+              agentLaunchTarget || boundNativeHomeFilePurposes.length > 0 || providerRequiresNativeHome
+            )) {
               if (!dependencies.connectedServicesMaterializationBaseDir) {
-                throw new Error('Foreground member materialization authority is unavailable');
+                throw new Error('Foreground Connected Account materialization authority is unavailable');
               }
+              const materializationDirectories = dependencies.requesterSessionRuntimeContext
+                ?? (requester ? resolveRequesterSessionRuntimeDirectories({
+                  activeServerDir: configuration.activeServerDir,
+                  connectedServicesMaterializationBaseDir: dependencies.connectedServicesMaterializationBaseDir,
+                  attribution: requester.attribution,
+                }) : {
+                  activeServerDir: configuration.activeServerDir,
+                  connectedServicesMaterializationBaseDir: dependencies.connectedServicesMaterializationBaseDir,
+                });
               if (!connectedServiceRedactionLease) {
                 connectedServiceRedactionLease = createProviderRedactionLease({ values: [] });
                 connectedServiceLaunchScope.register(connectedServiceRedactionLease.close);
@@ -1512,11 +1518,15 @@ export async function prepareForegroundAgentRuntimeAdmission(
               }
               const materialized = await materializeConnectedServicesForSpawn({
                 agentId: request.agentId, materializationKey: request.sessionId,
-                activeServerDir: configuration.activeServerDir,
-                baseDir: dependencies.connectedServicesMaterializationBaseDir,
+                activeServerDir: materializationDirectories.activeServerDir,
+                baseDir: materializationDirectories.connectedServicesMaterializationBaseDir,
                 sessionDirectory: request.directory, agentLaunchTarget,
                 requesterWorkAttributionV1: requester?.attribution,
-                recordsByServiceId: new Map(), allowNativeAccountState: false,
+                recordsByServiceId: new Map(), allowNativeAccountState: !agentLaunchTarget && !requester,
+                ...(providerRequiresNativeHome ? { nativeHomeOnly: true } : {}),
+                accountSettings: readAccountSettingsSnapshot()?.rawSettings ?? null,
+                vendorResumeId: request.vendorResumeId ?? null,
+                runtimeDescriptorV1: request.runtimeDescriptorV1,
                 accountPluginSettingsSource: requester ? createRequesterPluginSettingsSource({
                   bootstrap: requester, signal: registration.retirementSignal,
                   isCurrent: () => isSessionAccountCurrent(canonicalSessionId),
@@ -1535,20 +1545,29 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     requestAuthPurposeBindings: resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(sessionPurposeBindingSnapshot),
                   },
                 } : {}),
-                processEnv: { ...process.env, ...savedProfileEnvironment },
+                processEnv: {
+                  ...process.env, ...savedProfileEnvironment,
+                  ...(stateSharingDescriptor?.nativeHome && nativeHomeSourceEnvironmentValue !== undefined
+                    ? { [stateSharingDescriptor.nativeHome.environmentKey]: nativeHomeSourceEnvironmentValue ?? undefined }
+                    : {}),
+                },
                 signal: registration.retirementSignal,
                 isAccountRuntimeCurrent: async () => !registration.retirementSignal.aborted
                   && connectedAccountLaunchCurrent && registration.isCurrent(),
               });
-              if (!materialized?.agentLaunchMaterials
-                || materialized.agentLaunchMaterials.runtimeHome !== agentLaunchTarget.runtimeHome) {
+              if (!materialized) throw new Error('Foreground Connected Account materialization is unavailable');
+              if (agentLaunchTarget && (!materialized.agentLaunchMaterials
+                || materialized.agentLaunchMaterials.runtimeHome !== agentLaunchTarget.runtimeHome)) {
                 throw new Error('Foreground member native home is unavailable');
               }
               connectedServiceLaunchScope.register({ onFailure: materialized.cleanupOnFailure ?? (() => {}),
                 onExit: materialized.cleanupOnExit ?? (() => {}) });
-              agentLaunchMaterials = materialized.agentLaunchMaterials;
+              if (materialized.agentLaunchMaterials) agentLaunchMaterials = materialized.agentLaunchMaterials;
               connectedServiceRedactionLease.add([
-                ...Object.values(materialized.env), ...Object.values(agentLaunchMaterials.environment),
+                ...Object.values(materialized.env), ...Object.values(materialized.agentLaunchMaterials?.environment ?? {}),
+              ]);
+              sensitiveEnvironmentVariableNames = Object.freeze([
+                ...new Set([...sensitiveEnvironmentVariableNames, ...Object.keys(materialized.env)]),
               ]);
               connectedServiceEnvironment = Object.freeze({ ...connectedServiceEnvironment, ...materialized.env });
               connectedServiceUnsetEnvironmentVariableNames = Object.freeze([
@@ -1557,178 +1576,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
               materializedSessionConnectedAccounts = materialized.sessionConnectedAccounts ?? [];
               materializedStateObservationBinding = materialized.materializedStateObservationBinding;
               if (materialized.requestAuthMaterializedRoot) requestAuthMaterializedRoot = materialized.requestAuthMaterializedRoot;
-              ownsConnectedServiceLaunchScope = true;
-            } else if (
-              !agentLaunchTarget
-              && stateSharingDescriptor?.providerSupportStatus === 'supported'
-              && stateSharingDescriptor.nativeHome
-              && (
-                Boolean(existingMaterializedRoot)
-                || boundNativeHomeFilePurposes.length > 0
-                || Boolean(activeProviderLaunch)
-              )
-            ) {
-              if (
-                !existingMaterializedRoot
-                && !dependencies.connectedServicesMaterializationBaseDir
-              ) {
-                throw new Error(
-                  'Foreground Connected Account state-sharing root authority is unavailable',
-                );
-              }
-              const targetRoot = existingMaterializedRoot
-                ?? resolveConnectedServiceMaterializedRootDir({
-                  baseDir: dependencies.connectedServicesMaterializationBaseDir!,
-                  agentId: request.agentId,
-                  materializationKey: request.sessionId,
-                });
-              await ensurePrivateConnectedServiceMaterializedRoot(targetRoot);
-              if (!existingMaterializedRoot) {
-                connectedServiceLaunchScope.register(async () => {
-                  await rm(targetRoot, { recursive: true, force: true });
-                });
-              }
-              let stateSharingEnvironment: Readonly<Record<string, string>> =
-                Object.freeze({});
-              if (!existingMaterializedRoot && !requester) {
-                const policy = resolveNativeAgentSessionStateSharingPolicy(
-                  request.agentId,
-                );
-                const nativeSourceEnvironment = Object.fromEntries(
-                  Object.entries({
-                    ...process.env,
-                    ...savedProfileEnvironment,
-                    ...(typeof nativeHomeSourceEnvironmentValue !== 'string'
-                      ? {}
-                      : {
-                          [stateSharingDescriptor.nativeHome.environmentKey]:
-                            nativeHomeSourceEnvironmentValue,
-                        }),
-                  }).filter((entry): entry is [string, string] => (
-                    typeof entry[1] === 'string'
-                  )),
-                );
-                if (nativeHomeSourceEnvironmentValue === null) {
-                  delete nativeSourceEnvironment[
-                    stateSharingDescriptor.nativeHome.environmentKey
-                  ];
-                }
-                Object.freeze(nativeSourceEnvironment);
-                const appliedStateSharing = await applyConnectedServiceStateSharingDescriptor({
-                    signal: registration.retirementSignal,
-                    descriptor: stateSharingDescriptor,
-                    nativeSourceContext: {
-                      sourceRoot: resolveConnectedServiceNativeHomeRoot({
-                        nativeHome: stateSharingDescriptor.nativeHome,
-                        sourceEnvironment: nativeSourceEnvironment,
-                        homeDir: resolveHomeDirFromEnvironment(nativeSourceEnvironment),
-                      }),
-                      sourceEnv: nativeSourceEnvironment,
-                    },
-                    target: {
-                      targetMaterializedRoot: targetRoot,
-                      targetMaterializedEnv: {},
-                    },
-                    configMode: policy.configMode,
-                    requestedStateMode: policy.stateMode,
-                    effectiveStateMode: policy.stateMode,
-                    cwd: request.directory,
-                    providerLabel: request.agentId,
-                  });
-                stateSharingEnvironment = appliedStateSharing.envOverrides;
-                if (appliedStateSharing.linkedStateEntries.length > 0) {
-                  const nativeHomeRoot = await realpath(targetRoot);
-                  materializedStateObservationBinding = Object.freeze({
-                    agentId: request.agentId,
-                    pluginId: bridge.authorization.descriptor.pluginId,
-                    sourceCustody: bridge.authorization.descriptor.sourceCustody,
-                    nativeHomeRoot,
-                    entries: Object.freeze(appliedStateSharing.linkedStateEntries.map(entry => Object.freeze({
-                      ...entry, materializedEntryPath: join(nativeHomeRoot, entry.entryPath),
-                    }))),
-                  });
-                }
-              }
-              connectedServiceEnvironment = Object.freeze({
-                ...connectedServiceEnvironment,
-                ...stateSharingEnvironment,
-                [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: targetRoot,
-                [stateSharingDescriptor.nativeHome.environmentKey]: targetRoot,
-              });
-              const boundFilePurposes = existingMaterializedRoot
-                ? []
-                : boundNativeHomeFilePurposes;
-              if (boundFilePurposes.length > 0) {
-                if (!sessionPurposeBindingLease || !connectedAccountsOwner) {
-                  throw new Error(
-                    'Foreground Connected Account native-home credential authority is unavailable',
-                  );
-                }
-                const files = Object.create(null) as Record<string, Uint8Array>;
-                for (const scope of boundFilePurposes) {
-                  const expectedAccount = expectedConnectedAccountByPurposeKey.get(
-                    qualifiedPurposeKey(scope.purpose),
-                  );
-                  if (!expectedAccount) {
-                    throw new Error(
-                      'Foreground Connected Account expected account is unavailable',
-                    );
-                  }
-                  const materialization = await connectedAccountsOwner.materialize({
-                    purpose: scope.purpose,
-                    serviceRefs: scope.serviceRefs,
-                    exactPurposeBindingSubjectId: sessionPurposeBindingLease.subjectId,
-                    sessionId: canonicalSessionId,
-                    expectedAccount,
-                    request: Object.freeze({
-                      kind: 'files' as const,
-                      fileIds: Object.freeze([
-                        ...stateSharingDescriptor.authIsolation.secretEntries,
-                      ]),
-                    }),
-                    signal: registration.retirementSignal,
-                  });
-                  if (materialization.kind !== 'files') {
-                    throw new Error(
-                      'Connected Account native-home credential returned the wrong materialization kind',
-                    );
-                  }
-                  for (const [fileId, contents] of Object.entries(materialization.files)) {
-                    if (Object.prototype.hasOwnProperty.call(files, fileId)) {
-                      throw new Error(
-                        `Connected Account native-home credential '${fileId}' has multiple owners`,
-                      );
-                    }
-                    files[fileId] = contents;
-                  }
-                }
-                if (Object.keys(files).length > 0) {
-                  await materializeConnectedServiceNativeHomeCredentials({
-                    targetRoot,
-                    declaredSecretEntries:
-                      stateSharingDescriptor.authIsolation.secretEntries,
-                    files: Object.freeze(files),
-                  });
-                }
-              }
-              if (connectedServiceCatalogEntry?.applyAccountSettings) {
-                const context = await resolveAgentAccountSettingsApplicationContext({
-                  registry: lease.registry,
-                  identity: { pluginId: registration.pluginId, localId: registration.localAgentId },
-                  allowNativeAccountState: !requester,
-                  ...(requester ? { source: createRequesterPluginSettingsSource({
-                    bootstrap: requester, signal: registration.retirementSignal,
-                    isCurrent: () => isSessionAccountCurrent(canonicalSessionId),
-                  }) } : {}),
-                  signal: registration.retirementSignal,
-                });
-                await connectedServiceCatalogEntry.applyAccountSettings([{ id: 'materialized', directory: targetRoot }], context);
-              }
-              // Descriptor and credential writes have released their file locks.
-              const completedScope = requester
-                ? dependencies.requesterSessionRuntimeContext?.activeServerDir
-                : configuration.activeServerDir;
-              if (completedScope) await notifyProviderAccountSettingsMaterialization({ activeServerDir: completedScope });
               ownsConnectedServiceLaunchScope = true;
             }
 

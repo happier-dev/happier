@@ -373,6 +373,14 @@ export type AgentConnectedAccountStateSharingDescriptorTransformV1 = Readonly<{
   kind: 'rewrite_toml';
   spec: Readonly<{
     setStringValues: Readonly<Record<string, string>>;
+    /** Delete nested keys; a `*` segment matches each existing key at that table. */
+    removeKeyPaths?: readonly (readonly string[])[];
+    /** Project an explicit materialized environment fact into a nested string value. */
+    setStringValuesFromEnvironment?: readonly Readonly<{
+      path: readonly string[];
+      environmentKey: string;
+      values: Readonly<Record<string, string>>;
+    }>[];
     /**
      * Retain entries from a profile-owned TOML table during rematerialization.
      * Matching keys begin with the promoted path of a declared config entry,
@@ -406,6 +414,10 @@ export type AgentConnectedAccountNativeHomeV1 = Readonly<{
   defaultRelativePath: string;
   /** Opts native credential-bound account/group launches into the host's durable home lifecycle. */
   materializedDirectoryName?: string;
+  /** Link existing top-level native entries into the private root, except Agent-owned entries. */
+  materializedRootOverlay?: Readonly<{
+    privateEntries: readonly string[];
+  }>;
   /** Group homes share state by default; account-bound agents opt into the selected member's home. */
   groupHome?: 'group' | 'selectedAccount';
   /** Agent-owned connected-service history location in the existing runtime descriptor. */

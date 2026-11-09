@@ -17,6 +17,27 @@ import type { AgentLaunchMaterialization, AgentLaunchMaterializationTarget } fro
 
 type CredentialFileScope = Parameters<ManagedServiceCredentialFileOwner['materialize']>[0]['scope'];
 
+/** A selected purpose must produce credentials across its applicable launch uses. */
+export function assertQualifiedConnectedAccountLaunchUsesProduced(input: Readonly<{
+  snapshot: AgentSpawnQualifiedPurposeBindingSnapshot;
+  producedPurposeKeys: ReadonlySet<string>;
+  includeNativeHomeUses?: boolean;
+  isPurposeBound?(purpose: QualifiedConnectedAccountPurposeV1): boolean;
+}>): void {
+  const nativePurposeKeys = new Set((input.snapshot.fileMaterializationPurposes ?? []).map(scope => qualifiedPurposeKey(scope.purpose)));
+  const uses = [
+    ...(input.snapshot.environmentUses ?? []),
+    ...(input.snapshot.fileEnvironmentUses ?? []),
+    ...(input.includeNativeHomeUses ? input.snapshot.fileMaterializationPurposes ?? [] : []),
+  ];
+  for (const { purpose } of uses) {
+    const key = qualifiedPurposeKey(purpose);
+    const bound = input.isPurposeBound?.(purpose) ?? input.snapshot.bindings.some(binding => qualifiedPurposeKey(binding.purpose) === key);
+    if (!bound || (!input.includeNativeHomeUses && nativePurposeKeys.has(key))) continue;
+    if (!input.producedPurposeKeys.has(key)) throw new Error('Connected Account launch credential is unavailable');
+  }
+}
+
 /**
  * Host-owned projection of an Agent's qualified Connected Account launch uses.
  * Plugins declare purposes and the environment destinations; account selection,
@@ -38,9 +59,11 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
 }>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
   unsetEnvKeys: readonly string[];
+  producedPurposeKeys: readonly string[];
   agentLaunchMaterials?: AgentLaunchMaterialization;
 }>> {
   const materializedEnvironment: Record<string, string> = Object.create(null);
+  const producedPurposeKeys = new Set<string>();
   const expectedAccountsByPurposeKey = new Map(
     input.expectedAccountsByPurposeKey ?? [],
   );
@@ -106,9 +129,10 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
     }
     const value = materialization.env[use.environmentKey];
     if (typeof value !== 'string' || value.length === 0) {
-      throw new Error('Connected Account launch credential environment is unavailable');
+      continue;
     }
     materializedEnvironment[use.environmentKey] = value;
+    producedPurposeKeys.add(qualifiedPurposeKey(use.purpose));
   }
 
   const files: Record<string, Uint8Array> = Object.create(null);
@@ -141,12 +165,15 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
     }
     if (!Object.prototype.hasOwnProperty.call(materialization.files, use.fileId)
       || materialization.files[use.fileId]!.byteLength === 0) {
-      throw new Error('Connected Account launch credential file is unavailable');
+      continue;
     }
+    producedPurposeKeys.add(qualifiedPurposeKey(use.purpose));
     const materializedId = String(index);
     files[materializedId] = materialization.files[use.fileId]!;
     environmentKeysByMaterializedId.set(materializedId, use.environmentKey);
   }
+
+  assertQualifiedConnectedAccountLaunchUsesProduced({ snapshot: input.snapshot, producedPurposeKeys, isPurposeBound });
 
   if (environmentKeysByMaterializedId.size > 0) {
     const { credentialFileOwner, credentialFileScope, retainCredentialFileCleanup } = input;
@@ -188,6 +215,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
   }) : undefined;
   return Object.freeze({
     env: Object.freeze(materializedEnvironment),
+    producedPurposeKeys: Object.freeze([...producedPurposeKeys]),
     ...(agentLaunchMaterials ? { agentLaunchMaterials } : {}),
     unsetEnvKeys: normalizeUnsetEnvKeys((input.snapshot.environmentUnsetUses ?? [])
       .filter(use => isPurposeBound(use.purpose))

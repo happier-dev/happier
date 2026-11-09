@@ -43,7 +43,7 @@ describe('Claude foreground admission through the applied runtime', () => {
       try {
         const admission = await fixture.prepare({ profileId: undefined,
           accountSettingsScopeKey: undefined, accountSettingsVersion: undefined });
-        expect(admission).toMatchObject({ ok: true });
+        expect(admission, admission.ok ? undefined : JSON.stringify(admission.error)).toMatchObject({ ok: true });
         if (!admission.ok) throw new Error(admission.error.code);
         const claimed = await admission.prepared.claim({ canonicalSessionId: 'claude-provider-retention', httpPort: 40123,
           foregroundSatisfiedProfileSecretRequirementNames: [] });

@@ -5,6 +5,8 @@ import type { PluginDiagnosticData } from '../plugins/errors.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ConnectedAccountAccessModeV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 export type ConnectedAccountRuntimeConfigurationTarget =
     | Readonly<{
@@ -85,6 +87,10 @@ export type ConnectedAccountProviderIdentity = Readonly<{
     organizationId?: string | null;
 }>;
 
+/** Usage facts returned by authentication; record identity and freshness belong to the host. */
+export type ConnectedAccountCompletionObservation = Omit<ProviderAccountUsageSnapshotV1,
+    'recordId' | 'recordKey' | 'accountSubject' | 'staleAfterMs'>;
+
 export type ConnectedAccountAuthCompletionResult =
     | Readonly<{
         status: 'configurationRequired';
@@ -95,6 +101,12 @@ export type ConnectedAccountAuthCompletionResult =
         status: 'connected';
         /** Actual credential category; manual/native import providers report it when known. */
         credentialKind?: ConnectedServiceCredentialKind;
+        /** This successful authentication actually created an additional API key. */
+        includesApiKey?: true;
+        /** Account mode reported by authentication, independent of credential storage kind. */
+        accessMode?: ConnectedAccountAccessModeV1;
+        /** Secret-free usage already returned by authentication; published only after settlement. */
+        completionObservation?: ConnectedAccountCompletionObservation;
         /**
          * Immutable service-local account identity proposed by the plugin when it
          * has a truthful stable value. The host mints an opaque identity when this

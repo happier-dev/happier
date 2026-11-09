@@ -125,12 +125,14 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota extends Conn
     account: QualifiedConnectedAccountRef;
     signal?: AbortSignal;
   }>): Promise<QualifiedConnectedAccountMaterialSnapshot>;
-  /** Provider-free quota capability and admitted source basis for host usage initialization. */
+  /** Provider-free capability and admitted source basis for host usage initialization. */
   readQuotaSourceSnapshot(input: Readonly<{
     account: QualifiedConnectedAccountRef;
     credentialRevision: string;
     configurationRevision: string | null;
     accountMode: 'plain' | 'e2ee';
+    /** Completion publication consumes facts already returned by authentication. */
+    operation?: 'quotaFetch' | 'completionPublication';
     signal?: AbortSignal;
   }>): Promise<Readonly<{
     credentialRevision: string;
@@ -1203,7 +1205,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     const lease = await params.reloadController.acquireRuntimeRegistry();
     try {
       const runtimeLease = await lease.registry.resolveConnectedAccountRuntime?.(input.account.service);
-      if (!runtimeLease || !('quota' in runtimeLease.runtime) || !runtimeLease.runtime.quota
+      if (!runtimeLease
+        || (input.operation !== 'completionPublication' && (!('quota' in runtimeLease.runtime) || !runtimeLease.runtime.quota))
         || runtimeLease.occurrenceId !== materialSnapshot.contributionContractVersion
         || !sameService(runtimeLease.ref, input.account.service)) return null;
       const isCurrent = async () => {

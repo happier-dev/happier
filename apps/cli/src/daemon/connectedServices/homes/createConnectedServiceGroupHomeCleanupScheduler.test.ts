@@ -3,9 +3,10 @@ import { mkdir, rename, stat } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { resolveRequesterSessionRuntimeDirectories } from '../../sessionEncryption/requesterSessionRuntimeDirectories';
 import type { TrackedSession } from '../../types';
 import { createConnectedServiceGroupHomeCleanupScheduler } from './createConnectedServiceGroupHomeCleanupScheduler';
-import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
+import { resolveConnectedServiceGroupHomeDir, resolveConnectedServiceHomeDir } from './resolveConnectedServiceHomeDir';
 
 // Only filesystem rename is faulted; tracked binding parsing, factory wiring,
 // group-home selection and eventual quarantine use their real owners.
@@ -15,6 +16,62 @@ vi.mock('node:fs/promises', async importOriginal => {
 });
 
 describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
+  it('removes ordinary and admitted same-Account homes after the selected Session releases them', async () => {
+    const root = await createTempDir('happier-connected-service-account-scoped-home-');
+    try {
+      const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
+      const requesterRoot = (accountId: string) => resolveRequesterSessionRuntimeDirectories({
+        activeServerDir: root, connectedServicesMaterializationBaseDir: root, attribution: { accountId },
+      }).activeServerDir;
+      const homeAt = (activeServerDir: string) => resolveConnectedServiceHomeDir({
+        activeServerDir, serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', agentId: 'codex',
+      });
+      const ownRoots = [root, requesterRoot('owner')];
+      const ownHomes = ownRoots.map(homeAt);
+      const foreignHome = homeAt(requesterRoot('other-account'));
+      await Promise.all([...ownHomes, foreignHome].map(home => mkdir(home, { recursive: true })));
+      const pidToTrackedSession = new Map<number, TrackedSession>([[123, {
+        startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
+        spawnOptions: { directory: '/tmp/project', connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+        } } },
+      }]]);
+      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({
+        activeServerDir: root, additionalAccountHomeRoots: [ownRoots[1]!], pidToTrackedSession,
+      });
+      await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
+      await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
+      for (const home of ownHomes) await expect(stat(home)).resolves.toBeTruthy();
+      pidToTrackedSession.clear();
+      await scheduler.cleanupPendingDeletedGroupHomes();
+      for (const home of ownHomes) await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(foreignHome)).resolves.toBeTruthy();
+    } finally { await removeTempDir(root); }
+  });
+
+  it('retains a revoked account home until its tracked Session exits', async () => {
+    const root = await createTempDir('happier-connected-service-account-home-live-target-');
+    try {
+      const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
+      const pidToTrackedSession = new Map<number, TrackedSession>([[123, {
+        startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
+        spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          connectedServices: { v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          } } },
+      }]]);
+      const home = resolveConnectedServiceHomeDir({ activeServerDir: root, serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', agentId: 'codex' });
+      await mkdir(home, { recursive: true });
+      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, pidToTrackedSession });
+      await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
+      await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
+      await expect(stat(home)).resolves.toBeTruthy();
+      pidToTrackedSession.clear();
+      await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([expect.objectContaining({ cleaned: true })]);
+      await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await removeTempDir(root); }
+  });
+
   it('retains a live bound group home and recovers quarantine after four busy exit cleanups', async () => {
     const root = await createTempDir('happier-connected-service-group-home-live-target-');
     try {

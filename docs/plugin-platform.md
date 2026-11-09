@@ -8342,6 +8342,9 @@ diagnostic metadata; the closed category still owns recovery policy and the
 displayed failure reason. This is an additive same-realm 0.3 development contract: earlier
 events without the optional code still use their category, and matching SDK,
 plugin and host source load together. It adds no persisted or wire format.
+The generic failure status is **Failed**. Only explicit connection-failure
+reasons supply **Couldn't connect** through the shared attempt presenter;
+an established conversation's rejected answer does not claim connection failed.
 Protocol's `normalizeVoiceFailureCode`, projected through SDK `/voice/client`,
 owns the existing code-shaped diagnostic boundary shared by provider events,
 host failure logging and mediated credential causes; unsupported strings retain

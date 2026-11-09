@@ -18,6 +18,8 @@ import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { spawnTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { PreparedForegroundAgentRuntimeAdmission } from './foregroundAdmission';
 import {
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
@@ -123,6 +125,9 @@ export async function withRealForegroundAdmissionFixture<T>(
         ? await createAuthoredAdmittedPluginRuntimeFixture({
             plugins: options.plugins, happyHomeDir: home, controller: pluginReloadController,
             runtimeOptions: options.runtimeOptions,
+            resolveContributes: async happyHomeDir => createResolvedContributionRegistry(
+              await resolvePluginContributes({ happyHomeDir }),
+            ),
           })
         : await createAdmittedPluginRuntimeFixture({
             happyHomeDir: home, controller: pluginReloadController,

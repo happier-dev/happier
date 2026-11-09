@@ -18,8 +18,10 @@ export async function linkDirectoryChildren(params: Readonly<{
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
+  const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+  const excluded = new Set(params.exclude?.map(name => caseInsensitive ? name.toLowerCase() : name));
   await Promise.all(entryNames.map(async (entryName) => {
-    if (params.exclude?.includes(entryName)) return;
+    if (excluded.has(caseInsensitive ? entryName.toLowerCase() : entryName)) return;
     const source = join(params.source, entryName);
     let sourceStat;
     try {

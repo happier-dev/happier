@@ -915,7 +915,7 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
             if (selectedPluginOccurrenceId === null) {
               throw new Error('runner_reviewed_plugin_occurrence_unavailable');
             }
-            const environmentVariables = await materializeQualifiedConnectedAccountLaunchUses({
+            const launchEnvironment = await materializeQualifiedConnectedAccountLaunchUses({
               connectedAccountsOwner: materialized.connectedAccountsAuthority.owner,
               credentialFileOwner,
               snapshot: connectedAccountSnapshot,
@@ -935,9 +935,9 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
               },
             });
             return Object.freeze({
-              environmentVariables,
-              unsetEnvironmentVariables: Object.freeze([]),
-              sensitiveEnvironmentVariableNames: Object.freeze(Object.keys(environmentVariables)),
+              environmentVariables: launchEnvironment.env,
+              unsetEnvironmentVariables: launchEnvironment.unsetEnvKeys,
+              sensitiveEnvironmentVariableNames: Object.freeze(Object.keys(launchEnvironment.env)),
               sessionConnectedAccounts: materialized.connectedAccountsAuthority.resolveSessionConnectedAccounts(),
             });
           },

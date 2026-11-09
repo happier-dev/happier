@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:p
 
 import { parse, stringify, TomlError, type TomlTable, type TomlValue } from 'smol-toml';
 import type { AgentConnectedAccountSharedStateFileMergeV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { linkDirectoryChildren, resolveConfiguredNativeHomePath } from '@happier-dev/plugin-sdk/fs';
 
 import type { ConnectedServiceStateSharingDescriptor, ConnectedServiceStateSharingDescriptorEntry } from '@/agent/catalog/types';
 import type { ConnectedServiceMaterializedStateObservationBinding, ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
@@ -130,25 +131,7 @@ export function resolveConnectedServiceNativeHomeRoot(input: Readonly<{
   sourceEnvironment: Readonly<Record<string, string | undefined>>;
   homeDir: string;
 }>): string {
-  const sourceKey = input.nativeHome.sourceEnvironmentKey;
-  const environmentKeys = [
-    ...(sourceKey ? [sourceKey] : []),
-    input.nativeHome.environmentKey,
-    ...(input.nativeHome.fallbackEnvironmentKeys ?? []),
-  ];
-  const explicit = environmentKeys.map(key => input.sourceEnvironment[key]?.trim()).find(Boolean);
-  if (explicit) {
-    if (!isAbsolute(explicit)) {
-      throw new Error('connected_service_native_home_environment_must_be_absolute');
-    }
-    return resolve(explicit);
-  }
-  const homeRoot = resolve(input.homeDir);
-  const sourceRoot = resolve(homeRoot, input.nativeHome.defaultRelativePath);
-  if (sourceRoot === homeRoot || !isPathWithin(sourceRoot, homeRoot)) {
-    throw new Error('connected_service_native_home_default_must_be_home_relative');
-  }
-  return sourceRoot;
+  return resolveConfiguredNativeHomePath(input.nativeHome, input.sourceEnvironment, input.homeDir);
 }
 
 function normalizeRelativePath(path: string): string {
@@ -418,6 +401,19 @@ function mergeTableEntries(config: TomlTable, path: readonly string[], entries: 
   Object.assign(table, entries);
 }
 
+function removeTomlKeyPath(table: TomlTable, path: readonly string[]): void {
+  const [segment, ...rest] = path;
+  if (segment === undefined) return;
+  for (const key of segment === '*' ? Object.keys(table) : [segment]) {
+    if (!Object.hasOwn(table, key)) continue;
+    if (rest.length === 0) delete table[key];
+    else {
+      const child = asTomlTable(table[key]);
+      if (child) removeTomlKeyPath(child, rest);
+    }
+  }
+}
+
 async function buildDescriptorCopyTransformByEntry(
   input: ApplyConnectedServiceStateSharingDescriptorInput,
   diagnostics: ConnectedServicesMaterializationDiagnostic[],
@@ -470,6 +466,14 @@ async function buildDescriptorCopyTransformByEntry(
       const config = parseConnectedServiceTomlConfig(content, resolve(input.nativeSourceContext.sourceRoot, transform.entry));
       for (const [key, value] of Object.entries(transform.spec.setStringValues)) {
         if (key.trim()) config[key] = value;
+      }
+      for (const path of transform.spec.removeKeyPaths ?? []) removeTomlKeyPath(config, path);
+      for (const projection of transform.spec.setStringValuesFromEnvironment ?? []) {
+        const selected = input.target.targetMaterializedEnv[projection.environmentKey];
+        const value = selected !== undefined && Object.hasOwn(projection.values, selected) ? projection.values[selected] : undefined;
+        const key = projection.path.at(-1);
+        if (typeof value !== 'string' || !key) throw new Error('Connected-service config environment projection unavailable');
+        mergeTableEntries(config, projection.path.slice(0, -1), { [key]: value });
       }
       for (const rule of rules) {
         if (!rule.rebaseSourceKeys || input.configMode === 'isolated') continue;
@@ -539,6 +543,10 @@ export async function applyConnectedServiceStateSharingDescriptor(
   // An already-selected private home has no external configuration source. Preserve config
   // while the normal state owner detaches borrowed entries before private adoption.
   const selfSource = resolvePathForComparison(sourceRoot) === resolvePathForComparison(targetRoot);
+  const overlay = input.descriptor.nativeHome?.materializedRootOverlay;
+  if (overlay && !selfSource) {
+    await linkDirectoryChildren({ source: sourceRoot, destination: targetRoot, exclude: overlay.privateEntries });
+  }
   const sourceEnvironmentKey = input.descriptor.nativeHome?.sourceEnvironmentKey;
   const envOverrides: Record<string, string> = sourceEnvironmentKey ? { [sourceEnvironmentKey]: sourceRoot } : {};
   const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
