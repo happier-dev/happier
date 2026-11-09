@@ -1,4 +1,4 @@
-import type { SessionPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { isRefusingPermissionChoice, type SessionPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 /** An offered native choice as the shared resolver projects it: the producer's decision and scope travel with it. */
 export type OfferedPermissionChoice = SessionPermissionChoice &
@@ -12,12 +12,6 @@ export function isOfferedPermissionChoice(
   choice: SessionPermissionChoice,
 ): choice is OfferedPermissionChoice {
   return choice.decision !== undefined && choice.scope !== undefined;
-}
-
-export function isRefusingPermissionChoice(
-  choice: OfferedPermissionChoice,
-): boolean {
-  return choice.decision === 'denied' || choice.decision === 'abort';
 }
 
 export function isOfferedPermissionChoiceAvailable(

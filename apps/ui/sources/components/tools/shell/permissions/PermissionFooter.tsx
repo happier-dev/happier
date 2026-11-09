@@ -1,6 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import { McpAlwaysAllowDecision } from './McpAlwaysAllowDecision';
-import { resolveSessionPermissionChoices, isBroadShellGrantEligible } from '@/sync/ops/sessionPermissionChoices';
+import { resolveSessionPermissionChoices, isBroadShellGrantEligible, getSessionPermissionChoiceKind } from '@/sync/ops/sessionPermissionChoices';
 import { PermissionAnswerUnconfirmedNotice } from './PermissionAnswerUnconfirmedNotice';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
@@ -28,7 +28,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { PermissionDecisionButton } from './PermissionDecisionButton';
 import { PermissionFooterOfferedChoices } from './PermissionFooterOfferedChoices';
-import { isOfferedPermissionChoice, isRefusingPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
+import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     clearPermissionAnswerUnconfirmed,
@@ -861,8 +861,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         const handleChoose = (choiceId: string) => {
             const choice = offeredChoices.find(candidate => candidate.id === choiceId);
             if (!choice || !isPending || isCurrentRequestLoading || choice.availability?.allowed === false) return;
-            const kind = isRefusingPermissionChoice(choice) ? (choice.decision === 'abort' ? 'stop' : 'deny')
-                : choice.scope === 'once' ? 'approve' : 'approve_for_session';
+            const kind = getSessionPermissionChoiceKind(choice);
             void runPermissionAction(kind, (loading) => setLoadingChoiceId(loading ? choiceId : null),
                 () => submitPermissionChoice(choiceId));
         };

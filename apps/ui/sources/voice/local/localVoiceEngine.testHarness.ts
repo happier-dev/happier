@@ -616,6 +616,14 @@ export function replaceLocalVoiceSessionHttpSeed(sessionId: string, record?: Par
     if (!activeSessionMetadataHttp) throw new Error('Expected active Voice metadata HTTP boundary');
     activeSessionMetadataHttp.replaceSession(sessionId, record);
 }
+
+/** Keep the daemon's pushed request state and its later HTTP hydration coherent. */
+export async function applyLocalVoiceSessionAgentState(session: import('@/sync/domains/state/storageTypes').Session) {
+    const storage = await getStorage();
+    if (!activeSessionMetadataHttp) throw new Error('Expected active Voice metadata HTTP boundary');
+    activeSessionMetadataHttp.updateAgentState(session.id, session.agentState, session.agentStateVersion ?? 0);
+    storage.getState().applySessions([session]);
+}
 export async function switchLocalVoiceAccount(accountId: string) {
     if (!activeAccountHomes || !speechAccount) throw new Error('Expected active Voice Home');
     await activeAccountHomes.switchAccount('voice', accountId);

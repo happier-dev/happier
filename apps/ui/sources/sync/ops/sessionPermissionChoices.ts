@@ -21,14 +21,37 @@ export type SessionPermissionChoice = Readonly<{
     catalog?: Readonly<{ identity: ResolvedMcpToolIdentityV1; source?: string }>;
 }>;
 
-/** A plain Yes grants only this occurrence; No declines without stopping the run. */
+/** The same option kind drives permission presentation and automatic plain decisions. */
+export function getSessionPermissionChoiceKind(choice: Pick<SessionPermissionChoice, 'decision' | 'scope' | 'response'>):
+    'approve' | 'approve_for_session' | 'deny' | 'stop' {
+    const decision = choice.decision ?? choice.response.decision;
+    if (decision === 'denied') return 'deny';
+    if (decision === 'abort') return 'stop';
+    return choice.scope === 'once' ? 'approve' : 'approve_for_session';
+}
+
+export function isRefusingPermissionChoice(choice: Pick<SessionPermissionChoice, 'decision' | 'scope' | 'response'>): boolean {
+    const kind = getSessionPermissionChoiceKind(choice);
+    return kind === 'deny' || kind === 'stop';
+}
+
+/** Yes grants this occurrence; No prefers Deny, otherwise the offered Stop. */
 export function selectSessionPermissionChoiceForDecision(
     choices: readonly SessionPermissionChoice[],
     decision: 'approved' | 'denied',
 ): SessionPermissionChoice | undefined {
-    return choices.find(choice => choice.decision === decision
-        && (decision === 'denied' || choice.scope === 'once')
-        && choice.availability?.allowed !== false);
+    let stop: SessionPermissionChoice | undefined;
+    for (const choice of choices) {
+        if (choice.availability?.allowed === false) continue;
+        const kind = getSessionPermissionChoiceKind(choice);
+        if (decision === 'approved') {
+            if (choice.decision === 'approved' && choice.scope === 'once') return choice;
+        } else {
+            if (kind === 'deny') return choice;
+            if (kind === 'stop') stop ??= choice;
+        }
+    }
+    return stop;
 }
 
 /** Catalog consent is available only for the existing external, persistent request scope. */

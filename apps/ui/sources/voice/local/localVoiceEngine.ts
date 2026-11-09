@@ -917,17 +917,30 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
     onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
     onResponseSettled: async result => {
       const failure = !result.ok ? result.error : null;
+      const stopped = result.ok && result.decision === 'abort';
+      const acknowledgement = stopped ? t('voice.readiness.permissionCommandStopped')
+        : t(result.ok && result.decision === 'approved' ? 'approvals.status.approved' : 'approvals.status.rejected');
       const pendingTurn = activeTurnAbortSessionId === sessionId ? inFlight : null;
       if (pendingTurn && !failure) {
         // A settled permission response must not wait for the Agent's turn.
         // Its final can rearm the current capture, including a recovered one.
-        fireAndForget(pendingTurn.then(
-          () => resumeNativeVoiceListening(admission, captureAttempt),
+        const settlement = pendingTurn.then(
+          async () => {
+            if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+            if (stopped) {
+              await readNativeTurnMessage(admission, captureAttempt,
+                acknowledgement, false, () => true, () => {});
+              if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+              transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+            }
+            await resumeNativeVoiceListening(admission, captureAttempt);
+          },
           async turnError => {
             if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
             await surfaceLocalVoiceTurnFailure(sessionId, turnError, admission, captureAttempt);
           },
-        ), { tag: 'voice.nativePermission.turnSettlement' });
+        );
+        fireAndForget(settlement, { tag: 'voice.nativePermission.turnSettlement' });
         return;
       }
       if (failure && pendingTurn) {
@@ -941,7 +954,7 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
           `${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`, false, () => true, () => {});
       } else if (result.ok && !pendingTurn) {
         await readNativeTurnMessage(admission, captureAttempt,
-          t(result.decision === 'approved' ? 'approvals.status.approved' : 'approvals.status.rejected'),
+          acknowledgement,
           false, () => true, () => {});
       }
       if (failure || !pendingTurn) {

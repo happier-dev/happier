@@ -314,6 +314,27 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.visible).toBe(false);
     });
 
+    it('marks offered native refusals by their kind rather than their opaque IDs', () => {
+        const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
+            requirementId: 'native-refusals', source: 'codex', choices: [
+                { id: 'opaque:decline', label: 'Decline', decision: 'denied', scope: 'once',
+                    response: { approved: false, decision: 'denied' } },
+                { id: 'opaque:cancel', label: 'Stop', decision: 'abort', scope: 'once',
+                    response: { approved: false, decision: 'abort' } },
+            ],
+        } });
+        const model = buildDesktopActivityOverlayModel({ snapshot: createSnapshot({ permissionRequests: [{
+            kind: 'permission_request', requestId: 'native-command', serverId: 'server-1', sessionId: 'session-primary',
+            title: 'Approve command', summary: 'touch file', toolLabel: 'Bash', questionText: null, count: 1,
+            openActionIdentifier: 'open-session:session-primary', allowActionIdentifier: 'session.permission.respond',
+            denyActionIdentifier: 'session.permission.respond', directOptions: [], permissionChoices,
+        }] }), policy: createPolicy() });
+        expect(model.expanded.cards?.[0]).toMatchObject({ kind: 'permission_request', actions: expect.arrayContaining([
+            expect.objectContaining({ id: 'opaque:decline', tone: 'danger' }),
+            expect.objectContaining({ id: 'opaque:cancel', tone: 'danger' }),
+        ]) });
+    });
+
     it('prioritizes permission request cards ahead of passive session overview cards', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({

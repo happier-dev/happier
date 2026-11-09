@@ -14525,6 +14525,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
     permissionAccessFile: ({ path }) => `treballar amb ${path}`,
     permissionQuestion: ({ approve, deny }) => `Ho permeto? Digues «${approve}» o «${deny}».`,
     permissionTapRequired: "Fes servir la targeta d’aprovació per continuar.",
+    permissionCommandStopped: "He aturat l’ordre. Què vols fer en lloc d’això?",
     userActionAnnouncement: ({ question }) => `La sessió de codi necessita la teva resposta. ${question}`,
     userActionFallback: 'La sessió de codi necessita la teva resposta. Respon la pregunta perquè pugui continuar.',
     requestedTool: 'l’eina sol·licitada',

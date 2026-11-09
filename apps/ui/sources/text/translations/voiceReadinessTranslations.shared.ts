@@ -4,6 +4,7 @@ export type VoiceReadinessCopy = {
   ready: string;
   permissionQuestion: (params: { approve: string; deny: string }) => string;
   permissionTapRequired: string;
+  permissionCommandStopped: string;
   permissionAnnouncement: (params: { session: string; summary: string }) => string;
   requestingSession: string;
   permissionNamedSession: (params: { session: string }) => string;
@@ -99,6 +100,7 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
     permissionAccessFile: ({ path }) => `work with ${path}`,
     permissionQuestion: ({ approve, deny }) => `Should I allow it? Say “${approve}” or “${deny}”.`,
     permissionTapRequired: "Use the approval card to continue.",
+    permissionCommandStopped: "I stopped the command. What would you like to do instead?",
     userActionAnnouncement: ({ question }) => `The coding session needs your input. ${question}`,
     userActionFallback: 'The coding session needs your input. Answer the question so I can continue.',
     requestedTool: 'the requested tool',

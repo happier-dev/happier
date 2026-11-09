@@ -43,15 +43,18 @@ describe('Session permission offered choices', () => {
             .toEqual({ requirementId: 'spoken-occurrence', choiceId: 'opaque:deny' });
     });
 
-    it('does not turn an empty offer or Stop-only offer into a Yes or No answer', () => {
+    it.each([true, false])('maps No to the offered Stop only when available (%s), never to Yes', allowed => {
         const choices = resolveSessionPermissionChoices({ toolName: 'Shell', nativeChoices: {
             requirementId: 'stop-only', source: 'native-agent', choices: [
                 { id: 'stop-only', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
             ],
-        } });
+        }, nativeChoiceAvailability: [{ choiceId: 'stop-only', allowed }] });
         expect(selectSessionPermissionChoiceForDecision(choices, 'approved')).toBeUndefined();
-        expect(selectSessionPermissionChoiceForDecision(choices, 'denied')).toBeUndefined();
+        // Voice ORCH RUN107 ruling: No selects Stop when no Deny was offered.
+        expect(selectSessionPermissionChoiceForDecision(choices, 'denied')?.response.nativeChoice)
+            .toEqual(allowed ? { requirementId: 'stop-only', choiceId: 'stop-only' } : undefined);
         expect(selectSessionPermissionChoiceForDecision([], 'approved')).toBeUndefined();
+        expect(selectSessionPermissionChoiceForDecision([], 'denied')).toBeUndefined();
     });
 
     it.each(['claude', 'codex'])('keeps stored %s occurrences answerable after live descriptor policy removal', agentId => {

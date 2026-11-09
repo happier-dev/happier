@@ -14482,6 +14482,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
     permissionAccessFile: ({ path }) => `操作${path}`,
     permissionQuestion: ({ approve, deny }) => `是否允許？請說「${approve}」或「${deny}」。`,
     permissionTapRequired: "請使用核准卡片繼續。",
+    permissionCommandStopped: "我已停止該命令。你想改做什麼？",
     userActionAnnouncement: ({ question }) => `編碼工作階段需要你的回答。${question}`,
     userActionFallback: '編碼工作階段需要你的回答。請回答問題，以便我繼續。',
     requestedTool: '要求的工具',

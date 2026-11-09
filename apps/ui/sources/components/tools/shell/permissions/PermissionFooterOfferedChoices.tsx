@@ -8,12 +8,12 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import { PermissionDecisionButton } from './PermissionDecisionButton';
 import {
   arrangeOfferedChoices,
   isOfferedPermissionChoiceAvailable,
-  isRefusingPermissionChoice,
   resolveOfferedChoiceLayout,
   type OfferedPermissionChoice,
 } from './offeredChoiceLayout';

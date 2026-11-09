@@ -14523,6 +14523,7 @@ const voiceReadinessTranslations = { pl: defineVoiceReadinessTranslation({
     permissionAccessFile: ({ path }) => `pracować z ${path}`,
     permissionQuestion: ({ approve, deny }) => `Czy mam na to zezwolić? Powiedz „${approve}” lub „${deny}”.`,
     permissionTapRequired: "Użyj karty zatwierdzenia, aby kontynuować.",
+    permissionCommandStopped: "Polecenie zostało zatrzymane. Co chcesz zrobić zamiast tego?",
     userActionAnnouncement: ({ question }) => `Sesja kodowania potrzebuje Twojej odpowiedzi. ${question}`,
     userActionFallback: 'Sesja kodowania potrzebuje Twojej odpowiedzi. Odpowiedz na pytanie, abym mógł kontynuować.',
     requestedTool: 'żądane narzędzie',

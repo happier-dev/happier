@@ -14535,6 +14535,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
     permissionAccessFile: ({ path }) => `работать с ${path}`,
     permissionQuestion: ({ approve, deny }) => `Разрешить? Скажите «${approve}» или «${deny}».`,
     permissionTapRequired: "Чтобы продолжить, воспользуйтесь карточкой подтверждения.",
+    permissionCommandStopped: "Команда остановлена. Что вы хотите сделать вместо этого?",
     userActionAnnouncement: ({ question }) => `Сеансу разработки нужен ваш ответ. ${question}`,
     userActionFallback: 'Сеансу разработки нужен ваш ответ. Ответьте на вопрос, чтобы я мог продолжить.',
     requestedTool: 'запрошенный инструмент',

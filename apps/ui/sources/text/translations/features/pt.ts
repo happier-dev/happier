@@ -14503,6 +14503,7 @@ const voiceReadinessTranslations = { pt: defineVoiceReadinessTranslation({
     permissionAccessFile: ({ path }) => `trabalhar com ${path}`,
     permissionQuestion: ({ approve, deny }) => `Devo permitir? Diga «${approve}» ou «${deny}».`,
     permissionTapRequired: "Use o cartão de aprovação para continuar.",
+    permissionCommandStopped: "Parei o comando. O que você quer fazer em vez disso?",
     userActionAnnouncement: ({ question }) => `A sessão de código precisa da tua resposta. ${question}`,
     userActionFallback: 'A sessão de código precisa da tua resposta. Responde à pergunta para eu poder continuar.',
     requestedTool: 'a ferramenta pedida',

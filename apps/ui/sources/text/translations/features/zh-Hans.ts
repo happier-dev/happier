@@ -14482,6 +14482,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
     permissionAccessFile: ({ path }) => `操作${path}`,
     permissionQuestion: ({ approve, deny }) => `是否允许？请说“${approve}”或“${deny}”。`,
     permissionTapRequired: "请使用审批卡片继续。",
+    permissionCommandStopped: "我已停止该命令。你想改做什么？",
     userActionAnnouncement: ({ question }) => `编码会话需要你的回答。${question}`,
     userActionFallback: '编码会话需要你的回答。请回答问题，以便我继续。',
     requestedTool: '请求的工具',

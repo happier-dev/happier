@@ -5,6 +5,7 @@ import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
+import { isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 import { readConfidentialFillSettlement } from './confidentialSecretApprovalModel';
 
 /** The request lifecycle uses the same words in its detail and retained tab. */
@@ -45,7 +46,7 @@ export function resolveNativePermissionAnswer(permission: ToolCall['permission']
     if (!chosen || permission.status === 'pending' || permission.status === 'canceled') return null;
     const choice = permission.nativeChoices?.choices.find(candidate => candidate.id === chosen.choiceId);
     if (!choice) return null;
-    return { label: choice.label, refused: choice.decision === 'denied' || choice.decision === 'abort' };
+    return { label: choice.label, refused: isRefusingPermissionChoice(choice) };
 }
 
 /**

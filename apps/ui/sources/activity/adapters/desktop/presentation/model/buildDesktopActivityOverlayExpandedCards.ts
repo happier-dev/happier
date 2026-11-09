@@ -1,5 +1,6 @@
 import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import type { DesktopActivityOverlayExpandedCard, DesktopActivityOverlaySessionRowModel } from './desktopActivityOverlayModelTypes';
 import type { DesktopActivityOverlaySnapshot } from '../snapshot/desktopActivityOverlaySnapshotTypes';
@@ -73,7 +74,7 @@ function buildPermissionActions(
             data: withServerScope({ requestId: request.requestId,
                 ...(request.turnId ? { turnId: request.turnId } : {}), sessionId: request.sessionId, ...response }, request.serverId),
             tone: choice.id === 'allow' ? 'primary' as const
-                : choice.id === 'deny' || choice.id === 'stop' ? 'danger' as const : 'quiet' as const,
+                : isRefusingPermissionChoice(choice) ? 'danger' as const : 'quiet' as const,
         };
     });
     return [...actions, {

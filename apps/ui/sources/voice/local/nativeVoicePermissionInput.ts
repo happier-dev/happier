@@ -6,7 +6,7 @@ import { subscribeRegisteredStorageState } from '@/sync/domains/state/storageSta
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from '@/sync/ops/sessionPermissionChoices';
+import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from '@/sync/ops/sessionPermissionChoices';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
@@ -15,13 +15,15 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 
+type NativePermissionDecision = 'approved' | 'denied' | 'abort';
+
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
   beginTurn(): void;
   waitForPendingReadout(): Promise<boolean>;
   resumeReadout(): Promise<boolean>;
   captureResponse(): ((text: string) => Promise<void>) | null;
-  waitForResponseSettlement(): Promise<'approved' | 'denied' | null>;
+  waitForResponseSettlement(): Promise<NativePermissionDecision | null>;
   dispose(): void;
 }>;
 
@@ -43,13 +45,13 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
   onResponding: () => void;
-  onResponseSettled: (result: Readonly<{ ok: true; decision: 'approved' | 'denied' }> | Readonly<{ ok: false; error: unknown }>) => Promise<void>;
+  onResponseSettled: (result: Readonly<{ ok: true; decision: NativePermissionDecision }> | Readonly<{ ok: false; error: unknown }>) => Promise<void>;
 }>): NativeVoicePermissionInput {
   const execute = createFrontDoorActionExecute();
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
   let reading: Promise<void> | null = null;
-  let responseSettlement: Promise<'approved' | 'denied' | null> = Promise.resolve(null);
+  let responseSettlement: Promise<NativePermissionDecision | null> = Promise.resolve(null);
   const readAddresses = (): readonly SessionAddress[] => {
     const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: params.controlSessionId });
     if (binding?.transcriptMode !== 'native_session') return [];
@@ -156,6 +158,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       selected.ready = false;
       return async (text: string): Promise<void> => {
         const decision = resolveSpokenPermissionDecision(text);
+        let appliedDecision: NativePermissionDecision | null = decision;
         try {
           if (disposed || params.signal.aborted || prompt !== selected) return;
           if (text.trim()) await params.commitTranscript(text, randomUUID());
@@ -168,15 +171,17 @@ export function createNativeVoicePermissionInput(params: Readonly<{
             return;
           }
           const request = selected.request;
-          const response = request.nativeChoices === undefined ? { decision }
+          const choice = request.nativeChoices === undefined ? undefined
             : selectSessionPermissionChoiceForDecision(resolveSessionPermissionChoices({
               toolName: request.tool, toolInput: request.arguments, nativeChoices: request.nativeChoices,
               nativeChoiceAvailability: request.nativeChoiceAvailability,
-            }), decision)?.response;
+            }), decision);
+          const response = request.nativeChoices === undefined ? { decision } : choice?.response;
           if (!response) {
             await readPrompt(selected, t('voice.readiness.permissionTapRequired'), true);
             return;
           }
+          if (choice && getSessionPermissionChoiceKind(choice) === 'stop') appliedDecision = 'abort';
           params.onResponding();
           const responding = execute('session.permission.respond', {
             sessionId: selected.address.sessionId, requestId: selected.request.id,
@@ -184,13 +189,13 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal });
           // The native turn can finish before the permission RPC acknowledges.
           // Report the Action's settled decision to the turn lifecycle owner.
-          responseSettlement = responding.then(result => result.ok ? decision : null, () => null);
+          responseSettlement = responding.then(result => result.ok ? appliedDecision : null, () => null);
           requireActionSuccess(await responding);
         } catch (error) {
           if (!disposed && !params.signal.aborted) await params.onResponseSettled({ ok: false, error });
           return;
         }
-        if (!disposed && !params.signal.aborted && decision) await params.onResponseSettled({ ok: true, decision });
+        if (!disposed && !params.signal.aborted && appliedDecision) await params.onResponseSettled({ ok: true, decision: appliedDecision });
       };
     },
     waitForResponseSettlement: () => responseSettlement,

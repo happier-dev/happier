@@ -14487,6 +14487,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
     permissionAccessFile: ({ path }) => `${path}を操作する`,
     permissionQuestion: ({ approve, deny }) => `許可しますか？「${approve}」または「${deny}」と言ってください。`,
     permissionTapRequired: "続けるには承認カードを使ってください。",
+    permissionCommandStopped: "コマンドを停止しました。代わりに何をしますか？",
     userActionAnnouncement: ({ question }) => `コーディングセッションにはあなたの回答が必要です。${question}`,
     userActionFallback: 'コーディングセッションにはあなたの回答が必要です。続行できるよう質問に回答してください。',
     requestedTool: '要求されたツール',
