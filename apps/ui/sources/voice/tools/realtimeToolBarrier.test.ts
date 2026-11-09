@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { VoiceRealtimeToolCallV1, VoiceRealtimeToolResultV1 } from '@happier-dev/protocol';
+import type { VoiceRealtimeToolCallV1, VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 import { createRealtimeToolBarrier, RealtimeToolExecutionError } from './realtimeToolBarrier';
 
@@ -717,7 +717,7 @@ describe('realtime tool barrier', () => {
     expect(JSON.stringify(result)).not.toContain('raw');
   });
 
-  it('bounds calls per response before authorization or execution', async () => {
+  it('executes all 65 valid calls in a response', async () => {
     const authorizeCall = vi.fn(async () => ({ status: 'allowed' as const }));
     const executeCall = vi.fn(async () => ({ ok: true }));
     const barrier = createRealtimeToolBarrier({
@@ -726,15 +726,16 @@ describe('realtime tool barrier', () => {
       redactResult: (value) => value,
       submitResults: async () => undefined,
       continueResponse: async () => undefined,
-      maxCallsPerResponse: 2,
     });
 
-    await expect(barrier.run({
+    const result = await barrier.run({
       responseId: 'response-1',
-      calls: [call('one', 0), call('two', 1), call('three', 2)],
-    })).rejects.toMatchObject({ code: 'too_many_calls' });
-    expect(authorizeCall).not.toHaveBeenCalled();
-    expect(executeCall).not.toHaveBeenCalled();
+      calls: Array.from({ length: 65 }, (_, index) => call(`call-${index}`, index)),
+    });
+    expect(result.status).toBe('submitted');
+    expect(result.results).toHaveLength(65);
+    expect(result.results.every((entry) => entry.status === 'success')).toBe(true);
+    expect(executeCall).toHaveBeenCalledTimes(65);
   });
 
   it('retains more than 8,192 distinct mutating effect outcomes for their attempt', async () => {
@@ -768,22 +769,30 @@ describe('realtime tool barrier', () => {
     expect(executeCall).toHaveBeenCalledTimes(8_193);
   });
 
-  it('bounds concurrently active responses instead of growing past the replay cache limit', async () => {
-    let release!: (value: unknown) => void;
+  it('retains 129 failed deliveries and redelivers without repeating effects', async () => {
+    const executeCall = vi.fn(async () => ({ ok: true }));
+    const submitResults = vi.fn(async () => { throw new Error('delivery failed'); });
     const barrier = createRealtimeToolBarrier({
+      classifyCall: () => 'mutation',
       authorizeCall: async () => ({ status: 'allowed' as const }),
-      executeCall: async () => await new Promise((resolve) => { release = resolve; }),
+      executeCall,
       redactResult: (value) => value,
-      submitResults: async () => undefined,
+      submitResults,
       continueResponse: async () => undefined,
-      maxResponses: 1,
     });
-    const first = barrier.run({ responseId: 'response-1', calls: [call('one', 0)] });
+    for (let index = 0; index < 129; index += 1) {
+      const responseId = `response-${index}`;
+      await expect(barrier.run({
+        responseId,
+        calls: [{ ...call(`effect-${index}`, 0), responseId }],
+      })).resolves.toMatchObject({ status: 'failed' });
+    }
+    submitResults.mockImplementation(async () => undefined);
     await expect(barrier.run({
-      responseId: 'response-2',
-      calls: [{ ...call('two', 0), responseId: 'response-2' }],
-    })).rejects.toMatchObject({ code: 'capacity_exceeded' });
-    release({ ok: true });
-    await expect(first).resolves.toMatchObject({ status: 'submitted' });
+      responseId: 'response-0',
+      calls: [{ ...call('effect-0', 0), responseId: 'response-0' }],
+    })).resolves.toMatchObject({ status: 'submitted' });
+    expect(executeCall).toHaveBeenCalledTimes(129);
+    barrier.dispose();
   });
 });

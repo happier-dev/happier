@@ -2,7 +2,7 @@ import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions'
 import { VoiceRealtimeJsonValueSchema, VoiceRealtimeToolCallV1Schema, VoiceRealtimeToolResultV1Schema, type VoiceRealtimeJsonValue, type VoiceRealtimeToolCallV1, type VoiceRealtimeToolResultV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 export class RealtimeToolBarrierError extends Error {
-  readonly code: 'duplicate_call_id' | 'response_conflict' | 'too_many_calls' | 'capacity_exceeded' | 'disposed';
+  readonly code: 'duplicate_call_id' | 'response_conflict' | 'disposed';
 
   constructor(code: RealtimeToolBarrierError['code']) {
     super(code);
@@ -55,8 +55,6 @@ type RealtimeToolBarrierDeps = Readonly<{
     signal: AbortSignal,
   ) => Promise<void>;
   continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
-  maxResponses?: number;
-  maxCallsPerResponse?: number;
 }>;
 
 type ResponseRecord = {
@@ -69,7 +67,6 @@ type ResponseRecord = {
   detached: boolean;
   promise: Promise<RealtimeToolBarrierResult>;
   settled: boolean;
-  result: RealtimeToolBarrierResult | null;
 };
 
 type EffectOutcomeRecord = {
@@ -79,10 +76,6 @@ type EffectOutcomeRecord = {
 };
 
 const SAFE_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
-
-function clampPositiveInteger(value: number | undefined, fallback: number): number {
-  return Number.isFinite(value) && Number(value) > 0 ? Math.max(1, Math.floor(Number(value))) : fallback;
-}
 
 function isJsonArray(value: VoiceRealtimeJsonValue): value is readonly VoiceRealtimeJsonValue[] {
   return Array.isArray(value);
@@ -169,27 +162,9 @@ async function raceWithAbort<T>(startOperation: () => Promise<T>, signal: AbortS
 }
 
 export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
-  const maxResponses = clampPositiveInteger(deps.maxResponses, 128);
-  const maxCallsPerResponse = clampPositiveInteger(deps.maxCallsPerResponse, 64);
   const responses = new Map<string, ResponseRecord>();
   const effectOutcomes = new Map<string, EffectOutcomeRecord>();
   let disposed = false;
-
-  const evictSettledResponses = (targetSize: number): void => {
-    if (responses.size <= targetSize) return;
-    for (const [responseId, record] of responses) {
-      // A failed delivery still owns a completed result.
-      // Keep that bounded same-call custody until it is redelivered or the
-      // attempt disposes; evicting it would turn a replay into re-execution.
-      if (
-        !record.settled
-        || record.result?.status === 'failed'
-        || record.result?.status === 'detached'
-      ) continue;
-      responses.delete(responseId);
-      if (responses.size <= targetSize) return;
-    }
-  };
 
   const resetDeliveryController = (record: ResponseRecord): void => {
     record.deliveryController.abort();
@@ -395,9 +370,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   }>): Promise<RealtimeToolBarrierResult> => {
     if (disposed) throw new RealtimeToolBarrierError('disposed');
     const responseId = input.responseId;
-    if (input.calls.length > maxCallsPerResponse) {
-      throw new RealtimeToolBarrierError('too_many_calls');
-    }
     const calls = sortCalls(input.calls.map((raw) => VoiceRealtimeToolCallV1Schema.parse(raw)));
     if (!responseId || responseId.trim() !== responseId || calls.some((call) => call.responseId !== responseId)) {
       throw new RealtimeToolBarrierError('response_conflict');
@@ -424,7 +396,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
         resetDeliveryController(existing);
         return await submitCompletedResults(responseId, previous.results, existing);
       }).then((result) => {
-        existing.result = result;
         if (result.status === 'cancelled' && responses.get(responseId) === existing) {
           responses.delete(responseId);
         }
@@ -432,15 +403,9 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       }).finally(() => {
         input.signal?.removeEventListener('abort', abort);
         if (existing.promise === replay) existing.settled = true;
-        evictSettledResponses(maxResponses);
       });
       existing.promise = replay;
       return await replay;
-    }
-
-    evictSettledResponses(maxResponses - 1);
-    if (responses.size >= maxResponses) {
-      throw new RealtimeToolBarrierError('capacity_exceeded');
     }
 
     const controller = new AbortController();
@@ -454,14 +419,12 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       deliveryController: new AbortController(),
       detached: false,
       settled: false,
-      result: null,
       promise: Promise.resolve({ status: 'cancelled', results: [] }),
     };
     resetDeliveryController(record);
     const response = executeResponse(responseId, calls, record)
       .then((result) => {
         if (record.promise === response) record.settled = true;
-        record.result = result;
         if (result.status === 'cancelled' && responses.get(responseId) === record) {
           responses.delete(responseId);
         }
@@ -470,7 +433,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       .finally(() => {
         if (record.promise === response) record.settled = true;
         input.signal?.removeEventListener('abort', abort);
-        evictSettledResponses(maxResponses);
       });
     record.promise = response;
     responses.set(responseId, record);
