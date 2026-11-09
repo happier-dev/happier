@@ -50,17 +50,19 @@ let app = Fastify();
 let restoreHttp = () => {};
 let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
 const requests: Array<{ path: string; input: unknown; authorization: string | undefined }> = [];
+let machineCount = 1;
 
 beforeEach(async () => {
   transportFault.close = false;
   requests.length = 0;
+  machineCount = 1;
   app = Fastify();
   app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
   app.get('/v1/machines', async request => {
     requests.push({ path: request.url, input: request.query, authorization: request.headers.authorization });
     const pat = request.headers.authorization === `Bearer ${API_TOKEN}`;
-    return [{ id: 'machine-1', kind: 'persistent', active: pat, activeAt: Date.now(), revokedAt: null,
-      replacedByMachineId: pat ? null : 'machine-2' }];
+    return Array.from({ length: machineCount }, (_, index) => ({ id: `machine-${index + 1}`, kind: 'persistent', active: pat,
+      activeAt: Date.now(), revokedAt: null, replacedByMachineId: pat ? null : 'machine-2' }));
   });
   app.post('/v1/actions/machines.list', async request => {
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
@@ -96,7 +98,7 @@ describe('machines list through the canonical Action', () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it('invokes machines.list with the friendly page bound and preserves the released output', async () => {
+  it('invokes machines.list without an implicit projection and preserves the released output', async () => {
     credentialBoundary.readStoredCredentials.mockResolvedValue({
       token: API_TOKEN, encryption: null, credentialProvenance: 'api_token',
     });
@@ -106,7 +108,7 @@ describe('machines list through the canonical Action', () => {
 
     expect(credentialBoundary.readStoredCredentials).toHaveBeenCalled();
     expect(log.mock.calls.flat().join('\n')).toContain('machine-1');
-    expect(requests).toContainEqual({ path: '/v1/actions/machines.list', input: { limit: 200 }, authorization: `Bearer ${API_TOKEN}` });
+    expect(requests).toContainEqual({ path: '/v1/actions/machines.list', input: {}, authorization: `Bearer ${API_TOKEN}` });
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -129,6 +131,27 @@ describe('machines list through the canonical Action', () => {
       data: { machines: [{ id: 'machine-1', active: false, replacedByMachineId: 'machine-2' }] },
     });
     expect(requests).toContainEqual({ path: '/v1/machines', input: {}, authorization: 'Bearer token' });
+  });
+
+  it.each([
+    { args: [], count: 202 },
+    { args: ['--limit', '201'], count: 201 },
+    { args: ['--limit', '2'], count: 2 },
+  ])('lists $count Machines through canonical discovery with $args', async ({ args, count }) => {
+    machineCount = 202;
+    credentialBoundary.readStoredCredentials.mockResolvedValue({ token: 'token', encryption: null });
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown, ...args: unknown[]) => {
+      output += String(chunk);
+      const callback = args.find((value) => typeof value === 'function') as (() => void) | undefined;
+      callback?.();
+      return true;
+    }) as never);
+
+    await runMachinesList([...args, '--json']);
+    const envelope = JSON.parse(output);
+    expect(envelope).toMatchObject({ ok: true, kind: 'machines_list' });
+    expect(envelope.data.machines).toHaveLength(count);
   });
 
   it('rejects an unknown option before reading credentials', async () => {
@@ -160,7 +183,7 @@ describe('machines list through the canonical Action', () => {
     await runMachinesList([]);
 
     expect(process.exitCode).toBe(2);
-    expect(requests).toContainEqual({ path: '/v1/actions/machines.list', input: { limit: 200 }, authorization: `Bearer ${API_TOKEN}` });
+    expect(requests).toContainEqual({ path: '/v1/actions/machines.list', input: {}, authorization: `Bearer ${API_TOKEN}` });
   });
 });
 

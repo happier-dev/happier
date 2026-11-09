@@ -13,7 +13,7 @@ import { actionInputServerId } from './definition.js';
 
 export const PathsListRecentInputSchema = lazyZodSchema(() => z.looseObject({
   machineId: z.optional(z.string().check(z.minLength(1))),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(50))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
 }));
 
 /**

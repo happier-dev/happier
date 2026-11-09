@@ -596,7 +596,7 @@ export function filterResolvedActionOptions(
 ): readonly ResolvedActionOption[] {
   const query = typeof params?.query === 'string' ? params.query.trim().toLowerCase() : '';
   const limit = typeof params?.limit === 'number' && Number.isFinite(params.limit)
-    ? Math.max(1, Math.min(200, Math.floor(params.limit)))
+    ? Math.max(1, Math.floor(params.limit))
     : null;
 
   const valued = params?.values ? options.filter(option => params.values!.some(value => pluginJsonValuesEqual(option.value, value))) : options;

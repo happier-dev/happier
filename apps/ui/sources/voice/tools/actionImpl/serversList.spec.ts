@@ -23,6 +23,27 @@ describe('listServersForVoiceTool', () => {
         await setActiveServerId(initialServerId);
     });
 
+    it('lists all 51 loaded Homes by default and honors a requested 201-Home projection', async () => {
+        const setHomes = (count: number) => storage.setState({
+            concurrentSessionListCacheByServerId: Object.fromEntries(Array.from({ length: count }, (_, i) =>
+                [`connected-${i}`, { serverName: `Home ${i}` }])),
+            ordinarySessionListMembershipByServerId: Object.fromEntries(Array.from({ length: count }, (_, i) =>
+                [`connected-${i}`, [`session-${i}`]])),
+            sessionListRowsByServerId: Object.fromEntries(Array.from({ length: count }, (_, i) =>
+                [`connected-${i}`, { [`session-${i}`]: createSessionListRenderableSessionFixture({ id: `session-${i}`, metadata: null }) }])),
+        });
+        setHomes(50);
+        expect(await listServersForVoiceTool({})).toHaveProperty('items.length', 51);
+        setHomes(201);
+        expect(await listServersForVoiceTool({ limit: 201 })).toHaveProperty('items.length', 201);
+        expect(await listServersForVoiceTool({ limit: 2 })).toHaveProperty('items.length', 2);
+        expect(await listServersForVoiceTool({ limit: 1 })).toHaveProperty('items.length', 1);
+        storage.setState((state) => ({ settings: { ...state.settings, voice: { ...state.settings.voice,
+            privacy: { ...state.settings.voice.privacy, shareDeviceInventory: false },
+        } } }));
+        expect(await listServersForVoiceTool({})).toMatchObject({ errorCode: 'privacy_disabled' });
+    });
+
     it('prefers saved server profile names over raw server ids', async () => {
         storage.setState({
             concurrentSessionListCacheByServerId: { 'server-b': { serverName: 'Review Server' } },

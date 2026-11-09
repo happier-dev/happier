@@ -247,6 +247,25 @@ describe('agent catalog voice tools', () => {
     vi.unstubAllGlobals();
   });
 
+  it('honors requested 201-row backend and model projections without a host maximum', async () => {
+    const definitions = Array.from({ length: 202 }, (_, i) => AcpBackendDefinitionV1Schema.parse({
+      id: `team-${i}`, name: `team-${i}`, title: `Team ${i}`,
+      launch: { kind: 'command', command: 'kiro-cli', args: ['acp'] }, createdAt: 1, updatedAt: 1,
+    }));
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'ready', revision: 2, record: { v: 1, definitions } }, true);
+    const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const backends = await listAgentBackendsForVoiceTool({ includeDisabled: true });
+    expect(backends.items.length).toBeGreaterThanOrEqual(202);
+    expect(await listAgentBackendsForVoiceTool({ includeDisabled: true, limit: 201 })).toHaveProperty('items.length', 201);
+    expect(await listAgentBackendsForVoiceTool({ includeDisabled: true, limit: 2 })).toHaveProperty('items.length', 2);
+    machineCapabilitiesInvoke.mockResolvedValue({ supported: true, response: { ok: true, result: {
+      availableModels: Array.from({ length: 202 }, (_, i) => ({ id: `model-${i}`, name: `Model ${i}` })), supportsFreeform: false,
+    } } });
+    expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' })).toHaveProperty('items.length', 203);
+    expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1', limit: 201 })).toHaveProperty('items.length', 201);
+    expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1', limit: 2 })).toHaveProperty('items.length', 2);
+  });
+
   it('uses opened ACP destination rows for Agent Actions and refuses unavailable facts instead of listing an empty catalog', async () => {
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     delete state.settings.acpCatalogSettingsV1;

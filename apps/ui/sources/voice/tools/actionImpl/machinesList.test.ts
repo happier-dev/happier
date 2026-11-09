@@ -18,6 +18,22 @@ beforeEach(async () => {
 
 afterEach(clearMachineRequestReachabilityForTest);
 
+it('lists all 51 loaded Machines by default and honors a requested 201-Machine projection', async () => {
+    const { serverId } = account.scope;
+    const machines = Array.from({ length: 202 }, (_, i) => createMachineFixture({ id: `machine-${i}` }));
+    const setMachines = (count: number) => storage.setState({ machineListByServerId: { [serverId]: machines.slice(0, count) },
+        machineListStatusByServerId: { [serverId]: 'idle' } });
+    account.replaceVoice({ ...account.settings.voice, privacy: { ...account.settings.voice.privacy, shareDeviceInventory: true } });
+    setMachines(51);
+    expect(await listMachinesForVoiceTool({ serverId })).toHaveProperty('items.length', 51);
+    setMachines(202);
+    expect(await listMachinesForVoiceTool({ serverId, limit: 201 })).toHaveProperty('items.length', 201);
+    expect(await listMachinesForVoiceTool({ serverId, limit: 2 })).toHaveProperty('items.length', 2);
+    account.replaceVoice({ ...account.settings.voice, privacy: { ...account.settings.voice.privacy, shareDeviceInventory: false } });
+    expect(await listMachinesForVoiceTool({ serverId })).toMatchObject({ errorCode: 'privacy_disabled' });
+    expect(await listMachinesForVoiceTool({ serverId, purpose: 'input', limit: 2 })).toHaveProperty('items.length', 202);
+});
+
 it('retains a shared Use target installation in the Action inventory without stored content', async () => {
     const machine = createMachineFixture({ id: 'shared', installationId: 'other-installation',
         access: { custodian: { accountId: 'other-owner', displayName: 'Owner' }, role: 'use',

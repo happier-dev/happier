@@ -50,7 +50,6 @@ import {
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
-import { normalizeLimit } from './sessionStateReaders';
 import { createMachineInventoryProbe } from './probeMachineInventory';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 
@@ -136,9 +135,8 @@ function dedupeById<T extends Readonly<{ id: string }>>(items: readonly T[]): re
   return items.filter((entry, index, all) => all.findIndex((candidate) => candidate.id === entry.id) === index);
 }
 
-function limitItems<T>(items: readonly T[], limit: unknown): readonly T[] {
-  const bounded = normalizeLimit(limit);
-  return bounded ? items.slice(0, bounded) : items;
+function limitItems<T>(items: readonly T[], limit?: number): readonly T[] {
+  return items.slice(0, limit);
 }
 
 type AgentProbeInventoryDeps = Readonly<{
@@ -580,7 +578,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
           }]
         : [];
       return {
-        items: limitItems(items, (args as { limit?: unknown }).limit),
+        items: limitItems(items, args.limit),
       };
     },
     machinesList: async (args) => {
@@ -598,7 +596,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         ...(machine.access ? { access: machine.access } : {}),
       }));
       return {
-        items: limitItems(items, (args as { limit?: unknown }).limit),
+        items: limitItems(items, args.limit),
       };
     },
     serversList: async (args) => {
@@ -615,7 +613,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         }))
         .sort((a, b) => a.label.localeCompare(b.label));
       return {
-        items: limitItems(items, (args as { limit?: unknown }).limit),
+        items: limitItems(items, args.limit),
       };
     },
     readAccountAcpCatalog: async ({ signal }) => {
@@ -643,7 +641,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     agentsBackendsList: async (args) => {
       const captured = await readAcpCatalogSnapshot();
       const items = await (await import('./buildAgentBackendInventoryItemsLazy')).buildAgentBackendInventoryItemsLazy({
-        limit: (args as { limit?: unknown }).limit,
+        limit: args.limit,
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
         accountSettings: captured.account.settings,
         acpCatalogSnapshot: captured.catalog,
@@ -679,7 +677,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const backendTargetKey = typeof (args as { backendTargetKey?: unknown }).backendTargetKey === 'string'
         ? (args as { backendTargetKey?: string }).backendTargetKey?.trim() ?? ''
         : '';
-      const limit = (args as { limit?: unknown }).limit;
+      const limit = args.limit;
       const normalizedAgentId = String(agentId ?? '').trim();
       const backendTarget = backendTargetKey
         ? (() => {
@@ -747,7 +745,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
         : usesConfiguredCompatBackend ? [] : metadataItems;
       const dedupedItems = resolvedItems.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
         .filter((entry, index, all) => all.findIndex((candidate) => candidate.id === entry.id) === index);
-      const bounded = normalizeLimit(limit);
       let providerProjection: Extract<DaemonProviderModelProjectionResponseV1, { status: 'success' }> | null = null;
       if (args.includeProviderProjection && args.machineId && backendTargetKey && params.callMachineAction) {
         try {
@@ -767,7 +764,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       await captured?.assertCurrent();
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
-        items: bounded ? dedupedItems.slice(0, bounded) : dedupedItems,
+        items: limitItems(dedupedItems, limit),
         supportsFreeform: shouldUseProbeResult && probeResult ? probeResult.supportsFreeform : false,
         source: shouldUseProbeResult && probeResult
           ? probeResult.source
@@ -797,7 +794,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const probedItems = probeResult ? modeInventoryItemsFromProbeResult(probeResult) : [];
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
-        items: limitItems(dedupeById(probedItems), (args as { limit?: unknown }).limit),
+        items: limitItems(dedupeById(probedItems), args.limit),
         source: probeResult?.source ?? 'unavailable',
         ...(args.probe && probeResult ? { probeObservation: AgentSessionModesProbeObservationSchema.parse(probeResult) } : {}),
       };
@@ -843,7 +840,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       });
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
-        items: limitItems(items, (args as { limit?: unknown }).limit),
+        items: limitItems(items, args.limit),
         source,
         ...(args.probe && probeResult ? { probeObservation: AgentConfigOptionsProbeObservationSchema.parse(probeResult) } : {}),
       };

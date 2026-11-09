@@ -16,6 +16,27 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 describe('native Action configuration discovery', () => {
+  it('keeps complete Machine model discovery and honors a deliberate 201-row projection', async () => {
+    const agentId = 'acme.discovery/assistant';
+    const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
+      // The selected Machine RPC is the boundary; schema admission and projection remain real.
+      callMachineAction: async () => ({ ok: true, result: AgentModelsProbeObservationSchema.parse({
+        agentId, availableModels: Array.from({ length: 202 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` })),
+        supportsFreeform: false, source: 'dynamic',
+      }) }),
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
+    for (const [limit, count] of [[undefined, 202], [201, 201], [2, 2]] as const) {
+      const result = await executor.execute('agents.models.list', { agentId, machineId: 'worker',
+        ...(limit === undefined ? {} : { limit }) }, { surface: 'cli', authority: 'present_user' });
+      expect(result).toMatchObject({ ok: true, result: { source: 'dynamic' } });
+      if (!result.ok) throw new Error('Model inventory refused');
+      const parsed = PUBLIC_ACTION_OUTPUT_SCHEMAS['agents.models.list'].parse(result.result);
+      expect(parsed.items).toContainEqual({ id: 'model-0', label: 'Model 0' });
+      expect(parsed.items).toHaveLength(count);
+    }
+  });
+
   it.each([
     ['filesystem_identity_custody_unavailable', false],
     ['agent_isolation_unavailable', false],

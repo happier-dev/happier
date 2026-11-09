@@ -6,7 +6,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 
 export const ServersListInputSchema = lazyZodSchema(() => z.looseObject({
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
 }));
 
 function createServerDiscoveryActionSpecs() {

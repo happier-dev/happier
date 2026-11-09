@@ -7,12 +7,6 @@ import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/execut
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'
 
-function normalizeLimit(value: unknown): number | null {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return null
-  return Math.max(1, Math.min(200, Math.floor(parsed)))
-}
-
 function buildCatalogBackendInventoryItems(
   accountSettings: AccountSettings | null,
 ): AgentBackendInventoryItem[] {
@@ -65,14 +59,13 @@ export async function buildConfiguredAcpBackendInventoryItems(
 }
 
 export async function buildAgentBackendInventoryItems(params: Readonly<{
-  limit?: unknown;
+  limit?: number;
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
 }>): Promise<AgentBackendInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null
   const includeDisabled = params.includeDisabled === true
-  const limit = normalizeLimit(params.limit)
   const configuredAcpBackends = await buildConfiguredAcpBackendInventoryItems(
     accountSettings,
     params.acpCatalogSnapshot,
@@ -82,5 +75,5 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
     ...configuredAcpBackends,
   ].filter((item) => includeDisabled || item.enabled !== false)
 
-  return limit ? items.slice(0, limit) : items
+  return items.slice(0, params.limit)
 }

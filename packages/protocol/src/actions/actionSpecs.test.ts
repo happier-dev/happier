@@ -44,6 +44,19 @@ import {
   type RuntimeActionIdV1,
 } from './actionIds.js';
 
+it.each([
+  { actionId: 'machines.list' as const, input: { limit: 201 } },
+  { actionId: 'servers.list' as const, input: { limit: 201 } },
+  { actionId: 'paths.list_recent' as const, input: { limit: 201 } },
+  { actionId: 'agents.backends.list' as const, input: { limit: 201 } },
+  { actionId: 'agents.models.list' as const, input: { agentId: 'claude', limit: 201 } },
+])('admits a deliberate 201-row discovery projection through $actionId', ({ actionId, input }) => {
+  const schema = getActionSpec(actionId).inputSchema;
+  expect(schema.safeParse(input).success).toBe(true);
+  expect(schema.safeParse({ ...input, limit: 0 }).success).toBe(false);
+  expect(schema.safeParse({ ...input, limit: 1.5 }).success).toBe(false);
+});
+
 it('classifies Machine RPC reads from Action effects and exact internal read facts, not route or safe labels', async () => {
   const owner = await import('./actionSpecs.js');
   expect(owner).toHaveProperty('isReadOnlyMachineRpcMethod', expect.any(Function));

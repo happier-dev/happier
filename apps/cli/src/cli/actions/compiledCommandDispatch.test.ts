@@ -684,20 +684,20 @@ describe('compiled Action CLI command dispatch', () => {
     process.exitCode = 0;
   });
 
-  it('invokes the canonical machines.list Action with the friendly page bound', async () => {
+  it('invokes the canonical machines.list Action without an implicit projection', async () => {
     const { executions, deps } = harness();
     await runCompiledActionCliCommand({
       command: commandFor(['machines', 'list']),
       argv: ['machines', 'list'],
       deps: deps as never,
     });
-    expect(executions).toEqual([{ actionId: 'machines.list', input: { limit: 200 } }]);
+    expect(executions).toEqual([{ actionId: 'machines.list', input: {} }]);
   });
 
   it('refreshes machine inventory through the same canonical list command', async () => {
     const { executions, deps } = harness();
     await runCompiledActionCliCommand({ command: commandFor(['machines', 'list']), argv: ['machines', 'list', '--refresh'], deps: deps as never });
-    expect(executions).toEqual([{ actionId: 'machines.list', input: { limit: 200, refresh: true } }]);
+    expect(executions).toEqual([{ actionId: 'machines.list', input: { refresh: true } }]);
   });
 
   it('keeps --machine-id physical routing out of Action input', async () => {

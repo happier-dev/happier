@@ -9,6 +9,8 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, type AcpCatalogRecordV1 } from '@happier-dev
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
@@ -142,6 +144,23 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
 }
 
 describe('ACP Action inventory row authority', () => {
+  it('keeps complete backend discovery and honors a deliberate 201-row projection', async () => {
+    const initialRecord = { v: 1, definitions: Array.from({ length: 202 }, (_, index) => ({
+      ...record.definitions[0], id: `backend-${index}`, name: `backend-${index}`, title: `Backend ${index}`,
+    })) } satisfies AcpCatalogRecordV1;
+    const { deps } = await createInventory('ready', { initialRecord });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+    for (const [limit, count] of [[undefined, undefined], [201, 201], [2, 2]] as const) {
+      const result = await executor.execute('agents.backends.list', limit === undefined ? {} : { limit },
+        { surface: 'cli', authority: 'present_user' });
+      expect(result).toMatchObject({ ok: true });
+      if (!result.ok) throw new Error('Backend inventory refused');
+      const parsed = PUBLIC_ACTION_OUTPUT_SCHEMAS['agents.backends.list'].parse(result.result);
+      if (count === undefined) expect(parsed.items.filter(item => item.backendId?.startsWith('backend-'))).toHaveLength(202);
+      else expect(parsed.items).toHaveLength(count);
+    }
+  });
+
   it.each(['guest', 'custodian'] as const)('keeps the host Account ACP catalog private for an admitted %s list', async actor => {
     const hostRecord = { v: 1, definitions: [{ ...record.definitions[0], id: 'host-only', title: 'Host private Agent',
       launch: { kind: 'command', command: process.execPath, args: ['--host-private-config'] },

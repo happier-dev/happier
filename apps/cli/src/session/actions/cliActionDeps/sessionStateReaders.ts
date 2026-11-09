@@ -5,12 +5,6 @@ import {
 import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 
-export function normalizeLimit(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
-}
-
 function readStoredSessionRecord(
   params: Readonly<{ rawValue: unknown }> & SessionStoredContentCryptoContext,
 ): Record<string, unknown> | null {

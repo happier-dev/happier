@@ -48,7 +48,7 @@ export const ActionOptionsResolveInputSchema = lazyZodSchema(() => z.looseObject
   consumer: z.optional(InputOptionsConsumerV1Schema),
   optionsSourceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   query: z.optional(z.string().check(z.trim())),
   cursor: z.optional(z.string()),
   values: z.optional(z.array(StrictJsonValueSchema)),

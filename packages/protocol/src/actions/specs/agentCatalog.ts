@@ -42,7 +42,7 @@ export const MachineAgentInstallCliInputSchema = lazyZodSchema(() => z.strictObj
  */
 export const AgentsBackendsListInputSchema = lazyZodSchema(() => z.looseObject({
   includeDisabled: z.optional(z.boolean()),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   machineId: z.optional(z.string().check(z.minLength(1))),
 }));
 
@@ -78,7 +78,7 @@ export const AgentsModelsListInputSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.optional(z.string().check(z.minLength(1))),
   // Home routing is bound by the authenticated host, never authored inventory input.
   serverId: z.optional(z.never()),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   probe: z.optional(AgentInventoryProbeInputSchema),
 }).check(z.superRefine((value, ctx) => {
   if (value.purpose === 'scm_diff_summary') {

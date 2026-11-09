@@ -27,7 +27,7 @@ export async function listServersForVoiceTool(params: Readonly<{ limit?: number 
   if (!readVoicePrivacySettings(state?.settings).shareDeviceInventory) {
     return { ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled' };
   }
-  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.min(200, Math.floor(params.limit))) : 50;
+  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : undefined;
 
   const items: Array<{ serverId: string; label: string }> = [];
   const seen = new Set<string>();
@@ -43,6 +43,7 @@ export async function listServersForVoiceTool(params: Readonly<{ limit?: number 
   }
 
   for (const entry of listSessionListLookupServers(state)) {
+    if (limit !== undefined && items.length >= limit) break;
     const serverId = normalizeId(entry.serverId);
     if (!serverId) continue;
     if (seen.has(serverId)) continue;
@@ -53,7 +54,6 @@ export async function listServersForVoiceTool(params: Readonly<{ limit?: number 
       serverId,
       label: resolveVoiceServerLabel({ serverId, fallbackLabel: label, genericLabel }),
     });
-    if (items.length >= limit) break;
   }
 
   return { items };

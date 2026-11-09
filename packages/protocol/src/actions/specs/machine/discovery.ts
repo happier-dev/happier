@@ -8,18 +8,7 @@ import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } f
 
 export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
   serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
-  refresh: z.optional(z.boolean()),
-}));
-
-/**
- * The friendly `happier machines list` bound has always been the whole page. It
- * is a caller default, not an Action default: another surface may page.
- */
-export const MACHINES_LIST_CLI_DEFAULT_LIMIT = 200;
-export const MachinesListCliInputSchema = lazyZodSchema(() => z.strictObject({
-  serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(MACHINES_LIST_CLI_DEFAULT_LIMIT))),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   refresh: z.optional(z.boolean()),
 }));
 
@@ -64,12 +53,6 @@ function createMachineDiscoveryActionSpecs() {
     inputSchema: MachinesListInputSchema,
     cli: {
       commands: [{ path: ['machines', 'list'], visibility: 'canonical' }],
-      inputSchema: MachinesListCliInputSchema,
-      bindInput: (value) => ({
-        ...((value as Readonly<{ serverId?: string }>).serverId ? { serverId: (value as Readonly<{ serverId: string }>).serverId } : {}),
-        limit: (value as Readonly<{ limit?: number }>).limit ?? MACHINES_LIST_CLI_DEFAULT_LIMIT,
-        ...(typeof (value as Readonly<{ refresh?: boolean }>).refresh === 'boolean' ? { refresh: (value as Readonly<{ refresh: boolean }>).refresh } : {}),
-      }),
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);

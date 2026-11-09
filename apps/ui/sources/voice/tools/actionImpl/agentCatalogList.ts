@@ -342,7 +342,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
 export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string; serverId?: string; acpCatalogSnapshot?: AcpCatalogSnapshotV1; backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null }>): Promise<AgentsBackendsListOutput> {
   const includeDisabled = params.includeDisabled === true;
   const limitRaw = Number(params.limit);
-  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : null;
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.floor(limitRaw)) : null;
   const machineId = normalizeId(params.machineId);
   const serverId = normalizeId(params.serverId ?? getActiveServerSnapshot()?.serverId) || null;
   const settingsScope = storage.getState().settingsScope;
@@ -414,7 +414,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   const agentId = agentIdRaw as AgentId;
   const shouldExposeAgentId = !compatConfiguredAcpProbeAgentId;
   const limitRaw = Number(params.limit);
-  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : null;
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.floor(limitRaw)) : null;
   const isLegacyCompatProbe = isLegacyCompatAgentType(agentIdRaw);
   // Only a bundled Agent carries a build-time model fact. Without one the
   // machine capability probe answers whether this Agent supports selection, so

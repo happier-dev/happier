@@ -60,6 +60,20 @@ describe('listRecentPathsForVoiceTool', () => {
         await setServerUrl(previousServerUrl || null);
     });
 
+    it('lists every recent folder by default and honors a requested 201-folder projection while redacting paths', async () => {
+        storage.setState({ sessions: {} });
+        const paths = Array.from({ length: 202 }, (_, i) => ({ machineId: 'm1', path: `/private/projects/project-${i}` }));
+        setRecentPaths(paths.slice(0, 51));
+        expect(await listRecentPathsForVoiceTool({ machineId: 'm1' })).toHaveProperty('items.length', 51);
+        setRecentPaths(paths);
+        const result = await listRecentPathsForVoiceTool({ machineId: 'm1', limit: 201 });
+        expect(result).toHaveProperty('items.length', 201);
+        expect(result).not.toHaveProperty('items.0.path');
+        expect(result).not.toHaveProperty('items.0.machineId');
+        expect(JSON.stringify(result)).not.toContain('/private/projects');
+        expect(await listRecentPathsForVoiceTool({ machineId: 'm1', limit: 2 })).toHaveProperty('items.length', 2);
+    });
+
     it('returns redacted labels without workspace handles when file paths are hidden', async () => {
         expect(await listRecentPathsForVoiceTool({ limit: 10 }))
             .toEqual({ items: [{ label: 'happier — Leeroy MacBook Pro', lastUsedAt: 1000 }] });

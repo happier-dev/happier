@@ -74,7 +74,7 @@ export async function listRecentPathsForVoiceTool(params: Readonly<{ machineId?:
     preferProvidedSessionMetadata: true,
   });
 
-  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.min(50, Math.floor(params.limit))) : 10;
+  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : undefined;
   const limitedRecentPaths = recentPaths.slice(0, limit);
   const safeLabels = shareFilePaths ? null : buildSafeWorkspaceLabels({ machineLabel, paths: limitedRecentPaths });
 

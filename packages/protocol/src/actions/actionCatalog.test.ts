@@ -15,12 +15,27 @@ import {
   SerializedActionDefinitionV1Schema,
 } from '../index.js';
 import { z } from 'zod/mini';
-import { projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
+import { filterResolvedActionOptions, projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('admits a deliberate 201-row option projection through the canonical Action schema', () => {
+    expect(getActionSpec('action.options.resolve').inputSchema.safeParse({
+      optionsSourceId: 'machines.available', limit: 201,
+    }).success).toBe(true);
+  });
+
+  it('preserves complete options and honors deliberate 201-row projections after filtering', () => {
+    const options = Array.from({ length: 202 }, (_, index) => ({ value: `machine-${index}`, label: `Machine ${index}` }));
+    expect(filterResolvedActionOptions(options)).toHaveLength(202);
+    expect(filterResolvedActionOptions(options, { query: 'Machine', limit: 201 })).toHaveLength(201);
+    expect(filterResolvedActionOptions(options, { query: 'Machine 1', limit: 2 })).toEqual([
+      { value: 'machine-1', label: 'Machine 1' }, { value: 'machine-10', label: 'Machine 10' },
+    ]);
+  });
+
   it.each([
     ['session.open', { sessionId: `c${'a'.repeat(24)}` }],
     ['ui.voice_global.history.search', {}],

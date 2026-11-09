@@ -25,7 +25,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
     machineListByServerId: state.machineListByServerId,
     machineListStatusByServerId: state.machineListStatusByServerId,
   }) ?? [];
-  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.min(200, Math.floor(params.limit))) : 50;
+  const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : undefined;
   // The machines the Projects list and its widgets name are the ones selection shows; an input row says whether its label
   // is such a name, so a consumer never presents a hidden or still-loading machine's placeholder as one.
   const names = params.purpose === 'input' ? resolveMachineDisplayNames(machines.filter(isMachineVisibleForSelection)) : null;
@@ -33,7 +33,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
   const scope = scopeResolution?.kind === 'bound' ? scopeResolution.scope : null;
 
   // Host inputs read the already-loaded Home inventory, not the voice disclosure projection or launch readiness.
-  const items = (params.purpose === 'input' ? machines : machines.slice(0, limit))
+  const items = (params.purpose === 'input' || limit === undefined ? machines : machines.slice(0, limit))
     .map((m) => ({
       serverId,
       machineId: normalizeNonEmptyString(m?.id),
