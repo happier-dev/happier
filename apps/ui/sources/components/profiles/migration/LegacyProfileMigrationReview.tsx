@@ -1,7 +1,9 @@
 import * as React from 'react';
-import type { AIBackendProfile, ProviderErrorV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import type { AIBackendProfile} from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type { ProviderWireProtocol } from '@happier-dev/protocol/providers/capabilities/v1';
 
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -228,13 +230,13 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
                     }}
                     onSelect={(id) => updateDraft({ protocol: id as SupportedMigrationProtocol })}
                 />
-                <MachineSetupTextField
+                <MachineEnrollTextField
                     testID="profile-migration-name"
                     label={t('settingsProviders.authoring.name')}
                     value={draft.name}
                     onChangeText={(name) => updateDraft({ name })}
                 />
-                <MachineSetupTextField
+                <MachineEnrollTextField
                     testID="profile-migration-base-url"
                     label={t('settingsProviders.authoring.baseUrl')}
                     value={draft.baseUrl}
@@ -242,7 +244,7 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
                     autoCorrect={false}
                     onChangeText={(baseUrl) => updateDraft({ baseUrl })}
                 />
-                <MachineSetupTextField
+                <MachineEnrollTextField
                     testID="profile-migration-models"
                     label={t('settingsProviders.models.addFieldLabel')}
                     value={draft.manualModelsText}

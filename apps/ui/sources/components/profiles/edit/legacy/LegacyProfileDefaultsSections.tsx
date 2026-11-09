@@ -13,6 +13,7 @@ import { t } from '@/text';
 
 import { resolveProfileBackendTargetKeyForEntry } from '../profileBackendEntryStorage';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 
 export function LegacyProfileDefaultsSections(props: Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
@@ -81,7 +82,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                         icon={<Icon name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
                         rightElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                             <Icon name={props.getPermissionIconName(agentId, effectiveMode) as never} size={20} color={theme.colors.text.secondary} />
-                            <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
+                            <DisclosureCaret expanded={open} size={20} />
                         </View>}
                         showChevron={false}
                         onPress={toggle}
@@ -148,7 +149,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                         icon={<Icon name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
                         rightElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                             <Icon name={effectiveMode === 'direct' ? 'radio' : 'floppy-disk'} size={20} color={theme.colors.text.secondary} />
-                            <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
+                            <DisclosureCaret expanded={open} size={20} />
                         </View>}
                         showChevron={false}
                         onPress={toggle}

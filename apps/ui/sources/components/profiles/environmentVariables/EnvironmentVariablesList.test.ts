@@ -8,6 +8,8 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { installProfilesCommonModuleMocks } from '../profilesTestHelpers';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
+import { EnvironmentVariableCard } from './EnvironmentVariableCard';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 
 (
     globalThis as typeof globalThis & {
@@ -46,7 +48,6 @@ const useEnvironmentVariablesMock = vi.fn(
         isLoading: false,
     }),
 );
-const environmentVariableCardProps: Array<Record<string, unknown>> = [];
 
 vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
     useEnvironmentVariables: (
@@ -58,17 +59,6 @@ vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
-
-vi.mock('./EnvironmentVariableCard', () => ({
-    EnvironmentVariableCard: (props: Record<string, unknown>) => {
-        environmentVariableCardProps.push(props);
-        return React.createElement('EnvironmentVariableCard', props);
-    },
 }));
 
 type UseEnvironmentVariablesArgs = [
@@ -88,18 +78,19 @@ async function renderList(params: {
         params.onChange ??
         vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>();
     const screen = await renderScreen(
-        React.createElement(EnvironmentVariablesList, {
+        React.createElement(ListPresentationProvider, { value: 'page', children: React.createElement(EnvironmentVariablesList, {
             environmentVariables: params.environmentVariables,
             machineId: 'machine-1',
             serverId: params.serverId,
             profileDocs: params.profileDocs ?? null,
             onChange,
+            onAddVariable: ({ variable }) => onChange([...params.environmentVariables, variable]),
             sourceRequirementsByName: {},
             onUpdateSourceRequirement: () => {},
             getDefaultSecretNameForSourceVar: () => null,
             onPickDefaultSecretForSourceVar: () => {},
             allowSourceRequirements: params.allowSourceRequirements,
-        }),
+        }) }),
     );
     return { screen, onChange };
 }
@@ -113,15 +104,14 @@ function getLastUseEnvironmentVariablesCall(): UseEnvironmentVariablesArgs {
 describe('EnvironmentVariablesList', () => {
     beforeEach(() => {
         useEnvironmentVariablesMock.mockClear();
-        environmentVariableCardProps.length = 0;
     });
 
     it('suppresses profile secret-requirement controls for slim launch profiles', async () => {
-        await renderList({
+        const { screen } = await renderList({
             environmentVariables: [{ name: 'SAFE_FLAG', value: '1' }],
             allowSourceRequirements: false,
         });
-        expect(environmentVariableCardProps[0]?.showSourceRequirements).toBe(false);
+        expect(screen.findByType(EnvironmentVariableCard).props.showSourceRequirements).toBe(false);
     });
 
     it('keeps an Administration-selected server context for environment previews', async () => {
@@ -135,17 +125,12 @@ describe('EnvironmentVariablesList', () => {
         expect(options?.serverId).toBe('server-profile-b');
     });
 
-    it('offers one add row inside its sheet while there are no variables, and a section action once cards exist', async () => {
-        const { screen: empty } = await renderList({ environmentVariables: [] });
-        const emptyAdds = empty.findAll((node) => node.props?.testID === 'profile-environment-add');
-        expect(emptyAdds.length).toBeGreaterThan(0);
-        // It reads as an action, with the plus glyph every "add" row carries (orchestrator round 4).
-        expect(emptyAdds.every((node) => node.props.title === 'profiles.environmentVariables.addVariable')).toBe(true);
-        expect(emptyAdds.some((node) => node.props.icon != null)).toBe(true);
-        expect(empty.findAll((node) => node.props?.action != null && node.props?.title === 'profiles.environmentVariables.title')).toHaveLength(0);
-
-        const { screen: filled } = await renderList({ environmentVariables: [{ name: 'SAFE_FLAG', value: '1' }] });
-        expect(filled.findAll((node) => node.props?.action != null && node.props?.title === 'profiles.environmentVariables.title').length).toBeGreaterThan(0);
+    it.each([{ environmentVariables: [] }, { environmentVariables: [{ name: 'SAFE_FLAG', value: '1' }] }])('opens the complete add editor from the visible action (variables: %j)', async ({ environmentVariables }) => {
+        const { screen } = await renderList({ environmentVariables });
+        await act(async () => screen.pressByTestId('profile-environment-add'));
+        expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(environmentVariables.length + 1);
+        await act(async () => screen.changeTextByTestId('profile-environment-add-name', 'NEW_VARIABLE'));
+        expect(screen.findAllByType(EnvironmentVariableCard).at(-1)?.props.variable.name).toBe('NEW_VARIABLE');
     });
 
     describe('inline add interaction', () => {
@@ -226,7 +211,7 @@ describe('EnvironmentVariablesList', () => {
                 shellConfigExample: '',
             };
 
-            await renderList({
+            const { screen } = await renderList({
                 environmentVariables: [{ name: 'MAGIC', value: '${HOME}' }],
                 profileDocs,
             });
@@ -235,9 +220,9 @@ describe('EnvironmentVariablesList', () => {
             expect(keys).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
             expect(options?.sensitiveKeys ?? []).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
 
-            expect(environmentVariableCardProps).toHaveLength(1);
-            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
-            expect(environmentVariableCardProps[0]?.expectedValue).toBe('***');
+            expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(1);
+            expect(screen.findByType(EnvironmentVariableCard).props.isSecret).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.expectedValue).toBe('***');
         });
 
         it('respects daemon-forced sensitivity in card props', async () => {
@@ -258,14 +243,14 @@ describe('EnvironmentVariablesList', () => {
                 isLoading: false,
             });
 
-            await renderList({
+            const { screen } = await renderList({
                 environmentVariables: [{ name: 'AUTH_MODE', value: 'interactive', isSecret: false }],
             });
 
-            expect(environmentVariableCardProps).toHaveLength(1);
-            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
-            expect(environmentVariableCardProps[0]?.isForcedSensitive).toBe(true);
-            expect(environmentVariableCardProps[0]?.secretOverride).toBe(false);
+            expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(1);
+            expect(screen.findByType(EnvironmentVariableCard).props.isSecret).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.isForcedSensitive).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.secretOverride).toBe(false);
         });
     });
 });

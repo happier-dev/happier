@@ -121,9 +121,11 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement('Text', props, children),
 }));
 
+// Load the real component during collection; cold module transformation is not a test action.
+const { ProfilesList } = await import('./ProfilesList');
+
 describe('ProfilesList', () => {
     it('does not emit raw text nodes under non-Text parents when selection icons render as text on web', async () => {
-        const { ProfilesList } = await import('./ProfilesList');
 
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<ProfilesList
@@ -179,7 +181,6 @@ describe('ProfilesList', () => {
             ],
         };
 
-        const { ProfilesList } = await import('./ProfilesList');
         const screen = await renderScreen(
             <ProfilesList
                 customProfiles={[]}
@@ -213,7 +214,6 @@ describe('ProfilesList', () => {
                 },
             ],
         };
-        const { ProfilesList } = await import('./ProfilesList');
         const render = (presentation: 'page' | 'grouped') => renderScreen(
             <ProfilesList
                 presentation={presentation}
@@ -246,7 +246,6 @@ describe('ProfilesList', () => {
             sharedProfiles: [],
             builtInProfiles: [],
         };
-        const { ProfilesList } = await import('./ProfilesList');
         const screen = await renderScreen(
             <ProfilesList
                 presentation="page"
@@ -281,7 +280,6 @@ describe('ProfilesList', () => {
                 },
             ],
         };
-        const { ProfilesList } = await import('./ProfilesList');
         const render = (presentation: 'page' | 'grouped') => renderScreen(
             <ProfilesList
                 presentation={presentation}
@@ -319,7 +317,6 @@ describe('ProfilesList', () => {
                 { id: 'openai', name: 'OpenAI', isBuiltIn: true, compatibility: {}, compatibilityByTargetKey: {}, environmentVariables: [] },
             ],
         };
-        const { ProfilesList } = await import('./ProfilesList');
         const screen = await renderScreen(
             <ProfilesList
                 presentation="embedded"

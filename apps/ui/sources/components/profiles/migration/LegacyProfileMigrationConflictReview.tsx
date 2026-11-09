@@ -1,12 +1,14 @@
 import * as React from 'react';
 import type {
-    LegacyProfileMigrationConflictResolutionV1,
-    ProviderErrorV1,
+    LegacyProfileMigrationConflictResolutionV1} from '@happier-dev/protocol/providers/migrations/conflictsV1';
+import type {
+    ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type {
     ProviderSettingsMigrationPendingConflictV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/settings/v1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -170,7 +172,7 @@ export const LegacyProfileMigrationConflictReview = React.memo(function LegacyPr
             title={t('settingsProviders.migration.createNamed')}
             description={t('settingsProviders.migration.createNamedDescription')}
         >
-            <MachineSetupTextField
+            <MachineEnrollTextField
                 testID="profile-migration-conflict-name"
                 label={t('settingsProviders.migration.separateConnectionName')}
                 value={displayName}

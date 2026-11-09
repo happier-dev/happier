@@ -1,7 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { EnvironmentVariableCard } from './EnvironmentVariableCard';
+import { EnvironmentVariableCard, type EnvironmentVariableCardProps } from './EnvironmentVariableCard';
 import type { ProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Modal } from '@/modal';
@@ -12,9 +11,20 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import type { TextInput } from '@/components/ui/text/Text';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 
+
+type EnvironmentVariable = EnvironmentVariableCardProps['variable'];
+type SourceRequirement = NonNullable<EnvironmentVariableCardProps['sourceRequirement']>;
+
+export type ProfileSecretPickerSelection = Readonly<{
+    secretId?: string | null;
+    onSelect: (secretId: string | null) => void;
+}>;
+
+export type EnvironmentVariableAddition = Readonly<{
+    variable: EnvironmentVariable;
+    requirement: (SourceRequirement & { name: string; secretId?: string | null }) | null;
+}>;
 
 export interface EnvironmentVariablesListProps {
     environmentVariables: Array<{ name: string; value: string; isSecret?: boolean }>;
@@ -29,8 +39,9 @@ export interface EnvironmentVariablesListProps {
         sourceVarName: string,
         next: { required: boolean; useSecretVault: boolean } | null
     ) => void;
-    getDefaultSecretNameForSourceVar: (sourceVarName: string) => string | null;
-    onPickDefaultSecretForSourceVar: (sourceVarName: string) => void;
+    getDefaultSecretNameForSourceVar: (sourceVarName: string, secretId?: string | null) => string | null;
+    onPickDefaultSecretForSourceVar: (sourceVarName: string, selection?: ProfileSecretPickerSelection) => void;
+    onAddVariable: (addition: EnvironmentVariableAddition) => void;
     allowSourceRequirements?: boolean;
 }
 
@@ -52,10 +63,25 @@ export function EnvironmentVariablesList({
     onUpdateSourceRequirement,
     getDefaultSecretNameForSourceVar,
     onPickDefaultSecretForSourceVar,
+    onAddVariable,
     allowSourceRequirements = true,
 }: EnvironmentVariablesListProps) {
-    useUnistyles();
-    const styles = stylesheet;
+
+    const [isAddExpanded, setIsAddExpanded] = React.useState(false);
+    const [newVariable, setNewVariable] = React.useState<EnvironmentVariable>({ name: '', value: '' });
+    const [newRequirement, setNewRequirement] = React.useState<SourceRequirement | null | undefined>();
+    const [newSecretId, setNewSecretId] = React.useState<string | null | undefined>();
+    const nameInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
+    const newRequirementName = (parseEnvVarTemplate(newVariable.value)?.sourceVar ?? newVariable.name).trim().toUpperCase();
+    const draftRequirement = newRequirement === undefined
+        ? sourceRequirementsByName[newRequirementName] ?? null
+        : newRequirement;
+    const previewVariables = React.useMemo(() => (
+        isAddExpanded && /^[A-Z_][A-Z0-9_]*$/.test(newVariable.name)
+            && !environmentVariables.some(variable => variable.name === newVariable.name)
+            ? [...environmentVariables, newVariable]
+            : environmentVariables
+    ), [environmentVariables, isAddExpanded, newVariable]);
 
     const extractVarRefsFromValue = React.useCallback((value: string): string[] => {
         const refs: string[] = [];
@@ -88,14 +114,14 @@ export function EnvironmentVariablesList({
         const isSecretName = (name: string) =>
             documentedSecretNames.has(name) || SECRET_NAME_REGEX.test(name);
 
-        environmentVariables.forEach((envVar) => {
+        previewVariables.forEach((envVar) => {
             keys.add(envVar.name);
             env[envVar.name] = envVar.value;
 
             const valueRefs = extractVarRefsFromValue(envVar.value);
             valueRefs.forEach((ref) => keys.add(ref));
 
-            const isSensitive = isSecretName(envVar.name) || valueRefs.some(isSecretName);
+            const isSensitive = envVar.isSecret === true || isSecretName(envVar.name) || valueRefs.some(isSecretName);
             if (isSensitive) {
                 sensitive.add(envVar.name);
                 valueRefs.forEach((ref) => { sensitive.add(ref); });
@@ -112,7 +138,7 @@ export function EnvironmentVariablesList({
             extraEnv: env,
             sensitiveKeys: Array.from(sensitive),
         };
-    }, [documentedSecretNames, environmentVariables, extractVarRefsFromValue]);
+    }, [documentedSecretNames, previewVariables, extractVarRefsFromValue]);
 
     const { meta: machineEnv, isLoading: isMachineEnvLoading, policy: machineEnvPolicy } = useEnvironmentVariables(
         machineId,
@@ -120,15 +146,10 @@ export function EnvironmentVariablesList({
         { extraEnv, sensitiveKeys, serverId },
     );
 
-    // Add variable inline form state
-    const [isAddExpanded, setIsAddExpanded] = React.useState(false);
-    const [newVarName, setNewVarName] = React.useState('');
-    const [newVarValue, setNewVarValue] = React.useState('');
-    const nameInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
-
     const resetAddDraft = React.useCallback(() => {
-        setNewVarName('');
-        setNewVarValue('');
+        setNewVariable({ name: '', value: '' });
+        setNewRequirement(undefined);
+        setNewSecretId(undefined);
         setIsAddExpanded(false);
     }, []);
 
@@ -179,7 +200,7 @@ export function EnvironmentVariablesList({
     }, [environmentVariables, onChange]);
 
     const handleAddVariable = React.useCallback(() => {
-        const normalizedName = newVarName.trim().toUpperCase();
+        const normalizedName = newVariable.name.trim().toUpperCase();
         if (!normalizedName) {
             Modal.alert(t('common.error'), t('profiles.environmentVariables.validation.nameRequired'));
             return;
@@ -200,13 +221,55 @@ export function EnvironmentVariablesList({
             return;
         }
 
-        onChange([...environmentVariables, {
-            name: normalizedName,
-            value: newVarValue.trim() || '',
-        }]);
+        onAddVariable({
+            variable: { ...newVariable, name: normalizedName, value: newVariable.value.trim() },
+            requirement: draftRequirement ? {
+                ...draftRequirement,
+                name: newRequirementName,
+                ...(newSecretId !== undefined ? { secretId: newSecretId } : {}),
+            } : null,
+        });
 
         resetAddDraft();
-    }, [environmentVariables, newVarName, newVarValue, onChange, resetAddDraft]);
+    }, [draftRequirement, environmentVariables, newRequirementName, newSecretId, newVariable, onAddVariable, resetAddDraft]);
+
+    // Creation and existing rows share sensitivity, documentation and preview decisions.
+    const getCardProps = (envVar: EnvironmentVariable, index: number) => {
+        const refs = extractVarRefsFromValue(envVar.value);
+        const primaryRef = refs[0] ?? null;
+        const primaryDocs = getDocumentation(envVar.name);
+        const refDocs = primaryRef ? getDocumentation(primaryRef) : undefined;
+        const autoSecret =
+            primaryDocs.isSecret ||
+            refDocs?.isSecret ||
+            SECRET_NAME_REGEX.test(envVar.name) ||
+            refs.some((ref) => SECRET_NAME_REGEX.test(ref));
+        const forcedSecret = Boolean(machineEnv?.[envVar.name]?.isForcedSensitive);
+        const effectiveIsSecret = forcedSecret
+            ? true
+            : envVar.isSecret !== undefined
+                ? envVar.isSecret
+                : autoSecret;
+        const expectedValue = primaryDocs.expectedValue ?? refDocs?.expectedValue;
+        const description = primaryDocs.description ?? refDocs?.description;
+        const template = parseEnvVarTemplate(envVar.value);
+        const sourceVarName = template?.sourceVar ?? null;
+        const requirementVarName = (sourceVarName ?? envVar.name).trim().toUpperCase();
+
+        return {
+            variable: envVar, index, machineId, machineName: machineName ?? null,
+            machineEnv, machineEnvPolicy, isMachineEnvLoading,
+            expectedValue, description, isSecret: effectiveIsSecret,
+            secretOverride: envVar.isSecret, autoSecret, isForcedSensitive: forcedSecret,
+            sourceRequirement: sourceRequirementsByName[requirementVarName] ?? null,
+            onUpdateSourceRequirement,
+            defaultSecretNameForSourceVar: getDefaultSecretNameForSourceVar(requirementVarName),
+            onPickDefaultSecretForSourceVar,
+            onUpdateSecretOverride: handleUpdateSecretOverride,
+            onUpdate: handleUpdateVariable, onDelete: handleDeleteVariable, onDuplicate: handleDuplicateVariable,
+            showSourceRequirements: allowSourceRequirements,
+        } satisfies EnvironmentVariableCardProps;
+    };
 
     // Published Profiles carry requirements without environment-value rows.
     // Keep their private default picker reachable without manufacturing a value
@@ -232,7 +295,7 @@ export function EnvironmentVariablesList({
                     title={t('profiles.environmentVariables.addVariable')}
                     icon="plus"
                     expanded={isAddExpanded}
-                    onPress={() => setIsAddExpanded((current) => !current)}
+                    onPress={() => { if (isAddExpanded) resetAddDraft(); else setIsAddExpanded(true); }}
                 /> : undefined}
             >
                 {secretOnlyRequirements.map(([name]) => (
@@ -248,52 +311,11 @@ export function EnvironmentVariablesList({
             {environmentVariables.length > 0 && (
                 <View>
                     {environmentVariables.map((envVar, index) => {
-                        const refs = extractVarRefsFromValue(envVar.value);
-                        const primaryRef = refs[0] ?? null;
-                        const primaryDocs = getDocumentation(envVar.name);
-                        const refDocs = primaryRef ? getDocumentation(primaryRef) : undefined;
-                        const autoSecret =
-                            primaryDocs.isSecret ||
-                            refDocs?.isSecret ||
-                            SECRET_NAME_REGEX.test(envVar.name) ||
-                            refs.some((ref) => SECRET_NAME_REGEX.test(ref));
-                        const forcedSecret = Boolean(machineEnv?.[envVar.name]?.isForcedSensitive);
-                        const effectiveIsSecret = forcedSecret
-                            ? true
-                            : envVar.isSecret !== undefined
-                                ? envVar.isSecret
-                                : autoSecret;
-                        const expectedValue = primaryDocs.expectedValue ?? refDocs?.expectedValue;
-                        const description = primaryDocs.description ?? refDocs?.description;
-                        const template = parseEnvVarTemplate(envVar.value);
-                        const sourceVarName = template?.sourceVar ?? null;
-                        const requirementVarName = (sourceVarName ?? envVar.name).trim().toUpperCase();
 
                         return (
                             <EnvironmentVariableCard
                                 key={envVar.name}
-                                variable={envVar}
-                                index={index}
-                                machineId={machineId}
-                                machineName={machineName ?? null}
-                                machineEnv={machineEnv}
-                                machineEnvPolicy={machineEnvPolicy}
-                                isMachineEnvLoading={isMachineEnvLoading}
-                                expectedValue={expectedValue}
-                                description={description}
-                                isSecret={effectiveIsSecret}
-                                secretOverride={envVar.isSecret}
-                                autoSecret={autoSecret}
-                                isForcedSensitive={forcedSecret}
-                                sourceRequirement={requirementVarName ? (sourceRequirementsByName[requirementVarName] ?? null) : null}
-                                onUpdateSourceRequirement={onUpdateSourceRequirement}
-                                defaultSecretNameForSourceVar={requirementVarName ? getDefaultSecretNameForSourceVar(requirementVarName) : null}
-                                onPickDefaultSecretForSourceVar={onPickDefaultSecretForSourceVar}
-                                onUpdateSecretOverride={handleUpdateSecretOverride}
-                                onUpdate={handleUpdateVariable}
-                                onDelete={handleDeleteVariable}
-                                onDuplicate={handleDuplicateVariable}
-                                showSourceRequirements={allowSourceRequirements}
+                                {...getCardProps(envVar, index)}
                             />
                         );
                     })}
@@ -302,7 +324,7 @@ export function EnvironmentVariablesList({
 
                 <InlineAddExpander
                     isOpen={isAddExpanded}
-                    onOpenChange={setIsAddExpanded}
+                    onOpenChange={(open) => { if (open) setIsAddExpanded(true); else resetAddDraft(); }}
                     title={t('profiles.environmentVariables.addVariable')}
                     trigger={hasCards ? null : undefined}
                     // With no variables yet, the add row is the section's action: the plus glyph in the
@@ -312,44 +334,33 @@ export function EnvironmentVariablesList({
                     cancelTestID="profile-environment-add-cancel"
                     onCancel={resetAddDraft}
                     onSave={handleAddVariable}
-                    saveDisabled={!newVarName.trim()}
+                    saveDisabled={!newVariable.name.trim()}
                     cancelLabel={t('common.cancel')}
                     saveLabel={t('common.save')}
                     autoFocusRef={nameInputRef}
                 >
-                    <View style={styles.addFields}>
-                        <FieldItem label={t('secrets.fields.name')}>
-                            <FieldTextInput
-                                ref={nameInputRef}
-                                testID="profile-environment-add-name"
-                                accessibilityLabel={t('secrets.fields.name')}
-                                placeholder={t('profiles.environmentVariables.namePlaceholder')}
-                                value={newVarName}
-                                onChangeText={(text) => setNewVarName(text.toUpperCase())}
-                                autoCapitalize="characters"
-                                monospace
-                            />
-                        </FieldItem>
-                        <FieldItem label={t('secrets.fields.value')}>
-                            <FieldTextInput
-                                testID="profile-environment-add-value"
-                                accessibilityLabel={t('secrets.fields.value')}
-                                placeholder={t('profiles.environmentVariables.valuePlaceholder')}
-                                value={newVarValue}
-                                onChangeText={setNewVarValue}
-                                monospace
-                            />
-                        </FieldItem>
-                    </View>
+                    <EnvironmentVariableCard
+                        {...getCardProps(newVariable, 0)}
+                        onNameChange={(name) => setNewVariable(current => ({ ...current, name: name.toUpperCase() }))}
+                        nameInputRef={nameInputRef}
+                        testIDPrefix="profile-environment-add"
+                        sourceRequirement={draftRequirement}
+                        onUpdateSourceRequirement={(_name, requirement) => {
+                            setNewRequirement(requirement);
+                            if (!requirement?.useSecretVault) setNewSecretId(null);
+                        }}
+                        defaultSecretNameForSourceVar={getDefaultSecretNameForSourceVar(newRequirementName, newSecretId)}
+                        onPickDefaultSecretForSourceVar={(name) => onPickDefaultSecretForSourceVar(name, {
+                            secretId: newSecretId,
+                            onSelect: setNewSecretId,
+                        })}
+                        onUpdate={(_index, value) => setNewVariable(current => ({ ...current, value }))}
+                        onUpdateSecretOverride={(_index, isSecret) => setNewVariable(current => ({ ...current, isSecret }))}
+                        onDelete={undefined}
+                        onDuplicate={undefined}
+                    />
                 </InlineAddExpander>
             </ItemGroup>
         </View>
     );
 }
-
-
-const stylesheet = StyleSheet.create((theme) => ({
-    addFields: {
-        gap: theme.space.s12,
-    },
-}));

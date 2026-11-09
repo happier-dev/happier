@@ -4,7 +4,7 @@ import { StyleSheet as UnistylesStyleSheet } from 'react-native-unistyles';
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { useLocalRelayAccessControl } from '@/components/settings/server/localControl/useLocalRelayAccessControl';
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { Text } from '@/components/ui/text/Text';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
@@ -132,7 +132,7 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
         <View testID={props.testID} style={styles.root}>
             <View style={styles.form}>
                 {props.definition.fields.map((field) => (
-                    <MachineSetupTextField
+                    <MachineEnrollTextField
                         key={field.id}
                         testID={props.testID ? `${props.testID}-${field.id}` : `${props.definition.testIDPrefix}-${field.id}`}
                         label={field.label}

@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { installProfileEditFormModuleMocks, loadProfileEditFormCatalogFixtureOwners, publishProfileEditFormAcpCatalogFixture, publishProfileEditFormPrivateRowFixture } from './profileEditFormTestHelpers';
@@ -36,7 +36,7 @@ installProfileEditFormModuleMocks({
                 if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
                 return {};
             },
-            useAllMachines: () => [],
+            useActiveMachineFacts: () => [],
             useMachine: () => null,
             useSettings: () => ({ opencodeBackendMode: 'server' }),
             useCurrentSecretBindingsByProfileIdMutable: () => [{}, vi.fn()] as const,

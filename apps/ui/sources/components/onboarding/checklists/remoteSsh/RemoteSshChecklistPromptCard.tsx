@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import type { RemoteSshBootstrapPrompt } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import { buildBackgroundServiceReplacementPromptBody } from '@/components/systemTasks/prompts/backgroundServiceReplacementPromptPresentation';
 
@@ -27,9 +27,9 @@ export const RemoteSshChecklistPromptCard = React.memo(function RemoteSshCheckli
             <View style={styles.promptCard}>
                 <Text style={styles.promptTitle}>{props.prompt.message}</Text>
                 {props.prompt.target ? <Text style={styles.promptBody}>{props.prompt.target}</Text> : null}
-                <MachineSetupTextField
+                <MachineEnrollTextField
                     testID={props.testID}
-                    label={t('settings.machineSetupRemoteSshPasswordLabel')}
+                    label={t('settings.machineEnrollRemoteSshPasswordLabel')}
                     value={props.password}
                     editable={!props.isStarting}
                     secureTextEntry
@@ -62,12 +62,7 @@ export const RemoteSshChecklistPromptCard = React.memo(function RemoteSshCheckli
                             services: props.prompt.services,
                             format: 'detailed',
                         }) ?? ''
-                    : 'host' in props.prompt ? [
-                        props.prompt.host,
-                        props.prompt.keyType,
-                        props.prompt.fingerprint,
-                        props.prompt.kind === 'ssh.replaceHostKey' ? props.prompt.existingFingerprint : null,
-                    ].filter(Boolean).join('\n') : ''}
+                    : ''}
             </Text>
         </View>
     );

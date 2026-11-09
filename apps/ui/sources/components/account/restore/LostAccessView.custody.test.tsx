@@ -73,7 +73,7 @@ describe('LostAccessView custody', () => {
         expect(await TokenStorage.setPendingExternalAuth(pending)).toBe(true);
         expect((await guardAccountEncryptionFirstKeyCredentialMutation()).kind).toBe('finish_encryption_setup');
 
-        const screen = await renderScreen(<LostAccessView onBack={() => {}} returnTo="/restore" />);
+        const screen = await renderScreen(<LostAccessView returnTo="/restore" />);
         await vi.waitFor(() => expect(screen.findByTestId('lost-access-provider-github')).not.toBeNull());
         await screen.pressByTestIdAsync('lost-access-provider-github');
 

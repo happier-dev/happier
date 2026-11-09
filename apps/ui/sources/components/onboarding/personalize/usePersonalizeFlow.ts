@@ -2,11 +2,12 @@ import * as React from 'react';
 
 import { previewThemeSelection, useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
 import { useHomeSetupDismissals } from '@/components/hub/layout/useHomeSetupDismissals';
-import { storage, useLocalSetting } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
+import { personalizeProgressState, readPersonalizeProgress, useStoredPersonalizeProgress } from '@/sync/domains/state/onboardingUiState';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
+import { readThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
 
 import { createPersonalizeFlowActions, type PersonalizeFlowPorts } from './personalizeFlowController';
 import {
@@ -34,11 +35,14 @@ export function usePersonalizeFlowActions(assertCurrent: () => void) {
             readAccount: () => storage.getState().settings,
             readLocal: () => storage.getState().localSettings,
             writeSetting: (write) => { assertCurrent(); return setSetting(write, write.value); },
-            applyTheme: (mode) => applyThemeSelection(mode, storage.getState().localSettings.themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE),
-            readProgress: () => normalizePersonalizeProgress(storage.getState().localSettings.personalizeProgressV1),
+            applyTheme: (mode) => {
+                const snapshot = readThemeProfilesSnapshot();
+                return applyThemeSelection(mode, snapshot.themeProfiles, snapshot.legacyProfileIds);
+            },
+            readProgress: () => normalizePersonalizeProgress(readPersonalizeProgress()),
             writeProgress: (progress) => {
                 assertCurrent();
-                storage.getState().applyLocalSettings({ personalizeProgressV1: { savedSteps: [...progress.savedSteps], resumeAt: progress.resumeAt } }, { source: 'ui' });
+                personalizeProgressState.set('progress', { savedSteps: [...progress.savedSteps], resumeAt: progress.resumeAt });
             },
             completeSetup: () => { assertCurrent(); dismiss(PERSONALIZE_SETUP_ENTRY_ID); },
         };
@@ -48,7 +52,7 @@ export function usePersonalizeFlowActions(assertCurrent: () => void) {
 
 /** This device's visit memory for the Home card and the flow's resume page. */
 export function usePersonalizeProgress(): PersonalizeProgress {
-    const raw = useLocalSetting('personalizeProgressV1');
+    const raw = useStoredPersonalizeProgress();
     return React.useMemo(() => normalizePersonalizeProgress(raw), [raw]);
 }
 
@@ -74,7 +78,7 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
     }, [isCurrent]);
     const actions = usePersonalizeFlowActions(assertCurrent);
     const [page, setPage] = React.useState<PersonalizePageId>(() => params.initialPage
-        ?? resolvePersonalizeResumePage(normalizePersonalizeProgress(storage.getState().localSettings.personalizeProgressV1)));
+        ?? resolvePersonalizeResumePage(normalizePersonalizeProgress(readPersonalizeProgress())));
     // The values as the visit found them: the summary's "was", and Skip's "keep what you have".
     const [openedWith] = React.useState<PersonalizeChoices>(() => actions.readCurrentChoices());
     const [draft, setDraft] = React.useState<PersonalizeChoices>(openedWith);
@@ -90,7 +94,7 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
         if (!previewingTheme.current) return;
         previewingTheme.current = false;
         const local = storage.getState().localSettings;
-        previewThemeSelection(local.themePreference, local.themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE);
+        previewThemeSelection(local.themePreference, readThemeProfilesSnapshot().themeProfiles);
     }, []);
     React.useEffect(() => {
         if (isCurrent()) return;
@@ -126,7 +130,7 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
         if (!isCurrent() || saving.current) return;
         update({ theme });
         previewingTheme.current = true;
-        previewThemeSelection(theme, storage.getState().localSettings.themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE);
+        previewThemeSelection(theme, readThemeProfilesSnapshot().themeProfiles);
     }, [isCurrent, update]);
 
     /** Next: saves the page's step and moves on. False when the save failed (the page stays). */

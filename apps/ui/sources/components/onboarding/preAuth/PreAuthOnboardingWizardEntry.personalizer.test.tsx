@@ -9,12 +9,13 @@ import { renderScreen, standardCleanup, flushHookEffects, createRootLayoutFeatur
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storageStore';
+import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { getActiveServerId, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { endOnboardingJourneySession } from '@/components/onboarding/tour/state/journeySession';
 
@@ -62,7 +63,7 @@ beforeEach(async () => {
         return path === '/v1/features' || path === '/v1/features/authenticated' ? Promise.resolve(Response.json(features)) : http.request(url, init);
     } });
     primeServerFeaturesSnapshot({ serverId: connection.home.id, snapshot: { status: 'ready', features } });
-    storage.getState().applyLocalSettings({ hasCompletedAuthOnce: true });
+    onboardingAuthHistoryState.set('completed', true);
 });
 afterEach(async () => {
     standardCleanup();
@@ -83,7 +84,7 @@ function OwnerShell({ children }: React.PropsWithChildren) {
         canGoBack: false, canGoForward: false, openHref: state.openHref, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
         navigationForTab: () => { throw new Error('Unexpected tab navigation'); }, registerBackStep: () => () => {}, back: () => {}, forward: () => {},
     };
-    return <InjectedAuthProvider credentials={connection.credentials}><WorkspaceNavigationContext.Provider value={workspace}>{children}</WorkspaceNavigationContext.Provider></InjectedAuthProvider>;
+    return <InjectedAuthProvider credentials={connection.credentials}><WorkspaceNavigationProvider value={workspace}>{children}</WorkspaceNavigationProvider></InjectedAuthProvider>;
 }
 
 async function completeJourney() {

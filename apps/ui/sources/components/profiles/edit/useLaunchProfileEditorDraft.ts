@@ -17,12 +17,14 @@ type EditorDraft = Readonly<{ status: 'ready'; profile: AiLaunchProfile; secretB
 /** Capture a detached draft once its source is authoritative; refreshes never replace user edits. */
 export function useLaunchProfileEditorDraft(options: Readonly<{ enabled: boolean; cloneFrom: string | null; saveAsBuiltin?: boolean }>) {
     const scope = useAccountSettingsScope();
-    const projection = useProfileCatalog(scope);
+    const key = JSON.stringify([scope?.serverId, scope?.accountId, options.enabled, options.cloneFrom, options.saveAsBuiltin]);
+    const [captured, setCaptured] = React.useState<{ key: string; draft: EditorDraft }>(() => ({ key, draft: { status: 'loading' } }));
+    const needsSource = captured.key !== key || !['ready', 'idle', 'discarded'].includes(captured.draft.status);
+    const projection = useProfileCatalog(scope, { enabled: needsSource });
     const catalog = projection?.catalog;
     const profiles = useAiLaunchProfiles();
     const source = options.cloneFrom ? profiles.find(profile => profile.id === options.cloneFrom)
         ?? getBuiltInProfile(options.cloneFrom) : null;
-    const key = JSON.stringify([scope?.serverId, scope?.accountId, options.enabled, options.cloneFrom, options.saveAsBuiltin]);
     const initialize = (resumeMigration = false): EditorDraft => {
         if (!options.enabled) return { status: 'idle' };
         if (!scope) return { status: 'loading' };
@@ -42,7 +44,6 @@ export function useLaunchProfileEditorDraft(options: Readonly<{ enabled: boolean
             legacyCloneSource: result.legacyCloneSource }
             : { status: 'unavailable', reason: result.reason };
     };
-    const [captured, setCaptured] = React.useState(() => ({ key, draft: initialize() }));
     React.useEffect(() => {
         if (captured.key === key && ['ready', 'idle', 'discarded'].includes(captured.draft.status)) return;
         const draft = initialize(captured.key === key && captured.draft.status === 'migration');

@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, buildBackendTargetKeyV2, createProviderErrorV1 } from '@happier-dev/protocol';
+import { AIBackendProfileSchema} from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { buildBackendTargetKeyV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { DaemonProviderProfileMigrationPreviewResponseV1Schema,
     DaemonProviderProfileMigrationPreviewRequestV1Schema,
@@ -178,14 +180,19 @@ describe('Legacy Profile guided source preparation', () => {
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: rawSettings }, version: settingsVersion });
             if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
             if (path === '/v1/artifacts') return createArtifactListHttpResponse(requested, []);
-            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({
+            if (path === '/v1/account/saved-secrets/resources/materials' || path === '/v1/account/saved-secrets/resources') {
+                const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({
                 resources: ['auth-private', 'extra-private'].map(resourceId => ({ resourceId, encryptionMode: 'plain',
                     entry: { ref: formatSharedSavedSecretRefV1(resourceId), source: 'shared_resource', relationship: 'owner',
                         name: resourceId, kind: 'apiKey', revision: 3, materialStatus: 'ready',
                         capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
                     storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'apiKey', value: 'private-boundary-material' } },
                     recipientEnvelope: null })),
-            }));
+                });
+                return Response.json(path.endsWith('/materials') ? materials : {
+                    resources: materials.resources.map(resource => resource.entry),
+                });
+            }
             if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json({ rows: [] });
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
             if (path === '/v1/machines') return Response.json(machineRows);
@@ -578,12 +585,15 @@ describe('Legacy Profile guided source preparation', () => {
         }
     });
 
-    it('refuses a dirty same-ID picker save after its captured row revision becomes stale', async () => {
+    it.each(['inline', 'legacy'] as const)('refuses a dirty same-ID %s picker save after its captured row revision becomes stale', async kind => {
         const original = ProfileRecordV1Schema.parse({ v: 1, id: 'stale-picker-profile',
-            definition: { kind: 'inline', profile: { v: 2, id: 'stale-picker-profile', name: 'Captured original Profile',
-                extraEnvironmentVariables: [], createdAt: 1, updatedAt: 1 } },
+            definition: kind === 'inline'
+                ? { kind, profile: { v: 2, id: 'stale-picker-profile', name: 'Captured original Profile',
+                    extraEnvironmentVariables: [], createdAt: 1, updatedAt: 1 } }
+                : { kind, profile: { id: 'stale-picker-profile', name: 'Captured original Profile',
+                    environmentVariables: [], compatibilityByTargetKey: { [machineLoginTargetKey]: true }, createdAt: 1, updatedAt: 1 } },
             enabled: false, promptStack: [], secretBindings: { MASKED: null } });
-        if (original.definition.kind !== 'inline') throw new Error('Stale picker fixture requires an inline V2 row');
+        const nameField = kind === 'inline' ? 'profile-slim-name' : 'profile-legacy-name';
         let durable: ProfileRowV1 = { id: original.id, revision: 7, content: { t: 'plain', v: original } };
         rawSettings = {};
         referenceGuardRevision = 3;
@@ -620,18 +630,19 @@ describe('Legacy Profile guided source preparation', () => {
         // The canonical Node/native fixture presents alerts through this OS
         // boundary. Keep Modal and the save/refusal logic beneath it real.
         expect(Platform.OS).not.toBe('web');
-        const nativeAlert = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+        const nativeAlert = vi.mocked(Alert.alert);
+        nativeAlert.mockClear();
         try {
-            expect(screen.findAllByType(LaunchProfileEditForm)[0].props.profile.profileRecordRevision).toBe(7);
-            await act(async () => { screen.changeTextByTestId('profile-slim-name', 'My dirty original-baseline edit'); });
+            expect(screen.findAllByType(LaunchProfileEditForm)[0].props.profile).toMatchObject({ profileRecordRevision: 7 });
+            await act(async () => { screen.changeTextByTestId(nameField, 'My dirty original-baseline edit'); });
             const competing = ProfileRecordV1Schema.parse({ ...original,
-                definition: { kind: 'inline', profile: { ...original.definition.profile, name: 'Competing server edit', updatedAt: 2 } } });
+                definition: { ...original.definition, profile: { ...original.definition.profile, name: 'Competing server edit', updatedAt: 2 } } });
             durable = { id: original.id, revision: 8, content: { t: 'plain', v: competing } };
             referenceGuardRevision = 4;
             await act(async () => { await refreshProfileCatalog(homeScope); });
             expect(getProfileCatalogSnapshot(homeScope)?.catalog).toMatchObject({ status: 'ready', source: 'destination',
                 records: [{ revision: 8, record: competing }] });
-            expect(screen.findByTestId('profile-slim-name')?.props.value).toBe('My dirty original-baseline edit');
+            expect(screen.findByTestId(nameField)?.props.value).toBe('My dirty original-baseline edit');
             await screen.pressByTestIdAsync('profile-edit-save');
             // A parser or caller failure is not a stale-editor refusal. Require
             // the actual save path's revision conflict to reach the user.
@@ -643,7 +654,7 @@ describe('Legacy Profile guided source preparation', () => {
             // must still use the original baseline, never authorize via row8.
             expect(posted.every(mutation => mutation.expectedRevision === 7)).toBe(true);
             expect(durable).toEqual({ id: original.id, revision: 8, content: { t: 'plain', v: competing } });
-            expect(screen.findByTestId('profile-slim-name')?.props.value).toBe('My dirty original-baseline edit');
+            expect(screen.findByTestId(nameField)?.props.value).toBe('My dirty original-baseline edit');
             // Native Stack's real options still expose the enabled dirty Save
             // control; conflict must not clear the mounted draft's dirty state.
             expect(screen.findAllByType(Stack.Screen)[0].props.options.headerRight().props.disabled).toBe(false);

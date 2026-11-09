@@ -65,6 +65,7 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
             service={props.service.authority}
             serviceName={props.service.displayName}
             intent={props.intent}
+            returnTo={props.accountEntryReturnTo ?? props.returnTo}
             mode="password"
             password={{ login: login?.kind === 'email_password' ? login : null, view: passwordSelection }}
             transport={props.service.transport}
@@ -82,6 +83,7 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
             service={props.service.authority}
             serviceName={props.service.displayName}
             intent={props.intent}
+            returnTo={props.accountEntryReturnTo ?? props.returnTo}
             mode={keySelection}
             transport={props.service.transport}
             onResult={props.onResult}

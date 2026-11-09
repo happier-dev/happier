@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol';
+import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 
 import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';

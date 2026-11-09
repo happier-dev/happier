@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit';
@@ -1318,3 +1319,6 @@ describe('adaptPreAuthController', () => {
         expect(adapted.showSkip).toBe(false);
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

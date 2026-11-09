@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { LaunchProfileV2 } from '@happier-dev/protocol';
+import type { LaunchProfileV2 } from '@happier-dev/protocol/profiles/v2/schema';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { t } from '@/text';
 
 /**
@@ -133,7 +133,7 @@ export function SlimProfilePlacementFields(props: Readonly<{
             />
             {pinned === null ? null : (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                    <MachineSetupTextField
+                    <MachineEnrollTextField
                         testID="profile-slim-placement-directory"
                         label={t('profiles.launchPlacement.directory')}
                         value={pinned.directory ?? ''}

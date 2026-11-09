@@ -32,8 +32,8 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/components/ui/forms/MachineSetupTextField', () => ({
-    MachineSetupTextField: (props: Record<string, unknown>) => React.createElement('MachineSetupTextField', props),
+vi.mock('@/components/ui/forms/MachineEnrollTextField', () => ({
+    MachineEnrollTextField: (props: Record<string, unknown>) => React.createElement('MachineEnrollTextField', props),
 }));
 
 vi.mock('./styles', () => ({

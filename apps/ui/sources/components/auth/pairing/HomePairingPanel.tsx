@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -32,7 +32,8 @@ import { Modal } from '@/modal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { useSetupBlockPanelWidth } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
@@ -131,6 +132,7 @@ export const HomePairingPanel = React.memo(function HomePairingPanel(props: Read
     const { theme } = useUnistyles();
     const auth = useAuth();
     const prefix = props.testIDPrefix;
+    const writeClipboard = useClipboardWrite(props.targetProfileId ?? undefined);
     // Focused-Home authentication is only an admission hint. A retained Home's actual
     // credentials and identity are checked by the pairing owner, never borrowed from focus.
     const canRequestPairing = auth.isAuthenticated || Boolean(props.targetProfileId);
@@ -253,11 +255,11 @@ export const HomePairingPanel = React.memo(function HomePairingPanel(props: Read
                                 size="small"
                                 display="secondary"
                                 title={t('homeSetup.getDesktopApp')}
-                                onPress={() => { void Linking.openURL(HAPPIER_DESKTOP_DOWNLOAD_URL).catch(() => {}); }}
+                                onPress={() => { void requestOpenExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }}
                             />
                         )}
                         {sideBySide ? <View style={styles.grow} /> : null}
-                        {props.layout !== 'page' ? <CopyLinkButton testIDPrefix={prefix} link={link} /> : null}
+                        {props.layout !== 'page' ? <CopyLinkButton testIDPrefix={prefix} link={link} writeClipboard={writeClipboard} /> : null}
                     </View>
                     <View
                         testID={`${prefix}-status`}
@@ -317,7 +319,7 @@ function StoreQr(props: Readonly<{ testID: string; store: string; qrLink: string
             testID={props.testID}
             accessibilityRole="link"
             accessibilityLabel={t('homeSetup.storeQrLabel', { store: props.store })}
-            onPress={() => { void Linking.openURL(props.listingUrl).catch(() => {}); }}
+            onPress={() => { void requestOpenExternalUrl(props.listingUrl); }}
             style={styles.store}
         >
             <View style={styles.storePaper}>
@@ -417,7 +419,7 @@ function PairingSteps(props: Readonly<{ purpose: HomePairingPurpose }>) {
  * Copies the code's link (the same token as the QR, so it expires with it). The link is a secret
  * that adds a device, so copying it says so right there.
  */
-function CopyLinkButton(props: Readonly<{ testIDPrefix: string; link: string | null }>) {
+function CopyLinkButton(props: Readonly<{ testIDPrefix: string; link: string | null; writeClipboard: ReturnType<typeof useClipboardWrite> }>) {
     const { theme } = useUnistyles();
     const feedback = useHappierCopyFeedback(4000);
     const link = props.link;
@@ -432,7 +434,7 @@ function CopyLinkButton(props: Readonly<{ testIDPrefix: string; link: string | n
                 disabled={!link}
                 action={async () => {
                     if (!link) return;
-                    const copied = await setClipboardStringSafe(link);
+                    const copied = await props.writeClipboard(link);
                     if (!copied) {
                         await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
                         return;

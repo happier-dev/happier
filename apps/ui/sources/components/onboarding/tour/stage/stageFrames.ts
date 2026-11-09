@@ -12,6 +12,26 @@ export type StageFrame = Readonly<{
 }>;
 
 export const stageFrames = [
+    { id: 'triage.hero', surface: 'triage', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'channels.hero', surface: 'channels', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'computer.hero', surface: 'computer', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'team.credential-usage', surface: 'team-credential-usage', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'browser.session', surface: 'browser-session', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'providers.choice', surface: 'session-choice', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'machine-share.hero', surface: 'machine-share', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'store.install-result', surface: 'store-install-result', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'discussion.hero', surface: 'discussion', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'bots.hero', surface: 'bots', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'session-share.hero', surface: 'session-share', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'team.hero', surface: 'team', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'store.hero', surface: 'store', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'store.listing', surface: 'store-listing', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'store.library', surface: 'skills', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'providers.hero', surface: 'providers', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'accounts.hero', surface: 'accounts', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'browser.hero', surface: 'browser', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'home.hero', surface: 'home', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'home.phone', surface: 'home', device: 'phone', zoom: 1, dim: 0 },
     {
         id: 'sessions-list.hero',
         surface: 'sessions-list',
@@ -146,6 +166,14 @@ export const stageFrames = [
         zoom: 1.15,
         dim: 0,
     },
+    { id: 'workflow-run.hero', surface: 'workflow-run', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'deployments.hero', surface: 'deployments', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'delegated-work.hero', surface: 'delegated-work', device: 'desktop', zoom: 1, dim: 0 },
+    // The tool-detail conversation owns the real local-worker recipient picker.
+    { id: 'subagent-popover', surface: 'delegated-tool-detail', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'subagents.cross-agent', surface: 'delegated-work', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'session-handoff.hero', surface: 'session-handoff', device: 'desktop', zoom: 1, dim: 0 },
+    { id: 'control-room.phone', surface: 'delegated-work', device: 'phone', zoom: 1, dim: 0 },
 ] as const satisfies readonly StageFrame[];
 
 export const stageFrameById = new Map<string, StageFrame>(

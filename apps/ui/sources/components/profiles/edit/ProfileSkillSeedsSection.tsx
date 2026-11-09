@@ -6,6 +6,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SkillMark } from '@/components/settings/skills/SkillKindGlyph';
 import { SKILLS_COLLECTION_ROUTE } from '@/components/settings/skills/skillsCollectionModel';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
@@ -102,6 +103,7 @@ export function ProfileSkillSeedsSection(props: Readonly<{
                         testID={`profile-skill-seeds:row:${skillId}`}
                         title={title}
                         description={description}
+                        mark={<SkillMark firstParty={item?.provenance.kind === 'first_party'} />}
                         action={(
                             <IconButton
                                 testID={`profile-skill-seeds:row:${skillId}:remove`}

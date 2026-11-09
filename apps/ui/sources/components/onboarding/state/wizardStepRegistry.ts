@@ -1,5 +1,4 @@
 import { relayAccessProviderUsesPrerequisitesStep as relayAccessProviderNeedsPrerequisitesStep } from '@/components/settings/server/relayAccess/relayAccessUiCatalog';
-import { getRelayAccessProviderDescriptor } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { WizardContext, WizardStepDefinition, WizardStepId } from './wizardTypes';
 
 const baseRelayStep: Pick<WizardStepDefinition, 'kind' | 'surface' | 'canSkip'> = {
@@ -123,7 +122,8 @@ const wizardStepRegistryEntries = [
         subtitleKey: 'setupOnboarding.authRestoreSubtitle',
         kind: 'recovery',
         surface: 'onboarding',
-        canSkip: true,
+        // Another way in, not an optional step: Back is its way out.
+        canSkip: false,
         visibleWhen: onboardingVisible('auth_restore'),
     },
     {
@@ -132,8 +132,20 @@ const wizardStepRegistryEntries = [
         subtitleKey: 'setupOnboarding.authSecretKeySubtitle',
         kind: 'recovery',
         surface: 'onboarding',
-        canSkip: true,
+        // Another way in, not an optional step: Back is its way out.
+        canSkip: false,
         visibleWhen: onboardingVisible('auth_secret_key'),
+    },
+    {
+        id: 'auth_email_password',
+        titleKey: 'settingsAccount.nativePassword.title',
+        bodyOwnsHeading: true,
+        kind: 'auth',
+        surface: 'onboarding',
+        canSkip: false,
+        // Opened only with the sign-in request it answers, never reached by advancing the
+        // sequence, so it takes no place in the step order or the progress count.
+        visibleWhen: () => false,
     },
     {
         id: 'auth_service_select',
@@ -150,7 +162,8 @@ const wizardStepRegistryEntries = [
         subtitleKey: 'setupOnboarding.authLostAccessSubtitle',
         kind: 'recovery',
         surface: 'onboarding',
-        canSkip: true,
+        // Another way in, not an optional step: Back is its way out.
+        canSkip: false,
         visibleWhen: onboardingVisible('auth_lost_access'),
     },
     {

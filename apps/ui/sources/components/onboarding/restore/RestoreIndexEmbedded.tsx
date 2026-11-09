@@ -14,6 +14,7 @@ import {
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEntryForm';
 import { buildHomeConnectionDescriptorForProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { t } from '@/text';
 
 /**
  * The requester-displayed direction needs one unambiguous saved Home to display a
@@ -34,7 +35,8 @@ export function resolveReverseQrTargetProfileId(): string | null {
 
 export type RestoreIndexEmbeddedProps = Readonly<{
     entryIntent: HomeQrEntryIntent;
-    initialView?: 'qr' | 'scanner';
+    /** `paste` when the entry the person chose promised link entry (a device that cannot scan). */
+    initialView?: 'qr' | 'scanner' | 'paste';
     reverseTargetProfileId?: string | null;
     onBack: () => void;
     onOpenSecretKeyLogin?: () => void;
@@ -89,7 +91,11 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     const [currentView, setCurrentView] = React.useState<'qr' | 'scanner' | 'paste' | null>(null);
     const defaultView = props.initialView ?? (showScannerFirst ? 'scanner' : 'qr');
     const activeView = currentView ?? defaultView;
-    const pasteReturnViewRef = React.useRef<'qr' | 'scanner'>(defaultView);
+    // Link entry opened from the scanner or the QR returns there; opened first, it offers the QR
+    // this device can show, when it has one, and otherwise leaves the way out to the host's back.
+    const pasteReturnViewRef = React.useRef<'qr' | 'scanner' | null>(
+        defaultView !== 'paste' ? defaultView : reverseTargetProfileId ? 'qr' : null,
+    );
     const openPasteEntry = React.useCallback((returnView: 'qr' | 'scanner') => {
         pasteReturnViewRef.current = returnView;
         setCurrentView('paste');
@@ -102,9 +108,14 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     }, []);
 
     if (activeView === 'paste') {
+        const returnView = pasteReturnViewRef.current;
         return (
             <PairingLinkEntryForm
-                onBack={() => setCurrentView(pasteReturnViewRef.current)}
+                embedded
+                onBack={returnView ? () => setCurrentView(returnView) : undefined}
+                backLabel={returnView === 'scanner'
+                    ? t('connect.scanQrCodeOnDevice')
+                    : returnView === 'qr' ? t('connect.showQrInstead') : undefined}
                 onSubmit={submitPastedPairingLink}
             />
         );
@@ -116,6 +127,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
             embedded
             initialPairingLink={pastedPairingLink ?? props.initialPairingLink}
             onBack={props.onBack}
+            showBack={false}
             onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
             onOpenPairingLinkEntry={() => openPasteEntry('scanner')}
             onShowQrInstead={reverseTargetProfileId ? () => setCurrentView('qr') : undefined}

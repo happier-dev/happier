@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { SessionView } from '@/components/sessions/shell/SessionViewHost';
 import { DEMO_RICH_SESSION_ID } from '@/demoMode/world/buildDemoWorld';
+import { StagePhoneCaptureContext } from './StagePhoneCaptureContext';
 
 /**
  * The real session cockpit, composed for the stage. It lives in its own module
@@ -12,18 +13,21 @@ import { DEMO_RICH_SESSION_ID } from '@/demoMode/world/buildDemoWorld';
  */
 export type StageSessionDetailProps = Readonly<{
     sessionId?: string;
+    headerAccessory?: React.ReactNode;
 }>;
 
 export function StageSessionDetail(props: StageSessionDetailProps): React.ReactElement {
+    const phoneCapture = React.useContext(StagePhoneCaptureContext);
     return (
         <SessionView
             id={props.sessionId ?? DEMO_RICH_SESSION_ID}
+            headerAccessory={props.headerAccessory}
             surfaceFocusedOverride
             surfaceVisibleOverride
             routeAnchorOverride
-            safeAreaTopMode="external"
-            headerSafeAreaTopMode="external"
-            chatBottomSpacing="none"
+            safeAreaTopMode={phoneCapture ? undefined : 'external'}
+            headerSafeAreaTopMode={phoneCapture ? undefined : 'external'}
+            chatBottomSpacing={phoneCapture ? undefined : 'none'}
         />
     );
 }

@@ -8,6 +8,7 @@ import Animated, {
 import { useUnistyles } from 'react-native-unistyles';
 
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
+import { APP_SHELL_TITLE_STRIP_HEIGHT_PX } from '@/components/navigation/shell/appRail/appRailMetrics';
 
 import { stageVisualTokens } from './stageVisualTokens';
 
@@ -309,6 +310,7 @@ export function DeviceFrame(props: DeviceFrameProps): React.ReactElement {
                 {props.device === 'desktop' ? (
                     <>
                         {renderViewport({
+                            device: props.device,
                             children: props.children,
                             layout,
                             testID,
@@ -335,6 +337,7 @@ export function DeviceFrame(props: DeviceFrameProps): React.ReactElement {
                             <View testID={`${testID}-phone-bezel`} style={styles.phoneBezel}>
                                 <View testID={`${testID}-phone-notch`} style={styles.phoneNotch} />
                                 {renderViewport({
+                                    device: props.device,
                                     children: props.children,
                                     layout,
                                     testID,
@@ -350,6 +353,7 @@ export function DeviceFrame(props: DeviceFrameProps): React.ReactElement {
 }
 
 function renderViewport(params: Readonly<{
+    device: StageDevice;
     children: React.ReactNode;
     layout: DeviceFrameLayout;
     testID: string;
@@ -375,11 +379,17 @@ function renderViewport(params: Readonly<{
                     {
                         width: params.layout.logicalWidth,
                         height: params.layout.logicalHeight,
+                        // Host chrome is outside the scaled app canvas. Reserve
+                        // its physical height so it cannot cover app controls.
+                        paddingTop: params.layout.scale > 0 ? (params.device === 'desktop'
+                            ? APP_SHELL_TITLE_STRIP_HEIGHT_PX
+                            : stageVisualTokens.phoneFrame.notchTop + stageVisualTokens.phoneFrame.notchHeight
+                        ) / params.layout.scale : 0,
                         transform: [{ scale: params.layout.scale }],
                     },
                 ]}
             >
-                {params.children}
+                <View style={styles.content}>{params.children}</View>
             </View>
         </View>
     );
@@ -463,7 +473,7 @@ const styles = StyleSheet.create({
         backgroundColor: stageVisualTokens.desktopWindow.trafficGreen,
     },
     viewport: {
-        backgroundColor: '#fbfaf9',
+        backgroundColor: 'transparent',
         overflow: 'hidden',
     },
     desktopViewport: {
@@ -478,6 +488,12 @@ const styles = StyleSheet.create({
         alignItems: 'stretch',
         justifyContent: 'flex-start',
         transformOrigin: 'top left',
+    },
+    content: {
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        position: 'relative',
     },
     phoneRail: {
         backgroundColor: stageVisualTokens.phoneFrame.bezelColor,

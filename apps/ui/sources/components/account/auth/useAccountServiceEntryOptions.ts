@@ -10,7 +10,7 @@ import {
     type EffectiveSignInService,
 } from '@happier-dev/cli-common/accountService';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import type { HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
+import type { HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
     resolveSelectedAccountServiceEndpoint,
     subscribeAccountServiceEndpoint,

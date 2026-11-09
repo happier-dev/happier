@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { useRemoteSshBootstrapTask, type RemoteSshBootstrapFormState } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
@@ -38,6 +38,7 @@ import { getRemoteSshChecklistCopy } from './copy';
 import type { RemoteSshChecklistMode, RemoteSshChecklistPhase } from './types';
 import { remoteSshChecklistStyles } from './styles';
 import { RemoteSshChecklistPromptCard } from './RemoteSshChecklistPromptCard';
+import { useSshHostKeyTrustSheet } from '@/components/ssh/SshHostKeyTrustSheet';
 import { RemoteSshChecklistCredentialsPhase } from './RemoteSshChecklistCredentialsPhase';
 import { RemoteSshChecklistPlanPhase } from './RemoteSshChecklistPlanPhase';
 import { RemoteSshChecklistExecutionPhase } from './RemoteSshChecklistExecutionPhase';
@@ -191,6 +192,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         ...(props.initialDraft ?? {}),
     }));
     const hostScope = useActiveServerAccountScope();
+    const writeClipboard = useClipboardWrite(hostScope);
     const hostCatalog = useRemoteHostCatalogSnapshot(hostScope);
     const catalogHosts = hostCatalog?.data ?? EMPTY_REMOTE_HOSTS;
     const runner = props.runner ?? getSystemTasksRunner();
@@ -610,15 +612,22 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             execution.error?.message ? `Error: ${execution.error.message}` : null,
         ].filter((line): line is string => Boolean(line && line.trim().length > 0));
 
-        const copied = await setClipboardStringSafe(lines.join('\n'));
+        const copied = await writeClipboard(lines.join('\n'));
         if (!copied) {
             await Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
             return false;
         }
         return true;
-    }, [checklist.executionById, items, props.mode]);
+    }, [checklist.executionById, items, props.mode, writeClipboard]);
 
-    const promptBlock = prompt ? (
+    // A server's host key is asked in the one trust sheet (lab af-ssh Kp), never inline: Trust continues
+    // setup with that key, and backing out stops it, as the footer's Cancel did.
+    const hostKeyPrompt = prompt && (prompt.kind === 'ssh.trustHost' || prompt.kind === 'ssh.replaceHostKey') ? prompt : null;
+    useSshHostKeyTrustSheet(hostKeyPrompt ? { host: hostKeyPrompt.host, keyType: hostKeyPrompt.keyType,
+        fingerprint: hostKeyPrompt.fingerprint, existingFingerprint: hostKeyPrompt.existingFingerprint } : null,
+    (trusted) => { if (trusted) void handleContinueAfterPrompt(); else dismissPrompt(); });
+
+    const promptBlock = prompt && !hostKeyPrompt ? (
         <RemoteSshChecklistPromptCard
             testID={props.testID ? `${props.testID}-prompt-password` : 'remote-ssh-checklist-prompt-password'}
             prompt={prompt}
@@ -679,7 +688,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
         // execution
         props.onWizardBackChange?.({ hidden: true });
-        if (prompt) {
+        // A host key is answered in its sheet; the footer only waits.
+        if (prompt && prompt.kind !== 'ssh.trustHost' && prompt.kind !== 'ssh.replaceHostKey') {
             props.onWizardSkipChange?.({
                 hidden: false,
                 // Declining either setup decision stops setup, so it is a
@@ -704,11 +714,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                     ? t('settings.machineSetupRemotePromptApproveAction')
                     : prompt.kind === 'releaseChannel.switchDefaultForSetup'
                         ? t('common.continue')
-                    : prompt.kind === 'daemon.replaceRemoteBackgroundServices'
-                        ? t('settings.machineSetupRemotePromptReplaceServicesAction')
-                    : prompt.kind === 'ssh.replaceHostKey'
-                        ? t('settings.machineSetupRemotePromptReplaceAction')
-                        : t('settings.machineSetupRemotePromptTrustAction');
+                    : t('settings.machineSetupRemotePromptReplaceServicesAction');
             const passwordRequired = prompt.kind === 'ssh.password' && draft.password.trim().length === 0;
             props.onWizardPrimaryChange?.({
                 label: primaryLabel,

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AccountCredentialJourney } from './AccountCredentialJourney';
 import { useRouter } from 'expo-router';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol';
+import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 
 import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { HomeAuthenticationAction } from '@/auth/capabilities/authMethodCapabilities';

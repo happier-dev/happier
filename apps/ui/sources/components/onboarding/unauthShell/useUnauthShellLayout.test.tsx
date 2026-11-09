@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 
 import { useUnauthShellLayout } from './useUnauthShellLayout';
 
@@ -22,10 +23,7 @@ function setup(width: number, brandHeroSeenAt: number | null) {
         scale: 1,
         fontScale: 1,
     });
-    storage.setState((state) => ({
-        ...state,
-        localSettings: { ...state.localSettings, brandHeroSeenAt },
-    }));
+    onboardingHistoryState.set('brandHeroSeenAt', brandHeroSeenAt);
 }
 
 function Probe({ allow }: { allow: boolean }) {

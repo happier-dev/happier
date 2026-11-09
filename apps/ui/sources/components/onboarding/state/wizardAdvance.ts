@@ -31,12 +31,10 @@ export type WizardAdvanceEffect =
         type: 'activateServerUrl';
         serverUrl: string;
         source: 'url';
-        scope: 'device';
     }>
     | Readonly<{
         type: 'activateServerProfile';
         serverId: string;
-        scope: 'device';
     }>
     | Readonly<{
         type: 'setRelaySelection';
@@ -104,7 +102,6 @@ function resolveRelaySelectAdvance(
                 type: 'activateServerUrl',
                 serverUrl,
                 source: 'url',
-                scope: 'device',
             });
         }
         effects.push({
@@ -128,7 +125,6 @@ function resolveRelaySelectAdvance(
             effects.push({
                 type: 'activateServerProfile',
                 serverId: event.cloudRelay.serverId,
-                scope: 'device',
             });
         }
         effects.push({
@@ -174,7 +170,6 @@ function resolveSaveCustomRelayUrl(
                 type: 'activateServerUrl',
                 serverUrl: relayUrl,
                 source: 'url',
-                scope: 'device',
             },
             { type: 'clearRelayAccessDraft' },
             {

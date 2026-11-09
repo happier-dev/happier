@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 import { StoredLaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
-import { buildSlimProfileSave, isSlimProfileReservedEnvironmentAuthorityReady } from './slimProfileDraft';
+import { buildSlimProfileSave } from './slimProfileDraft';
+import { getAllAgentProviderOwnedEnvironmentKeys } from '@/agents/registry/registryCore';
 
 const base = {
     v: 2 as const,
@@ -124,11 +125,11 @@ describe('buildSlimProfileSave', () => {
             .toMatchObject({ status: 'success', profile: { envVarRequirements: [] } });
     });
 
-    it('refuses requirement-only changes without current reserved-key authority', () => {
+    it('saves requirement-only changes with bundled reserved keys and no daemon projection', () => {
         const draft = { name: 'Deploy', description: '', extraEnvironmentVariables: [],
             envVarRequirements: [{ name: 'DEPLOY_TOKEN', kind: 'secret' as const, required: true }] };
-        expect(buildSlimProfileSave(base, draft, Date.now, new Set(), false))
-            .toMatchObject({ status: 'error', field: 'extraEnvironmentVariables' });
+        expect(buildSlimProfileSave(base, draft, Date.now, getAllAgentProviderOwnedEnvironmentKeys(null)))
+            .toMatchObject({ status: 'success', profile: { envVarRequirements: draft.envVarRequirements } });
     });
 
     it('rejects static and dynamically reserved secret requirements without an environment row', () => {
@@ -149,29 +150,24 @@ describe('buildSlimProfileSave', () => {
         });
     });
 
-    it('fails closed when environment rows changed before daemon reserved-key authority is ready', () => {
-        expect(buildSlimProfileSave(base, {
-            name: 'Profile A', description: '',
-            extraEnvironmentVariables: [{ name: 'SAFE_FLAG', value: '1' }],
-        }, Date.now, new Set(), false)).toMatchObject({
-            status: 'error', field: 'extraEnvironmentVariables',
-        });
+    it.each([null, { external: { providerOwnedEnvironmentKeys: ['EXTERNAL_AUTH'] } }])(
+        'retains bundled and available-projection feedback without declaration readiness (%s)', projection => {
+            const reserved = getAllAgentProviderOwnedEnvironmentKeys(projection);
+            for (const name of ['CLAUDE_CODE_OAUTH_TOKEN', ...(projection ? ['EXTERNAL_AUTH'] : [])]) {
+                expect(buildSlimProfileSave(base, {
+                    name: 'Profile A', description: '', extraEnvironmentVariables: [{ name, value: '' }],
+                }, Date.now, reserved)).toMatchObject({ status: 'error', field: 'extraEnvironmentVariables' });
+            }
+            expect(buildSlimProfileSave(base, {
+                name: 'Profile A', description: '', extraEnvironmentVariables: [{ name: 'SAFE_FLAG', value: '1' }],
+            }, Date.now, reserved)).toMatchObject({ status: 'success' });
+        },
+    );
 
+    it('allows an offline external key to be saved for canonical spawn-time validation', () => {
         expect(buildSlimProfileSave(base, {
-            name: 'Renamed', description: '',
-            extraEnvironmentVariables: [],
-        }, Date.now, new Set(), false)).toMatchObject({ status: 'success' });
-    });
-
-    it('does not treat a ready legacy daemon projection as reserved-key authority', () => {
-        expect(isSlimProfileReservedEnvironmentAuthorityReady({
-            projectionPhase: 'ready',
-            hasV2Projection: false,
-        })).toBe(false);
-        expect(isSlimProfileReservedEnvironmentAuthorityReady({
-            projectionPhase: 'ready',
-            hasV2Projection: true,
-        })).toBe(true);
+            name: 'Profile A', description: '', extraEnvironmentVariables: [{ name: 'EXTERNAL_AUTH', value: '' }],
+        }, Date.now, getAllAgentProviderOwnedEnvironmentKeys(null))).toMatchObject({ status: 'success' });
     });
 
     it('persists exact Agent defaults and structured Provider model preference without flattening them', () => {

@@ -22,6 +22,7 @@ import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent
 import { buildDismissedThisComputerSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { publishSessionListBotSelection } from '@/sync/store/domains/sessionListBotSelection';
 import { t } from '@/text';
 
 import { MOBILE_MAX_WIDTH_PX } from '../unauthShell/useUnauthShellLayout';
@@ -204,7 +205,8 @@ function isPreAuthControllerAuthStep(stepId: OnboardingWizardController['stepId'
     return stepId === 'auth'
         || stepId === 'auth_restore'
         || stepId === 'auth_secret_key'
-        || stepId === 'auth_lost_access';
+        || stepId === 'auth_lost_access'
+        || stepId === 'auth_email_password';
 }
 
 function syncConfigStep(params: Readonly<{
@@ -308,6 +310,9 @@ function restoreExactSnapshot(snapshot: StoreSnapshot): void {
     storage.setState((current) => ({
         sessions: snapshot.sessions,
         sessionListRowsByServerId: snapshot.sessionListRowsByServerId,
+        sessionListBotRowsByServerId: publishSessionListBotSelection(
+            current.sessionListRowsByServerId, snapshot.sessionListRowsByServerId, current.sessionListBotRowsByServerId,
+        ),
         ordinarySessionListMembershipByServerId: snapshot.ordinarySessionListMembershipByServerId,
         archivedSessionListMembershipByServerId: snapshot.archivedSessionListMembershipByServerId,
         sessionListIndexByServerId: snapshot.sessionListIndexByServerId,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { HANDOFF_TEXT_MAX_WIDTH } from '@/components/onboarding/ui/handoffLayout';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 export type WebDesktopDownloadCtaProps = Readonly<{
     testIDPrefix: string;
@@ -58,7 +59,7 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
     const styles = stylesheet;
     const showSubtitle = props.showSubtitle ?? true;
     const openDownload = React.useCallback(() => {
-        void Linking.openURL(HAPPIER_DESKTOP_DOWNLOAD_URL).catch(() => {});
+        void requestOpenExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL);
     }, []);
 
     return (

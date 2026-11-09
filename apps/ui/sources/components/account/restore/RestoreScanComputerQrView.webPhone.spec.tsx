@@ -14,9 +14,10 @@ import type { HomeQrEnrollmentTarget } from '@/auth/flows/qrStart';
 import type { AuthCredentials, ServerCredentialLookupOptions } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import {
-    deriveHomeQrRendezvousSecretV2,
+    deriveHomeQrRendezvousSecretV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import {
     type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import {
     installRestoreScanComputerQrViewCommonModuleMocks,
     resetRestoreScanComputerQrViewCommonModuleMockState,
@@ -722,7 +723,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             issuedAtMs,
             expiresAtMs,
         };
-        const { computeHomeQrBindingProofV2 } = await import('@happier-dev/protocol');
+        const { computeHomeQrBindingProofV2} = await import('@happier-dev/protocol/crypto/qrProvisioningV2');
         const bindingProof = computeHomeQrBindingProofV2({
             direction: reverseInvite.direction,
             qrSecret: new Uint8Array(32).fill(4),
@@ -816,7 +817,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
                 issuedAtMs,
                 expiresAtMs,
             };
-            const { computeHomeQrBindingProofV2 } = await import('@happier-dev/protocol');
+            const { computeHomeQrBindingProofV2} = await import('@happier-dev/protocol/crypto/qrProvisioningV2');
             const bindingProof = computeHomeQrBindingProofV2({
                 direction: reverseInvite.direction,
                 qrSecret: new Uint8Array(32).fill(4),
@@ -886,7 +887,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             requesterPublicKeyBase64Url: encodeBase64(requesterPublicKey, 'base64url'),
             expiresAtMs,
         };
-        const { computeHomeQrBindingProofV2 } = await import('@happier-dev/protocol');
+        const { computeHomeQrBindingProofV2} = await import('@happier-dev/protocol/crypto/qrProvisioningV2');
         const bindingProof = computeHomeQrBindingProofV2({
             direction: reverseInvite.direction,
             qrSecret: new Uint8Array(32).fill(4),
@@ -976,7 +977,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
 
     it('aborts reverse status polling and consumes the pending row when the user cancels', async () => {
         const { requesterPublicKey, invite: reverseInvite } = createReverseInvite('pair-reverse-cancel-known');
-        const { computeHomeQrBindingProofV2 } = await import('@happier-dev/protocol');
+        const { computeHomeQrBindingProofV2} = await import('@happier-dev/protocol/crypto/qrProvisioningV2');
         const bindingProof = computeHomeQrBindingProofV2({
             direction: reverseInvite.direction,
             qrSecret: new Uint8Array(32).fill(4),
@@ -1225,7 +1226,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             });
             expect(featureDecisionState.targetProbeSpy).toHaveBeenCalledOnce();
             expect(restoreScanSuccessState.trackAuthEnrollmentTransientRetrySpy).not.toHaveBeenCalled();
-            expect(screen.getTextContent()).toContain('connect.scanComputerQrUnavailableBody');
+            expect(screen.getTextContent()).toContain('terminal.invalidConnectionLinkDescription');
         } finally {
             vi.useRealTimers();
         }
@@ -1282,7 +1283,9 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         });
 
         expect(screen.getTextContent()).toContain('connect.pairingQrExpired');
-        expect(screen.findByTestId('restore-enrollment-retry')).not.toBeNull();
+        // A scanned code that expired is replaced by scanning a new one, not by retrying it.
+        expect(screen.findByTestId('restore-enrollment-retry')).toBeNull();
+        expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull();
         expect(modalAlertSpy).not.toHaveBeenCalledWith(
             'modals.authRequestExpired',
             'modals.authRequestExpiredDescription',
@@ -1761,7 +1764,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(routerNavigationState.replaceSpy).not.toHaveBeenCalled();
         // Unknown input yields the persistent invalid-input outcome, not the
         // recognized-V1 guidance or a dismissible modal dead end.
-        expect(screen.getTextContent()).toContain('connect.scanComputerQrUnavailableBody');
+        expect(screen.getTextContent()).toContain('terminal.invalidConnectionLinkDescription');
         expect(screen.findByTestId('restore-enrollment-retry')).not.toBeNull();
         expect(modalAlertSpy).not.toHaveBeenCalled();
     });

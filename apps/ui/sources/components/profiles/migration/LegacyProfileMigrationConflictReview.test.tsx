@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderSettingsMigrationPendingConflictV1Schema } from '@happier-dev/protocol';
+import { ProviderSettingsMigrationPendingConflictV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
@@ -20,9 +20,9 @@ const rpc = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
-const [{ Item }, { MachineSetupTextField }, { ProviderErrorItems }] = await Promise.all([
+const [{ Item }, { MachineEnrollTextField }, { ProviderErrorItems }] = await Promise.all([
     import('@/components/ui/lists/Item'),
-    import('@/components/ui/forms/MachineSetupTextField'),
+    import('@/components/ui/forms/MachineEnrollTextField'),
     import('@/components/settings/providers/ProviderErrorItems'),
 ]);
 let serverId = '';
@@ -161,7 +161,7 @@ describe('LegacyProfileMigrationConflictReview', () => {
             onConfirmed={vi.fn(async () => undefined)}
             onClose={vi.fn()}
         />);
-        const nameField = screen.findAllByType(MachineSetupTextField)[0];
+        const nameField = screen.findAllByType(MachineEnrollTextField)[0];
         await React.act(async () => { nameField?.props.onChangeText?.('DeepSeek work account'); });
         await pressRow(screen, 'settingsProviders.migration.createNamed');
         expect(confirm).toHaveBeenCalledWith(expect.objectContaining({

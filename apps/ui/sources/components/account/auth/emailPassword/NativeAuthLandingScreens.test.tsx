@@ -35,6 +35,7 @@ const boundary = vi.hoisted(() => ({
 vi.mock('expo-router', () => ({ useRouter: () => ({ replace: boundary.replace }) }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ refreshFromActiveServer: boundary.refreshFromActiveServer }),
+    useOptionalAuth: () => ({ isAuthenticated: false }),
 }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -223,6 +224,13 @@ it('retries authentication discovery after a valid verification preview without 
         nativeAdmission: { kind: 'native_email_verification', token: 'verification-bearer' },
     });
     expect(boundary.preview).toHaveBeenCalledTimes(1);
+});
+
+it('opens a mailed link as a step of the welcome split, not a bare page', async () => {
+    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
+    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
+    expect(screen.findByTestId('unauth-shell-native-auth-reset')).not.toBeNull();
+    expect(screen.findByTestId('native-auth-reset-title')).not.toBeNull();
 });
 
 it('recovers sign-in discovery after a completed reset without resetting the password again', async () => {

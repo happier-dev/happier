@@ -2,7 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { deriveHomeQrBindingKeyV2, sealTerminalProvisioningV3TokenOnlyPayload, type SystemTaskSpec } from '@happier-dev/protocol';
+import { deriveHomeQrBindingKeyV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { sealTerminalProvisioningV3TokenOnlyPayload} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import { type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';

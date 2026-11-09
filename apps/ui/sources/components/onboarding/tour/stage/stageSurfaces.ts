@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { StageDevice } from './DeviceFrame';
 
 export const STAGE_SURFACE_IDS = [
+    'home',
     'sessions-list',
     'session-view',
     'relay-settings',
@@ -14,6 +15,29 @@ export const STAGE_SURFACE_IDS = [
     'mcp-servers',
     'connected-services',
     'theme-profiles',
+    'workflow-run',
+    'deployments',
+    'delegated-work',
+    'delegated-tool-detail',
+    'session-handoff',
+    'bots',
+    'session-share',
+    'store',
+    'providers',
+    'accounts',
+    'browser',
+    'store-listing',
+    'skills',
+    'discussion',
+    'team',
+    'browser-session',
+    'session-choice',
+    'machine-share',
+    'store-install-result',
+    'team-credential-usage',
+    'computer',
+    'channels',
+    'triage',
 ] as const;
 
 export type StageSurfaceId = typeof STAGE_SURFACE_IDS[number];
@@ -25,6 +49,8 @@ type StageSurfaceModule = Readonly<{ default: StageSurfaceComponent }>;
 export type StageSurface = Readonly<{
     id: StageSurfaceId;
     component: React.LazyExoticComponent<StageSurfaceComponent>;
+    /** Capture restores the device boundary omitted by bare route bodies. */
+    phoneSafeArea: 'surface' | 'capture';
     seeds: readonly StageWorldSeed[];
     tier: StageSurfaceTier;
     devices: readonly StageDevice[];
@@ -118,6 +144,17 @@ const loadSessionViewStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(
 
 const SessionViewStageSurface = React.lazy(loadSessionViewStageSurface);
 
+const loadHomeStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const [{ StageAppShell }, { HomeHub }] = await Promise.all([
+        import('./StageAppShell'),
+        import('@/components/hub/HomeHub'),
+    ]);
+    return { default: ({ device }) => React.createElement(StageAppShell, {
+        device, surface: 'home', detail: React.createElement(HomeHub),
+    }) };
+});
+const HomeStageSurface = React.lazy(loadHomeStageSurface);
+
 const loadRelaySettingsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
     const homesModule = await import('@/components/settings/server/collection/HomesSettingsIndex');
 
@@ -166,15 +203,152 @@ const loadThemeProfilesStageSurface = cacheStageSurfaceLoader<StageSurfaceModule
 });
 const ThemeProfilesStageSurface = React.lazy(loadThemeProfilesStageSurface);
 
+const loadWorkflowRunStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/WorkflowRunStageSurface');
+    return { default: module.WorkflowRunStageSurface };
+});
+const WorkflowRunStageSurface = React.lazy(loadWorkflowRunStageSurface);
+
+const loadDeploymentsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/DeploymentsStageSurface');
+    return { default: module.DeploymentsStageSurface };
+});
+const DeploymentsStageSurface = React.lazy(loadDeploymentsStageSurface);
+
+const loadDelegatedWorkStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/FeatureSessionStageSurface');
+    return { default: module.DelegatedWorkStageSurface };
+});
+const DelegatedWorkStageSurface = React.lazy(loadDelegatedWorkStageSurface);
+
+const loadDelegatedToolDetailStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/DelegatedToolDetailStageSurface');
+    return { default: module.DelegatedToolDetailStageSurface };
+});
+const DelegatedToolDetailStageSurface = React.lazy(loadDelegatedToolDetailStageSurface);
+
+const loadSessionHandoffStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/FeatureSessionStageSurface');
+    return { default: module.SessionHandoffStageSurface };
+});
+const SessionHandoffStageSurface = React.lazy(loadSessionHandoffStageSurface);
+
+const loadBotsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/BotsStageSurface');
+    return { default: module.BotsStageSurface };
+});
+const BotsStageSurface = React.lazy(loadBotsStageSurface);
+
+const loadSessionShareStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/SessionShareStageSurface');
+    return { default: module.SessionShareStageSurface };
+});
+const SessionShareStageSurface = React.lazy(loadSessionShareStageSurface);
+
+const loadStoreStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/StoreStageSurface');
+    return { default: module.StoreStageSurface };
+});
+const StoreStageSurface = React.lazy(loadStoreStageSurface);
+
+const loadProvidersStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/ProvidersStageSurface');
+    return { default: module.ProvidersStageSurface };
+});
+const ProvidersStageSurface = React.lazy(loadProvidersStageSurface);
+
+const loadAccountsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/AccountsStageSurface');
+    return { default: module.AccountsStageSurface };
+});
+const AccountsStageSurface = React.lazy(loadAccountsStageSurface);
+
+const loadBrowserStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/BrowserStageSurface');
+    return { default: module.BrowserStageSurface };
+});
+const BrowserStageSurface = React.lazy(loadBrowserStageSurface);
+
+const loadStoreListingStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/StoreListingStageSurface');
+    return { default: module.StoreListingStageSurface };
+});
+const StoreListingStageSurface = React.lazy(loadStoreListingStageSurface);
+
+const loadSkillsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/SkillsStageSurface');
+    return { default: module.SkillsStageSurface };
+});
+const SkillsStageSurface = React.lazy(loadSkillsStageSurface);
+
+const loadDiscussionStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/DiscussionStageSurface');
+    return { default: module.DiscussionStageSurface };
+});
+const DiscussionStageSurface = React.lazy(loadDiscussionStageSurface);
+
+const loadTeamStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/TeamStageSurface');
+    return { default: module.TeamStageSurface };
+});
+const TeamStageSurface = React.lazy(loadTeamStageSurface);
+
+const loadBrowserSessionStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/BrowserSessionStageSurface');
+    return { default: module.BrowserSessionStageSurface };
+});
+const BrowserSessionStageSurface = React.lazy(loadBrowserSessionStageSurface);
+
+const loadTeamCredentialUsageStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/TeamCredentialUsageStageSurface');
+    return { default: module.TeamCredentialUsageStageSurface };
+});
+const TeamCredentialUsageStageSurface = React.lazy(loadTeamCredentialUsageStageSurface);
+const loadNewSessionChoiceStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/NewSessionChoiceStageSurface');
+    return { default: module.NewSessionChoiceStageSurface };
+});
+const NewSessionChoiceStageSurface = React.lazy(loadNewSessionChoiceStageSurface);
+const loadMachineShareStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/MachineShareStageSurface');
+    return { default: module.MachineShareStageSurface };
+});
+const MachineShareStageSurface = React.lazy(loadMachineShareStageSurface);
+const loadStoreInstallResultStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/StoreListingStageSurface');
+    return { default: module.StoreInstallResultStageSurface };
+});
+const StoreInstallResultStageSurface = React.lazy(loadStoreInstallResultStageSurface);
+const loadComputerStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/ComputerStageSurface');
+    return { default: module.ComputerStageSurface };
+});
+const ComputerStageSurface = React.lazy(loadComputerStageSurface);
+const loadChannelsStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/ChannelsStageSurface');
+    return { default: module.ChannelsStageSurface };
+});
+const ChannelsStageSurface = React.lazy(loadChannelsStageSurface);
+const loadTriageStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
+    const module = await import('./surfaces/TriageStageSurface');
+    return { default: module.TriageStageSurface };
+});
+const TriageStageSurface = React.lazy(loadTriageStageSurface);
+
 // A8 review reuses the real desktop split, pointing the detail owner at the
 // seeded review session (its review-comment drafts render the diff feedback loop).
 const loadReviewStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async () => {
-    const [{ StageAppShell }, { DEMO_REVIEW_SESSION_ID }, sessionDetailModule] = await Promise.all([
+    const [{ StageAppShell }, { DEMO_REVIEW_SESSION_ID }, sessionDetailModule, { ReviewPhoneStageSurface }, { StagePhoneNavigationHost }] = await Promise.all([
         import('./StageAppShell'),
         import('@/demoMode/world/constants'),
         loadStageSessionDetail(),
+        import('./surfaces/ReviewPhoneStageSurface'),
+        import('./StagePhoneNavigationHost'),
     ]);
     function ReviewStageSurfaceComponent(props: Readonly<{ device: StageDevice }>): React.ReactElement {
+        if (props.device === 'phone') return React.createElement(StagePhoneNavigationHost, {
+            surface: 'review', children: React.createElement(ReviewPhoneStageSurface, props),
+        });
         return React.createElement(StageAppShell, {
             device: props.device,
             surface: 'session-view',
@@ -193,6 +367,7 @@ const loadVoiceStageSurface = cacheStageSurfaceLoader<StageSurfaceModule>(async 
 const VoiceStageSurface = React.lazy(loadVoiceStageSurface);
 
 const stageSurfaceLoaders = new Map<StageSurfaceId, CachedStageModuleLoader<StageSurfaceModule>>([
+    ['home', loadHomeStageSurface],
     ['sessions-list', loadSessionsListStageSurface],
     ['session-view', loadSessionViewStageSurface],
     ['relay-settings', loadRelaySettingsStageSurface],
@@ -204,6 +379,29 @@ const stageSurfaceLoaders = new Map<StageSurfaceId, CachedStageModuleLoader<Stag
     ['mcp-servers', loadMcpServersStageSurface],
     ['connected-services', loadConnectedServicesStageSurface],
     ['theme-profiles', loadThemeProfilesStageSurface],
+    ['workflow-run', loadWorkflowRunStageSurface],
+    ['deployments', loadDeploymentsStageSurface],
+    ['delegated-work', loadDelegatedWorkStageSurface],
+    ['delegated-tool-detail', loadDelegatedToolDetailStageSurface],
+    ['session-handoff', loadSessionHandoffStageSurface],
+    ['bots', loadBotsStageSurface],
+    ['session-share', loadSessionShareStageSurface],
+    ['store', loadStoreStageSurface],
+    ['providers', loadProvidersStageSurface],
+    ['accounts', loadAccountsStageSurface],
+    ['browser', loadBrowserStageSurface],
+    ['store-listing', loadStoreListingStageSurface],
+    ['skills', loadSkillsStageSurface],
+    ['discussion', loadDiscussionStageSurface],
+    ['team', loadTeamStageSurface],
+    ['browser-session', loadBrowserSessionStageSurface],
+    ['session-choice', loadNewSessionChoiceStageSurface],
+    ['machine-share', loadMachineShareStageSurface],
+    ['store-install-result', loadStoreInstallResultStageSurface],
+    ['team-credential-usage', loadTeamCredentialUsageStageSurface],
+    ['computer', loadComputerStageSurface],
+    ['channels', loadChannelsStageSurface],
+    ['triage', loadTriageStageSurface],
 ]);
 
 export async function preloadStageSurfaces(surfaceIds: readonly StageSurfaceId[]): Promise<void> {
@@ -216,8 +414,17 @@ export async function preloadStageSurfaces(surfaceIds: readonly StageSurfaceId[]
 
 export const stageSurfaces = [
     {
+        id: 'home',
+        component: HomeStageSurface,
+        phoneSafeArea: 'surface',
+        seeds: ['sessions', 'messages', 'machines', 'settings', 'server'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    {
         id: 'sessions-list',
         component: SessionsListStageSurface,
+        phoneSafeArea: 'surface',
         seeds: ['sessions', 'messages', 'machines', 'settings', 'server'],
         tier: 'A',
         devices: ['desktop', 'phone'],
@@ -225,6 +432,7 @@ export const stageSurfaces = [
     {
         id: 'session-view',
         component: SessionViewStageSurface,
+        phoneSafeArea: 'surface',
         seeds: ['sessions', 'messages', 'machines', 'settings', 'server'],
         tier: 'A',
         devices: ['desktop', 'phone'],
@@ -232,6 +440,7 @@ export const stageSurfaces = [
     {
         id: 'relay-settings',
         component: RelaySettingsStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['server', 'settings'],
         tier: 'A',
         devices: ['desktop'],
@@ -239,6 +448,7 @@ export const stageSurfaces = [
     {
         id: 'machines-settings',
         component: MachinesSettingsStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['machines', 'settings', 'server'],
         tier: 'A',
         devices: ['desktop'],
@@ -246,6 +456,7 @@ export const stageSurfaces = [
     {
         id: 'subagents',
         component: SubagentsStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['settings', 'server', 'machines'],
         tier: 'B',
         devices: ['desktop'],
@@ -253,13 +464,15 @@ export const stageSurfaces = [
     {
         id: 'review',
         component: ReviewStageSurface,
+        phoneSafeArea: 'surface',
         seeds: ['sessions', 'messages', 'settings', 'server'],
         tier: 'B',
-        devices: ['desktop'],
+        devices: ['desktop', 'phone'],
     },
     {
         id: 'source-control',
         component: SourceControlStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['settings', 'server'],
         tier: 'B',
         devices: ['desktop'],
@@ -267,6 +480,7 @@ export const stageSurfaces = [
     {
         id: 'voice',
         component: VoiceStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['sessions', 'settings', 'server'],
         tier: 'B',
         devices: ['desktop'],
@@ -274,6 +488,7 @@ export const stageSurfaces = [
     {
         id: 'mcp-servers',
         component: McpServersStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['settings', 'server', 'machines'],
         tier: 'B',
         devices: ['desktop'],
@@ -281,6 +496,7 @@ export const stageSurfaces = [
     {
         id: 'connected-services',
         component: ConnectedServicesStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['settings', 'server'],
         tier: 'B',
         devices: ['desktop', 'phone'],
@@ -288,10 +504,69 @@ export const stageSurfaces = [
     {
         id: 'theme-profiles',
         component: ThemeProfilesStageSurface,
+        phoneSafeArea: 'capture',
         seeds: ['settings'],
         tier: 'B',
         devices: ['desktop'],
     },
+    {
+        id: 'workflow-run',
+        component: WorkflowRunStageSurface,
+        phoneSafeArea: 'capture',
+        seeds: ['settings', 'server', 'machines'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    {
+        id: 'deployments',
+        component: DeploymentsStageSurface,
+        phoneSafeArea: 'capture',
+        seeds: ['settings', 'server', 'machines'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    {
+        id: 'delegated-work',
+        component: DelegatedWorkStageSurface,
+        phoneSafeArea: 'surface',
+        seeds: ['sessions', 'messages', 'settings', 'server', 'machines'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    {
+        id: 'delegated-tool-detail',
+        component: DelegatedToolDetailStageSurface,
+        phoneSafeArea: 'capture',
+        seeds: ['sessions', 'messages', 'settings', 'server', 'machines'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    {
+        id: 'session-handoff',
+        component: SessionHandoffStageSurface,
+        phoneSafeArea: 'surface',
+        seeds: ['sessions', 'messages', 'settings', 'server', 'machines'],
+        tier: 'B',
+        devices: ['desktop', 'phone'],
+    },
+    { id: 'bots', component: BotsStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server', 'sessions'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'session-share', component: SessionShareStageSurface, phoneSafeArea: 'capture', seeds: [], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'store', component: StoreStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'providers', component: ProvidersStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'accounts', component: AccountsStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'browser', component: BrowserStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop'] },
+    { id: 'store-listing', component: StoreListingStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'skills', component: SkillsStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'discussion', component: DiscussionStageSurface, phoneSafeArea: 'capture', seeds: ['sessions', 'settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'team', component: TeamStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'browser-session', component: BrowserSessionStageSurface, phoneSafeArea: 'surface', seeds: ['sessions', 'messages', 'settings', 'server', 'machines'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'session-choice', component: NewSessionChoiceStageSurface, phoneSafeArea: 'capture', seeds: ['sessions', 'settings', 'server', 'machines'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'machine-share', component: MachineShareStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server', 'machines'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'store-install-result', component: StoreInstallResultStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'team-credential-usage', component: TeamCredentialUsageStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'computer', component: ComputerStageSurface, phoneSafeArea: 'capture', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'channels', component: ChannelsStageSurface, phoneSafeArea: 'surface', seeds: ['settings', 'server'], tier: 'B', devices: ['desktop', 'phone'] },
+    { id: 'triage', component: TriageStageSurface, phoneSafeArea: 'surface', seeds: ['settings', 'server', 'sessions', 'machines'], tier: 'B', devices: ['desktop', 'phone'] },
 ] as const satisfies readonly StageSurface[];
 
 export const stageSurfaceById = new Map<StageSurfaceId, StageSurface>(

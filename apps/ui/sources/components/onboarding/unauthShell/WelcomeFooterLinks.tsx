@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, View } from 'react-native';
+import { View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -9,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
+import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 
 import { RelayRetentionDisclosure, type RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
 
@@ -32,9 +33,9 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
-    const openDocs = React.useCallback(() => { void Linking.openURL(DOCS_URL); }, []);
-    const openGithub = React.useCallback(() => { void Linking.openURL(GITHUB_URL); }, []);
-    const openDiscord = React.useCallback(() => { void Linking.openURL(DISCORD_URL); }, []);
+    const [, openDocs] = useOpenExternalUrl(DOCS_URL);
+    const [, openGithub] = useOpenExternalUrl(GITHUB_URL);
+    const [, openDiscord] = useOpenExternalUrl(DISCORD_URL);
 
     const labelColor = { color: theme.colors.text.secondary };
     const actionColor = { color: theme.colors.text.primary };

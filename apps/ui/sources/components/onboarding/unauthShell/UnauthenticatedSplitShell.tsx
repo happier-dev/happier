@@ -55,9 +55,9 @@ export type UnauthenticatedSplitShellProps = Readonly<{
 
     /**
      * Callback for the "Get started" button on the mobile brand hero
-     * prelude. Must apply `{ brandHeroSeenAt: Date.now() }` to local
-     * settings — typically `useApplyBrandHeroSeen()` from this folder. The
-     * shell re-renders into `mobile-workflow` after the local setting flips.
+     * prelude. Records the timestamp in device history through
+     * `useApplyBrandHeroSeen()` from this folder. The shell re-renders into
+     * `mobile-workflow` after that history changes.
      * No wizard/route dispatch is required for this prelude.
      */
     onBrandHeroGetStarted: () => void;

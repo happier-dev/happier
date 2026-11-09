@@ -1,8 +1,7 @@
-import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -32,8 +31,8 @@ import {
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { Text } from '@/components/ui/text/Text';
-import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
 
@@ -168,15 +167,14 @@ function LandingShell(props: Readonly<{ title: string; children: React.ReactNode
             }
         },
     }), [pendingActionId]);
+    // A mailed link opens one more step of sign-in: signed out it sits in the welcome split's
+    // pane like every other standalone auth route, signed in it takes the same focused card.
     return (
-        <ScrollView contentContainerStyle={[styles.scroll, { maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }]} testID={props.testID}>
+        <AuthRouteStepFrame testID={props.testID} title={props.title}>
             <WelcomeActionList admission={admission}>
-                <View style={styles.card}>
-                    <Text style={styles.title}>{props.title}</Text>
-                    {props.children}
-                </View>
+                <View style={styles.card}>{props.children}</View>
             </WelcomeActionList>
-        </ScrollView>
+        </AuthRouteStepFrame>
     );
 }
 
@@ -883,8 +881,6 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
 });
 
 const styles = StyleSheet.create((theme) => ({
-    scroll: { paddingHorizontal: theme.space.s20, paddingVertical: theme.space.s32, gap: theme.space.s16 },
     card: { gap: 14, width: '100%' },
-    title: { ...Typography.variant('title'),  color: theme.colors.text.primary },
     body: { fontSize: 14, color: theme.colors.text.secondary },
 }));

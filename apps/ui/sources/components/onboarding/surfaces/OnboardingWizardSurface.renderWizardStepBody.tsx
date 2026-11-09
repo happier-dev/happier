@@ -30,6 +30,7 @@ import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEm
 import { SecretKeyLoginEmbedded } from '@/components/onboarding/restore/SecretKeyLoginEmbedded';
 import { WelcomeDecisionPanel } from '../preAuth/WelcomeDecisionPanel';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
+import { EmailPasswordAuthStep, type EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { AccountServiceSelectionForm, type AccountServiceSelectionFormProps } from '@/components/account/auth/AccountServiceSelectionForm';
 import { readAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
@@ -81,6 +82,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     accountContinuationIntent: AccountContinuationIntent;
     accountEntryReturnTo?: string;
     accountDirectoryKeyRequest: WelcomeAuthenticationMethod | null;
+    emailPasswordRequest: EmailPasswordAuthStepRequest | null;
+    onEmailPasswordClose: () => void;
     accountDirectoryHomeRecovery: Readonly<{
         kind: 'home_auth' | 'continuation';
         input: AccountPostAuthInput;
@@ -142,7 +145,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     onOpenRelaySelectionFromWelcome: () => void;
     onOpenRelaySelectionFromAuth: () => void;
-    onOpenSetup: () => void;
     onCreatePersonalHome?: () => void;
 
     onOpenRestore: () => void;
@@ -151,8 +153,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onRestoreBackToAuth: () => void;
     onRestoreNavigationLockChange: (locked: boolean) => void;
     initialPairingLink: string | null;
-    restoreInitialView?: 'qr';
-    onLostAccessBackToAuth: () => void;
+    restoreInitialView?: 'qr' | 'paste';
 
     onRelayAccessAdvance: () => void;
     onHostRelayRemoteAdvance: () => void;
@@ -185,6 +186,18 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 onCreatePersonalHome={params.canCreatePersonalHome ? params.onCreatePersonalHome : undefined}
             />
         );
+    }
+
+    if (params.stepId === 'auth_email_password') {
+        // The pane's back chevron is this step's way back; the panel keeps its own
+        // Back only for the escapes that leave the surface (recovery key).
+        return params.emailPasswordRequest ? (
+            <EmailPasswordAuthStep
+                {...params.emailPasswordRequest}
+                showBackAction={false}
+                onClose={params.onEmailPasswordClose}
+            />
+        ) : null;
     }
 
     if (params.stepId === 'scan_code') {
@@ -469,6 +482,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
             }) ?? t('welcome.yourSignInService');
             return (
                 <AccountDirectoryKeyLoginForm
+                    returnTo={params.accountEntryReturnTo}
                     service={service}
                     serviceName={serviceName}
                     intent={params.accountContinuationIntent}
@@ -489,7 +503,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         if (request?.authority.purpose === 'home' && request.execution.kind === 'key_entry') {
             const target = resolveHomeAuthenticationTarget(request.authority.target);
             if (target) {
-                return <SecretKeyLoginForm embedded target={{
+                return <SecretKeyLoginForm embedded returnTo={params.accountEntryReturnTo} target={{
                     ...target,
                     ...(params.authEntryOptions.homeTransport?.runtimeOrigin
                         ? { runtimeOrigin: params.authEntryOptions.homeTransport.runtimeOrigin }
@@ -505,7 +519,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     }
 
     if (params.stepId === 'auth_lost_access') {
-        return <LostAccessEmbedded onBack={params.onLostAccessBackToAuth} />;
+        return <LostAccessEmbedded />;
     }
 
     return null;

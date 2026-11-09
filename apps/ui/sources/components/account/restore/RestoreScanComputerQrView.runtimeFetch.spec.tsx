@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { tryWriteServerEnabledBitInPlace, type HomeQrInviteV2 } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { type HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 import { buildHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { renderScreen, standardCleanup } from '@/dev/testkit';

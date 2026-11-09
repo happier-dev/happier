@@ -14,7 +14,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { sharedSecretProvenanceSegments, sharedSecretStatusLabel } from './savedSecretRowCopy';
 
@@ -137,8 +137,11 @@ export function SecretsList(props: SecretsListProps) {
         return resolution.kind === 'shared_resource' ? resolution : null;
     })();
 
+    const resolveStatus = (entry: SavedSecretCatalogEntryV1) => props.resolveSharedReference?.(entry.ref).status ?? entry.materialStatus;
+    // A Home out of reach is one cause for every shared row: it is said once above the rows, not on each.
+    const homeUnreachable = (props.sharedEntries ?? []).some((entry) => resolveStatus(entry) === 'temporarily_unavailable');
     const renderSharedEntry = (entry: SavedSecretCatalogEntryV1, idx: number, total: number) => {
-        const resolvedStatus = props.resolveSharedReference?.(entry.ref).status ?? entry.materialStatus;
+        const resolvedStatus = resolveStatus(entry);
         // A passkey is a key for a browser profile, not a value a field can use: listed, not choosable.
         const passkey = entry.storage?.kind === 'passkey';
         const provenance = [...(passkey ? [t('secretsSettings.kindPasskey')] : []), ...sharedSecretProvenanceSegments(entry)];
@@ -149,7 +152,7 @@ export function SecretsList(props: SecretsListProps) {
                 key={entry.ref}
                 testID={`saved-secret:${entry.ref}`}
                 title={entry.name ?? t('secrets.catalog.unavailableName')}
-                subtitle={[...provenance, sharedSecretStatusLabel(resolvedStatus)].join(' · ')}
+                subtitle={[...provenance, ...(resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined}
                 accessibilityLabel={[
                     entry.name ?? t('secrets.catalog.unavailableName'),
                     entry.relationship === 'owner'
@@ -178,6 +181,15 @@ export function SecretsList(props: SecretsListProps) {
                         subtitle={t('secrets.catalog.operationFailed')}
                         onPress={props.onRetrySharedCatalog}
                         showChevron={false}
+                    />
+                ) : null}
+                {homeUnreachable ? (
+                    <Item
+                        testID="saved-secret-catalog-unreachable"
+                        title={sharedSecretStatusLabel('temporarily_unavailable')}
+                        icon={<Icon name="wifi-slash" size={29} color={theme.colors.text.secondary} />}
+                        showChevron={false}
+                        showDivider
                     />
                 ) : null}
                 {props.includeNoneRow && (

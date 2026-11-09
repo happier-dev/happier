@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { AccountEncryptionMigrateRequestSchema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, computeAccountEncryptionMigrateKeyFingerprintV1,
-    createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol';
+import { AccountEncryptionMigrateRequestSchema,
+    createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';

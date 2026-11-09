@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AiLaunchProfile, LaunchProfileV2 } from '@happier-dev/protocol';
+import type { AiLaunchProfile} from '@happier-dev/protocol/profiles/read';
+import type { LaunchProfileV2 } from '@happier-dev/protocol/profiles/v2/schema';
 
 import { DEFAULT_PROFILES, getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 

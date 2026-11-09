@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export type BackChevronProps = Readonly<{
     onPress: () => void;
@@ -22,9 +22,8 @@ export const BackChevron = React.memo(function BackChevron(props: BackChevronPro
     const styles = stylesheet;
     const feedback = usePressFeedback({ glyph: true });
     return (
-        <Pressable
+        <HappierPressable
             onPress={props.onPress}
-            hitSlop={8}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
             testID={props.testID ?? 'unauth-shell-back-chevron'}
@@ -35,7 +34,7 @@ export const BackChevron = React.memo(function BackChevron(props: BackChevronPro
             <Animated.View style={feedback.animatedStyle}>
                 <Icon name="caret-left" size={24} color={theme.colors.text.primary} />
             </Animated.View>
-        </Pressable>
+        </HappierPressable>
     );
 });
 

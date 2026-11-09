@@ -1,8 +1,8 @@
 import * as React from 'react';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { ProjectedAuthenticationCatalog } from '@happier-dev/cli-common/authentication/authMethodCatalog';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import type { HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
+import type { HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { HomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';

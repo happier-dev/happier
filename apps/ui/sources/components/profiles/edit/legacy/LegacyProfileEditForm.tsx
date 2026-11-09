@@ -1,6 +1,6 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import React from 'react';
-import { ViewStyle, Linking, Platform } from 'react-native';
+import { ViewStyle, Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -17,8 +17,8 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { Switch } from '@/components/ui/forms/Switch';
 import { getBuiltInProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
-import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
-import { useSetting, useSettingsSelector, useAllMachines, useMachine, useSettingMutable } from '@/sync/domains/state/storage';
+import { EnvironmentVariablesList, type EnvironmentVariableAddition } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
+import { useSetting, useSettingsSelector, useMachine, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -33,6 +33,7 @@ import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { NEUTRAL_AGENT_ICON_NAME } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { buildBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
@@ -53,6 +54,7 @@ import { ProfilePreferredAgentField } from '../ProfilePreferredAgentField';
 import { ProfileEditActions } from '../ProfileEditActions';
 import { Icon } from '@/components/ui/icons/Icon';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import type { ProfileRecordV1, ProfileLegacyCloneSourceV1 } from '@happier-dev/protocol/profiles/profileRecordSchemaV1';
 
 export interface LegacyProfileEditFormProps {
@@ -141,7 +143,7 @@ function LegacyProfileEditFormReady({
     const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
     const popoverBoundaryRef = React.useRef<any>(null);
     const enabledAgentIds = useEnabledAgentIds();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const opencodeBackendMode = useSettingsSelector((settings) => (
         (settings as Record<string, unknown>).opencodeBackendMode
@@ -176,10 +178,10 @@ function LegacyProfileEditFormReady({
     useMachineReachabilityRevision(Boolean(resolvedMachine));
     const machinePresence = resolvedMachine ? resolveMachineReachability(machineBinding?.isCurrent() ? machineBinding.scope : null, resolvedMachine, presenceNowMs) : 'unknown';
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: resolvedMachineId,
         serverId: activeServerId,
         enabled: Boolean(resolvedMachineId),
-        staleMs: 60_000,
     });
     const backendCatalogAvailable = acpCatalogSnapshot?.status === 'ready';
     const resolvedBackendEntries = React.useMemo(() => {
@@ -508,11 +510,7 @@ function LegacyProfileEditFormReady({
         const url = profileDocs?.setupGuideUrl;
         if (!url) return;
         try {
-            if (Platform.OS === 'web') {
-                window.open(url, '_blank');
-            } else {
-                await Linking.openURL(url);
-            }
+            await requestOpenExternalUrl(url);
         } catch (error) {
             console.error('Failed to open URL:', error);
         }
@@ -576,10 +574,15 @@ function LegacyProfileEditFormReady({
         };
     }, [handleSave, saveRef]);
 
+    const addEnvironmentVariable = React.useCallback(({ variable, requirement }: EnvironmentVariableAddition) => {
+        setEnvironmentVariables(existing => [...existing, variable]);
+        if (requirement) updateSourceRequirement(requirement.name, requirement, requirement.secretId);
+    }, [updateSourceRequirement]);
+
     if (!backendCatalogAvailable) return <ItemList>{header}{catalogAvailability(acpCatalogSnapshot)}</ItemList>;
 
     return (
-        <ItemList ref={popoverBoundaryRef} style={containerStyle} keyboardShouldPersistTaps="handled">
+        <ItemList ref={popoverBoundaryRef} style={containerStyle} keyboardAware keyboardShouldPersistTaps="handled">
             {header}
             <ProfileNameSection testIDPrefix="profile-legacy" name={name} onChangeName={setName} />
 
@@ -689,6 +692,7 @@ function LegacyProfileEditFormReady({
                 machineName={getMachineDisplayName(resolvedMachine)}
                 profileDocs={profileDocs}
                 onChange={setEnvironmentVariables}
+                onAddVariable={addEnvironmentVariable}
                 sourceRequirementsByName={sourceRequirementsByName}
                 onUpdateSourceRequirement={updateSourceRequirement}
                 getDefaultSecretNameForSourceVar={getDefaultSecretNameForSourceVar}

@@ -18,8 +18,19 @@ function frameById(frameId: string): StageFrame {
 }
 
 describe('stage surface registry', () => {
+    it('distinguishes a worker detail from its Claude lead session with cross-Agent delegates', () => {
+        expect(frameById('subagent-popover').surface).toBe('delegated-tool-detail');
+        expect(frameById('subagents.cross-agent').surface).toBe('delegated-work');
+        expect(resolveStageFrameDevice(frameById('subagents.cross-agent'), 'phone')).toBe('phone');
+    });
+    it('renders Home through the same registered surface on desktop and phone', () => {
+        expect(frameById('home.hero')).toMatchObject({ surface: 'home', device: 'desktop' });
+        expect(frameById('home.phone')).toMatchObject({ surface: 'home', device: 'phone' });
+        expect(stageSurfaces.find(surface => surface.id === 'home')).toMatchObject({ devices: ['desktop', 'phone'] });
+    });
     it('registers the four Tier-A surfaces plus the feature-showcase Tier-B surfaces', () => {
         expect(STAGE_SURFACE_IDS).toEqual([
+            'home',
             'sessions-list',
             'session-view',
             'relay-settings',
@@ -31,23 +42,70 @@ describe('stage surface registry', () => {
             'mcp-servers',
             'connected-services',
             'theme-profiles',
+            'workflow-run',
+            'deployments',
+            'delegated-work',
+            'delegated-tool-detail',
+            'session-handoff',
+            'bots',
+            'session-share',
+            'store',
+            'providers',
+            'accounts',
+            'browser',
+            'store-listing',
+            'skills',
+            'discussion',
+            'team',
+            'browser-session',
+            'session-choice',
+            'machine-share',
+            'store-install-result',
+            'team-credential-usage',
+            'computer',
+            'channels',
+            'triage',
         ]);
         expect(stageSurfaces.map((surface) => ({
             id: surface.id,
             tier: surface.tier,
             devices: surface.devices,
         }))).toEqual([
+            { id: 'home', tier: 'B', devices: ['desktop', 'phone'] },
             { id: 'sessions-list', tier: 'A', devices: ['desktop', 'phone'] },
             { id: 'session-view', tier: 'A', devices: ['desktop', 'phone'] },
             { id: 'relay-settings', tier: 'A', devices: ['desktop'] },
             { id: 'machines-settings', tier: 'A', devices: ['desktop'] },
             { id: 'subagents', tier: 'B', devices: ['desktop'] },
-            { id: 'review', tier: 'B', devices: ['desktop'] },
+            { id: 'review', tier: 'B', devices: ['desktop', 'phone'] },
             { id: 'source-control', tier: 'B', devices: ['desktop'] },
             { id: 'voice', tier: 'B', devices: ['desktop'] },
             { id: 'mcp-servers', tier: 'B', devices: ['desktop'] },
             { id: 'connected-services', tier: 'B', devices: ['desktop', 'phone'] },
             { id: 'theme-profiles', tier: 'B', devices: ['desktop'] },
+            { id: 'workflow-run', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'deployments', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'delegated-work', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'delegated-tool-detail', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'session-handoff', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'bots', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'session-share', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'store', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'providers', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'accounts', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'browser', tier: 'B', devices: ['desktop'] },
+            { id: 'store-listing', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'skills', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'discussion', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'team', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'browser-session', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'session-choice', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'machine-share', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'store-install-result', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'team-credential-usage', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'computer', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'channels', tier: 'B', devices: ['desktop', 'phone'] },
+            { id: 'triage', tier: 'B', devices: ['desktop', 'phone'] },
         ]);
     });
 

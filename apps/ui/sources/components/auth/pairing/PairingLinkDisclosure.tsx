@@ -9,7 +9,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 const stylesheet = StyleSheet.create((theme) => ({
     disclosure: {
@@ -60,6 +60,7 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
 }>) {
     const styles = stylesheet;
     const [expanded, setExpanded] = React.useState(false);
+    const writeClipboard = useClipboardWrite(undefined, { enabled: expanded });
     const copyFeedback = useHappierCopyFeedback();
 
     return (
@@ -91,7 +92,7 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
                                 title={t('common.copy')}
                                 display="inverted"
                                 action={async () => {
-                                    const copied = await setClipboardStringSafe(props.link!);
+                                    const copied = await writeClipboard(props.link!);
                                     if (!copied) {
                                         await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
                                         return;

@@ -5,6 +5,7 @@ import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { readProfileEnabledById, type ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
@@ -43,10 +44,10 @@ export function useProfilesListModel(params: Readonly<{
         return getEnabledAgentIds({ backendEnabledByTargetKey });
     }, [backendEnabledByTargetKey]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: params.machineId,
         serverId: params.serverId,
         enabled: Boolean(params.machineId),
-        staleMs: 60_000,
     });
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({

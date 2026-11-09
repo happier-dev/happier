@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type {
@@ -119,9 +120,6 @@ const authEntryOptionsState = vi.hoisted(() => ({
         retryServerCheck: () => {},
     },
 }));
-const localSettingsState = vi.hoisted(() => ({
-    hasCompletedAuthOnce: false as boolean,
-}));
 const journeySessionState = vi.hoisted(() => ({
     active: false as boolean,
 }));
@@ -193,10 +191,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 
-vi.mock('@/sync/store/settingsReadHooks', () => ({
-    useLocalSetting: (key: string) => (localSettingsState as Record<string, unknown>)[key],
-}));
-
 vi.mock('@/components/onboarding/tour/state/journeySession', () => ({
     useOnboardingJourneySessionActive: () => journeySessionState.active,
 }));
@@ -206,11 +200,13 @@ vi.mock('@/components/onboarding/state/usePendingSetupIntent', () => ({
 }));
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     isDesktopHost: () => tauriDesktopState.value,
 }));
 
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
+vi.mock('@/utils/platform/desktopWindowBridge', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopWindowBridge')>(),
     getDesktopWindowChromePolicy: () => desktopWindowBridgeState.getDesktopWindowChromePolicy(),
     getDesktopWindowState: () => desktopWindowBridgeState.getDesktopWindowState(),
     listenDesktopWindowState: (handler: (state: { isMaximized: boolean }) => void) =>
@@ -343,7 +339,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         applyBrandHeroSeenMock.mockReset();
         onboardingTourFeatureState.state = 'disabled';
         onboardingTourFeatureState.calls = [];
-        localSettingsState.hasCompletedAuthOnce = false;
+        onboardingAuthHistoryState.set('completed', false);
         journeySessionState.active = false;
         authState.isAuthenticated = false;
         pendingSetupIntentState.value = null;
@@ -513,7 +509,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
     it('renders the classic welcome shell for returning users even when onboardingTour is enabled', async () => {
         onboardingTourFeatureState.state = 'enabled';
-        localSettingsState.hasCompletedAuthOnce = true;
+        onboardingAuthHistoryState.set('completed', true);
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
@@ -539,7 +535,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
     it('keeps rendering the journey for a returning user while a journey session is active', async () => {
         onboardingTourFeatureState.state = 'enabled';
-        localSettingsState.hasCompletedAuthOnce = true;
+        onboardingAuthHistoryState.set('completed', true);
         journeySessionState.active = true;
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
@@ -553,7 +549,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
     it('renders the journey replay deep-link for a returning user in a production (non-debug) build', async () => {
         delete process.env.EXPO_PUBLIC_DEBUG;
         onboardingTourFeatureState.state = 'enabled';
-        localSettingsState.hasCompletedAuthOnce = true;
+        onboardingAuthHistoryState.set('completed', true);
         vi.stubGlobal('window', {
             location: {
                 href: 'http://localhost:8081/?happier_journey_beat=A5',
@@ -571,7 +567,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
     it('ignores the journey replay deep-link when the onboardingTour feature flag is off', async () => {
         delete process.env.EXPO_PUBLIC_DEBUG;
         onboardingTourFeatureState.state = 'disabled';
-        localSettingsState.hasCompletedAuthOnce = true;
+        onboardingAuthHistoryState.set('completed', true);
         vi.stubGlobal('window', {
             location: {
                 href: 'http://localhost:8081/?happier_journey_beat=A5',
@@ -587,7 +583,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
     it('re-latches the journey at the setup act for an authed returning user with a pending setup continuation', async () => {
         onboardingTourFeatureState.state = 'enabled';
-        localSettingsState.hasCompletedAuthOnce = true;
+        onboardingAuthHistoryState.set('completed', true);
         journeySessionState.active = false;
         authState.isAuthenticated = true;
         pendingSetupIntentState.value = {

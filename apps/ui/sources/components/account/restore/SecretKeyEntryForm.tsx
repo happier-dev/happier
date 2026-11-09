@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { decodeBase64 } from '@/encryption/base64';
@@ -180,7 +179,6 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
                         iconName={revealed ? 'eye-slash' : 'eye'}
                         variant="plain"
                         size={28}
-                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
                         onPress={() => setRevealed((value) => !value)}
                     />
                 </View>

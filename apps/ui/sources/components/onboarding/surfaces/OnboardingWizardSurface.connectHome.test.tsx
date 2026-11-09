@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { createRootLayoutFeaturesResponse, createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
+vi.mock('@/utils/web/reactDomCjs', async () =>
+    (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
 installDisconnectedServerSocketBoundary();
 
 installTokenStorageWebPlatformMocks({
@@ -63,7 +65,8 @@ const authEntryOptions = {
 } satisfies AuthEntryOptions;
 
 // Collect the real UI graph before the behavior deadline; no internal owner is mocked.
-await import('@/dev/testkit/harness/onboardingWizardHarness');
+await loadSyncSingletonForTests();
+await import('./OnboardingWizardSurface');
 
 async function enterManualHomeAddress(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const customAddress = screen.findByTestId('onboarding-wizard-relay:customUrl');
@@ -81,14 +84,11 @@ function withoutSyntheticTimestamps(items: readonly import('@/sync/domains/serve
 
 describe('first-run custom Home address connection', () => {
     const originalScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-    let restoreLocalStorage: (() => void) | null = null;
-    let restoreWebLocks: (() => void) | null = null;
+    let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | null = null;
 
     beforeEach(async () => {
-        await loadSyncSingletonForTests();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `onboarding_connect_${Date.now()}_${Math.random()}`;
-        restoreLocalStorage = installLocalStorageMock().restore;
-        restoreWebLocks = installWebLockManagerMock().restore;
+        browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev' });
         runtimeFetchMock.mockReset().mockImplementation(async () => new Response(null, { status: 404 }));
         modalAlert.mockClear();
         (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
@@ -97,8 +97,8 @@ describe('first-run custom Home address connection', () => {
     afterEach(async () => {
         standardCleanup();
         await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
-        restoreWebLocks?.();
-        restoreLocalStorage?.();
+        browser?.restore();
+        browser = null;
         if (originalScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = originalScope;
     });
@@ -209,8 +209,8 @@ describe('first-run custom Home address connection', () => {
         await flushHookEffects({ cycles: 3, turns: 3 });
 
         expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);
-        expect(profiles.listServerProfiles()).toHaveLength(beforeProfiles.length + 1);
         expect(profiles.getActiveServerSnapshot().serverUrl).toBe(endpointUrl);
         expect(modalAlert).not.toHaveBeenCalled();
+        expect(profiles.listServerProfiles()).toHaveLength(beforeProfiles.length + 1);
     });
 });

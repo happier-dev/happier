@@ -3,12 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import {
-    createProviderErrorV1,
-    DEFAULT_PROVIDER_SETTINGS_V1,
-    ProviderConnectionIdSchema,
+    createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import {
+    DEFAULT_PROVIDER_SETTINGS_V1} from '@happier-dev/protocol/providers/settings/v1';
+import {
+    ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import {
     serializeModelVisibilityRefV1,
     type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -457,7 +460,7 @@ describe('SlimProfileRoutingFields model visibility', () => {
         expect(options.some((option) => option.value?.providerConnectionId === 'pc_stale')).toBe(false);
     });
 
-    it('confirms an experimental Provider model in the exact Profile scope before persisting it', async () => {
+    it('saves an experimental Profile preference without granting execution consent', async () => {
         providerProjectionGroups = [experimentalProviderGroup()];
         const entry = claudeEntry();
         const agentTargetKey = resolveProfileBackendTargetKeyForEntry(entry);
@@ -477,7 +480,7 @@ describe('SlimProfileRoutingFields model visibility', () => {
         />);
 
         expect(confirmationHookInputs.at(-1)).toMatchObject({
-            enabled: true,
+            enabled: false,
             machineId: 'machine-profile',
             serverId: 'server-profile',
             agentTargetKey,
@@ -508,12 +511,7 @@ describe('SlimProfileRoutingFields model visibility', () => {
             await Promise.resolve();
         });
 
-        expect(confirmExperimental).toHaveBeenCalledWith(expect.objectContaining({
-            connectionId: experimentalRef.providerConnectionId,
-            expectedConnectionRevision: 7,
-            agentTargetKey,
-            modelId: experimentalRef.modelId,
-        }), expect.any(Function));
+        expect(confirmExperimental).not.toHaveBeenCalled();
         expect(onPreferredModelChange).toHaveBeenCalledWith(expect.objectContaining({
             v: 1,
             ref: experimentalRef,

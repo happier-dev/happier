@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useIsFocused, usePreventRemove } from '@react-navigation/native';
@@ -9,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
+import { openTerminalConnectApproval } from '@/auth/terminal/terminalConnectContinuation';
 import { useAuth } from '@/auth/context/AuthContext';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 import { t } from '@/text';
@@ -33,6 +34,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { Text } from '@/components/ui/text/Text';
 import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { trackAccountRestored, trackAuthEnrollmentTransientRetry } from '@/track';
@@ -170,12 +172,23 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         gap: theme.space.s12,
     },
+    // Embedded, the view is a step on its host's column: copy and actions start at the column's
+    // edge under the host's heading, and the other ways in are quiet text actions.
+    embeddedSubtitle: {
+        textAlign: 'left',
+    },
     embeddedFooter: {
-        marginTop: theme.space.s10,
+        marginTop: theme.space.s16,
+        alignItems: 'flex-start',
+        gap: theme.space.s16,
     },
     footerButton: {
         width: '100%',
         maxWidth: 360,
+    },
+    // On a step column an action spans the column, at the pane's one action height.
+    embeddedFooterButton: {
+        width: '100%',
     },
 }));
 
@@ -188,6 +201,8 @@ export type RestoreScanComputerQrViewProps = Readonly<{
     embedded?: boolean;
     initialPairingLink?: string | null;
     onBack?: () => void;
+    /** False when the host already draws the way back (the welcome pane's chevron, the setup card's back). */
+    showBack?: boolean;
     onOpenSecretKeyLogin?: () => void;
     onOpenPairingLinkEntry?: () => void;
     onShowQrInstead?: () => void;
@@ -234,6 +249,10 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     const [phase, setPhase] = React.useState<'idle' | 'requesting' | 'securing'>('idle');
     const [enrollmentResult, setEnrollmentResult] = React.useState<ScannerEnrollmentResult | null>(null);
+    // A pasted terminal link that expired is a link, not a QR: its message says so.
+    const [expiredTerminalLink, setExpiredTerminalLink] = React.useState(false);
+    // How the code being processed arrived; an expired one is replaced by the same route.
+    const [inviteOrigin, setInviteOrigin] = React.useState<'scanned' | 'link'>('scanned');
     const [activeInvite, setActiveInvite] = React.useState<HomeQrInviteV2 | null>(null);
     const [navigationLocked, setNavigationLocked] = React.useState(false);
     const [shellNavigationRequested, setShellNavigationRequested] = React.useState(false);
@@ -287,6 +306,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     const resetEnrollmentResult = React.useCallback(() => {
         setEnrollmentResult(null);
+        setExpiredTerminalLink(false);
         setActiveInvite(null);
         setPhase('idle');
     }, []);
@@ -298,6 +318,26 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         }
         router.back();
     }, [props.onBack, router]);
+
+    const showBack = props.showBack !== false;
+    const subtitleStyle: StyleProp<TextStyle> = embedded ? [styles.subtitle, styles.embeddedSubtitle] : styles.subtitle;
+    const renderAlternative = (testID: string, title: string, onPress: () => void) => (
+        embedded ? (
+            <TextLinkButton key={testID} testID={testID} label={title} onPress={onPress} />
+        ) : (
+            <View key={testID} style={styles.footerButton}>
+                <RoundButton
+                    testID={testID}
+                    size="small"
+                    title={title}
+                    display="inverted"
+                    action={async () => {
+                        onPress();
+                    }}
+                />
+            </View>
+        )
+    );
 
     const openSecretKeyLogin = React.useCallback(() => {
         if (embedded && props.onOpenSecretKeyLogin) {
@@ -411,6 +451,14 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             if (link.kind === 'team_join') {
                 // A pasted Team join link is a way into a Home too; its join screen owns the rest.
                 router.push(link.path);
+                return;
+            }
+            if (link.kind === 'terminal_connect') {
+                const result = await openTerminalConnectApproval(link.terminal, { navigate: router.push, refreshAuth: auth.refreshFromActiveServer });
+                if (result === 'expired') {
+                    setExpiredTerminalLink(true);
+                    setEnrollmentResult('expired');
+                }
                 return;
             }
             if (link.kind !== 'home_qr_invite') {
@@ -856,7 +904,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 }
             }
         },
-        [beginEnrollmentAttempt, classifyScannedLink, completeEnrollment, handleBack, isCurrentAttempt, openRetainedHomeOrReturnToShell, openShowQrInstead, props.entryIntent, props.expectedHomeServerIdentityId, props.onCredentials, props.onAuthenticated, props.onShowQrInstead, router],
+        [auth.refreshFromActiveServer, beginEnrollmentAttempt, classifyScannedLink, completeEnrollment, handleBack, isCurrentAttempt, openRetainedHomeOrReturnToShell, openShowQrInstead, props.entryIntent, props.expectedHomeServerIdentityId, props.onCredentials, props.onAuthenticated, props.onShowQrInstead, router],
     );
 
     const processedInitialPairingLinkRef = React.useRef<string | null>(null);
@@ -874,6 +922,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             return;
         }
         processedInitialPairingLinkRef.current = initialPairingLink;
+        setInviteOrigin('link');
         void processPairingLink(initialPairingLink);
     }, [isFocused, pairingState, phase, processPairingLink, props.initialPairingLink]);
 
@@ -894,52 +943,44 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         phase,
         ...(activeInvite ? { direction: activeInvite.direction } : {}),
         ...(enrollmentResult ? { result: enrollmentResult } : {}),
+        inviteOrigin,
+        linkEntryAvailable: typeof props.onOpenPairingLinkEntry === 'function',
     });
-    const statusText = t(enrollmentPresentation.primaryTranslationKey);
+    const openNewPairingLinkEntry = React.useCallback(() => {
+        resetEnrollmentResult();
+        props.onOpenPairingLinkEntry?.();
+    }, [props.onOpenPairingLinkEntry, resetEnrollmentResult]);
+    // The result's one way on: the same code again, a new code by the route the old one came, or done.
+    const resultAction = enrollmentPresentation.recoveryAction === 'retry'
+        ? { testID: 'restore-enrollment-retry', title: t('common.retry'), onPress: resetEnrollmentResult }
+        : enrollmentPresentation.recoveryAction === 'scan_new_code'
+            ? { testID: 'restore-enrollment-scan-new', title: t('connect.scanNewQr'), onPress: resetEnrollmentResult }
+            : enrollmentPresentation.recoveryAction === 'enter_new_link'
+                ? { testID: 'restore-enrollment-paste-new', title: t('connect.pasteNewLink'), onPress: openNewPairingLinkEntry }
+                : { testID: 'restore-enrollment-done', title: t('common.done'), onPress: handleBack };
+    const statusText = expiredTerminalLink && enrollmentResult === 'expired'
+        ? t('modals.authRequestExpiredDescription')
+        : t(enrollmentPresentation.primaryTranslationKey);
+    // The card holds progress or the Home being joined; with neither (a link that never named a
+    // Home) there is nothing to frame, so no empty capsule is drawn.
+    const showStatusCard = enrollmentPresentation.activity
+        || (enrollmentPresentation.contextualFacts !== 'none' && activeInvite != null);
 
     if (pairingState === 'unknown') {
         const frame = (
             <View style={containerStyle}>
                 <View style={contentWrapperStyle}>
                     {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
-                    <Text style={styles.subtitle}>{t('common.loading')}</Text>
+                    <Text style={subtitleStyle}>{t('common.loading')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
                         <ActivitySpinner size="small" color={theme.colors.text.primary} />
                     </View>
 
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-open-manual"
-                                size="small"
-                                title={t('connect.restoreWithSecretKeyInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    openSecretKeyLogin();
-                                }}
-                            />
-                        </View>
-                        {props.onShowQrInstead ? <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-show-qr-instead"
-                                size="small"
-                                title={t('connect.showQrInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    openShowQrInstead();
-                                }}
-                            />
-                        </View> : null}
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-scan-cancel"
-                                size="small"
-                                title={t('common.back')}
-                                display="inverted"
-                                onPress={handleBack}
-                            />
-                        </View>
+                        {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}
+                        {props.onShowQrInstead ? renderAlternative('restore-show-qr-instead', t('connect.showQrInstead'), openShowQrInstead) : null}
+                        {showBack ? renderAlternative('restore-scan-cancel', t('common.back'), handleBack) : null}
                     </View>
                 </View>
             </View>
@@ -957,44 +998,16 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             <View style={containerStyle}>
                 <View style={contentWrapperStyle}>
                     {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
-                    <Text style={styles.subtitle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
+                    <Text style={subtitleStyle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
                         <Text style={styles.detailLabel}>{t('connect.scanComputerQrUnavailableTitle')}</Text>
                     </View>
 
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-open-manual"
-                                size="small"
-                                title={t('connect.restoreWithSecretKeyInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    openSecretKeyLogin();
-                                }}
-                            />
-                        </View>
-                        {props.onShowQrInstead ? <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-show-qr-instead"
-                                size="small"
-                                title={t('connect.showQrInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    openShowQrInstead();
-                                }}
-                            />
-                        </View> : null}
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-scan-cancel"
-                                size="small"
-                                title={t('common.back')}
-                                display="inverted"
-                                onPress={handleBack}
-                            />
-                        </View>
+                        {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}
+                        {props.onShowQrInstead ? renderAlternative('restore-show-qr-instead', t('connect.showQrInstead'), openShowQrInstead) : null}
+                        {showBack ? renderAlternative('restore-scan-cancel', t('common.back'), handleBack) : null}
                     </View>
                 </View>
             </View>
@@ -1047,46 +1060,29 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 subtitle={t('connect.scanComputerQrInstructions')}
                 permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
                 embedded={props.embedded}
-                onCancel={handleBack}
+                onCancel={showBack ? handleBack : undefined}
                 onScan={async (data) => {
                     if (typeof data === 'string' && data.trim()) {
+                        setInviteOrigin('scanned');
                         await processPairingLink(data.trim());
                     }
                 }}
                 footer={
                     <>
-                        {props.onOpenPairingLinkEntry ? <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-enter-pairing-link"
-                                size="normal"
-                                title={t('connect.enterUrlManually')}
-                                onPress={props.onOpenPairingLinkEntry}
-                            />
-                        </View> : null}
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-open-manual"
-                                size="small"
-                                title={t('connect.restoreWithSecretKeyInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    openSecretKeyLogin();
-                                }}
-                            />
-                        </View>
-                        {props.onShowQrInstead ? (
-                            <View style={styles.footerButton}>
+                        {/* On a step column the scanner's own state (Retry) is the one primary and link entry is
+                            one more quiet way in, like the others; standalone it stays the filled action. */}
+                        {props.onOpenPairingLinkEntry ? (embedded
+                            ? renderAlternative('restore-enter-pairing-link', t('connect.enterUrlManually'), props.onOpenPairingLinkEntry)
+                            : <View style={styles.footerButton}>
                                 <RoundButton
-                                    testID="restore-show-qr-instead"
-                                    size="small"
-                                    title={t('connect.showQrInstead')}
-                                    display="inverted"
-                                    action={async () => {
-                                        openShowQrInstead();
-                                    }}
+                                    testID="restore-enter-pairing-link"
+                                    size="normal"
+                                    title={t('connect.enterUrlManually')}
+                                    onPress={props.onOpenPairingLinkEntry}
                                 />
-                            </View>
-                        ) : null}
+                            </View>) : null}
+                        {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}
+                        {props.onShowQrInstead ? renderAlternative('restore-show-qr-instead', t('connect.showQrInstead'), openShowQrInstead) : null}
                     </>
                 }
             />
@@ -1099,13 +1095,13 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
                 <Text
                     testID={phase === 'securing' ? 'restore-enrollment-securing' : undefined}
-                    style={styles.subtitle}
+                    style={subtitleStyle}
                     accessibilityLiveRegion={enrollmentPresentation.liveRegion}
                 >
                     {statusText}
                 </Text>
 
-                <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
+                {showStatusCard ? <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
                     {enrollmentPresentation.activity ? (
                         <ActivitySpinner size="small" color={theme.colors.text.primary} />
                     ) : null}
@@ -1125,35 +1121,35 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                             </Text>
                         </>
                     ) : null}
-                </View>
+                </View> : null}
 
                 {enrollmentResult ? (
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
-                        <View style={styles.footerButton}>
+                        {/* Embedded, the result's one way on is the step's primary, the same height as the
+                            Continue that led here; standalone it keeps the dialog-sized quiet button. */}
+                        <View style={embedded ? styles.embeddedFooterButton : styles.footerButton}>
                             <RoundButton
-                                testID={enrollmentPresentation.recoveryAction === 'retry'
-                                    ? 'restore-enrollment-retry'
-                                    : 'restore-enrollment-done'}
-                                size="small"
-                                title={t(enrollmentPresentation.recoveryAction === 'retry' ? 'common.retry' : 'common.done')}
-                                display="inverted"
-                                onPress={enrollmentPresentation.recoveryAction === 'retry'
-                                    ? resetEnrollmentResult
-                                    : handleBack}
+                                testID={resultAction.testID}
+                                size={embedded ? 'large' : 'small'}
+                                title={resultAction.title}
+                                display={embedded ? 'default' : 'inverted'}
+                                onPress={resultAction.onPress}
                             />
                         </View>
                     </View>
                 ) : phase !== 'securing' ? (
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-enrollment-cancel"
-                                size="small"
-                                title={t('common.cancel')}
-                                display="inverted"
-                                onPress={cancelEnrollmentAttempt}
-                            />
-                        </View>
+                        {embedded ? renderAlternative('restore-enrollment-cancel', t('common.cancel'), cancelEnrollmentAttempt) : (
+                            <View style={styles.footerButton}>
+                                <RoundButton
+                                    testID="restore-enrollment-cancel"
+                                    size="small"
+                                    title={t('common.cancel')}
+                                    display="inverted"
+                                    onPress={cancelEnrollmentAttempt}
+                                />
+                            </View>
+                        )}
                     </View>
                 ) : null}
             </View>

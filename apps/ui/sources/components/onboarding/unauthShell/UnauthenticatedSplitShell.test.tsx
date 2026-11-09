@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
+import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 
 import { stageVisualTokens } from '../tour/stage/stageVisualTokens';
 import { StagePane } from './StagePane';
@@ -62,8 +63,7 @@ const initialStorageState = storage.getState();
 
 function setLayoutFixture(layout: UnauthShellLayout) {
     deviceState.width = layout === 'split' ? 1000 : 390;
-    storage.setState({ localSettings: { ...storage.getState().localSettings,
-        brandHeroSeenAt: layout === 'mobile-workflow' ? 1 : null } });
+    onboardingHistoryState.set('brandHeroSeenAt', layout === 'mobile-workflow' ? 1 : null);
 }
 
 function FakeBody(props: { label: string }) {
@@ -352,7 +352,7 @@ describe('UnauthenticatedSplitShell', () => {
         expect(screenNoBack.findAllByTestId('unauth-shell-back-chevron')).toEqual([]);
     });
 
-    it('does not expose the focused Home as a welcome auth authority and keeps footer links touchable', async () => {
+    it('does not expose the focused Home as a welcome auth authority and keeps footer links at their design size', async () => {
         setLayoutFixture('split');
         const onOpenRelayCustomFlow = vi.fn();
         const screen = await renderScreen(
@@ -373,10 +373,10 @@ describe('UnauthenticatedSplitShell', () => {
             'welcome-footer-discord-action',
             'welcome-footer-docs-action',
         ]) {
-            expect(flattenStyle(screen.findByTestId(testID)?.props.style)).toMatchObject({
-                minWidth: 44,
-                minHeight: 44,
-            });
+            // A touch target is a hit area, not a drawn size: the links keep their design size.
+            const style = flattenStyle(screen.findByTestId(testID)?.props.style);
+            expect(style.minWidth).toBeUndefined();
+            expect(style.minHeight).toBeUndefined();
         }
     });
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useHappierItemGroupItemBehavior } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,6 +13,7 @@ import { t } from '@/text';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 type WizardChoiceRowProps = Readonly<{
     testID: string;
@@ -185,9 +186,8 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                             matchTriggerWidth={false}
                             variant="slim"
                             trigger={({ toggle }) => (
-                                <Pressable
+                                <HappierPressable
                                     testID={`${props.testID}-menu`}
-                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                                     onPress={toggle}
                                     onPressIn={menuTriggerFeedback.onPressIn}
                                     onPressOut={menuTriggerFeedback.onPressOut}
@@ -201,7 +201,7 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                                     <Animated.View style={menuTriggerFeedback.animatedStyle}>
                                         <Icon name="dots-three" size={16} color={theme.colors.text.secondary} />
                                     </Animated.View>
-                                </Pressable>
+                                </HappierPressable>
                             )}
                         />
                     ) : null}

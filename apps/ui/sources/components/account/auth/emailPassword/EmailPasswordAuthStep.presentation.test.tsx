@@ -3,14 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
-import { Modal } from '@/modal';
-import { CustomModal } from '@/modal/components/CustomModal';
-import type { CustomModalConfig, ModalConfig } from '@/modal/types';
 import { t } from '@/text';
-import { presentEmailPasswordAuthentication } from './presentEmailPasswordAuthentication';
+import { EmailPasswordAuthStep } from './EmailPasswordAuthStep';
 
-// Exercise the real card and panel with the canonical native platform boundary;
-// browser portal/focus behavior is covered separately by BaseModal's DOM tests.
+// Exercise the real step and panel with the canonical native platform boundary.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative'))
     .createReactNativeNativeMock({ platformOS: 'ios' }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -19,50 +15,32 @@ const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('expo-router', () => ({ useRouter: () => ({ push }) }));
 
 let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
-let unregister: (() => void) | undefined;
-
-// The provider's Omit<ModalConfig, 'id'> loses union-specific fields; check the
-// actual custom variant before rendering the configuration it published.
-function isCustomModalConfig(config: Omit<ModalConfig, 'id'>): config is Omit<CustomModalConfig, 'id'> {
-    return config.type === 'custom' && 'component' in config;
-}
 
 afterEach(async () => {
     await screen?.unmount();
     screen = null;
-    unregister?.();
-    unregister = undefined;
     await standardCleanup();
 });
 
 it('lets the real authentication panel own its visible heading across login and recovery', async () => {
-    let shown: Omit<ModalConfig, 'id'> | undefined;
-    unregister = Modal.registerProvider({
-        showModal: (config) => { shown = config; return 'auth-presentation'; },
-        hideModal: vi.fn(),
-        hideAllModals: vi.fn(),
-        updateCustomModalProps: vi.fn(),
-    });
-    presentEmailPasswordAuthentication({
-        target: {
-            endpointUrl: 'https://home.example.test',
-            canonicalServerUrl: 'https://home.example.test',
-            addressAnchorUrl: 'https://home.example.test',
-            serverId: 'home',
-            serverIdentityId: 'srv_home',
-        },
-        recoveryTarget: 'srv_home',
-        action: 'login',
-        mode: 'either',
-        passwordReset: 'email',
-        onAuthenticated: vi.fn(),
-    });
-    function config(): CustomModalConfig {
-        if (!shown || !isCustomModalConfig(shown)) throw new Error('Authentication did not present a custom modal');
-        return { ...shown, id: 'auth-presentation' };
-    }
     const onClose = vi.fn();
-    screen = await renderScreen(<CustomModal config={config()} visible onClose={onClose} />);
+    screen = await renderScreen(
+        <EmailPasswordAuthStep
+            target={{
+                endpointUrl: 'https://home.example.test',
+                canonicalServerUrl: 'https://home.example.test',
+                addressAnchorUrl: 'https://home.example.test',
+                serverId: 'home',
+                serverIdentityId: 'srv_home',
+            }}
+            recoveryTarget="srv_home"
+            action="login"
+            mode="either"
+            passwordReset="email"
+            onAuthenticated={vi.fn()}
+            onClose={onClose}
+        />,
+    );
     const headingCount = (key: Parameters<typeof t>[0]) => screen!.findAllByType(Text)
         .filter(node => node.props.children === t(key)).length;
 
@@ -85,6 +63,6 @@ it('lets the real authentication panel own its visible heading across login and 
         pathname: '/auth/password/recover',
         params: { target: 'srv_home' },
     });
-    // The recovery page must not remain underneath this modal's focus trap.
+    // The recovery page replaces this step rather than opening over it.
     expect(onClose).toHaveBeenCalledOnce();
 });

@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 import {
     PlanChecklistCard,
@@ -95,6 +95,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
 }>) {
     const styles = stylesheet;
     const preflight = useThisComputerSetupPreflight();
+    const writeClipboard = useClipboardWrite(preflight.activeServerId);
     const { accountId: appAccountId } = useAppAccountIdentity();
     const isReady = computeIsReady(preflight);
     const {
@@ -210,13 +211,13 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             activeTaskSnapshot,
             executionById,
         });
-        const copied = await setClipboardStringSafe(JSON.stringify(payload, null, 2));
+        const copied = await writeClipboard(JSON.stringify(payload, null, 2));
         if (!copied) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
             return false;
         }
         return true;
-    }, [activeTaskSnapshot, controller.selectedIds, executionById, preflight]);
+    }, [activeTaskSnapshot, controller.selectedIds, executionById, preflight, writeClipboard]);
 
     React.useLayoutEffect(() => {
         const onWizardPrimaryChange = wizardPrimaryChangeRef.current;

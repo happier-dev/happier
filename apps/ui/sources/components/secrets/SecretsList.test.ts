@@ -10,8 +10,8 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
-import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SecretsList } from './SecretsList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -152,22 +152,6 @@ describe('SecretsList', () => {
         vi.restoreAllMocks();
     });
 
-    it('shows a passkey in a value picker as not choosable, since it is not a value', async () => {
-        const passkey = SavedSecretCatalogEntryV1Schema.parse({
-            ref: 'happier:shared-secret:v1:passkey-a', source: 'shared_resource', relationship: 'owner',
-            name: 'GitHub passkey', kind: 'other', encryptionMode: 'e2ee', owner: null, accessSources: [],
-            audience: { accounts: [], teams: [], groups: [] }, ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
-            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
-            storage: { kind: 'passkey' },
-        });
-        const { screen, onSelectId } = await renderSecretsList({ sharedEntries: [passkey] });
-        const row = screen.findAll(node => node.props.testID === `saved-secret:${passkey.ref}` && typeof node.props.subtitle === 'string')[0];
-        expect(row?.props.disabled).toBe(true);
-        expect(String(row?.props.subtitle)).toContain('secretsSettings.kindPasskey');
-        await screen.pressByTestIdAsync(`saved-secret:${passkey.ref}`).catch(() => undefined);
-        expect(onSelectId).not.toHaveBeenCalled();
-    });
-
     it('states who shared a recipient row and which access carries it', async () => {
         // Picking a shared secret is a decision about whose credential a Session
         // will spend. The Home already projects the recipient-safe owner and the
@@ -193,6 +177,37 @@ describe('SecretsList', () => {
         expect(rendered).toContain('secrets.catalog.provenance.sharedBy(owner=Ada)');
         expect(rendered).toContain('secrets.catalog.provenance.via(source=Platform)');
         expect(rendered).toContain('secrets.catalog.provenance.direct');
+    });
+
+    it('shows a passkey in a value picker as not choosable, since it is not a value', async () => {
+        const passkey = SavedSecretCatalogEntryV1Schema.parse({
+            ref: 'happier:shared-secret:v1:passkey-a', source: 'shared_resource', relationship: 'owner',
+            name: 'GitHub passkey', kind: 'other', encryptionMode: 'e2ee', owner: null, accessSources: [],
+            audience: { accounts: [], teams: [], groups: [] }, ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+            storage: { kind: 'passkey' },
+        });
+        const { screen, onSelectId } = await renderSecretsList({ sharedEntries: [passkey] });
+        const row = screen.findAll(node => node.props.testID === `saved-secret:${passkey.ref}` && typeof node.props.subtitle === 'string')[0];
+        expect(row?.props.disabled).toBe(true);
+        expect(String(row?.props.subtitle)).toContain('secretsSettings.kindPasskey');
+        await screen.pressByTestIdAsync(`saved-secret:${passkey.ref}`).catch(() => undefined);
+        expect(onSelectId).not.toHaveBeenCalled();
+    });
+
+    it('says once that the Home is out of reach instead of repeating it on every shared row', async () => {
+        const base = SavedSecretCatalogEntryV1Schema.parse({
+            ref: 'happier:shared-secret:v1:a', source: 'shared_resource', relationship: 'owner',
+            name: 'Deploy key', kind: 'apiKey', encryptionMode: null, owner: null, accessSources: [],
+            audience: null, ownerAccountId: null, revision: 1, materialStatus: 'temporarily_unavailable',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+        });
+        const entries = [base, { ...base, ref: 'happier:shared-secret:v1:b', name: 'Registry token' },
+            { ...base, ref: 'happier:shared-secret:v1:c', name: 'Sentry DSN' }];
+        const { screen } = await renderSecretsList({ sharedEntries: entries });
+
+        expect(screen.getTextContent().split('secrets.catalog.status.temporarily_unavailable')).toHaveLength(2);
+        expect(screen.findHostByTestId('saved-secret-catalog-unreachable')).not.toBeNull();
     });
 
     it('offers a working refresh action when the shared catalog is stale', async () => {

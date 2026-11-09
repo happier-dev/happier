@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
+import { useRouter as useHomeRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
@@ -22,11 +23,14 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
 import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { getActiveServerSnapshot, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { listServerProfiles, removeServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
 import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
@@ -42,6 +46,7 @@ import {
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import type { EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
@@ -110,7 +115,11 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     onSelectAccountService?: AccountServiceSelectionFormProps['onSelect'];
 }>;
 
-export type WelcomeAuthenticationActionContext = Readonly<{ signal: AbortSignal }>;
+export type WelcomeAuthenticationActionContext = Readonly<{
+    signal: AbortSignal;
+    /** Opens the shared email/password controller as the next step of this workflow. */
+    presentEmailPassword: (request: EmailPasswordAuthStepRequest) => void;
+}>;
 
 export type OnboardingWizardController = Readonly<{
     stepId: WizardStepId;
@@ -129,9 +138,17 @@ export type OnboardingWizardController = Readonly<{
     skipDisabled: boolean;
     title: string;
     subtitle: string | null;
+    /** The body draws its own heading; hosts render `title` for naming only. */
+    bodyOwnsHeading: boolean;
     footerHint: React.ReactNode | null;
+    homeContext: OnboardingWizardHomeContext | null;
     body: React.ReactNode;
     goToStep: (stepId: WizardStepId) => void;
+}>;
+
+export type OnboardingWizardHomeContext = Readonly<{
+    relayUrl: string;
+    status: 'active' | 'selected';
 }>;
 
 function resolveCanScanQr(params: Readonly<{ width: number; height: number; platform: string }>): boolean {
@@ -143,6 +160,7 @@ function resolveCanScanQr(params: Readonly<{ width: number; height: number; plat
 
 export function useOnboardingWizardController(props: OnboardingWizardSurfaceProps): OnboardingWizardController {
     const requestPersonalHomeBootstrap = useRequestPersonalHomeBootstrap();
+    const homeRouter = useHomeRouter();
     const { theme } = useUnistyles();
     const styles = onboardingWizardSurfaceStylesheet;
     const { width, height } = useWindowDimensions();
@@ -203,6 +221,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const relayAccessRemoteHostRef = React.useRef<RelayAccessControlOptions['remoteHost']>(undefined);
     const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
     const [accountDirectoryKeyRequest, setAccountDirectoryKeyRequest] = React.useState<WelcomeAuthenticationMethod | null>(null);
+    const [emailPasswordRequest, setEmailPasswordRequest] = React.useState<EmailPasswordAuthStepRequest | null>(null);
     const [accountDirectoryContinuationIntent, setAccountDirectoryContinuationIntent] = React.useState<AccountContinuationIntent | null>(null);
     const [accountDirectoryHomeRecovery, setAccountDirectoryHomeRecovery] = React.useState<Readonly<{
         kind: 'home_auth' | 'continuation';
@@ -261,7 +280,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             || (profile.canonicalServerUrl != null && isSameServerUrl(profile.canonicalServerUrl, serverUrl))
         ));
         if (saved) {
-            const switched = await setActiveServerAndSwitch({ serverId: saved.id, scope: 'device' });
+            const switched = await setActiveServerAndSwitch({ serverId: saved.id, scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
             if (switched === 'blocked') return null;
             props.onInitialServerUrlConnected?.();
             return saved;
@@ -275,7 +294,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 confirmCanonicalUrl: confirmCanonicalHomeUrl,
             });
             if (result.kind === 'connected') {
-                const switched = await setActiveServerAndSwitch({ serverId: result.profile.id, scope: 'device' });
+                const switched = await setActiveServerAndSwitch({ serverId: result.profile.id, scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
                 if (switched === 'blocked') return null;
                 props.onInitialServerUrlConnected?.();
                 return result.profile;
@@ -301,7 +320,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 case 'activateServerProfile':
                     if (await setActiveServerAndSwitch({
                         serverId: effect.serverId,
-                        scope: effect.scope,
+                        scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
                     }) === 'blocked') return false;
                     break;
                 case 'setRelaySelection':
@@ -354,7 +373,13 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const controller = new AbortController();
         welcomeAuthenticationAbortControllerRef.current = controller;
         try {
-            await action(request, { signal: controller.signal });
+            await action(request, {
+                signal: controller.signal,
+                presentEmailPassword: (emailPassword) => {
+                    setEmailPasswordRequest(emailPassword);
+                    dispatch({ type: 'wizard/goToStep', stepId: 'auth_email_password' });
+                },
+            });
         } finally {
             if (welcomeAuthenticationAbortControllerRef.current === controller) {
                 welcomeAuthenticationAbortControllerRef.current = null;
@@ -850,14 +875,16 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, []);
 
     const handleOpenRelaySelectionFromWelcome = React.useCallback(() => {
-        if (!setupPolicy.relay.allowRelaySelection) {
-            return;
-        }
-        if (!state.context.relaySelection.locked) {
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection() });
-        }
-        dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
-    }, [setupPolicy.relay.allowRelaySelection, state.context.relaySelection.locked]);
+        openAddHome(homeRouter, { onWelcomeHomeStep: () => {
+            if (!setupPolicy.relay.allowRelaySelection) {
+                return;
+            }
+            if (!state.context.relaySelection.locked) {
+                dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection() });
+            }
+            dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+        } });
+    }, [homeRouter, setupPolicy.relay.allowRelaySelection, state.context.relaySelection.locked]);
 
     const handleOpenRelaySelectionPreservingSelection = React.useCallback(() => {
         if (!setupPolicy.relay.allowRelaySelection) {
@@ -977,21 +1004,18 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         stepId,
     ]);
 
-    const footerHint = React.useMemo(() => {
-        if (stepId === 'scan_code') return null;
+    // The Home a step acts on (or, while choosing, the one selected). Hosts present it their own
+    // way: a footer summary in the card, one quiet line in the welcome pane's header.
+    const homeContext = React.useMemo((): OnboardingWizardHomeContext | null => {
+        // The email/password step names its Home in its own heading block.
+        if (stepId === 'scan_code' || stepId === 'auth_email_password') return null;
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
             const status = snapshotRelayUrl && isSameServerUrl(snapshotRelayUrl, resolvedRelayUrl)
                 ? 'active'
                 : 'selected';
-            return (
-                <ActiveRelaySummary
-                    idPrefix={`${props.testID ?? 'onboarding-wizard'}-relay-hint`}
-                    relayUrl={resolvedRelayUrl}
-                    status={status}
-                />
-            );
+            return { relayUrl: resolvedRelayUrl, status };
         }
         if (stepId === 'welcome' && !welcomeHasKnownRelay) return null;
         const rawRelayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
@@ -1000,13 +1024,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             ? (welcomeRelayUrl || rawRelayUrl || lastKnownSnapshotRelayUrlRef.current)
             : (rawRelayUrl || fallbackRelayUrl);
         if (!resolvedRelayUrl) return null;
-        return (
-            <ActiveRelaySummary
-                idPrefix={`${props.testID ?? 'onboarding-wizard'}-relay-hint`}
-                relayUrl={resolvedRelayUrl}
-                status="active"
-            />
-        );
+        return { relayUrl: resolvedRelayUrl, status: 'active' };
     }, [
         selectedRelayFooterUrl,
         snapshotRelayUrl,
@@ -1016,6 +1034,15 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         welcomeHasKnownRelay,
         welcomeRelayUrl,
     ]);
+    const footerHint = React.useMemo(() => (
+        homeContext ? (
+            <ActiveRelaySummary
+                idPrefix={`${props.testID ?? 'onboarding-wizard'}-relay-hint`}
+                relayUrl={homeContext.relayUrl}
+                status={homeContext.status}
+            />
+        ) : null
+    ), [homeContext, props.testID]);
 
     const selectedRelayEndpointForReadiness = React.useMemo(() => {
         if (stepId !== 'relay_select') return null;
@@ -1158,7 +1185,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 ? { serverId: canonicalCloudProfile.serverId, serverUrl: canonicalCloudProfile.serverUrl }
                 : await ensureCanonicalCloudRelayProfile();
             if (ensuredCloudProfile) {
-                const switched = await setActiveServerAndSwitch({ serverId: ensuredCloudProfile.serverId, scope: 'device' });
+                const switched = await setActiveServerAndSwitch({ serverId: ensuredCloudProfile.serverId, scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
                 return switched !== 'blocked';
             }
         }
@@ -1175,10 +1202,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
     }, [ensureActiveServerForAuth, welcomeRelayUrl]);
     const handleOpenRestore = handleWelcomeLogin;
-
-    const handleOpenSetup = React.useCallback(() => {
-        router.push('/setup');
-    }, []);
 
     const handleOpenLostAccess = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_lost_access' });
@@ -1312,9 +1335,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 ? () => handleWelcomeLogin()
                 : () => handleWelcomeAdvance();
         }
-        if (stepId === 'auth_restore' || stepId === 'auth_secret_key' || stepId === 'auth_lost_access') {
-            return () => dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-        }
         return () => dispatch({ type: 'wizard/advance' });
     }, [
         handleWelcomeAdvance,
@@ -1413,7 +1433,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                                 }
 
                                 if (relaySwitchDecision === 'switch') {
-                                    await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: 'device' });
+                                    await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
                                     dispatch({
                                         type: 'wizard/setRelaySelection',
                                         relaySelection: {
@@ -1458,14 +1478,15 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         && typeof state.parsedScanPayload.rawLink === 'string'
             ? state.parsedScanPayload.rawLink
             : null;
-    // "Show QR instead" chosen for a scanned legacy account link.
+    // "Show QR instead" chosen for a scanned legacy account link. Otherwise a device that cannot
+    // scan reached this step from "Enter URL manually", so it opens on the link field it promised.
     const restoreInitialView =
         state.parsedScanPayload
         && typeof state.parsedScanPayload === 'object'
         && 'kind' in state.parsedScanPayload
         && state.parsedScanPayload.kind === 'account_connect'
             ? 'qr' as const
-            : undefined;
+            : !canScanQr && !initialPairingLink ? 'paste' as const : undefined;
     const relaySelectBody = renderWizardChoiceList({
         accessibilityLabel: t('setupOnboarding.preAuthTitle'),
         items: [
@@ -1488,6 +1509,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             ?? { kind: 'enter', target: { kind: 'automatic' } },
         accountDirectoryKeyRequest,
         accountDirectoryHomeRecovery,
+        emailPasswordRequest,
+        onEmailPasswordClose: () => {
+            setEmailPasswordRequest(null);
+            dispatch({ type: 'wizard/back' });
+        },
         accountEntryReturnTo: props.accountEntryReturnTo,
         initialPairingLink,
         restoreInitialView,
@@ -1546,7 +1572,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onScan: handleScan,
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
-        onOpenSetup: handleOpenSetup,
         onCreatePersonalHome: requestPersonalHomeBootstrap ?? undefined,
         onOpenRestore: handleOpenRestore,
         onOpenLostAccess: handleOpenLostAccess,
@@ -1556,7 +1581,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             dispatch({ type: 'wizard/back' });
         },
         onRestoreNavigationLockChange: setRestoreNavigationLocked,
-        onLostAccessBackToAuth: () => dispatch({ type: 'wizard/back' }),
         onRelayAccessAdvance: handleRelayAccessAdvance,
         onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
         onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }),
@@ -1582,7 +1606,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         skipDisabled,
         title,
         subtitle,
+        bodyOwnsHeading: stepDefinition.bodyOwnsHeading === true,
         footerHint,
+        homeContext,
         body,
         goToStep: (nextStepId: WizardStepId) => {
             dispatch({ type: 'wizard/goToStep', stepId: nextStepId });

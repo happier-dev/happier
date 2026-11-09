@@ -79,7 +79,7 @@ describe('resolveWizardAdvance', () => {
         expect(result).toEqual({
             nextStepId,
             effects: [
-                { type: 'activateServerProfile', serverId: 'cloud-profile', scope: 'device' },
+                { type: 'activateServerProfile', serverId: 'cloud-profile' },
                 {
                     type: 'setRelaySelection',
                     relaySelection: {
@@ -168,7 +168,6 @@ describe('resolveWizardAdvance', () => {
                     type: 'activateServerUrl',
                     serverUrl: 'https://saved-relay.example.test',
                     source: 'url',
-                    scope: 'device',
                 },
                 {
                     type: 'setRelaySelection',
@@ -210,7 +209,6 @@ describe('resolveWizardAdvance', () => {
                     type: 'activateServerUrl',
                     serverUrl: 'https://local-relay.example.test',
                     source: 'url',
-                    scope: 'device',
                 },
                 { type: 'clearRelayAccessDraft' },
                 {

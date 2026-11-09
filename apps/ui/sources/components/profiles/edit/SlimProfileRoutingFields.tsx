@@ -42,9 +42,11 @@ export function SlimProfileRoutingFields(props: Readonly<{
 }>) {
     const [openPermissionTarget, setOpenPermissionTarget] = React.useState<string | null>(null);
     const [openPersistenceTarget, setOpenPersistenceTarget] = React.useState<string | null>(null);
+    const [preferredModelDemanded, setPreferredModelDemanded] = React.useState(false);
     const selectedEntry = props.entries.find((entry) => resolveProfileBackendTargetKeyForEntry(entry) === props.preferredAgentTargetKey) ?? null;
     const preferredModelFieldLabel = t('profiles.preferredModel.title');
     const preferredModel = useExactModelChoice({
+        purpose: 'preference',
         agentTargetKey: props.preferredAgentTargetKey ?? null,
         agentId: selectedEntry?.builtInAgentId ?? selectedEntry?.catalogAgentId ?? null,
         machineId: props.machineId,
@@ -52,14 +54,18 @@ export function SlimProfileRoutingFields(props: Readonly<{
         selected: props.preferredModelSelection?.ref ?? null,
         title: preferredModelFieldLabel,
         fallbackLabel: t('profiles.preferredModel.none'),
+        enabled: preferredModelDemanded,
     });
     const preferredModelPresentation = preferredModel.presentation;
     const onPreferredModelChange = props.onPreferredModelChange;
-    const openModelPicker = React.useCallback(() => preferredModel.open((ref) => onPreferredModelChange(ref ? {
-        v: 1,
-        updatedAt: Date.now(),
-        ref,
-    } : undefined)), [onPreferredModelChange, preferredModel.open]);
+    const openModelPicker = React.useCallback(() => {
+        setPreferredModelDemanded(true);
+        preferredModel.open((ref) => onPreferredModelChange(ref ? {
+            v: 1,
+            updatedAt: Date.now(),
+            ref,
+        } : undefined));
+    }, [onPreferredModelChange, preferredModel.open]);
     const permissionEntries = React.useMemo(() => {
         return props.entries.flatMap((entry) => {
             const agentId = entry.builtInAgentId ?? entry.catalogAgentId ?? entry.agentId;

@@ -1,6 +1,6 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -12,10 +12,11 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { Icon } from '@/components/ui/icons/Icon';
 import { downloadWebFile } from '@/sync/runtime/files/downloadWebFile';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -74,6 +75,7 @@ type Props = CustomModalInjectedProps & Readonly<{
 }>;
 
 export function SecretKeyBackupModal(props: Props) {
+    const writeClipboard = useClipboardWrite();
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -88,13 +90,13 @@ export function SecretKeyBackupModal(props: Props) {
     }, [props.secret]);
 
     const handleCopy = React.useCallback(async () => {
-        const copied = await setClipboardStringSafe(formattedSecret);
+        const copied = await writeClipboard(formattedSecret);
         if (!copied) {
             Modal.alert(t('common.error'), t('settingsAccount.secretKeyCopyFailed'));
             return;
         }
         copyFeedback.markCopied();
-    }, [copyFeedback, formattedSecret]);
+    }, [copyFeedback, formattedSecret, writeClipboard]);
 
     const handleExport = React.useCallback(async () => {
         const contents = `${formattedSecret}\n`;
@@ -157,9 +159,8 @@ export function SecretKeyBackupModal(props: Props) {
             <View style={styles.keyContainer}>
                 <Text style={styles.keyText}>{revealed ? formattedSecret : maskedSecret}</Text>
                 <View style={styles.row}>
-                    <Pressable
+                    <HappierPressable
                         onPress={() => setRevealed((v) => !v)}
-                        hitSlop={8}
                         accessibilityRole="button"
                         style={styles.revealToggle}
                     >
@@ -171,7 +172,7 @@ export function SecretKeyBackupModal(props: Props) {
                         <Text style={styles.link}>
                             {revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                     {copyFeedback.isCopied() ? (
                         <CopiedPill visible testID="secret-key-backup-copy-feedback" />
                     ) : (

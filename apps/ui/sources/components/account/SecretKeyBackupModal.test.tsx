@@ -1,8 +1,8 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { formatRecoveryKeyForDisplay, formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { installAccountCommonModuleMocks } from './accountTestHelpers';
 import { SecretKeyBackupModal } from './SecretKeyBackupModal';
@@ -12,6 +12,7 @@ installAccountCommonModuleMocks();
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 
 const secret = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+beforeEach(() => installBrowserClipboardBoundary(async text => { await Clipboard.setStringAsync(text); }));
 
 describe('Recovery key disclosure', () => {
     afterEach(() => {
@@ -87,7 +88,7 @@ describe('Recovery key disclosure', () => {
         expect(Modal.alert).not.toHaveBeenCalled();
         await copied.unmount();
 
-        vi.mocked(Clipboard.setStringAsync).mockResolvedValueOnce(false);
+        vi.mocked(Clipboard.setStringAsync).mockRejectedValueOnce(new DOMException('', 'NotAllowedError'));
         const refused = await renderScreen(<SecretKeyBackupModal secret={secret} onClose={vi.fn()} />);
         await refused.pressByTestIdAsync('recovery-key-copy');
         expect(Modal.alert).toHaveBeenCalledWith('common.error', 'settingsAccount.secretKeyCopyFailed');

@@ -3,10 +3,12 @@ import { t } from '@/text';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKey} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { ProfileEditForm } from './ProfileEditForm';
+import { ProfileNameSection } from './ProfileNameSection';
 import {
     installProfileEditFormModuleMocks,
     resetProfileEditFormTestState,
@@ -61,7 +63,7 @@ installProfileEditFormModuleMocks({
                 if (key === 'sessionDefaultPermissionModeByTargetKey') return {};
                 return (settingsState as any)[key] ?? {};
             },
-            useAllMachines: () => [],
+            useActiveMachineFacts: () => [],
             useMachine: () => null,
             useSettings: () => settingsState,
             useCurrentSecretBindingsByProfileIdMutable: () => [{}, vi.fn()] as const,
@@ -150,6 +152,20 @@ describe('ProfileEditForm backend targets', () => {
         expect(picker?.props.itemTrigger.subtitle).toBe(t('common.unavailable'));
         expect(saveRef.current?.()).toBe(true);
         expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBe(profile.defaultBackendTargetKey);
+    });
+
+    it('preserves the unsaved editor through catalog refresh', async () => {
+        const [{ getStorage }, , catalog] = await loadProfileEditFormCatalogFixtureOwners();
+        const scope = getStorage().getState().settingsScope;
+        if (!scope) throw new Error('Expected the profile editor fixture scope');
+        const screen = await renderScreen(React.createElement(ProfileEditForm, {
+            profile: buildProfile(), machineId: null, onSave: vi.fn(() => true), onCancel: vi.fn(),
+        }));
+        await act(async () => screen.findByType(ProfileNameSection).props.onChangeName('Unsaved edit'));
+        await act(async () => catalog.beginAcpCatalogLoad(scope));
+        expect(screen.root.findAll(node => node.props.testID === 'profile-legacy-catalog-availability').length).toBeGreaterThan(0);
+        await act(async () => catalog.applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: catalogRecord }, true));
+        expect(screen.findByType(ProfileNameSection).props.name).toBe('Unsaved edit');
     });
 
     it('renders configured ACP backends as editable backend rows and persists target compatibility changes', async () => {

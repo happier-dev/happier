@@ -66,6 +66,11 @@ const SpotlightRegistryContext = React.createContext<SpotlightRegistryContextVal
 
 const SpotlightTargetScopeContext = React.createContext(true);
 
+/** The stage marks only its current slot active; warm and outgoing slots are inactive. */
+export function useSpotlightTargetScopeActive(): boolean {
+    return React.useContext(SpotlightTargetScopeContext);
+}
+
 export function SpotlightTargetScope(props: React.PropsWithChildren<Readonly<{
     active: boolean;
 }>>): React.ReactElement {
@@ -308,7 +313,7 @@ export function useSpotlightTarget(
     id: string | null | undefined,
 ): SpotlightTargetProps {
     const registry = React.useContext(SpotlightRegistryContext);
-    const scopeActive = React.useContext(SpotlightTargetScopeContext);
+    const scopeActive = useSpotlightTargetScopeActive();
     const { activeTargetId, measureTarget, registerTarget } = registry;
     const registrationActive = Boolean(scopeActive && id);
 

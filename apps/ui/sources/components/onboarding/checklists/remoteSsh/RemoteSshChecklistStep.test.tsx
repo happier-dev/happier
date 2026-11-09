@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -15,7 +15,7 @@ import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import type { RemoteSshChecklistMode } from './types';
@@ -931,6 +931,49 @@ describe('RemoteSshChecklistStep', () => {
         });
 
         expect(runnerHarness.respondSpy).toHaveBeenCalledWith(expect.any(String), { replaceExistingServices: true });
+    });
+
+    it('asks a new host key in the one trust sheet, never inline, and continues with the trusted key', async () => {
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const { Modal } = await import('@/modal');
+        const shown: { chrome?: { testID?: string }; props?: { onResolve?: (trusted: boolean) => void } }[] = [];
+        const show = vi.spyOn(Modal, 'show').mockImplementation(((config: (typeof shown)[number]) => { shown.push(config); return `sheet-${shown.length}`; }) as never);
+        onTestFinished(() => show.mockRestore());
+        const runnerHarness = createRunner({
+            snapshot: {
+                status: 'running',
+                currentStepId: 'ssh.trust',
+                latestMessage: 'Verify the server',
+                awaitingInput: true,
+                events: [{ type: 'prompt', stepId: 'ssh.trust', message: 'Trust this host?',
+                    data: { kind: 'ssh.trustHost', host: 'atlas.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:p3Ox1q9Z' } }],
+                result: null,
+            } as any,
+        });
+        let primary: { label?: string; onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteMachine',
+            relayUrl: 'https://relay.example.test',
+            runner: runnerHarness.runner,
+            initialDraft: { username: 'dev', host: 'atlas.example' },
+            onWizardPrimaryChange: (state) => { primary = state as any; },
+        }));
+        const pressPrimary = async () => { await act(async () => { await (primary as any)?.onPress?.(); }); };
+        await pressPrimary();
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        await pressPrimary();
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        // The key is the sheet's: the page shows no fingerprint and no inline Trust.
+        expect(shown.filter(config => config.chrome?.testID === 'ssh-host-key-modal')).toHaveLength(1);
+        expect(screen.getTextContent()).not.toContain('SHA256:p3Ox1q9Z');
+        const startsBefore = runnerHarness.startSpy.mock.calls.length;
+        await act(async () => { shown[0]!.props?.onResolve?.(true); });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        // Trusting continues setup with exactly that key.
+        expect(runnerHarness.startSpy.mock.calls.length).toBe(startsBefore + 1);
+        expect(JSON.stringify(runnerHarness.startSpy.mock.calls.at(-1))).toContain('SHA256:p3Ox1q9Z');
     });
 
     it('answers a declined remote release-channel switch instead of cancelling the task', async () => {

@@ -3,9 +3,10 @@ import * as React from 'react';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useSettingsSelector } from '@/sync/domains/state/storage';
-import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
+import { useAcpCatalogDataForServer } from '@/sync/store/useAcpCatalog';
 
 export function useSlimProfileAgentEntries(machineId: string | null, serverId?: string | null): {
     entries: ReturnType<typeof getResolvedBackendCatalogEntries>;
@@ -17,17 +18,17 @@ export function useSlimProfileAgentEntries(machineId: string | null, serverId?: 
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
     }), ["backendEnabledByTargetKey"]);
     const resolvedServerId = serverId ?? getActiveServerId();
-    const { snapshot: acpCatalog } = useAcpCatalogForServer(serverId === undefined ? resolvedServerId : serverId);
+    const acpCatalog = useAcpCatalogDataForServer(serverId === undefined ? resolvedServerId : serverId);
     const projection = useDaemonMergedProjectionInputs({
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId,
         serverId: resolvedServerId,
         enabled: Boolean(machineId),
-        staleMs: 60_000,
     });
     const entries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSnapshot: acpCatalog?.catalog,
+            retainedAcpCatalogRecord: acpCatalog,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             discoveredBackendIds: projection.inputs?.discoveredBackendIds ?? undefined,
             mergedProviderProjectionById: projection.inputs?.mergedProviderProjectionById ?? null,

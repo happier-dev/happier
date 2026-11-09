@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKey} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { ProfileEditForm } from './ProfileEditForm';
@@ -24,7 +25,7 @@ installProfileEditFormModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSetting: () => ({}),
-            useAllMachines: () => [],
+            useActiveMachineFacts: () => [],
             useMachine: () => null,
             useSettings: () => settingsState,
             useSettingMutable: () => [{}, vi.fn()] as const,

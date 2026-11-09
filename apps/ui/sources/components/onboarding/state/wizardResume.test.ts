@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
-import { setOnboardingWizardAwaitingAuthResumeIntent } from './wizardResume';
+import { resolveWizardAuthReturnToRoute, setOnboardingWizardAwaitingAuthResumeIntent } from './wizardResume';
 
 const RELAY_URL = 'https://relay.example.test';
 
@@ -19,8 +19,15 @@ async function activateRelay(): Promise<void> {
 
 describe('wizardResume', () => {
     afterEach(() => {
+        vi.unstubAllGlobals();
         clearPendingSetupIntent();
         standardCleanup();
+    });
+
+    it('returns sign-in to the explicitly selected Home', () => {
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { location: { href: 'https://app.example.test/?server=https%3A%2F%2Fselected.example.test' } });
+        expect(resolveWizardAuthReturnToRoute()).toBe('/?server=https%3A%2F%2Fselected.example.test');
     });
 
     it('persists onboarding resume phases through the canonical pending setup intent', async () => {

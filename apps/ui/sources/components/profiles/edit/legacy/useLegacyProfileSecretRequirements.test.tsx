@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createRenderCommitCounter, renderHook, useRenderCommitCounter } from '@/dev/testkit';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import type { SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useLegacyProfileSecretRequirements } from './useLegacyProfileSecretRequirements';
@@ -47,21 +47,39 @@ vi.mock('@/text', async () => {
 });
 
 describe('useLegacyProfileSecretRequirements', () => {
-    it('captures the matching retained legacy row during refresh and saves after fresh admission without rebasing its bindings', async () => {
+    it('refuses Save when matching private bindings were not captured', async () => {
+        const profile = { ...AIBackendProfileSchema.parse({ id: 'legacy', name: 'Private draft',
+            createdAt: 1, updatedAt: 1 }), profileRecordRevision: 8 };
+        publishProfile(profile, { MASKED: null });
+        const hook = await renderHook(() => useLegacyProfileSecretRequirements({ profile, profileName: profile.name,
+            environmentVariables: profile.environmentVariables }));
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
+        act(() => hook.getCurrent().notifySaveUnavailable());
+        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_editor_revision_unavailable');
+    });
+
+    it('keeps captured private bindings available for canonical Save during display refresh and revision changes', async () => {
         const profile = { ...AIBackendProfileSchema.parse({ id: 'legacy', name: 'Frontend review',
             environmentVariables: [], createdAt: 1, updatedAt: 1 }), profileRecordRevision: 7 };
         const bindings = { MASKED: null, TOKEN: 'happier:shared-secret:v1:retained' };
         publishProfile(profile, bindings);
         const catalog = getProfileCatalogSnapshot(scope)!.catalog;
         beginProfileCatalogLoad(scope);
-        const hook = await renderHook(() => useLegacyProfileSecretRequirements({ profile, profileName: profile.name,
-            environmentVariables: profile.environmentVariables }));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useLegacyProfileSecretRequirements({ profile, profileName: profile.name,
+                environmentVariables: profile.environmentVariables });
+        });
+        counter.reset();
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual(bindings);
         act(() => applyProfileCatalogSnapshot(scope, catalog, true));
         expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual(bindings);
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
         if (catalog.status !== 'ready') throw new Error('Expected the fixture census');
         act(() => applyProfileCatalogSnapshot(scope, { ...catalog, records: catalog.records.map(row => ({ ...row, revision: 8 })) }, true));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual(bindings);
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
         await hook.unmount();
     });
     it('keeps a selected default secret in the profile draft until save', async () => {
@@ -114,6 +132,38 @@ describe('useLegacyProfileSecretRequirements', () => {
         expect(getProfileCatalogSnapshot(scope)?.data).toEqual(rowsBefore);
     });
 
+    it('keeps a newly created secret local until adding the variable and reads its current catalog label', async () => {
+        capture.modalShow.mockReset();
+        const profile = { ...AIBackendProfileSchema.parse({ id: 'new-variable', name: 'Work',
+            environmentVariables: [], createdAt: 1, updatedAt: 1 }), profileRecordRevision: 7 };
+        publishProfile(profile, {});
+        const hook = await renderHook(() => useLegacyProfileSecretRequirements({
+            profile, profileName: profile.name, environmentVariables: profile.environmentVariables,
+        }));
+        const onSelect = vi.fn();
+        act(() => hook.getCurrent().openDefaultSecretModalForSourceVar('CUSTOM_CREDENTIAL', { secretId: null, onSelect }));
+        const modalConfig = capture.modalShow.mock.calls.at(-1)?.[0] as Readonly<{
+            props: { onResolve: (result: SecretRequirementModalResult) => void };
+        }>;
+        act(() => modalConfig.props.onResolve({
+            action: 'selectSaved', envVarName: 'CUSTOM_CREDENTIAL', secretId: 'new-secret', setDefault: true,
+        }));
+        expect(onSelect).toHaveBeenCalledWith('new-secret');
+        expect(hook.getCurrent().profileSecretBindings).toEqual({});
+        act(() => applySavedSecretCatalogPage({ scope, entries: [SavedSecretCatalogEntryV1Schema.parse({
+            ref: 'new-secret', name: 'New credential', kind: 'apiKey', source: 'personal',
+            relationship: 'owner', revision: 1, materialStatus: 'ready', capabilities: {
+                rename: true, rotate: true, delete: true, use: true, manageAccess: false,
+            },
+        })], observedAt: 1 }));
+        expect(hook.getCurrent().getDefaultSecretNameForSourceVar('CUSTOM_CREDENTIAL', 'new-secret')).toBe('New credential');
+        expect(hook.getCurrent().getDefaultSecretNameForSourceVar('CUSTOM_CREDENTIAL')).toBeNull();
+        act(() => hook.getCurrent().updateSourceRequirement('CUSTOM_CREDENTIAL', { required: true, useSecretVault: true }, 'new-secret'));
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ CUSTOM_CREDENTIAL: 'new-secret' });
+        expect(hook.getCurrent().derivedEnvVarRequirements).toEqual([{ name: 'CUSTOM_CREDENTIAL', kind: 'secret', required: true }]);
+        expect(getProfileCatalogSnapshot(scope)?.data?.[0].record.secretBindings).toEqual({});
+    });
+
     it('selects None against inherited defaults without pinning other defaults or losing private tombstones', async () => {
         capture.modalShow.mockReset();
         capture.modalAlert.mockClear();
@@ -149,17 +199,13 @@ describe('useLegacyProfileSecretRequirements', () => {
         expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null, PRIVATE: privateReference, DEPLOY_TOKEN: null });
         act(() => applyProfileCatalogSnapshot(scope, catalog, true, new Map([[artifact.artifactId,
             { ...artifact, revision: { headerVersion: 2, bodyVersion: 4 } }]])));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
-        act(() => hook.getCurrent().notifySaveUnavailable());
-        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_revision_conflict');
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null, PRIVATE: privateReference, DEPLOY_TOKEN: null });
         act(() => applyProfileCatalogSnapshot(scope, catalog, true, artifactsById));
         act(() => storage.setState({ settingsScope: { serverId: 'other-home', accountId: scope.accountId } }));
         expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
         act(() => storage.setState({ settingsScope: scope }));
         act(() => beginProfileCatalogLoad(scope));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
-        act(() => hook.getCurrent().notifySaveUnavailable());
-        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_editor_revision_unavailable');
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null, PRIVATE: privateReference, DEPLOY_TOKEN: null });
     });
 
     it('authors a new V2 inline draft without a row and preserves captured clone overrides', async () => {
@@ -178,7 +224,7 @@ describe('useLegacyProfileSecretRequirements', () => {
         expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null });
     });
 
-    it('retains source-preserving clone private bindings only while its captured source revision remains current', async () => {
+    it('retains clone private bindings for canonical source admission regardless of display freshness', async () => {
         capture.modalAlert.mockClear();
         const source = { ...AIBackendProfileSchema.parse({ id: 'legacy-source', name: 'Login', authMode: 'machineLogin',
             isBuiltIn: false, createdAt: 1, updatedAt: 1 }), profileRecordRevision: 7 };
@@ -192,19 +238,13 @@ describe('useLegacyProfileSecretRequirements', () => {
             controlRevision: 1, referenceGuardRevision: 1, diagnostics: [], records: [{ revision: 8,
                 record: ProfileRecordV1Schema.parse({ v: 1, id: source.id, definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse(source) },
                     enabled: false, promptStack: [], secretBindings: { MASKED: null } }) }] }, true));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
-        act(() => hook.getCurrent().notifySaveUnavailable());
-        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_revision_conflict');
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null });
 
         act(() => beginProfileCatalogLoad(scope));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
-        act(() => hook.getCurrent().notifySaveUnavailable());
-        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_editor_revision_unavailable');
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null });
         act(() => applyProfileCatalogSnapshot(scope, { status: 'ready', source: 'destination', authority: 'active', records: [],
             control: null, controlRevision: 'absent', referenceGuardRevision: 'absent', diagnostics: [] }, true));
-        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toBeNull();
-        act(() => hook.getCurrent().notifySaveUnavailable());
-        expect(capture.modalAlert).toHaveBeenLastCalledWith('common.error', 'profile_editor_revision_unavailable');
+        expect(hook.getCurrent().readPrivateSecretBindingsForSave()).toEqual({ MASKED: null });
 
         capture.modalAlert.mockClear();
         act(() => storage.setState({ settingsScope: { ...scope, accountId: 'another-account' } }));

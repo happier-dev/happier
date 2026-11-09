@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { AccountCredentialJourney } from '@/components/account/auth/AccountCredentialJourney';
 import { useRouter } from 'expo-router';
-import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol';
+import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 

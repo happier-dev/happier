@@ -1,7 +1,7 @@
 import * as React from 'react';
+import type { ProfileSecretPickerSelection } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
 
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { Modal } from '@/modal';
 import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 import { applyProfileSecretBindingSelectionV1 } from '@happier-dev/protocol/profiles/profileOperations';
@@ -9,10 +9,10 @@ import { resolveEffectiveProfileSecretBindingsV1, type ProfileRecordV1, type Pro
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { getProfileCatalogSnapshot, subscribeProfileCatalogSnapshots } from '@/sync/store/settings/profileCatalogSnapshot';
+import { getProfileCatalogSnapshot } from '@/sync/store/settings/profileCatalogSnapshot';
 import { t } from '@/text';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
-import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 type EnvironmentVariable = { name: string; value: string; isSecret?: boolean };
@@ -29,19 +29,16 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
     const { profile, profileName, environmentVariables } = params;
     const scope = useAccountSettingsScope();
     const mountedRef = useMountedRef();
-    // The collection owns demand and publication. The editor consumes its exact
-    // scoped row, never the effective binding projection as a private snapshot.
-    const snapshot = React.useSyncExternalStore(subscribeProfileCatalogSnapshots,
-        () => getProfileCatalogSnapshot(scope), () => getProfileCatalogSnapshot(scope));
+    // Capture the admitted row once; canonical Save owns revision admission rather
+    // than repainting or replacing this private draft on a catalog refresh.
     const capture = React.useRef<Readonly<{
         scope: typeof scope;
         bindings: ProfileRecordV1['secretBindings'] | null;
-        profile: AiLaunchProfile;
-        legacyCloneSource: ProfileLegacyCloneSourceV1 | undefined;
     }> | null>(null);
     if (!capture.current) {
+        const snapshot = getProfileCatalogSnapshot(scope);
         // A refresh keeps the complete admitted row used to render this editor.
-        // Capture its matching private bindings; save still requires a fresh census below.
+        // Capture its matching private bindings without rebasing them on refresh.
         const row = snapshot?.dataComplete && snapshot.source === 'destination'
             ? snapshot.data?.find(candidate => candidate.record.id === profile.id) : undefined;
         const bindings = profile.profileRecordRevision !== undefined
@@ -50,35 +47,15 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
                 ? params.draftSecretBindings ?? null
                 : isLaunchProfileV2(params.profile) && !profile.artifactId && !row
                     ? params.draftSecretBindings ?? {} : null;
-        capture.current = { scope, bindings, profile: params.profile, legacyCloneSource: params.legacyCloneSource };
+        capture.current = { scope, bindings };
     }
-    const [secrets, setSecrets] = useSavedSecretsMutable();
-    const savedSecretCatalog = useSavedSecretCatalog();
+    const savedSecretEntries = useSavedSecretCatalogEntries();
     const [profileSecretBindings, setProfileSecretBindings] = React.useState<ProfileRecordV1['secretBindings']>(
         () => ({ ...capture.current?.bindings }),
     );
-    const readSaveRefusal = React.useCallback((): 'profile_editor_revision_unavailable' | 'profile_revision_conflict' | null => {
+    const readSaveRefusal = React.useCallback((): 'profile_editor_revision_unavailable' | null => {
         const captured = capture.current;
         if (!captured?.bindings || !areAccountSettingsScopesEqual(captured.scope, getStorage().getState().settingsScope)) return 'profile_editor_revision_unavailable';
-        const current = getProfileCatalogSnapshot(captured.scope);
-        const source = captured.profile;
-        const clone = captured.legacyCloneSource;
-        const expectedRevision = clone?.revision ?? source.profileRecordRevision;
-        if (expectedRevision === undefined) {
-            return isLaunchProfileV2(source) && !source.artifactId
-                && !current?.data?.some(row => row.record.id === source.id) ? null : 'profile_editor_revision_unavailable';
-        }
-        if (current?.catalog.status !== 'ready' || current.catalog.source !== 'destination' || current.stale) return 'profile_editor_revision_unavailable';
-        const row = current.data?.find(candidate => candidate.record.id === (clone?.id ?? source.id));
-        if (!row) return 'profile_editor_revision_unavailable';
-        if (row.revision !== expectedRevision) return 'profile_revision_conflict';
-        if (row.record.definition.kind === 'artifact') {
-            const artifactId = row.record.definition.artifactId;
-            const revision = current.artifactsById.get(artifactId)?.revision;
-            const expected = clone?.artifactRevision ?? source.revision;
-            if (!revision || !expected || (clone ? clone.artifactRevision?.artifactId !== artifactId : source.artifactId !== artifactId)) return 'profile_editor_revision_unavailable';
-            if (revision.headerVersion !== expected.headerVersion || revision.bodyVersion !== expected.bodyVersion) return 'profile_revision_conflict';
-        }
         return null;
     }, []);
     const readPrivateSecretBindingsForSave = React.useCallback((): ProfileRecordV1['secretBindings'] | null => (
@@ -137,18 +114,22 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
             }))
     ), [sourceRequirementsByName]);
 
-    const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string): string | null => {
-        const secretId = effectiveBindings[sourceVarName] ?? null;
+    const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string, selectedSecretId?: string | null): string | null => {
+        const secretId = selectedSecretId !== undefined ? selectedSecretId : effectiveBindings[sourceVarName] ?? null;
         return secretId
-            ? savedSecretCatalog.entries.find((entry) => entry.ref === secretId)?.name ?? null
+            ? savedSecretEntries.find((entry) => entry.ref === secretId)?.name ?? null
             : null;
-    }, [effectiveBindings, savedSecretCatalog.entries]);
+    }, [effectiveBindings, savedSecretEntries]);
 
-    const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string) => {
+    const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string, selection?: ProfileSecretPickerSelection) => {
         const normalized = sourceVarName.trim().toUpperCase();
         if (!normalized) return;
-        const defaultSecretId = effectiveBindings[normalized] ?? null;
+        const defaultSecretId = selection?.secretId !== undefined ? selection.secretId : effectiveBindings[normalized] ?? null;
         const setDefaultSecretId = (secretId: string | null) => {
+            if (selection) {
+                selection.onSelect(secretId);
+                return;
+            }
             setProfileSecretBindings(existing => applyProfileSecretBindingSelectionV1(existing, normalized,
                 secretId ? { kind: 'reference', reference: secretId } : { kind: 'none' }));
         };
@@ -162,22 +143,21 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
                 secretEnvVarName: normalized,
                 machineId: null,
                 accountScope: capture.current?.scope ?? null,
-                secrets,
                 defaultSecretId,
                 selectedSavedSecretId: defaultSecretId,
                 onSetDefaultSecretId: setDefaultSecretId,
                 variant: 'defaultForProfile',
                 titleOverride: t('secrets.defineDefaultForProfileTitle'),
-                onChangeSecrets: setSecrets,
+                allowManage: true,
                 allowSessionOnly: false,
                 onResolve: handleResolve,
             },
             onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
-    }, [effectiveBindings, profile.id, profileName, secrets, setSecrets]);
+    }, [effectiveBindings, profile.id, profileName]);
 
-    const updateSourceRequirement = React.useCallback((sourceVarName: string, next: RequirementState | null) => {
+    const updateSourceRequirement = React.useCallback((sourceVarName: string, next: RequirementState | null, secretId?: string | null) => {
         const normalized = sourceVarName.trim().toUpperCase();
         if (!normalized) return;
         setSourceRequirementsByName((previous) => {
@@ -186,8 +166,9 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
             else delete updated[normalized];
             return updated;
         });
-        if (!next?.useSecretVault) {
-            setProfileSecretBindings(existing => applyProfileSecretBindingSelectionV1(existing, normalized, { kind: 'none' }));
+        if (!next?.useSecretVault || secretId !== undefined) {
+            setProfileSecretBindings(existing => applyProfileSecretBindingSelectionV1(existing, normalized,
+                next?.useSecretVault && secretId ? { kind: 'reference', reference: secretId } : { kind: 'none' }));
         }
     }, []);
 

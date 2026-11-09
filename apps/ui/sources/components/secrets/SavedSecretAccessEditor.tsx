@@ -29,6 +29,8 @@ import {
     type SavedSecretGrantDraft,
 } from '@/components/sharing/secrets/savedSecretGrantDraft';
 import { SavedSecretShareSheet } from '@/components/sharing/secrets/SavedSecretShareSheet';
+import { savedSecretAudiencePresentations } from '@/components/sharing/secrets/useSavedSecretShareController';
+import { announceShareGrantRemovals } from '@/components/sharing/shareAnnouncements';
 
 /**
  * Who a Saved Secret reaches — for a secret that is already shared, and for one
@@ -224,10 +226,13 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         setFailure(null);
         const encryption = getSyncSingleton().encryption;
         try {
+        const announceSavedAudience = () => announceShareGrantRemovals(
+            Object.values(savedSecretAudiencePresentations(entry?.audience, props.scope.accountId, null)), draft);
         const finishApproved = async () => {
             if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
             setSaving(true);
             try {
+                announceSavedAudience();
                 await props.onSaved();
                 if (targetMounted.current && currentTargetIdentity.current === targetIdentity) props.onClose();
             } finally {
@@ -274,6 +279,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             }
             return;
         }
+        announceSavedAudience();
         try {
             await props.onSaved();
         } catch {

@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 
 import { createDeferred, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';

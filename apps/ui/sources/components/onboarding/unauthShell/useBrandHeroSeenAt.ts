@@ -1,5 +1,5 @@
-import { useLocalSetting } from '@/sync/store/hooks';
+import { useOnboardingHistoryTimestamp } from '@/sync/domains/state/onboardingUiState';
 
 export function useBrandHeroSeenAt(): number | null {
-    return useLocalSetting('brandHeroSeenAt');
+    return useOnboardingHistoryTimestamp('brandHeroSeenAt');
 }

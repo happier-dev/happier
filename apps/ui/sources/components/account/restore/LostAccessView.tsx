@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Linking, Platform, ScrollView, View } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Linking, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -23,7 +23,6 @@ import {
     captureHomeExternalAuthTarget,
     createHomeOAuthRequestContext,
 } from '@/auth/providers/homeExternalAuthTarget';
-import { layout } from '@/components/ui/layout/layout';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import type {
     AuthCredentialLifecycleResult,
@@ -44,76 +43,44 @@ async function guardOrdinaryAuthIngress(
         : result;
 }
 
+/**
+ * Lost access is always a step inside a host that titles it and owns its way back (the welcome pane's
+ * chevron, the setup card's back), so the view is its explanation and the reset actions only.
+ */
 export type LostAccessViewProps = Readonly<{
-    onBack: () => void;
     returnTo: string;
-    embedded?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    scrollView: {
-        flex: 1,
-        backgroundColor: theme.colors.surface.base,
+    root: {
+        width: '100%',
+        gap: theme.space.s24,
     },
     loading: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.surface.base,
-    },
-    container: {
-        flex: 1,
-        alignItems: 'center',
-        paddingHorizontal: theme.space.s24,
-    },
-    contentWrapper: {
         width: '100%',
-        maxWidth: Math.min(560, layout.maxWidth),
-        paddingVertical: 28,
+        alignItems: 'flex-start',
     },
-    noticeCard: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 14,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: 14,
-        backgroundColor: theme.colors.surface.base,
-    },
-    noticeBody: {
-        fontSize: 16,
+    // The consequence of a reset, not more of the purpose line above it: it reads in ink.
+    body: {
+        ...Typography.variant('reading'),
         color: theme.colors.text.primary,
-        lineHeight: 24,
-        ...Typography.default(),
     },
     actions: {
-        marginTop: 18,
-        alignItems: 'center',
         width: '100%',
+        gap: theme.space.s12,
     },
     actionButton: {
-        width: '100%',
-        maxWidth: 360,
-        marginTop: theme.space.s12,
-    },
-    footer: {
-        marginTop: 18,
-        alignItems: 'center',
-        width: '100%',
-    },
-    footerButton: {
         width: '100%',
         maxWidth: 360,
     },
 }));
 
 export const LostAccessView = React.memo(function LostAccessView(props: LostAccessViewProps) {
+    const router = useRouter();
     useUnistyles();
     const styles = stylesheet;
 
     const [providers, setProviders] = React.useState<string[] | null>(null);
-    const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
-        ? [styles.scrollView, { backgroundColor: 'transparent' }]
-        : styles.scrollView;
 
     React.useEffect(() => {
         let mounted = true;
@@ -232,43 +199,39 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
         );
     }
 
-    const content = (
-        <View style={styles.container}>
-            <View style={styles.contentWrapper}>
-                <View style={styles.noticeCard}>
-                    <Text style={styles.noticeBody}>{t('connect.lostAccessBody')}</Text>
+    return (
+        <View testID="lost-access-view" style={styles.root}>
+            {/* The reset copy describes the reset; a Home that offers none says what is left instead. */}
+            <Text testID="lost-access-body" style={styles.body}>
+                {providers.length > 0 ? t('connect.lostAccessBody') : t('connect.lostAccessNoResetBody')}
+            </Text>
+            {providers.length > 0 ? (
+                <View style={styles.actions}>
+                    {providers.map((providerId) => (
+                        <View key={providerId} style={styles.actionButton}>
+                            <RoundButton
+                                testID={`lost-access-provider-${providerId}`}
+                                size="large"
+                                title={t('connect.lostAccessContinue', {
+                                    provider: getAuthProvider(providerId)?.displayName ?? providerId,
+                                })}
+                                action={() => startReset(providerId)}
+                            />
+                        </View>
+                    ))}
                 </View>
-
-                {providers.length > 0 ? (
-                    <View style={styles.actions}>
-                        {providers.map((providerId) => (
-                            <View key={providerId} style={styles.actionButton}>
-                                <RoundButton
-                                    testID={`lost-access-provider-${providerId}`}
-                                    size="normal"
-                                    title={t('connect.lostAccessContinue', {
-                                        provider: getAuthProvider(providerId)?.displayName ?? providerId,
-                                    })}
-                                    action={() => startReset(providerId)}
-                                />
-                            </View>
-                        ))}
-                    </View>
-                ) : null}
-
-                <View style={styles.footer}>
-                    <View style={styles.footerButton}>
+            ) : (
+                <View style={styles.actions}>
+                    <View style={styles.actionButton}>
                         <RoundButton
-                            size="normal"
-                            title={t('common.back')}
-                            display="inverted"
-                            onPress={props.onBack}
+                            testID="lost-access-use-key"
+                            size="large"
+                            title={t('connect.restoreWithSecretKeyInstead')}
+                            action={() => router.push('/restore/manual')}
                         />
                     </View>
                 </View>
-            </View>
+            )}
         </View>
     );
-
-    return <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>{content}</ScrollView>;
 });

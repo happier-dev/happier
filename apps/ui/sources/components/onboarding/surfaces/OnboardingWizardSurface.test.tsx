@@ -248,7 +248,7 @@ const { RemoteSshChecklistStep } = await import('../checklists/remoteSsh/RemoteS
 const { LocalRelayAccessControlSection } = await import('@/components/settings/server/localControl/LocalRelayAccessControlSection');
 const { RelayAccessConfigFieldsStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessConfigFieldsStep');
 const { RelayAccessTailscalePrerequisitesStep } = await import('@/components/onboarding/steps/relayAccess/RelayAccessTailscalePrerequisitesStep');
-await import('@/dev/testkit/harness/onboardingWizardHarness');
+await import('./OnboardingWizardSurface');
 const initialStorageState = storage.getState();
 
 function SignedOutAuth({ children }: React.PropsWithChildren) {
@@ -364,6 +364,22 @@ describe('OnboardingWizardSurface', () => {
         modalAlertAsyncMock.mockReset().mockResolvedValue();
         modalShowMock.mockClear();
         storage.setState(initialStorageState, true);
+    });
+
+    it('selects an onboarding Home in the full secondary without rewriting the device Home', async () => {
+        await focusHomeAtAddress('https://main-onboarding.example.test');
+        const deviceHome = profiles.getDeviceDefaultServerId();
+        const targetId = await homes.addHome({ name: 'Secondary onboarding', serverUrl: 'https://secondary-onboarding.example.test', accountId: null, active: false });
+        browser!.reconfigureUrl('https://app.happier.dev/desktop/app-window');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const screen = await renderScreen(<OnboardingWizardSurface layout="portrait" isDesktopShell
+            initialStepId="relay_enter_url" authEntryOptions={baseAuthOptions} />);
+        await act(async () => screen.findByTestId('onboarding-wizard-relay-url-input')!.props.onChangeText('https://secondary-onboarding.example.test'));
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        expect(profiles.getActiveServerId()).toBe(targetId);
+        expect(profiles.getTabActiveServerId()).toBe(targetId);
+        expect(profiles.getDeviceDefaultServerId()).toBe(deviceHome);
+        await screen.unmount();
     });
 
     it('exposes wizard state and navigation through the controller hook', async () => {

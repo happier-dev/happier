@@ -240,6 +240,6 @@ describe('WizardChoiceRow', () => {
         const overflowTrigger = screen.findByTestId('wizard-choice-menu');
         expect(overflowTrigger).toBeTruthy();
         expect(overflowTrigger?.type).toBe('Pressable');
-        expect(overflowTrigger?.props.accessibilityRole).toBe('button');
+        expect(overflowTrigger?.props.role ?? overflowTrigger?.props.accessibilityRole).toBe('button');
     });
 });

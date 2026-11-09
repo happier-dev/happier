@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';

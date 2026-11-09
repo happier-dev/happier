@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePendingTerminalConnect } from '@/hooks/session/usePendingTerminalConnect';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,7 +12,7 @@ import { createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/a
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useLocalSetting } from '@/sync/store/hooks';
+import { useHasCompletedAuthOnce } from '@/sync/domains/state/onboardingUiState';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
@@ -67,8 +68,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     // AuthContext.loginWithCredentials and preserved on logout, so it remains
     // true across re-installs of the session — exactly like the brand-hero
     // seen flag.
-    const isReturningUser = useLocalSetting('hasCompletedAuthOnce');
+    const isReturningUser = useHasCompletedAuthOnce();
     const returningGreeting = useReturningGreeting();
+    // A terminal link hands off to sign-in here: the heading says what signing in is for, for as
+    // long as that link can still be approved. The pairing's own expiry decides, not a second clock.
+    const pendingTerminal = usePendingTerminalConnect(props.showGreeting !== false);
+    const terminalWaiting = pendingTerminal !== null;
     // A phone's first run is the Homes doorway (lab K1p): a phone never hosts a Home, so it asks how
     // to reach one. A chosen Home, or a returning person, keeps the Home's own sign-in below.
     const viewportClass = useViewportClass();
@@ -322,10 +327,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
               */}
             {props.showGreeting !== false ? <View style={styles.headingBlock}>
                 <Text accessibilityRole="header" style={styles.title}>
-                    {isReturningUser ? returningGreeting.title : t('welcome.welcomeQuestionTitle')}
+                    {terminalWaiting ? t('welcome.terminalContinuationTitle')
+                        : isReturningUser ? returningGreeting.title : t('welcome.welcomeQuestionTitle')}
                 </Text>
                 <Text accessibilityRole="header" style={styles.subtitleTitle}>
-                    {isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
+                    {terminalWaiting ? t('welcome.terminalContinuationSubtitle')
+                        : isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
                 </Text>
             </View> : null}
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />

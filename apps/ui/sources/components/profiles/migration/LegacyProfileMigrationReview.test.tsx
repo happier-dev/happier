@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, createProviderErrorV1 } from '@happier-dev/protocol';
+import { AIBackendProfileSchema} from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';

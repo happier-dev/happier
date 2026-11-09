@@ -204,6 +204,32 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
     });
 
+    it.each([
+        { state: 'live', expiresInMs: 60_000, title: 'welcome.terminalContinuationTitle', subtitle: 'welcome.terminalContinuationSubtitle' },
+        { state: 'expired', expiresInMs: -1, title: 'welcome.welcomeQuestionTitle', subtitle: 'welcome.welcomeQuestionSubtitle' },
+    ] as const)('greets a person sent here by a $state terminal link', async ({ expiresInMs, title, subtitle }) => {
+        const { setPendingTerminalConnect, clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        setPendingTerminalConnect({
+            publicKeyB64Url: 'A'.repeat(43),
+            serverUrl: getActiveServerSnapshot().serverUrl,
+            serverIdentityId: 'srv_terminal_home',
+            pairing: { secretB64Url: 'B'.repeat(43), createdAtMs: Date.now() - 60_000, expiresAtMs: Date.now() + expiresInMs },
+        });
+        try {
+            const screen = await renderScreen(
+                <WelcomeDecisionPanel authEntryOptions={baseOptions} onContinueWithHomeAuthentication={vi.fn()} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />,
+            );
+            const headers = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header')
+                .map(node => node.props.children);
+            // The greeting leads; the quiet "Already use Happier?" group heading follows it.
+            expect(headers.slice(0, 2)).toEqual([t(title), t(subtitle)]);
+            await screen.unmount();
+        } finally {
+            clearPendingTerminalConnect();
+        }
+    });
+
     it('leaves the heading to its authentication parent while keeping sign-in actions usable', async () => {
         const onAuthenticate = vi.fn();
         const screen = await renderScreen(

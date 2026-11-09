@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { deriveHomeQrBindingKeyV2, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol';
+import { deriveHomeQrBindingKeyV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { sealTerminalProvisioningV3TokenOnlyPayload} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
@@ -17,6 +19,7 @@ import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountD
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { RestoreScanComputerQrView } from './RestoreScanComputerQrView';
+import { t } from '@/text';
 
 installTokenStorageWebPlatformMocks();
 // The network boundary: every request the real HTTP client issues, keyed by observed origin and path.
@@ -24,7 +27,8 @@ const boundary = { request: vi.fn() };
 
 /** Non-secret binding to the Account credential a continuation was created under. */
 const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: navigation }).module);
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -33,6 +37,53 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let restore: (() => void) | undefined;
 afterEach(async () => { await screen?.unmount(); resetRuntimeFetch(); restore?.(); });
+
+it.each(['valid', 'expired'] as const)('dispatches a %s pasted terminal link without enrollment or automatic approval', async state => {
+    restore = installLocalStorageMock().restore;
+    navigation.push.mockClear();
+    const fixture = createDirectoryHttpFixture();
+    const descriptor = fixture.home.connectionDescriptor;
+    const home = await adoptHomeProfile({ descriptor, source: 'qr', descriptorAuthority: 'current_connection_observation' });
+    await setActiveServerId(home.id, { scope: 'device' });
+    const requests: string[] = [];
+    setRuntimeFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        requests.push(path);
+        return new Response(JSON.stringify({ ...createRootLayoutFeaturesResponse({
+            features: { auth: { pairing: { boundQrV2: { enabled: true }, desktopQrMobileScan: { enabled: true } } } },
+            capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+        }), homeConnectionDescriptor: descriptor }), { headers: { 'Content-Type': 'application/json' } });
+    });
+    const payload = encodeTerminalConnectLinkV4Payload({
+        v: 4, publicKeyB64Url: encodeBase64(tweetnacl.box.keyPair().publicKey, 'base64url'),
+        pairing: { v: 3, secretB64Url: encodeBase64(new Uint8Array(32).fill(17), 'base64url'),
+            createdAtMs: Date.now() - 60_000, expiresAtMs: state === 'expired' ? Date.now() - 1 : Date.now() + 60_000,
+            homeServerIdentityId: descriptor.homeServerIdentityId, supportsTokenOnly: true },
+        homeConnectionDescriptor: descriptor,
+    });
+    const openPairingLinkEntry = vi.fn();
+    screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+        <RestoreScanComputerQrView embedded entryIntent="add_home" initialPairingLink={`happier://terminal?v4=${payload}`}
+            onOpenPairingLinkEntry={openPairingLinkEntry} />
+    </InjectedAuthProvider>);
+    const pending = await import('@/sync/domains/pending/pendingTerminalConnect');
+    if (state === 'expired') {
+        // A pasted terminal link is a link, so its expiry is worded for links, not QR codes.
+        await vi.waitFor(() => expect(screen!.getTextContent()).toContain(t('modals.authRequestExpiredDescription')));
+        expect(screen!.getTextContent()).not.toContain(t('connect.pairingQrExpired'));
+        expect(navigation.push).not.toHaveBeenCalled();
+        expect(pending.getPendingTerminalConnect()).toBeNull();
+        // The same link can never work again: the one way on is a new link, not a retry of this one.
+        expect(screen!.findByTestId('restore-enrollment-retry')).toBeNull();
+        await screen!.pressByTestIdAsync('restore-enrollment-paste-new');
+        expect(openPairingLinkEntry).toHaveBeenCalledTimes(1);
+    } else {
+        await vi.waitFor(() => expect(navigation.push).toHaveBeenCalledWith('/terminal/connect'));
+        expect(pending.getPendingTerminalConnect()).toMatchObject({ homeConnectionDescriptor: descriptor, serverIdentityId: descriptor.homeServerIdentityId });
+    }
+    expect(requests.filter(path => path.includes('/auth/'))).toEqual([]);
+    pending.clearPendingTerminalConnect();
+});
 
 it('resumes no-Homes recovery only after exact QR credentials commit, without enrollment or focus', async () => {
     restore = installLocalStorageMock().restore;

@@ -4,7 +4,7 @@ import { t } from '@/text';
 
 /**
  * Returning-user greeting picker. Used by the welcome decision panel when
- * `localSettings.hasCompletedAuthOnce === true`.
+ * the device's completed-authentication history is true.
  *
  * The hook picks ONE title and ONE subtitle from the two pools below and
  * locks the selection via useRef so it stays stable across re-renders. A

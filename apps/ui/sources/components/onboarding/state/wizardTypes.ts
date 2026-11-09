@@ -22,6 +22,7 @@ export type WizardStepId =
     | 'auth_secret_key'
     | 'auth_service_select'
     | 'auth_lost_access'
+    | 'auth_email_password'
     | 'confirm_switch_relay';
 
 export type WizardRelayChoiceId = 'cloud' | 'thisComputer' | 'remoteComputer' | 'customUrl';
@@ -54,6 +55,8 @@ export type WizardStepDefinition = Readonly<{
     id: WizardStepId;
     titleKey: TranslationKey;
     subtitleKey?: TranslationKey;
+    /** The step body titles itself (its heading changes with its own sub-views), so the host draws none. */
+    bodyOwnsHeading?: boolean;
     kind: WizardStepKind;
     surface: WizardMode;
     canSkip: boolean;

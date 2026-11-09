@@ -6,7 +6,10 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
+import { lightTheme, darkTheme, type Theme } from '@/theme';
+import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { resetPersistentUiStateForTest } from '@/dev/testkit/cleanup/persistentUiState';
 import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -23,7 +26,9 @@ vi.mock('socket.io-client', async importOriginal =>
 vi.mock('@/modal', async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
-const boundary = vi.hoisted(() => ({ setTheme: vi.fn(), setStatusBarStyle: vi.fn() }));
+const boundary = vi.hoisted(() => ({ setTheme: vi.fn(), setStatusBarStyle: vi.fn(),
+    themes: null as Record<'light' | 'dark', Theme> | null,
+}));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default },
@@ -31,7 +36,12 @@ vi.mock('react-native', async () => {
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({ runtime: { setTheme: boundary.setTheme } });
+    return createUnistylesMock({ runtime: { setTheme: boundary.setTheme,
+        getTheme: (name: 'light' | 'dark') => boundary.themes?.[name],
+        updateTheme: (name: 'light' | 'dark', update: (theme: Theme) => Theme) => {
+            if (boundary.themes) boundary.themes[name] = update(boundary.themes[name]);
+        },
+    } });
 });
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: boundary.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
@@ -44,7 +54,13 @@ let ACCOUNT_A = { serverId: '', accountId: 'alice' };
 let ACCOUNT_B = { serverId: '', accountId: 'bob' };
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
+function readSavedProgress(): { savedSteps: string[]; resumeAt: string | null } {
+    return JSON.parse(getPersistenceStorage().getString('ui-state:personalize-progress-v1:progress')
+        ?? '{"savedSteps":[],"resumeAt":null}');
+}
+
 beforeEach(async () => {
+    await resetPersistentUiStateForTest();
     await homes.reset();
     await homes.addHome({ name: 'Personalize Home', serverUrl: 'https://personalize-flow.test',
         accountId: ACCOUNT_A.accountId, currentAccount: true });
@@ -56,6 +72,7 @@ beforeEach(async () => {
     storage.setState({ settings: settingsDefaults, settingsScope: ACCOUNT_A, profileScope: ACCOUNT_A,
         localSettings: { ...localSettingsDefaults, themePreference: 'light' } });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    boundary.themes = { light: lightTheme, dark: darkTheme };
     boundary.setTheme.mockClear();
     boundary.setStatusBarStyle.mockClear();
 });
@@ -85,14 +102,14 @@ describe('Personalize mounted visit', () => {
             await act(async () => { hook.getCurrent().update(patch); });
             await act(async () => { expect(await hook.getCurrent().next()).toBe(false); });
             expect(hook.getCurrent().page).toBe(step);
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual([]);
+            expect(readSavedProgress().savedSteps).toEqual([]);
             expect(readPersonalizeChoices(storage.getState().settings, storage.getState().localSettings)).toEqual(before);
 
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } } })); });
             await act(async () => { expect(await hook.getCurrent().next()).toBe(true); });
             expect(readPersonalizeChoices(storage.getState().settings, storage.getState().localSettings)).toMatchObject(patch);
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual([step]);
+            expect(readSavedProgress().savedSteps).toEqual([step]);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
@@ -106,7 +123,7 @@ describe('Personalize mounted visit', () => {
             await act(async () => { pending = hook.getCurrent().next(); });
             await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
             expect(hook.getCurrent()).toMatchObject({ page: 'work', status: 'saving' });
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual([]);
+            expect(readSavedProgress().savedSteps).toEqual([]);
             expect(readPersonalizeChoices(storage.getState().settings, storage.getState().localSettings).listLayout).toBe('projects');
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
             await act(async () => { expect(await pending).toBe(false); });
@@ -117,7 +134,7 @@ describe('Personalize mounted visit', () => {
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
             await act(async () => { expect(await pending).toBe(true); });
             expect(readPersonalizeChoices(storage.getState().settings, storage.getState().localSettings).listLayout).toBe('recent_activity');
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual(['work']);
+            expect(readSavedProgress().savedSteps).toEqual(['work']);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
@@ -125,9 +142,15 @@ describe('Personalize mounted visit', () => {
         storage.setState({ settings: settingsParse({ ...settingsDefaults,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) });
         const hook = await renderHook(() => usePersonalizeFlow({ initialPage: 'look', onExit: vi.fn() }));
+        const localSettings = storage.getState().localSettings;
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
         await act(async () => { hook.getCurrent().skip(); });
         expect(hook.getCurrent().page).toBe('style');
-        expect(storage.getState().localSettings.personalizeProgressV1.resumeAt).toBe('style');
+        const savedDeviceSettings = writes.mock.calls.filter(([key]) => key === 'local-settings');
+        expect(savedDeviceSettings).toHaveLength(0);
+        expect(storage.getState().localSettings.themePreference).toBe(localSettings.themePreference);
+        expect(storage.getState().localSettings.themeProfileSelection).toEqual(localSettings.themeProfileSelection);
+        expect(readSavedProgress().resumeAt).toBe('style');
         expect(storage.getState().localSettings.themePreference).toBe('light');
     });
 
@@ -154,6 +177,30 @@ describe('Personalize mounted visit', () => {
         await act(async () => { expect(await held.next()).toBe(false); expect(await hook.getCurrent().next()).toBe(false); });
         expect(storage.getState().settings).toBe(accountB);
         expect(storage.getState().localSettings).toBe(localB);
+    });
+
+    it('keeps account profiles through theme preview, latest-state restore, and commit', async () => {
+        const profile = { ...createThemeProfileDraft({ id: 'account-ocean', name: 'Account ocean', now: '2026-10-20T12:00:00.000Z' }),
+            overrides: { light: { 'background.canvas': '#aabbcc' }, dark: { 'background.canvas': '#112233' } } };
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ themeProfiles: [profile] }) });
+        try {
+            storage.getState().applyLocalSettings({ themeProfileSelection: { light: profile.id, dark: profile.id } });
+            const hook = await renderHook(() => usePersonalizeFlow({ initialPage: 'look', onExit: vi.fn() }));
+            await act(async () => { hook.getCurrent().selectTheme('dark'); });
+            expect(boundary.themes?.dark.colors.background.canvas).toBe('#112233');
+            expect(storage.getState().localSettings.themePreference).toBe('light');
+            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
+                themeProfiles: [{ ...profile, overrides: { light: { 'background.canvas': '#ddeeff' }, dark: { 'background.canvas': '#112233' } } }],
+            })); });
+            await act(async () => { hook.getCurrent().skip(); });
+            expect(boundary.themes?.light.colors.background.canvas).toBe('#ddeeff');
+            await hook.unmount();
+            const next = await renderHook(() => usePersonalizeFlow({ initialPage: 'look', onExit: vi.fn() }));
+            await act(async () => { next.getCurrent().selectTheme('dark'); });
+            await act(async () => { expect(await next.getCurrent().next()).toBe(true); });
+            expect(storage.getState().localSettings.themeProfileSelection).toEqual({ light: profile.id, dark: profile.id });
+            expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
     });
 
     it('previews a tile without persistence, and Skip restores the saved theme', async () => {
@@ -187,11 +234,11 @@ describe('Personalize mounted visit', () => {
             let pending: Promise<boolean> | boolean;
             await act(async () => { pending = hook.getCurrent().next(); });
             expect(hook.getCurrent().page).toBe('look');
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual([]);
+            expect(readSavedProgress().savedSteps).toEqual([]);
             await act(async () => { commit(); expect(await pending).toBe(true); });
             expect(hook.getCurrent().page).toBe('style');
             expect(storage.getState().localSettings.themePreference).toBe('dark');
-            expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual(['look']);
+            expect(readSavedProgress().savedSteps).toEqual(['look']);
         } finally { unregister(); }
     });
 
@@ -218,12 +265,12 @@ describe('Personalize mounted visit', () => {
         expect(Modal.alert).toHaveBeenCalledOnce();
         expect(hook.getCurrent()).toMatchObject({ page: 'look', draft: { theme: 'dark' } });
         expect(storage.getState().localSettings.themePreference).toBe('light');
-        expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual([]);
+        expect(readSavedProgress().savedSteps).toEqual([]);
         persist.mockRestore();
         await act(async () => { expect(await hook.getCurrent().next()).toBe(true); });
         expect(hook.getCurrent().page).toBe('style');
         expect(storage.getState().localSettings.themePreference).toBe('dark');
-        expect(storage.getState().localSettings.personalizeProgressV1.savedSteps).toEqual(['look']);
+        expect(readSavedProgress().savedSteps).toEqual(['look']);
     });
 
     it('rejects a theme mutation delayed until after its launching Account retires', async () => {

@@ -62,7 +62,7 @@ installProfileEditFormModuleMocks({
         createStorageModuleStub({
             useSetting: () => ({}),
             useSettings: () => ({}),
-            useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
+            useActiveMachineFacts: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
             useMachine: () => null,
             useCurrentSecretBindingsByProfileIdMutable: () => [{}, vi.fn()] as const,
             useSettingMutable: (key: string) => {

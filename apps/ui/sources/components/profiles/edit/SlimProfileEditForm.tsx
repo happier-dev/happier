@@ -1,15 +1,15 @@
 import * as React from 'react';
 import type { ViewStyle } from 'react-native';
-import type { LaunchProfileV2 } from '@happier-dev/protocol';
+import type { LaunchProfileV2 } from '@happier-dev/protocol/profiles/v2/schema';
 import type { AiLaunchProfileSourceV1 } from '@happier-dev/protocol/profiles/read';
 import type { ProfileRecordV1, ProfileLegacyCloneSourceV1 } from '@happier-dev/protocol/profiles/profileRecordSchemaV1';
 
-import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
+import { EnvironmentVariablesList, type EnvironmentVariableAddition } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-import { buildSlimProfileSave, isSlimProfileReservedEnvironmentAuthorityReady } from './slimProfileDraft';
+import { buildSlimProfileSave } from './slimProfileDraft';
 import { getAllAgentProviderOwnedEnvironmentKeys } from '@/agents/catalog/catalog';
 import { SlimProfilePlacementFields } from './SlimProfilePlacementFields';
 import { SlimProfilePromptBehaviorFields } from './SlimProfilePromptBehaviorFields';
@@ -96,14 +96,10 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
     );
     const reservedEnvironmentVariableNames = React.useMemo(
         () => getAllAgentProviderOwnedEnvironmentKeys(
-            daemonProjection.inputs?.pluginProjectionV2?.agentsById,
+            daemonProjection.inputs?.pluginProjectionV2?.agentsById ?? null,
         ),
         [daemonProjection.inputs?.pluginProjectionV2?.agentsById],
     );
-    const reservedEnvironmentAuthorityReady = isSlimProfileReservedEnvironmentAuthorityReady({
-        projectionPhase: daemonProjection.phase,
-        hasV2Projection: daemonProjection.inputs?.pluginProjectionV2 != null,
-    });
 
     React.useEffect(() => {
         props.onDirtyChange?.(JSON.stringify({
@@ -163,16 +159,13 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
             },
             Date.now,
             reservedEnvironmentVariableNames,
-            reservedEnvironmentAuthorityReady,
         );
         if (result.status === 'error') {
             Modal.alert(
                 t('common.error'),
                 result.field === 'name'
                     ? t('profiles.nameRequired')
-                    : result.field === 'extraEnvironmentVariables' && !reservedEnvironmentAuthorityReady
-                        ? t('settingsProviders.migration.reservedEnvironmentValidationUnavailable')
-                        : result.message,
+                    : result.message,
             );
             return false;
         }
@@ -190,7 +183,6 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         preferredModelSelection,
         props,
         initialProfile,
-        reservedEnvironmentAuthorityReady,
         reservedEnvironmentVariableNames,
         skillSeeds,
         requirements.derivedEnvVarRequirements,
@@ -204,8 +196,13 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         return () => { props.saveRef!.current = null; };
     }, [handleSave, props.saveRef]);
 
+    const addEnvironmentVariable = React.useCallback(({ variable, requirement }: EnvironmentVariableAddition) => {
+        setExtraEnvironmentVariables(existing => [...existing, variable]);
+        if (requirement) requirements.updateSourceRequirement(requirement.name, requirement, requirement.secretId);
+    }, [requirements.updateSourceRequirement]);
+
     return (
-        <ItemList style={props.containerStyle} keyboardShouldPersistTaps="handled">
+        <ItemList style={props.containerStyle} keyboardAware keyboardShouldPersistTaps="handled">
             {props.header}
             <ProfileNameSection
                 testIDPrefix="profile-slim"
@@ -220,6 +217,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
                 serverId={serverId}
                 profileDocs={null}
                 onChange={setExtraEnvironmentVariables}
+                onAddVariable={addEnvironmentVariable}
                 sourceRequirementsByName={requirements.sourceRequirementsByName}
                 onUpdateSourceRequirement={requirements.updateSourceRequirement}
                 getDefaultSecretNameForSourceVar={requirements.getDefaultSecretNameForSourceVar}

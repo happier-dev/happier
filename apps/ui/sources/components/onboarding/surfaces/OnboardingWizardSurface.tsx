@@ -5,10 +5,9 @@ import { usePreventRemove } from '@react-navigation/native';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { StepTransitionFrame } from '@/components/ui/motion/StepTransitionFrame';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 
+import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
+import { ActiveRelaySummary } from '../ui/ActiveRelaySummary';
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardModalShell } from '../ui/WizardModalShell';
 import {
@@ -87,46 +86,7 @@ type BareOnboardingWorkflowContentProps = Readonly<{
     testID: string;
 }>;
 
-const bareStylesheet = StyleSheet.create((theme) => ({
-    root: {
-        flex: 1,
-        width: '100%',
-        maxWidth: 560,
-        alignSelf: 'center',
-        justifyContent: 'flex-start',
-        gap: theme.space.s24,
-    },
-    content: {
-        width: '100%',
-        gap: theme.space.s10,
-    },
-    header: {
-        width: '100%',
-        gap: theme.space.s10,
-    },
-    title: {
-        ...Typography.variant('display'),
-        color: theme.colors.text.primary,
-    },
-    subtitle: {
-        ...Typography.default(),
-        fontSize: 16,
-        lineHeight: 24,
-        color: theme.colors.text.secondary,
-    },
-    body: {
-        width: '100%',
-        gap: theme.space.s24,
-    },
-    footer: {
-        width: '100%',
-        alignItems: 'flex-start',
-        gap: 14,
-    },
-    footerHint: {
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-    },
+const bareStylesheet = StyleSheet.create(() => ({
     primaryButton: {
         width: '100%',
         maxWidth: 360,
@@ -149,45 +109,28 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
     }
 
     const canShowSkip = Boolean(controller.onSkip) && controller.showSkip !== false;
-    const hasFooter = Boolean(controller.footerHint) || Boolean(controller.onPrimary) || canShowSkip;
+    const hasFooter = Boolean(controller.onPrimary) || canShowSkip;
+    // The Home a step acts on is one quiet line above its heading, not a capsule among its actions;
+    // while choosing a Home the list itself shows the selection.
+    const homeContext = controller.homeContext?.status === 'active' ? controller.homeContext : null;
 
     return (
-        <View
-            testID={`${props.testID}-bare-workflow`}
-            style={styles.root}
-        >
-            <View style={styles.content}>
-                <View style={styles.header}>
-                    <Text
-                        testID={`${props.testID}-bare-title`}
-                        accessibilityRole="header"
-                        style={styles.title}
-                    >
-                        {controller.title}
-                    </Text>
-                    {controller.subtitle ? (
-                        <Text style={styles.subtitle}>
-                            {controller.subtitle}
-                        </Text>
-                    ) : null}
-                </View>
-                <StepTransitionFrame
-                    transitionKey={controller.stepId}
-                    direction={controller.contentTransitionDirection}
-                    testID={`${props.testID}-bare-body-transition`}
-                >
-                    <View style={styles.body}>
-                        {controller.body}
-                    </View>
-                </StepTransitionFrame>
-            </View>
-            {hasFooter ? (
-                <View style={styles.footer}>
-                    {controller.footerHint ? (
-                        <View style={styles.footerHint}>
-                            {controller.footerHint}
-                        </View>
-                    ) : null}
+        <UnauthenticatedStep
+            testID={`${props.testID}-bare`}
+            context={homeContext ? (
+                <ActiveRelaySummary
+                    idPrefix={`${props.testID}-relay-hint`}
+                    relayUrl={homeContext.relayUrl}
+                    status="active"
+                    presentation="line"
+                />
+            ) : null}
+            title={controller.bodyOwnsHeading ? undefined : controller.title}
+            subtitle={controller.bodyOwnsHeading ? undefined : controller.subtitle}
+            bodyTransitionKey={controller.stepId}
+            bodyTransitionDirection={controller.contentTransitionDirection}
+            footer={hasFooter ? (
+                <>
                     {controller.onPrimary ? (
                         <View style={styles.primaryButton}>
                             <RoundButton
@@ -215,8 +158,10 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
                             />
                         </View>
                     ) : null}
-                </View>
+                </>
             ) : null}
-        </View>
+        >
+            {controller.body}
+        </UnauthenticatedStep>
     );
 }

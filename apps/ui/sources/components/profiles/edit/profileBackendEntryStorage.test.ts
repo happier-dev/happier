@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { projectHistoricalBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol';
+import { projectHistoricalBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol/profiles/historicalCompatibilityV1';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 

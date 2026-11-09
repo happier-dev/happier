@@ -1,3 +1,4 @@
+import { resolveWebServerEntrySignInRoute } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 export function setOnboardingWizardAwaitingAuthResumeIntent(relayUrl: string | null): void {
@@ -9,6 +10,6 @@ export function setOnboardingWizardAwaitingAuthResumeIntent(relayUrl: string | n
     });
 }
 
-export function resolveWizardAuthReturnToRoute(): '/' {
-    return '/';
+export function resolveWizardAuthReturnToRoute(): ReturnType<typeof resolveWebServerEntrySignInRoute> {
+    return resolveWebServerEntrySignInRoute();
 }

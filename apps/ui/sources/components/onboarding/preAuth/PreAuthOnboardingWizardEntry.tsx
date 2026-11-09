@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { Platform, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -45,16 +45,16 @@ import { readJourneyReplayBeatId, readWebQueryParam } from '@/components/onboard
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
-import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { useHasCompletedAuthOnce } from '@/sync/domains/state/onboardingUiState';
 import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthentication';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
-import { presentEmailPasswordAuthentication } from '@/components/account/auth/emailPassword/presentEmailPasswordAuthentication';
 import { completeEmailPasswordAuthentication } from '@/components/account/auth/emailPassword/completeEmailPasswordAuthentication';
 import {
     ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT,
     openAccountSecurityForHome,
 } from '@/components/settings/account/openAccountSecurityForHome';
-import { consumeWebServerUrlOverrideFromLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { readWebServerEntry } from '@/sync/domains/server/serverProfiles';
+import { consumeWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { useOpenPersonalize } from '@/components/onboarding/personalize/useOpenPersonalize';
 import type { JourneyCompletion } from '@/components/onboarding/tour/state/useJourneyProgress';
 
@@ -175,17 +175,19 @@ function resolveJourneySurface(params: Readonly<{ isDesktopShell: boolean; platf
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
     const auth = useAuth();
     const router = useRouter();
+    const { step } = useLocalSearchParams<{ step?: string | string[] }>();
+    const homeStepRequested = (Array.isArray(step) ? step[0] : step) === 'home';
     const openPersonalize = useOpenPersonalize();
-    const suppliedHomeAddress = React.useMemo(() => readWebServerUrlOverrideFromLocation(), []);
+    const suppliedHomeAddress = React.useMemo(() => readWebServerEntry(), []);
     const clearSuppliedHomeAddress = React.useCallback(() => {
-        if (suppliedHomeAddress) consumeWebServerUrlOverrideFromLocation({ serverUrl: suppliedHomeAddress.serverUrl });
+        if (suppliedHomeAddress) consumeWebServerUrlOverrideFromLocation({ serverUrl: suppliedHomeAddress.serverUrl, retainSelection: true });
     }, [suppliedHomeAddress]);
     const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
     const onboardingTourEnabled = onboardingTourDecision?.state === 'enabled';
     const onboardingTourResolving = onboardingTourDecision == null;
     // The journey is a FIRST-RUN experience (D21). `hasCompletedAuthOnce` survives
     // logout by design, so returning users get the preserved classic welcome shell.
-    const hasCompletedAuthOnce = useLocalSetting('hasCompletedAuthOnce') === true;
+    const hasCompletedAuthOnce = useHasCompletedAuthOnce();
     // Sticky: once a journey session is live it OWNS the viewport until it ends.
     // This flag flips true when the host mounts and stays true across the auth hinge
     // (login sets `hasCompletedAuthOnce`), so a first-run journey is never torn down
@@ -290,13 +292,13 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         });
         // Every native email/password action owns a controller the generic
         // helper deliberately refuses to run. Welcome hosts the same shared
-        // controller the auth-entry surface embeds rather than reimplementing it.
+        // controller the auth-entry surface embeds, as its next workflow step.
         if (outcome.kind !== 'no_effect' || outcome.reason !== 'delegated_email_password') return;
         if (request.authority.purpose !== 'home' || request.execution.kind !== 'email_password') return;
         const resolvedTarget = resolveHomeAuthenticationTarget(request.authority.target);
         if (!resolvedTarget || context.signal.aborted) return;
         const execution = request.execution;
-        presentEmailPasswordAuthentication({
+        context.presentEmailPassword({
             target: {
                 ...resolvedTarget,
                 ...(authEntryOptions.homeTransport?.runtimeOrigin
@@ -313,10 +315,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             ...(execution.passwordReset ? { passwordReset: execution.passwordReset } : {}),
             ...(authEntryOptions.homeLabel ? { homeLabel: authEntryOptions.homeLabel } : {}),
             signal: context.signal,
-            // Welcome has no mounted step of its own behind this modal, so a
-            // Connect whose exact-Home activation is blocked has nowhere to report
-            // it. The modal owns that arrival: it stays open with the shared
-            // focus-only retry and closes only once Account Security is reached.
+            // Welcome has no other mounted step behind this one, so a Connect
+            // whose exact-Home activation is blocked has nowhere to report it.
+            // The step owns that arrival: it stays with the shared focus-only
+            // retry and leaves only once Account Security is reached.
             ...(execution.action === 'connect'
                 ? {
                     reachExactHome: async () => await openAccountSecurityForHome({
@@ -348,7 +350,8 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (props.initialStepId) {
             return props.initialStepId;
         }
-        if (suppliedHomeAddress) return 'relay_enter_url';
+        if (suppliedHomeAddress && !suppliedHomeAddress.isAdmitted) return 'relay_enter_url';
+        if (homeStepRequested) return 'relay_select';
         const candidate = readDebugWebQueryParam('happier_wizard_step');
         if (!candidate) {
             return undefined;
@@ -360,7 +363,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         } catch {
             return undefined;
         }
-    }, [props.initialStepId, suppliedHomeAddress]);
+    }, [homeStepRequested, props.initialStepId, suppliedHomeAddress]);
 
     const resolvedInitialBeatId = React.useMemo((): JourneyBeatId | undefined => (
         readJourneyReplayBeatId()
@@ -395,7 +398,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         accountEntryReturnTo: resolveAuthReturnToRoute(),
         shellChrome,
         initialStepId: resolvedInitialStepId,
-        initialServerUrl: suppliedHomeAddress?.serverUrl,
+        initialServerUrl: suppliedHomeAddress && !suppliedHomeAddress.isAdmitted ? suppliedHomeAddress.serverUrl : undefined,
         onInitialServerUrlConnected: suppliedHomeAddress ? clearSuppliedHomeAddress : undefined,
         onContinueWithAccountServiceProvider: continueWithAccountServiceProvider,
         onContinueWithHomeAuthentication: continueWithHomeAuthentication,
@@ -420,6 +423,9 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         <UnauthenticatedSplitShell
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
+            // On a phone every later step keeps the compact mark above it, like the standalone
+            // signed-out routes; the full-bleed scanner owns its whole viewport.
+            showMobileWordmark={controller.stepId !== 'scan_code'}
             allowMobileBrandHero={controller.stepId === 'welcome'}
             retentionDisclosure={authEntryOptions.retentionDisclosure}
             onOpenRelayCustomFlow={() => {
@@ -435,7 +441,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         </UnauthenticatedSplitShell>
     );
 
-    if (onboardingTourResolving && !suppliedHomeAddress) {
+    if (onboardingTourResolving && !suppliedHomeAddress && !homeStepRequested) {
         return journeyLoadingFallback;
     }
 
@@ -445,6 +451,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const shouldRenderJourney =
         onboardingTourEnabled
         && !suppliedHomeAddress
+        && !homeStepRequested
         && (journeySessionActive || hasAuthedSetupContinuation || !hasCompletedAuthOnce || hasExplicitJourneyReplayIntent);
     // Re-latch case: authed setup continuation without a live journey session mounts
     // the host directly at the first setup-act beat (S3) instead of the journey start.

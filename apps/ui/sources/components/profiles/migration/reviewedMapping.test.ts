@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AIBackendProfileSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
 import {
     buildLegacyProfileMigrationDraft,

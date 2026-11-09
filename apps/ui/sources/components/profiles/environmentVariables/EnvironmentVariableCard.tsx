@@ -10,7 +10,9 @@ import { t } from '@/text';
 import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export interface EnvironmentVariableCardProps {
@@ -36,8 +38,11 @@ export interface EnvironmentVariableCardProps {
     onPickDefaultSecretForSourceVar?: (sourceVarName: string) => void;
     onUpdateSecretOverride?: (index: number, isSecret: boolean | undefined) => void;
     onUpdate: (index: number, newValue: string) => void;
-    onDelete: (index: number) => void;
-    onDuplicate: (index: number) => void;
+    onDelete?: (index: number) => void;
+    onDuplicate?: (index: number) => void;
+    onNameChange?: (name: string) => void;
+    nameInputRef?: React.RefObject<React.ElementRef<typeof TextInput> | null>;
+    testIDPrefix?: string;
     showSourceRequirements?: boolean;
 }
 
@@ -95,6 +100,9 @@ export function EnvironmentVariableCard({
     onUpdate,
     onDelete,
     onDuplicate,
+    onNameChange,
+    nameInputRef,
+    testIDPrefix,
     showSourceRequirements = true,
 }: EnvironmentVariableCardProps) {
     const { theme } = useUnistyles();
@@ -283,6 +291,9 @@ export function EnvironmentVariableCard({
         </View>
     ) : (Boolean(effectiveSourceRequirement?.useSecretVault) ? (
         <Pressable
+            testID={testIDPrefix ? `${testIDPrefix}-secret` : undefined}
+            accessibilityRole="button"
+            accessibilityLabel={t('profiles.environmentVariables.card.defaultSecretLabel')}
             onPress={() => onPickDefaultSecretForSourceVar?.(requirementVarName)}
             style={({ pressed }) => ({ opacity: pressed ? motionTokens.press.opacitySubtle : 1 })}
         >
@@ -388,8 +399,18 @@ export function EnvironmentVariableCard({
             containerStyle={styles.groupContainer}
         >
             <Item
-                title={variable.name}
-                subtitle={description}
+                title={onNameChange ? t('secrets.fields.name') : variable.name}
+                subtitle={onNameChange ? (
+                    <FieldTextInput
+                        ref={nameInputRef}
+                        testID={testIDPrefix ? `${testIDPrefix}-name` : undefined}
+                        accessibilityLabel={t('secrets.fields.name')}
+                        placeholder={t('profiles.environmentVariables.namePlaceholder')}
+                        value={variable.name}
+                        onChangeText={onNameChange}
+                        autoCapitalize="characters"
+                    />
+                ) : description}
                 showChevron={false}
                 rightElement={(
                     <View style={styles.titleRowActions}>
@@ -400,18 +421,16 @@ export function EnvironmentVariableCard({
                                 color={theme.colors.state.danger.foreground}
                             />
                         )}
-                        <Pressable
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        {onDelete ? <HappierPressable
                             onPress={() => onDelete(index)}
                         >
                             <Icon name="trash" size={theme.iconSize.large} color={theme.colors.state.danger.foreground} />
-                        </Pressable>
-                        <Pressable
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        </HappierPressable> : null}
+                        {onDuplicate ? <HappierPressable
                             onPress={() => onDuplicate(index)}
                         >
                             <Icon name="copy" size={theme.iconSize.large} color={theme.colors.button.secondary.tint} />
-                        </Pressable>
+                        </HappierPressable> : null}
                     </View>
                 )}
             />
@@ -444,15 +463,14 @@ export function EnvironmentVariableCard({
                 rightElement={(
                     <View style={styles.secretRowRight}>
                         {showResetToAuto && (
-                            <Pressable
+                            <HappierPressable
                                 onPress={() => onUpdateSecretOverride?.(index, undefined)}
-                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                                 style={({ pressed }) => ({ opacity: pressed ? motionTokens.press.opacity : 1 })}
                             >
                                 <Text style={styles.resetToAutoText}>
                                     {t('profiles.environmentVariables.card.secretToggleResetToAuto')}
                                 </Text>
-                            </Pressable>
+                            </HappierPressable>
                         )}
                         <Switch
                             value={hideValueInUi}
@@ -491,6 +509,8 @@ export function EnvironmentVariableCard({
                         showChevron={false}
                         rightElement={(
                             <Switch
+                                testID={testIDPrefix ? `${testIDPrefix}-vault` : undefined}
+                                accessibilityLabel={t('profiles.environmentVariables.card.requirementUseVaultLabel')}
                                 value={Boolean(effectiveSourceRequirement?.useSecretVault)}
                                 onValueChange={(next) => {
                                     if (!onUpdateSourceRequirement) return;

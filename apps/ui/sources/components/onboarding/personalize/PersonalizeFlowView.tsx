@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -18,6 +18,7 @@ import { PersonalizeStepBody, PersonalizeStyleChoices, countPersonalizeChanges }
 import { PERSONALIZE_STEPS, isPersonalizeStep, type PersonalizePageId } from './personalizeFlowModel';
 import { personalizeStepName } from './personalizeLabels';
 import { usePersonalizeFlow, type PersonalizeFlow } from './usePersonalizeFlow';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** Where the page stands in the six steps: the optional style sits between Look and Conversation. */
 function resolveProgress(page: PersonalizePageId): number {
@@ -117,9 +118,9 @@ function PersonalizeDesktopPresentation(props: Readonly<{ flow: PersonalizeFlow;
             <View style={styles.header}>
                 <Text style={styles.flowTitle}>{t('personalize.flowTitle')}</Text>
                 {flow.page !== 'summary' ? (
-                    <Pressable testID={`${testID}-later`} accessibilityRole="button" onPress={flow.later} hitSlop={8}>
+                    <HappierPressable testID={`${testID}-later`} accessibilityRole="button" onPress={flow.later}>
                         <Text style={styles.headerAction}>{t('personalize.finishLater')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             </View>
             <PersonalizeProgress done={resolveProgress(flow.page)} testID={`${testID}-progress`} />
@@ -182,24 +183,23 @@ function PersonalizePhonePresentation(props: Readonly<{ flow: PersonalizeFlow; t
     return (
         <View testID={testID} style={styles.sheet}>
             <View style={styles.sheetHeader}>
-                <Pressable
+                <HappierPressable
                     testID={`${testID}-back`}
                     accessibilityRole="button"
                     accessibilityLabel={t('common.back')}
                     disabled={flow.page === 'look' || flow.status === 'saving'}
                     onPress={flow.back}
-                    hitSlop={8}
                     style={flow.page === 'look' ? styles.hidden : null}
                 >
                     <Icon name="caret-left" size={22} color={theme.colors.text.primary} />
-                </Pressable>
+                </HappierPressable>
                 <View style={styles.sheetTitle}>
                     <Text style={styles.flowTitle}>{t('personalize.flowTitle')}</Text>
                     <Text style={styles.eyebrow}>{t('personalize.stepCounter', { n: progress, total: PERSONALIZE_STEPS.length })}</Text>
                 </View>
-                <Pressable testID={`${testID}-later`} accessibilityRole="button" onPress={flow.later} hitSlop={8}>
+                <HappierPressable testID={`${testID}-later`} accessibilityRole="button" onPress={flow.later}>
                     <Text style={styles.headerAction}>{t('personalize.later')}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
             <PersonalizeProgress done={progress} testID={`${testID}-progress`} />
             <JourneyConfigSlot controller={buildController(flow, body, true)} layout="scroll" primarySizing="fill" testID={`${testID}-config`} />
