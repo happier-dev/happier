@@ -221,6 +221,39 @@ async function installRevocableVoiceSettings(approvalWaivedSurfaces?: unknown) {
 }
 
 describe('default Action executor mode and catalog contracts', () => {
+  it.each(['enabled', 'dependency_opt_out', 'home_opt_out'] as const)('admits Runner creation through the runtime decision and retains read/cancel (%s)', async policy => {
+    const activationId = '00000000-0000-4000-8000-000000000007';
+    const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    const input = { v: 1 as const, activationId, draftId: 'runner-draft', homeServerIdentityId: 'srv_mode_home',
+      activationSigningPublicKey: encodeBase64(signing.publicKey, 'base64url'), activationExpiresAt: null,
+      workspace: { kind: 'choose_on_endpoint' as const }, authoringCommitment: 'A'.repeat(43),
+      artifact: { product: 'happier-runner' as const, version: '0.3.0', target: 'linux-x64' as const, sha256: 'a'.repeat(64) },
+      endpointFactsRecipient: { mode: 'plain' as const, creatorAccountId: 'alice' } };
+    const activation = { ...input, creatorAccountId: 'alice', creatorTokenEpoch: 0,
+      sessionId: 'runner-session', machineId: 'runner-machine', state: 'pending', closeReason: null, claim: null, endpointFacts: null };
+    const { v: _version, ...projection } = activation;
+    const features = createRootLayoutFeaturesResponse({ features: { machines: { enabled: true }, sessions: { enabled: true,
+      drafts: { enabled: policy !== 'dependency_opt_out' }, ephemeralRunner: { enabled: policy !== 'home_opt_out' } } } });
+    homes.answer(serverId, '/v1/features', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const settings = storage.getState().settings;
+    storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 100);
+    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 100 } });
+    const path = `/v1/ephemeral-runners/activations/${activationId}`;
+    homes.answer(serverId, '/v1/ephemeral-runners/activations', { body: { status: 'created', activation: projection } });
+    homes.answer(serverId, path, { select: (_body, request) => ({ body: request.init?.method === 'DELETE'
+      ? { ...projection, state: 'closed', closeReason: 'canceled' } : projection }) });
+    const executor = createDefaultActionExecutor();
+    const created = await executor.execute('sessions.runner.activation.create', input, context());
+    expect(created, JSON.stringify(created)).toMatchObject(policy === 'enabled'
+      ? { ok: true, result: { activationId, state: 'pending' } }
+      : { ok: false, errorCode: 'runner_unavailable' });
+    expect(homes.requestsFor('/v1/ephemeral-runners/activations')).toHaveLength(policy === 'enabled' ? 1 : 0);
+    expect(await executor.execute('sessions.runner.activation.get', { activationId }, context())).toMatchObject({ ok: true, result: { activationId, state: 'pending' } });
+    expect(await executor.execute('sessions.runner.activation.cancel', { activationId }, context())).toMatchObject({ ok: true, result: { activationId, closed: true } });
+  });
+
   it('uses the calling Session approval profile while a present user can change a target Session profile', async () => {
     const sessionId = 'approval-profile-session';
     const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'claude', approvalProfileId: 'builtin:read-propose' });
