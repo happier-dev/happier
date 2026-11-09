@@ -272,8 +272,10 @@ export function getAgentCore(id: AgentId): AgentCoreConfig | null {
 }
 
 export function getBundledAgentDeclaration(id: AgentId): BundledAgentDeclaration | null {
+    const bundledId = resolveAgentIdFromFlavor(id);
+    if (!bundledId) return null;
     return Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find(
-        (declaration) => resolveBundledAgentIdFromContributionIdentity(declaration.identity) === id,
+        (declaration) => resolveBundledAgentIdFromContributionIdentity(declaration.identity) === bundledId,
     ) ?? null;
 }
 

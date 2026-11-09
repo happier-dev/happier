@@ -14,10 +14,10 @@ import {
 } from './accountProviderDeclarations';
 
 describe('admitted Provider declarations', () => {
-    it('resolves connected services for a legacy bundled routing id through its declared identity', () => {
-        expect(readAccountAgentConnectedAccountServiceKeys('backend:ohMyPi', { kind: 'account' }))
+    it.each(['ohMyPi', 'ohmypi', 'oh-my-pi', 'omp'])('resolves connected services for legacy bundled routing id %s through its declared identity', (agentId) => {
+        expect(readAccountAgentConnectedAccountServiceKeys(`backend:${agentId}`, { kind: 'account' }))
             .toContain('happier.agent.claude/anthropic');
-        expect(readAccountAgentConnectedAccountServiceKeys('backend:ohMyPi', { kind: 'machine', projection: null }))
+        expect(readAccountAgentConnectedAccountServiceKeys(`backend:${agentId}`, { kind: 'machine', projection: null }))
             .toBeNull();
     });
 
