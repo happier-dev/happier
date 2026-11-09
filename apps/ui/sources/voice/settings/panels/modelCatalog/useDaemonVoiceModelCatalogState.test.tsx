@@ -165,6 +165,48 @@ describe('useDaemonVoiceModelCatalogState', () => {
     });
     afterEach(async () => { vi.useRealTimers(); await account.reset(); vi.restoreAllMocks(); });
 
+    it('keeps the root passive while closed, releases installing polling on close, and refreshes on reopen', async () => {
+        const { RealtimeProvider } = await import('@/realtime/RealtimeProvider');
+        const voice = settingsParse({ voice: { providerId: 'local_conversation',
+            executionMachine: { mode: 'fixed', machineId: 'machine-a' },
+            providers: { local_conversation: { schemaVersion: 1, config: {
+                stt: { provider: 'local_neural', localNeural: { execution: 'daemon', assetId: STT_PACK } },
+            } } },
+        } }).voice;
+        storage.setState({ settings: { ...storage.getState().settings, voice } });
+        catalogReply([status(STT_PACK, { installState: 'installing' })]);
+        const content = (open: boolean) => <AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+            <RealtimeProvider>{open ? <TestHarness refreshKey="machine-a" /> : null}</RealtimeProvider>
+        </AuthProvider>;
+        const screen = await renderScreen(content(false));
+        await settle();
+        expect(requests).toHaveLength(0);
+        vi.useFakeTimers();
+        await screen.update(content(true));
+        await settle();
+        expect(state(screen.tree).installState).toBe('installing');
+        const openedReads = requests.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        await settle();
+        expect(requests.length).toBeGreaterThan(openedReads);
+        await screen.update(content(false));
+        const closedReads = requests.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(requests).toHaveLength(closedReads);
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({
+            machineId: 'machine-a', serverId: storage.getState().settingsScope!.serverId,
+        }, 'authority'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(requests).toHaveLength(closedReads);
+        vi.useRealTimers();
+        catalogReply([status(STT_PACK, { installState: 'installed', runtimeState: 'ready' })]);
+        await screen.update(content(true));
+        await settle();
+        expect(state(screen.tree)).toMatchObject({ installState: 'installed', loading: false });
+        expect(listingRequests().length).toBeGreaterThan(0);
+        await screen.unmount();
+    });
+
     it.each(['local_direct', 'local_conversation'])(
         'keeps Conversations, Dictation and Advanced on the same model-status input through %s failure and recovery', async (providerId) => {
         const ttsPack = listModelPackCatalogEntries('tts_sherpa')[0]!.packId;

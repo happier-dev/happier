@@ -8,12 +8,12 @@ import { useVoiceConversationsReadinessModel } from '@/voice/settings/panels/Voi
 const retainVoiceSettings = () => {};
 export type ReadAloudReadiness = Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction'>;
 
-/** A revealed assistant action observes the same selected Speak role as Voice setup, without probing. */
+/** A revealed assistant action acquires the same selected Speak role as Voice setup. */
 export function ReadAloudReadinessSubscription(props: Readonly<{
     onChange: (readiness: ReadAloudReadiness | null) => void;
 }>) {
     const voice = useSetting('voice');
-    const inputs = useVoiceSettingsReadinessInputs(voice, { purpose: 'conversation', probeMachine: false });
+    const inputs = useVoiceSettingsReadinessInputs(voice, { purpose: 'conversation', probeMachine: true });
     const model = useVoiceConversationsReadinessModel({
         voice, setVoice: retainVoiceSettings, rowScope: 'selected',
         happierVoiceSupported: inputs.happierVoiceSupported,
