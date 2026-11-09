@@ -42,7 +42,7 @@ describe('Happier SDK client lifecycle', () => {
       organizationPlacement: { folderId: 'intake', tagIds: ['mail'] },
     });
     const producedRequest = projectSessionSpawnNewApiRequest(projectSessionSpawnNewActionInputV2(canonicalInput));
-    const admittedProcesses: Array<Parameters<ActionExecutorDeps['sessionSpawnNew']>[0]> = [];
+    const admittedProcesses: Array<Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0]> = [];
     // Only the execution machine's process-start boundary is substituted. SDK
     // generation, surface binding, strict input/output and executor remain real.
     const processBoundary: Pick<ActionExecutorDeps, 'sessionSpawnNew'> = {
