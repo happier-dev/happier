@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 func TestPinnedSDKRequestAuthRefusalKeepsTypedStatusWithoutUpstreamOrReplay(t *testing.T) {
@@ -32,11 +32,11 @@ func TestPinnedSDKRequestAuthRefusalKeepsTypedStatusWithoutUpstreamOrReplay(t *t
 		path, body, vectorName, brokerCode string
 		brokerStatus                       int
 	}{
-		{"codex", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`, "unavailable", "broker_unavailable", 503},
-		{"codex-stream", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-5.5","input":"hello","stream":true}`, "unavailable", "broker_unavailable", 503},
+		{"codex", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`, "unavailable", "broker_unavailable", 503},
+		{"codex-stream", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello","stream":true}`, "unavailable", "broker_unavailable", 503},
 		{"claude", ProviderClaude, ProtocolAnthropic, "/v1/messages", `{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`, "unavailable", "broker_unavailable", 503},
-		{"retired", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`, "not-active", "source_unavailable", 403},
-		{"invalid-daemon-response", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`, "unknown-error-code", "broker_unavailable", 503},
+		{"retired", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`, "not-active", "source_unavailable", 403},
+		{"invalid-daemon-response", ProviderCodex, ProtocolOpenAIResponses, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`, "unknown-error-code", "broker_unavailable", 503},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			var vector *requestAuthHTTPVector
@@ -144,7 +144,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	}
 	catalog := gateway.Catalog()
 	assertGeneratedCatalogMatchesRegisteredSDK(t, catalog)
-	if !catalogContains(catalog, ProviderCodex, "gpt-5.5") {
+	if !catalogContains(catalog, ProviderCodex, "gpt-6.1-sol") {
 		t.Fatal("credential-free catalog omitted pinned Codex compatibility model")
 	}
 	if !catalogContains(catalog, ProviderClaude, "claude-sonnet-4-6") {
@@ -164,7 +164,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 		t.Fatalf("HTTP model catalog performed %d credential lookups, want credential-free static SDK source", got)
 	}
 
-	codexResponse := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+	codexResponse := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`)
 	if codexResponse.StatusCode != http.StatusOK {
 		t.Fatalf("Codex downstream status = %d, body=%s", codexResponse.StatusCode, readResponse(t, codexResponse))
 	}
@@ -180,7 +180,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	// the wrapper accepts a chat-completions request, shapes it onto the Codex Responses
 	// upstream, and answers in chat-completions form. Without this leg the harness proves
 	// the contract only for the Responses and Anthropic surfaces.
-	chatResponse := postJSON(t, cfg, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`)
+	chatResponse := postJSON(t, cfg, "/v1/chat/completions", `{"model":"gpt-6.1-sol","messages":[{"role":"user","content":"hello"}]}`)
 	if chatResponse.StatusCode != http.StatusOK {
 		t.Fatalf("OpenAI Chat downstream status = %d, body=%s", chatResponse.StatusCode, readResponse(t, chatResponse))
 	}
@@ -231,6 +231,8 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	}
 
 	assertStrictSurface(t, cfg, http.MethodGet, "/v0/management/config")
+	assertStrictSurface(t, cfg, http.MethodGet, "/v8/management/config")
+	assertStrictSurface(t, cfg, http.MethodGet, "/v8/management/oauth/auth-url?provider=claude")
 	assertStrictSurface(t, cfg, http.MethodGet, "/management.html")
 	assertStrictSurface(t, cfg, http.MethodGet, "/codex/callback")
 	assertStrictSurface(t, cfg, http.MethodGet, "/")
@@ -241,7 +243,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 // A family-looking name is not a registered model. Characterize the actual
 // pinned public SDK route before exposing a newer model in source catalogs.
 func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
-	for _, model := range []string{"gpt-6-luna", "gpt-6.1-sol"} {
+	for _, model := range []string{"gpt-5.5", "unregistered-codex-model"} {
 		t.Run(model, func(t *testing.T) {
 			cfg := Config{
 				Host: "127.0.0.1", Port: reserveLoopbackPort(t), RuntimeDir: t.TempDir(),
@@ -264,7 +266,7 @@ func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
 			response := postJSON(t, cfg, "/v1/responses", fmt.Sprintf(`{"model":%q,"input":"hello"}`, model))
 			body := readResponse(t, response)
 			t.Logf("model=%s status=%d body=%s upstream_requests=%d credential_lookups=%d", model, response.StatusCode, body, len(upstream.requests()), len(broker.purposes()))
-			if response.StatusCode != http.StatusBadGateway {
+			if response.StatusCode != http.StatusBadRequest {
 				t.Fatalf("unregistered model accepted: status=%d body=%s", response.StatusCode, body)
 			}
 			var failure struct {
@@ -273,7 +275,7 @@ func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
 					Code string `json:"code"`
 				} `json:"error"`
 			}
-			if err := json.Unmarshal([]byte(body), &failure); err != nil || failure.Error.Type != "server_error" || failure.Error.Code != "internal_server_error" {
+			if err := json.Unmarshal([]byte(body), &failure); err != nil || failure.Error.Type != "invalid_request_error" || failure.Error.Code != "model_not_found" {
 				t.Fatalf("unexpected SDK refusal: %s", body)
 			}
 			if len(upstream.requests()) != 0 || len(broker.purposes()) != 0 {
@@ -281,7 +283,7 @@ func TestPinnedSDKUnregisteredCodexModelsDoNotReachUpstream(t *testing.T) {
 			}
 			// The same gateway and controlled boundary accept a registered model;
 			// a broken route or unavailable fixture cannot satisfy this check.
-			known := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+			known := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`)
 			knownBody := readResponse(t, known)
 			if known.StatusCode != http.StatusOK || len(upstream.requests()) != 1 || len(broker.purposes()) != 1 {
 				t.Fatalf("registered model failed: status=%d body=%s upstream_requests=%d credential_lookups=%d", known.StatusCode, knownBody, len(upstream.requests()), len(broker.purposes()))
@@ -345,7 +347,7 @@ func TestPinnedSDKSparseBindingsSeparateServingProtocolFromUpstreamAuthority(t *
 			}
 			unboundModel := "claude-sonnet-4-6"
 			if testCase.provider == ProviderClaude {
-				unboundModel = "gpt-5.5"
+				unboundModel = "gpt-6.1-sol"
 			}
 			for _, model := range gateway.Catalog() {
 				if model.Provider != testCase.provider || model.ID == unboundModel {
@@ -387,7 +389,7 @@ func TestPinnedSDKClaudeExecutorKeepsRequestShapingOutsideRequestTimeCredentialO
 	}{
 		{
 			name:         "OAuth sentinel",
-			wantToolName: "Bash",
+			wantToolName: "bash",
 		},
 		{
 			name:              "neutral bearer sentinel",
@@ -473,10 +475,10 @@ func TestPinnedSDKClaudeExecutorKeepsRequestShapingOutsideRequestTimeCredentialO
 			if got := requests[0].Header.Get("X-Claude-Code-Session-Id"); got != "" {
 				t.Fatalf("Claude credential-derived session identity survived final transport = %q", got)
 			}
-			if got := requests[0].Header.Get("X-App"); got != "cli" {
+			if got := wireHeaderValue(requests[0].Header, "X-App"); (got == "cli") != (testCase.registrationToken == "") {
 				t.Fatalf("Claude upstream X-App = %q, want pinned executor identity header", got)
 			}
-			if got := requests[0].Header.Get("Anthropic-Beta"); !strings.Contains(got, "claude-code-20250219") {
+			if got := wireHeaderValue(requests[0].Header, "Anthropic-Beta"); strings.Contains(got, "claude-code-20250219") != (testCase.registrationToken == "") {
 				t.Fatalf("Claude upstream Anthropic-Beta = %q, want pinned executor Claude Code identity beta", got)
 			}
 			assertNoRuntimeStateFiles(t, cfg.RuntimeDir)
@@ -513,7 +515,7 @@ func TestPinnedSDKClaudeStreamingAndCountTokensUseFinalLeaseAfterExecutorShaping
 			leaseToken:             "claude-stream-current",
 			leaseAppHeader:         "current-stream-app",
 			wantUpstreamPath:       "/v1/messages",
-			wantUpstreamAccept:     "text/event-stream",
+			wantUpstreamAccept:     "application/json",
 			wantStream:             true,
 			wantDownstreamFragment: `"type":"message_stop"`,
 		},
@@ -601,7 +603,7 @@ func TestPinnedSDKClaudeStreamingAndCountTokensUseFinalLeaseAfterExecutorShaping
 			if got := request.Header.Get("X-Claude-Code-Session-Id"); got != "" {
 				t.Fatalf("registration-time Claude session identity survived final transport = %q", got)
 			}
-			if got := request.Header.Get("Anthropic-Beta"); !strings.Contains(got, "claude-code-20250219") {
+			if got := wireHeaderValue(request.Header, "Anthropic-Beta"); !strings.Contains(got, "claude-code-20250219") {
 				t.Fatalf("Anthropic-Beta = %q, want pinned Claude executor shaping", got)
 			}
 			if got := request.Header.Get("Accept"); got != testCase.wantUpstreamAccept {
@@ -621,8 +623,8 @@ func TestPinnedSDKClaudeStreamingAndCountTokensUseFinalLeaseAfterExecutorShaping
 			if upstreamBody.Stream != testCase.wantStream {
 				t.Fatalf("upstream stream = %v, want %v", upstreamBody.Stream, testCase.wantStream)
 			}
-			if len(upstreamBody.Tools) != 1 || upstreamBody.Tools[0].Name != "Bash" {
-				t.Fatalf("upstream tools = %#v, want OAuth-shaped Bash tool", upstreamBody.Tools)
+			if len(upstreamBody.Tools) != 1 || upstreamBody.Tools[0].Name != "bash" {
+				t.Fatalf("upstream tools = %#v, want preserved caller tool name", upstreamBody.Tools)
 			}
 			if testCase.wantStream && upstreamBody.Tools[0].CacheControl["type"] != "ephemeral" {
 				t.Fatalf("streaming tool cache_control = %#v, want pinned executor injection", upstreamBody.Tools[0].CacheControl)
@@ -667,7 +669,7 @@ func TestPinnedSDKDoesNotReplayOrCoolDownManagedEntry(t *testing.T) {
 
 	wantStatuses := []int{http.StatusTooManyRequests, http.StatusForbidden, http.StatusOK}
 	for i, want := range wantStatuses {
-		response := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`)
+		response := postJSON(t, cfg, "/v1/responses", `{"model":"gpt-6.1-sol","input":"hello"}`)
 		if response.StatusCode != want {
 			t.Fatalf("request %d downstream status = %d, want %d; body=%s", i+1, response.StatusCode, want, readResponse(t, response))
 		}
@@ -698,7 +700,7 @@ func TestPinnedSDKComposesOneLeafCurrentnessRetryWithoutManagerOrBootstrapReplay
 	}{
 		{
 			name:             "current material change succeeds on one leaf retry",
-			body:             `{"model":"gpt-5.5","input":"hello"}`,
+			body:             `{"model":"gpt-6.1-sol","input":"hello"}`,
 			upstreamStatuses: []int{http.StatusUnauthorized, http.StatusOK, http.StatusOK},
 			wantStatus:       http.StatusOK,
 			wantEffects:      2,
@@ -706,7 +708,7 @@ func TestPinnedSDKComposesOneLeafCurrentnessRetryWithoutManagerOrBootstrapReplay
 		},
 		{
 			name:             "repeated unauthorized response stops after two total effects",
-			body:             `{"model":"gpt-5.5","input":"hello"}`,
+			body:             `{"model":"gpt-6.1-sol","input":"hello"}`,
 			upstreamStatuses: []int{http.StatusUnauthorized, http.StatusUnauthorized, http.StatusOK},
 			wantStatus:       http.StatusUnauthorized,
 			wantEffects:      2,
@@ -714,10 +716,10 @@ func TestPinnedSDKComposesOneLeafCurrentnessRetryWithoutManagerOrBootstrapReplay
 		},
 		{
 			name:               "pre-payload streaming failure has no hidden bootstrap replay",
-			body:               `{"model":"gpt-5.5","stream":true,"input":"hello"}`,
+			body:               `{"model":"gpt-6.1-sol","stream":true,"input":"hello"}`,
 			upstreamStatuses:   []int{http.StatusOK, http.StatusOK},
 			upstreamBodyErrors: []error{io.ErrUnexpectedEOF, nil},
-			wantStatus:         http.StatusRequestTimeout,
+			wantStatus:         http.StatusInternalServerError,
 			wantEffects:        1,
 			wantReports:        0,
 		},
@@ -883,7 +885,7 @@ func TestPinnedSDKKeepsDownstreamBearerSeparateFromBrokerCapabilityAndOtherSessi
 			t,
 			cfg,
 			"/v1/responses",
-			`{"model":"gpt-5.5","input":"must stay session scoped"}`,
+			`{"model":"gpt-6.1-sol","input":"must stay session scoped"}`,
 			unauthorized,
 		)
 		if response.StatusCode < http.StatusBadRequest {
@@ -902,7 +904,7 @@ func TestPinnedSDKKeepsDownstreamBearerSeparateFromBrokerCapabilityAndOtherSessi
 		t,
 		cfg,
 		"/v1/responses",
-		`{"model":"gpt-5.5","input":"authorized session request"}`,
+		`{"model":"gpt-6.1-sol","input":"authorized session request"}`,
 	)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("authorized downstream status = %d, body=%s", response.StatusCode, readResponse(t, response))
@@ -959,7 +961,7 @@ func TestPinnedSDKWrapperIngressAcceptsOnlyExactSingleBearerBeforeSDKAuth(t *tes
 		request, errRequest := http.NewRequest(
 			http.MethodPost,
 			fmt.Sprintf("http://%s:%d%s", cfg.Host, cfg.Port, path),
-			strings.NewReader(`{"model":"gpt-5.5","input":"must remain at wrapper ingress"}`),
+			strings.NewReader(`{"model":"gpt-6.1-sol","input":"must remain at wrapper ingress"}`),
 		)
 		if errRequest != nil {
 			t.Fatalf("create downstream request: %v", errRequest)
@@ -1119,7 +1121,7 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 	consumerConfig := cfg
 	consumerConfig.DownstreamBearer = testCapability(91)
 	streamResponse := postJSON(t, consumerConfig, "/v1/responses", `{
-		"model":"gpt-5.5",
+		"model":"gpt-6.1-sol",
 		"stream":true,
 		"input":"use the tool",
 		"tools":[{
@@ -1154,7 +1156,7 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 		t.Fatal(err)
 	}
 	if err := connection.WriteMessage(websocket.TextMessage, []byte(
-		`{"type":"response.create","model":"gpt-5.5","input":[{"type":"message","role":"user","content":"hello"}]}`,
+		`{"type":"response.create","model":"gpt-6.1-sol","input":[{"type":"message","role":"user","content":"hello"}]}`,
 	)); err != nil {
 		t.Fatalf("write downstream websocket: %v", err)
 	}
@@ -1215,7 +1217,7 @@ func TestPinnedSDKPropagatesDownstreamCancellationToFinalTransport(t *testing.T)
 		requestContext,
 		http.MethodPost,
 		fmt.Sprintf("http://%s:%d/v1/responses", cfg.Host, cfg.Port),
-		strings.NewReader(`{"model":"gpt-5.5","input":"cancel me"}`),
+		strings.NewReader(`{"model":"gpt-6.1-sol","input":"cancel me"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1648,7 +1650,7 @@ func (f *protocolFixtureRoundTripper) RoundTrip(request *http.Request) (*http.Re
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader(
-			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.5\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-6.1-sol\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
 		)),
 		Request: request,
 	}, nil
@@ -1658,4 +1660,15 @@ func (f *protocolFixtureRoundTripper) requests() []*http.Request {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]*http.Request(nil), f.seen...)
+}
+
+// HTTP field names are case insensitive; v8 deliberately emits lower-case
+// Claude fingerprint keys before the network transport serializes them.
+func wireHeaderValue(header http.Header, name string) string {
+	for key, values := range header {
+		if strings.EqualFold(key, name) {
+			return strings.Join(values, ",")
+		}
+	}
+	return ""
 }

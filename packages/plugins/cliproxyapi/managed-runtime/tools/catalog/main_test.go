@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -37,7 +41,12 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.SplitN(modelJSON, " satisfies ", 2)[0]), &rows); err != nil {
 		t.Fatal(err)
 	}
-	images := map[string]bool{"gpt-image-1.5": false, "gpt-image-2": false}
+	images := map[string]bool{
+		"gpt-image-1.5": false, "gpt-image-2": false,
+		"gpt-image-2.5": false, "gpt-image-2.5-flare": false, "gpt-image-2.5-sunburst": false,
+		"gpt-image-2.6": false, "gpt-image-2.6-flare": false, "gpt-image-2.6-sunburst": false,
+	}
+	foundEffortModel := false
 	for _, row := range rows["codex"] {
 		if _, image := images[row.ID]; image {
 			images[row.ID] = true
@@ -47,9 +56,10 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 		} else if row.Capabilities["toolRoundTrips"] != "unknown" {
 			t.Errorf("chat model %s must retain unknown tool support", row.ID)
 		}
-		if row.ID != "gpt-5.5" {
+		if row.ID != "gpt-6.1-sol" {
 			continue
 		}
+		foundEffortModel = true
 		var levels []string
 		for _, option := range row.ModelOptions {
 			if option.ID == "reasoning_effort" {
@@ -58,15 +68,48 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 				}
 			}
 		}
-		if !reflect.DeepEqual(levels, []string{"low", "medium", "high", "xhigh"}) {
-			t.Fatalf("generated gpt-5.5 effort choices = %v, want exact pinned SDK levels", levels)
+		if !reflect.DeepEqual(levels, []string{"low", "medium", "high", "xhigh", "max"}) {
+			t.Fatalf("generated gpt-6.1-sol effort choices = %v, want exact pinned SDK levels", levels)
 		}
+	}
+	if !foundEffortModel {
+		t.Error("missing pinned gpt-6.1-sol effort model")
 	}
 	for id, found := range images {
 		if !found {
 			t.Errorf("missing pinned image model %s", id)
 		}
 	}
+	t.Run("Go health SDK identity follows the selected module", func(t *testing.T) {
+		file, err := parser.ParseFile(token.NewFileSet(), "../../sdk_version.generated.go", nil, 0)
+		if err != nil {
+			t.Fatalf("generated SDK version is missing or invalid: %v; run go -C managed-runtime run ./tools/catalog from the plugin root", err)
+		}
+		for _, declaration := range file.Decls {
+			constants, ok := declaration.(*ast.GenDecl)
+			if !ok || constants.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range constants.Specs {
+				entry := spec.(*ast.ValueSpec)
+				for index, name := range entry.Names {
+					if name.Name != "pinnedSDKVersion" {
+						continue
+					}
+					literal, ok := entry.Values[index].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						t.Fatal("generated pinnedSDKVersion must be a string literal")
+					}
+					version, err := strconv.Unquote(literal.Value)
+					if err != nil || version != module.Version {
+						t.Fatalf("health SDK version = %q, selected module = %q; regenerate the catalog", version, module.Version)
+					}
+					return
+				}
+			}
+		}
+		t.Fatal("generated health SDK version is missing pinnedSDKVersion")
+	})
 	got, err := os.ReadFile("../../../src/provider/staticModels.generated.ts")
 	if err != nil {
 		t.Fatal(err)

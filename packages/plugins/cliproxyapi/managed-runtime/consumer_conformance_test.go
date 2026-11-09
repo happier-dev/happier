@@ -90,9 +90,9 @@ func TestPinnedSDKSharedConsumersUseExactSubjectAndRejectUnboundOrRevokedAuthori
 	consumerConfig := cfg
 	for index, consumer := range []map[string]any{one, two} {
 		consumerConfig.DownstreamBearer = consumer["token"].(string)
-		payload := `{"model":"gpt-5.5","input":"hello"}`
+		payload := `{"model":"gpt-6.1-sol","input":"hello"}`
 		if index == 0 {
-			payload = `{"model":"gpt-5.5","input":"hello","stream":true,"tools":[{"type":"function","name":"fixture_tool","parameters":{"type":"object","properties":{}}}]}`
+			payload = `{"model":"gpt-6.1-sol","input":"hello","stream":true,"tools":[{"type":"function","name":"fixture_tool","parameters":{"type":"object","properties":{}}}]}`
 		}
 		response := postJSON(t, consumerConfig, "/v1/responses", payload)
 		body := readResponse(t, response)
@@ -119,7 +119,7 @@ func TestPinnedSDKSharedConsumersUseExactSubjectAndRejectUnboundOrRevokedAuthori
 	}
 	consumerConfig.DownstreamBearer = all["token"].(string)
 	mixedModels := getStrictOpenAIModelCatalog(t, consumerConfig)
-	for _, expected := range []struct{ id, purpose string }{{"gpt-5.5", "openai-upstream"}, {"claude-sonnet-4-6", "anthropic-upstream"}} {
+	for _, expected := range []struct{ id, purpose string }{{"gpt-6.1-sol", "openai-upstream"}, {"claude-sonnet-4-6", "anthropic-upstream"}} {
 		found := false
 		for _, model := range mixedModels {
 			var id string
@@ -162,7 +162,7 @@ func TestPinnedSDKSharedConsumersUseExactSubjectAndRejectUnboundOrRevokedAuthori
 		if path == "/v1/models" {
 			method = http.MethodGet
 		}
-		request, _ := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", cfg.Port, path), strings.NewReader(`{"model":"gpt-5.5","input":"physical key"}`))
+		request, _ := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", cfg.Port, path), strings.NewReader(`{"model":"gpt-6.1-sol","input":"physical key"}`))
 		request.Header.Set("Authorization", "Bearer "+cfg.DownstreamBearer)
 		response, err := http.DefaultClient.Do(request)
 		if err != nil {
@@ -177,14 +177,14 @@ func TestPinnedSDKSharedConsumersUseExactSubjectAndRejectUnboundOrRevokedAuthori
 	foreign.Consumer.PluginID = "foreign.provider.gateway"
 	writeConsumerAccess(t, accessPath, map[string]any{"token": one["token"], "capabilityPath": onePath, "purposes": []QualifiedPurpose{foreign}})
 	consumerConfig.DownstreamBearer = one["token"].(string)
-	response := postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-5.5","input":"wrong qualified consumer"}`)
+	response := postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-6.1-sol","input":"wrong qualified consumer"}`)
 	_ = response.Body.Close()
 	if response.StatusCode < 400 {
 		t.Fatalf("unqualified purpose name granted access: %d", response.StatusCode)
 	}
 	for _, consumers := range [][]map[string]any{{one, one}, {map[string]any{"token": one["token"], "capabilityPath": onePath, "purposes": []QualifiedPurpose{testPurpose("openai-upstream")}, "sessionId": "unadmitted"}}} {
 		writeConsumerAccess(t, accessPath, consumers...)
-		response := postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-5.5","input":"invalid access document"}`)
+		response := postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-6.1-sol","input":"invalid access document"}`)
 		_ = response.Body.Close()
 		if response.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("invalid access document admitted: %d", response.StatusCode)
@@ -192,7 +192,7 @@ func TestPinnedSDKSharedConsumersUseExactSubjectAndRejectUnboundOrRevokedAuthori
 	}
 	writeConsumerAccess(t, accessPath, two)
 	consumerConfig.DownstreamBearer = one["token"].(string)
-	response = postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-5.5","input":"revoked"}`)
+	response = postJSON(t, consumerConfig, "/v1/responses", `{"model":"gpt-6.1-sol","input":"revoked"}`)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked token = %d", response.StatusCode)
@@ -244,7 +244,7 @@ func TestPinnedSDKSharedConsumerSettlementCancelsOnlyReleasedConsumerAndJoinsInf
 	_ = awaitManagedHealthIdentity(t, cfg)
 	ctx, cancelRequest := context.WithCancel(context.Background())
 	defer cancelRequest()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/v1/responses", cfg.Port), strings.NewReader(`{"model":"gpt-5.5","input":"first"}`))
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/v1/responses", cfg.Port), strings.NewReader(`{"model":"gpt-6.1-sol","input":"first"}`))
 	request.Header.Set("Authorization", "Bearer "+testCapability(71))
 	request.Header.Set("Content-Type", "application/json")
 	settled := make(chan error, 1)
@@ -263,7 +263,7 @@ func TestPinnedSDKSharedConsumerSettlementCancelsOnlyReleasedConsumerAndJoinsInf
 	}
 	other := cfg
 	other.DownstreamBearer = testCapability(72)
-	response := postJSON(t, other, "/v1/responses", `{"model":"gpt-5.5","input":"second"}`)
+	response := postJSON(t, other, "/v1/responses", `{"model":"gpt-6.1-sol","input":"second"}`)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("second consumer failed: %d %s", response.StatusCode, readResponse(t, response))
 	}
@@ -303,7 +303,7 @@ func TestPinnedSDKSharedConsumerSettlementCancelsOnlyReleasedConsumerAndJoinsInf
 		t.Fatalf("consumer reported settlement before its request finished: %d", status)
 	case <-time.After(50 * time.Millisecond):
 	}
-	response = postJSON(t, other, "/v1/responses", `{"model":"gpt-5.5","input":"still active while first settles"}`)
+	response = postJSON(t, other, "/v1/responses", `{"model":"gpt-6.1-sol","input":"still active while first settles"}`)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("pending settlement canceled another consumer: %d", response.StatusCode)
 	}
@@ -362,7 +362,7 @@ func TestPinnedSDKSharedConsumerRevocationDuringBorrowPreventsUpstreamEffect(t *
 	cancelGateway, result := runGateway(t, gateway)
 	defer stopGateway(t, cancelGateway, result)
 	_ = awaitManagedHealthIdentity(t, cfg)
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/v1/responses", cfg.Port), strings.NewReader(`{"model":"gpt-5.5","input":"pending borrow"}`))
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/v1/responses", cfg.Port), strings.NewReader(`{"model":"gpt-6.1-sol","input":"pending borrow"}`))
 	request.Header.Set("Authorization", "Bearer "+testCapability(82))
 	request.Header.Set("Content-Type", "application/json")
 	settled := make(chan *http.Response, 1)

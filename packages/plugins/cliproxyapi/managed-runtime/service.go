@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	sdkapi "github.com/router-for-me/CLIProxyAPI/v7/sdk/api"
-	cliproxy "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	sdkapi "github.com/router-for-me/CLIProxyAPI/v8/sdk/api"
+	cliproxy "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 type CatalogModel struct {
@@ -28,6 +28,7 @@ type Gateway struct {
 	config      Config
 	service     *cliproxy.Service
 	coreManager *coreauth.Manager
+	consumers   *consumerAccessOwner
 	runMu       sync.Mutex
 	running     bool
 }
@@ -59,9 +60,6 @@ func newGateway(
 	mutateAuth func(*coreauth.Auth),
 ) (*Gateway, error) {
 	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-	if err := runtimeIdentity.validate(); err != nil {
 		return nil, err
 	}
 	routes, err := servingRoutesForProtocols(
@@ -107,8 +105,10 @@ func newGateway(
 
 	upstreamConfig := managedSDKConfig(config)
 	downstreamAuth := StrictDownstreamBearerMiddleware(config.DownstreamBearer)
+	var consumers *consumerAccessOwner
 	if config.ConsumerAccessPath != "" {
-		downstreamAuth = newConsumerAccessOwner(config).middleware()
+		consumers = newConsumerAccessOwner(config, manager)
+		downstreamAuth = consumers.middleware()
 	}
 	middleware := []gin.HandlerFunc{
 		StrictServingMiddleware(routes),
@@ -149,6 +149,7 @@ func newGateway(
 		config:      config,
 		service:     service,
 		coreManager: manager,
+		consumers:   consumers,
 	}, nil
 }
 
@@ -176,6 +177,11 @@ func (g *Gateway) Run(ctx context.Context) error {
 	g.running = true
 	g.runMu.Unlock()
 	defer func() {
+		if g.consumers != nil {
+			g.consumers.mu.Lock()
+			g.consumers.models.close()
+			g.consumers.mu.Unlock()
+		}
 		for _, entry := range g.config.AuthEntries {
 			cliproxy.GlobalModelRegistry().UnregisterClient(entry.ID)
 		}
@@ -239,9 +245,11 @@ func managedSDKConfig(config Config) *sdkconfig.Config {
 			DisableAutoUpdatePanel: true,
 		},
 	}
+	// The daemon owns persistent identity and credentials; the SDK is an in-memory executor.
+	cfg.KVStore.Disabled = true
 	cfg.Routing.Strategy = "round-robin"
 	cfg.Routing.SessionAffinity = false
-	cfg.Codex.IdentityConfuse = false
+	cfg.Codex.DisableCodexCloaking = true
 	return cfg
 }
 
@@ -261,20 +269,30 @@ func managedRuntimeAuth(entry AuthEntry) *coreauth.Auth {
 		// rows remain explicitly account-unverified and do not claim entitlement.
 		attributes["plan_type"] = "pro"
 	}
+	metadata := map[string]any{
+		// A rejected lease must not poison the unrelated registration sentinel.
+		// The broker owns refresh and the next request borrows the current lease.
+		"request_scoped_errors": []any{map[string]any{
+			"status": http.StatusUnauthorized, "match-regexr": []string{"(?s).*"},
+			"action": coreauth.RequestScopedActionStop,
+		}},
+	}
 	registrationSentinel := "happier-registration-sentinel"
 	if entry.Provider == ProviderClaude {
 		// Keep the pinned executor on its subscription/OAuth translation path.
 		registrationSentinel = "sk-ant-oat01-happier-registration-sentinel"
+		// Leases carry the real credential only at the final transport boundary.
+		// Use the SDK's explicit opt-out from credential profile acquisition.
+		metadata["skip_account_profile"] = true
 	}
+	metadata["access_token"] = registrationSentinel
 	return &coreauth.Auth{
 		ID:         entry.ID,
 		Provider:   string(entry.Provider),
 		Status:     coreauth.StatusActive,
 		Attributes: attributes,
-		Metadata: map[string]any{
-			"access_token": registrationSentinel,
-		},
-		Runtime: neverRefreshRuntime{},
+		Metadata:   metadata,
+		Runtime:    neverRefreshRuntime{},
 	}
 }
 

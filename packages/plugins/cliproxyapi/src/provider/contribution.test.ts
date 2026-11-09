@@ -2,11 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
-import {
-  projectCLIProxyAPIProviderConnectionApplication,
-  resolveCLIProxyAPIManagedBrokerApplication,
-  resolveCLIProxyAPIManagedPurposeFamily,
-} from './managedContract.js';
 
 describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   it('publishes credential-free SDK compatibility models for each managed service without claiming tool support', () => {
@@ -15,22 +10,33 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
     expect(families).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'openai-upstream',
-        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.5', name: 'gpt-5.5' })]),
+        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.1-sol', name: 'gpt-6.1-sol' })]),
       }),
       expect.objectContaining({
         purpose: 'anthropic-upstream',
-        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'claude-sonnet-4-6', name: 'claude-sonnet-4-6' })]),
+        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'claude-sonnet-5-5', name: 'claude-sonnet-5-5' })]),
       }),
     ]));
     expect(families.find((family) => family.purpose === 'openai-upstream')?.staticModels)
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'claude-sonnet-4-6' })]));
     expect(families.find((family) => family.purpose === 'anthropic-upstream')?.staticModels)
-      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.5' })]));
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.1-sol' })]));
+    const codexModels = families.find((family) => family.purpose === 'openai-upstream')?.staticModels ?? [];
+    for (const retiredId of ['gpt-5.3-codex-spark', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5']) {
+      expect(codexModels.some((model) => model.id === retiredId)).toBe(false);
+    }
+    const imageModelIds = [
+      'gpt-image-1.5', 'gpt-image-2',
+      'gpt-image-2.5', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst',
+      'gpt-image-2.6', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst',
+    ];
+    expect(codexModels.filter((model) => model.capabilities?.toolRoundTrips === 'unsupported')
+      .map((model) => model.id).sort()).toEqual(imageModelIds);
     for (const family of families) {
       expect(new Set(family.staticModels?.map((model) => model.id)).size).toBe(family.staticModels?.length);
       for (const model of family.staticModels ?? []) {
         expect(model.capabilities).toEqual({
-          toolRoundTrips: ['gpt-image-1.5', 'gpt-image-2'].includes(model.id) ? 'unsupported' : 'unknown',
+          toolRoundTrips: imageModelIds.includes(model.id) ? 'unsupported' : 'unknown',
           reasoningControls: 'unknown',
         });
         expect(model).not.toHaveProperty('accountEntitlementVerified');
@@ -49,7 +55,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
     const values = (models: typeof codexModels, id: string) => models.find((model) => model.id === id)
       ?.modelOptions?.find((option) => option.id === 'reasoning_effort')?.options?.map((option) => option.value);
 
-    expect(values(codexModels, 'gpt-5.5')).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(values(codexModels, 'codex-auto-review')).toEqual(['low', 'medium', 'high', 'xhigh']);
     expect(values(codexModels, 'gpt-5.6-sol')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(values(claudeModels, 'claude-sonnet-4-6')).toEqual(['low', 'medium', 'high', 'max']);
     expect(values(claudeModels, 'claude-opus-4-7')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -64,63 +70,6 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
     }
   });
 
-  it('owns source-qualified upstream purposes independently of the exact downstream endpoint/protocol', () => {
-    expect(resolveCLIProxyAPIManagedPurposeFamily({
-      endpointTemplateId: 'cliproxyapi-openai-responses',
-      protocol: 'openai-responses',
-      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-    })?.purpose).toBe('openai-upstream');
-    expect(resolveCLIProxyAPIManagedPurposeFamily({
-      endpointTemplateId: 'cliproxyapi-anthropic',
-      protocol: 'anthropic',
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-    })?.purpose).toBe('anthropic-upstream');
-    expect(resolveCLIProxyAPIManagedPurposeFamily({
-      endpointTemplateId: 'cliproxyapi-anthropic',
-      protocol: 'openai-responses',
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-    })).toBeNull();
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-      protocol: 'anthropic',
-    })?.endpointTemplateId).toBe('cliproxyapi-anthropic');
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-      protocol: 'openai-responses',
-    })?.endpointTemplateId).toBe('cliproxyapi-openai-responses');
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-      protocol: 'openai-chat',
-    })?.endpointTemplateId).toBe('cliproxyapi-openai-chat');
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'foreign', localId: 'openai-codex' },
-      protocol: 'anthropic',
-    })).toBeNull();
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-      protocol: 'unsupported',
-    })).toBeNull();
-    expect(resolveCLIProxyAPIManagedBrokerApplication({
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-      protocol: 'anthropic',
-    })?.endpointTemplateId).toBe('cliproxyapi-anthropic');
-  });
-
-  it('projects Provider Connection traffic onto the same managed executable without changing its Agent target', () => {
-    expect(projectCLIProxyAPIProviderConnectionApplication({
-      agentTargetKey: 'agent:example/custom',
-      protocol: 'openai-chat',
-    })).toEqual({
-      agentTargetKey: 'agent:example/custom',
-      implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      endpointTemplateId: 'cliproxyapi-openai-chat',
-      protocol: 'openai-chat',
-    });
-    expect(projectCLIProxyAPIProviderConnectionApplication({
-      agentTargetKey: 'agent:example/custom',
-      protocol: 'unsupported',
-    })).toBeNull();
-  });
   it('declares one discovery-backed aggregator for adopted local and explicit remote connections', () => {
     const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
 
@@ -200,7 +149,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
-        sourceRegistryVersion: 'v7.2.95:reasoning-image-capabilities-v2',
+        sourceRegistryVersion: 'v8.0.61:reasoning-image-capabilities-v2',
         probes: [{
           endpointTemplateId: 'cliproxyapi-openai-responses',
           path: '/v1/models',

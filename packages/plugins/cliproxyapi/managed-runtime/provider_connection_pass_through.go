@@ -18,15 +18,17 @@ import (
 )
 
 const (
-	ProviderConnectionCredentialHeader = "X-Happier-Provider-Source-Credential"
-	ProviderConnectionDescriptorHeader = "X-Happier-Provider-Source"
+	ProviderConnectionCredentialHeader            = "X-Happier-Provider-Source-Credential"
+	ProviderConnectionAdditionalCredentialsHeader = "X-Happier-Provider-Source-Additional-Credentials"
+	ProviderConnectionDescriptorHeader            = "X-Happier-Provider-Source"
 )
 
 type ProviderConnectionRequestSource struct {
-	BaseURL              string            `json:"baseUrl"`
-	ResolvedAddresses    []string          `json:"resolvedAddresses"`
-	PublicHeaders        map[string]string `json:"publicHeaders"`
-	CredentialHeaderName string            `json:"credentialHeaderName"`
+	BaseURL                         string            `json:"baseUrl"`
+	ResolvedAddresses               []string          `json:"resolvedAddresses"`
+	PublicHeaders                   map[string]string `json:"publicHeaders"`
+	CredentialHeaderName            string            `json:"credentialHeaderName"`
+	AdditionalCredentialHeaderNames []string          `json:"additionalCredentialHeaderNames,omitempty"`
 }
 
 var providerAuthenticationHeaders = map[string]struct{}{
@@ -61,8 +63,22 @@ func (source ProviderConnectionRequestSource) validate() error {
 	credentialName := strings.ToLower(source.CredentialHeaderName)
 	if source.CredentialHeaderName != credentialName || !headerNamePattern.MatchString(credentialName) ||
 		strings.EqualFold(credentialName, ProviderConnectionCredentialHeader) ||
+		strings.EqualFold(credentialName, ProviderConnectionAdditionalCredentialsHeader) ||
 		strings.EqualFold(credentialName, ProviderConnectionDescriptorHeader) {
 		return fmt.Errorf("credential header name is invalid")
+	}
+	credentialNames := map[string]struct{}{credentialName: {}}
+	for _, name := range source.AdditionalCredentialHeaderNames {
+		if name != strings.ToLower(name) || !headerNamePattern.MatchString(name) || strings.EqualFold(name, ProviderConnectionCredentialHeader) || strings.EqualFold(name, ProviderConnectionDescriptorHeader) || strings.EqualFold(name, ProviderConnectionAdditionalCredentialsHeader) {
+			return fmt.Errorf("credential header name is invalid")
+		}
+		if _, exists := credentialNames[name]; exists {
+			return fmt.Errorf("credential header name is duplicated")
+		}
+		if _, hop := providerHopByHopHeaders[name]; hop {
+			return fmt.Errorf("credential header name is invalid")
+		}
+		credentialNames[name] = struct{}{}
 	}
 	if len(source.ResolvedAddresses) == 0 {
 		return fmt.Errorf("resolved addresses are invalid")
@@ -97,8 +113,14 @@ func (source ProviderConnectionRequestSource) validate() error {
 			strings.EqualFold(name, ProviderConnectionDescriptorHeader) {
 			return fmt.Errorf("public headers are invalid")
 		}
+		if strings.EqualFold(name, ProviderConnectionAdditionalCredentialsHeader) {
+			return fmt.Errorf("public headers are invalid")
+		}
 		if _, sensitive := providerAuthenticationHeaders[name]; sensitive {
 			return fmt.Errorf("public headers are invalid")
+		}
+		if _, collision := credentialNames[name]; collision {
+			return fmt.Errorf("public headers collide with credentials")
 		}
 		if _, hop := providerHopByHopHeaders[name]; hop {
 			return fmt.Errorf("public headers are invalid")
@@ -182,7 +204,7 @@ func ProviderConnectionPassThroughMiddleware(configuration ProviderConnectionPas
 		}
 		credentials := c.Request.Header.Values(ProviderConnectionCredentialHeader)
 		descriptors := c.Request.Header.Values(ProviderConnectionDescriptorHeader)
-		if len(credentials) != 1 || credentials[0] == "" || strings.ContainsAny(credentials[0], "\x00\r\n") || len(descriptors) != 1 {
+		if len(credentials) != 1 || credentials[0] == "" || strings.IndexFunc(credentials[0], func(char rune) bool { return char < 32 || char == 127 }) >= 0 || len(descriptors) != 1 {
 			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}
@@ -190,6 +212,32 @@ func ProviderConnectionPassThroughMiddleware(configuration ProviderConnectionPas
 		if err != nil {
 			c.AbortWithStatus(http.StatusForbidden)
 			return
+		}
+		materials := map[string]string{source.CredentialHeaderName: credentials[0]}
+		additional := c.Request.Header.Values(ProviderConnectionAdditionalCredentialsHeader)
+		if len(source.AdditionalCredentialHeaderNames) == 0 && len(additional) != 0 {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		if len(source.AdditionalCredentialHeaderNames) > 0 {
+			if len(additional) != 1 {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			raw, decodeError := base64.RawURLEncoding.DecodeString(additional[0])
+			companions := make(map[string]string)
+			if decodeError != nil || json.Unmarshal(raw, &companions) != nil || len(companions) != len(source.AdditionalCredentialHeaderNames) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			for _, name := range source.AdditionalCredentialHeaderNames {
+				value := companions[name]
+				if value == "" || strings.IndexFunc(value, func(char rune) bool { return char < 32 || char == 127 }) >= 0 {
+					c.AbortWithStatus(http.StatusForbidden)
+					return
+				}
+				materials[name] = value
+			}
 		}
 		target, err := providerConnectionTarget(configuration, source, c.Request.URL)
 		if err != nil {
@@ -200,7 +248,10 @@ func ProviderConnectionPassThroughMiddleware(configuration ProviderConnectionPas
 		outbound.URL, outbound.Host, outbound.RequestURI, outbound.Header = target, target.Host, "", make(http.Header)
 		for name, values := range c.Request.Header {
 			normalized := strings.ToLower(name)
-			if normalized == strings.ToLower(ProviderConnectionCredentialHeader) || normalized == strings.ToLower(ProviderConnectionDescriptorHeader) || normalized == "host" {
+			if normalized == strings.ToLower(ProviderConnectionCredentialHeader) || normalized == strings.ToLower(ProviderConnectionDescriptorHeader) || normalized == strings.ToLower(ProviderConnectionAdditionalCredentialsHeader) || normalized == "host" {
+				continue
+			}
+			if _, credential := materials[normalized]; credential {
 				continue
 			}
 			if _, sensitive := providerAuthenticationHeaders[normalized]; sensitive {
@@ -218,7 +269,9 @@ func ProviderConnectionPassThroughMiddleware(configuration ProviderConnectionPas
 		for name, value := range source.PublicHeaders {
 			outbound.Header.Set(name, value)
 		}
-		outbound.Header.Set(source.CredentialHeaderName, credentials[0])
+		for name, value := range materials {
+			outbound.Header.Set(name, value)
+		}
 		transport := upstream
 		if transport == nil {
 			transport = providerConnectionTransport(source)

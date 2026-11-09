@@ -115,6 +115,7 @@ func TestPackagedWrapper(t *testing.T) {
 	// authority cannot publish a consumer catalog or borrow credentials.
 	assertStatus(t, port, "/v1/models", downstreamBearer, http.StatusServiceUnavailable)
 	assertStatus(t, port, "/v0/management/config", downstreamBearer, http.StatusNotFound)
+	assertStatus(t, port, "/v8/management/config", downstreamBearer, http.StatusNotFound)
 	assertModelRequestFailsClosed(t, port, downstreamBearer)
 	if _, err := os.Stat(filepath.Join(runtimeDir, "request-auth", "cliproxyapi-runtime")); !os.IsNotExist(err) {
 		t.Fatalf("wrapper created a private child directory beneath the host-owned root: %v", err)
@@ -200,7 +201,7 @@ func assertModelRequestFailsClosed(t *testing.T, port int, bearer string) {
 	request, err := http.NewRequest(
 		http.MethodPost,
 		fmt.Sprintf("http://127.0.0.1:%d/v1/responses", port),
-		bytes.NewBufferString(`{"model":"gpt-5.5","input":"must fail before capability activation"}`),
+		bytes.NewBufferString(`{"model":"gpt-6.1-sol","input":"must fail before capability activation"}`),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 type QualifiedAccountRef struct {
@@ -120,7 +120,7 @@ func (p *leaseRoundTripperProvider) RoundTripperFor(auth *coreauth.Auth) http.Ro
 	if p == nil || auth == nil {
 		return errorRoundTripper{err: fmt.Errorf("managed auth entry is missing")}
 	}
-	entry, ok := p.entries[auth.ID]
+	entry, ok := managedEntryForAuth(p.entries, auth)
 	if !ok || strings.TrimSpace(auth.Provider) != string(entry.Provider) {
 		return errorRoundTripper{err: fmt.Errorf("managed auth entry is not authorized")}
 	}
@@ -184,7 +184,11 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 		"X-Api-Key",
 		"X-Claude-Code-Session-Id",
 	} {
-		outbound.Header.Del(name)
+		for wireName := range outbound.Header {
+			if strings.EqualFold(wireName, name) {
+				delete(outbound.Header, wireName)
+			}
+		}
 	}
 	outbound.Header.Set("Authorization", "Bearer "+lease.AccessToken)
 	for name, value := range lease.RequiredHeaders {

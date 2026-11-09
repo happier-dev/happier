@@ -163,11 +163,7 @@ func readBinarySource(binaryPath string) (string, []moduleIdentity, error) {
 			continue
 		}
 		if dependency.Replace != nil {
-			return "", nil, fmt.Errorf(
-				"compiled module %s@%s uses an unsupported replacement",
-				dependency.Path,
-				dependency.Version,
-			)
+			dependency = dependency.Replace
 		}
 		identity := moduleIdentity{
 			Path:    strings.TrimSpace(dependency.Path),
@@ -310,18 +306,15 @@ func listCompiledModules(context Context) ([]listedModule, error) {
 		if pkg.Module == nil || pkg.Module.Main {
 			continue
 		}
-		if pkg.Module.Replace != nil {
-			return nil, fmt.Errorf(
-				"listed module %s@%s uses an unsupported replacement",
-				pkg.Module.Path,
-				pkg.Module.Version,
-			)
+		source := pkg.Module
+		if source.Replace != nil {
+			source = source.Replace
 		}
 		record := moduleRecord{
-			Path:    strings.TrimSpace(pkg.Module.Path),
-			Version: strings.TrimSpace(pkg.Module.Version),
-			Sum:     strings.TrimSpace(pkg.Module.Sum),
-			Dir:     strings.TrimSpace(pkg.Module.Dir),
+			Path:    strings.TrimSpace(source.Path),
+			Version: strings.TrimSpace(source.Version),
+			Sum:     strings.TrimSpace(source.Sum),
+			Dir:     strings.TrimSpace(source.Dir),
 		}
 		if record.Path == "" || record.Version == "" || record.Sum == "" || record.Dir == "" {
 			return nil, fmt.Errorf("listed module has incomplete source identity: %#v", record)

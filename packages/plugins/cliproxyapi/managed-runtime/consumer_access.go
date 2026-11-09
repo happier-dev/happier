@@ -9,13 +9,13 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	cliproxy "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 const ConsumerAccessSettlementPath = "/_happier/consumer-access/settle"
@@ -23,9 +23,10 @@ const ConsumerAccessSettlementPath = "/_happier/consumer-access/settle"
 // Consumer access is a private projection of the host's existing admitted
 // request-auth subjects, not credential material or a second subject selector.
 type consumerAccess struct {
-	Token          string             `json:"token"`
-	CapabilityPath string             `json:"capabilityPath"`
-	Purposes       []QualifiedPurpose `json:"purposes"`
+	Token          string               `json:"token"`
+	CapabilityPath string               `json:"capabilityPath"`
+	Purposes       []QualifiedPurpose   `json:"purposes"`
+	ModelCatalogs  []sourceModelCatalog `json:"modelCatalogs,omitempty"`
 }
 
 type consumerAccessDocument struct {
@@ -74,6 +75,9 @@ func readConsumerAccess(path string) ([]consumerAccess, error) {
 			}
 			purposes[purpose] = struct{}{}
 		}
+		if err := consumer.validateModelCatalogs(); err != nil {
+			return nil, err
+		}
 	}
 	return document.Consumers, nil
 }
@@ -102,7 +106,7 @@ func (s consumerRequestScope) current() (consumerAccess, error) {
 		return consumerAccess{}, fmt.Errorf("consumer access is unavailable")
 	}
 	current, ok := findConsumer(consumers, s.access.Token)
-	if !ok || current.CapabilityPath != s.access.CapabilityPath || len(current.Purposes) != len(s.access.Purposes) {
+	if !ok || current.CapabilityPath != s.access.CapabilityPath || len(current.Purposes) != len(s.access.Purposes) || !reflect.DeepEqual(current.ModelCatalogs, s.access.ModelCatalogs) {
 		return consumerAccess{}, fmt.Errorf("consumer access is no longer admitted")
 	}
 	for _, purpose := range s.access.Purposes {
@@ -117,7 +121,7 @@ func requestConsumerScope(ctx context.Context) (consumerRequestScope, bool) {
 	if scope, ok := ctx.Value(consumerRequestScopeKey{}).(consumerRequestScope); ok {
 		return scope, true
 	}
-	// Pinned SDK v7.2.95 creates its execution context separately and carries
+	// Pinned SDK v8.0.61 creates its execution context separately and carries
 	// the original request in this documented-by-source gin context slot.
 	if c, ok := ctx.Value("gin").(*gin.Context); ok && c != nil && c.Request != nil {
 		scope, ok := c.Request.Context().Value(consumerRequestScopeKey{}).(consumerRequestScope)
@@ -137,10 +141,12 @@ type consumerAccessOwner struct {
 	entries        []AuthEntry
 	mu             sync.Mutex
 	inflight       map[string]map[*consumerInflightRequest]struct{}
+	models         *consumerModelRegistrations
 }
 
-func newConsumerAccessOwner(config Config) *consumerAccessOwner {
+func newConsumerAccessOwner(config Config, manager *coreauth.Manager) *consumerAccessOwner {
 	return &consumerAccessOwner{path: config.ConsumerAccessPath, physicalBearer: config.DownstreamBearer, entries: config.AuthEntries,
+		models:   &consumerModelRegistrations{entries: config.AuthEntries, manager: manager, registered: make(map[string]consumerModelRegistration)},
 		inflight: make(map[string]map[*consumerInflightRequest]struct{})}
 }
 
@@ -187,6 +193,11 @@ func (o *consumerAccessOwner) middleware() gin.HandlerFunc {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
+		if err := o.models.install(access); err != nil {
+			o.mu.Unlock()
+			c.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		active := &consumerInflightRequest{cancel: cancel, done: make(chan struct{})}
 		if o.inflight[token] == nil {
@@ -207,34 +218,7 @@ func (o *consumerAccessOwner) middleware() gin.HandlerFunc {
 		ctx = context.WithValue(ctx, consumerRequestScopeKey{}, consumerRequestScope{path: o.path, access: access})
 		c.Request = c.Request.WithContext(ctx)
 		if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/v1/models" {
-			models := make([]map[string]any, 0)
-			for _, model := range cliproxy.GlobalModelRegistry().GetAvailableModels("openai") {
-				id, ok := model["id"].(string)
-				if !ok {
-					continue
-				}
-				purposes := make([]QualifiedPurpose, 0)
-				for _, entry := range o.entries {
-					if access.admits(entry.Purpose) && cliproxy.GlobalModelRegistry().ClientSupportsModel(entry.ID, id) {
-						purposes = append(purposes, entry.Purpose)
-					}
-				}
-				if len(purposes) == 0 {
-					continue
-				}
-				// Keep the SDK's OpenAI projection and add only the configured,
-				// consumer-admitted slots that actually serve this exact model.
-				// Protocol is a downstream translation, never vendor identity.
-				row := make(map[string]any)
-				for _, key := range []string{"id", "object", "created", "owned_by"} {
-					if value, present := model[key]; present {
-						row[key] = value
-					}
-				}
-				row["happier_connected_account_purposes"] = purposes
-				models = append(models, row)
-			}
-			c.AbortWithStatusJSON(http.StatusOK, gin.H{"object": "list", "data": models})
+			c.AbortWithStatusJSON(http.StatusOK, gin.H{"object": "list", "data": consumerModelList(access, o.entries)})
 			return
 		}
 		// The SDK's static API-key parser remains intact. Only authenticated
@@ -287,6 +271,9 @@ func (o *consumerAccessOwner) settle(c *gin.Context) {
 			return
 		}
 	}
+	o.mu.Lock()
+	o.models.release(input.Token)
+	o.mu.Unlock()
 	c.AbortWithStatusJSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -311,8 +298,8 @@ func (s *consumerAdmissionSelector) Pick(ctx context.Context, provider, model st
 		if auth == nil {
 			continue
 		}
-		entry, ok := s.entries[auth.ID]
-		if ok && entry.Provider == Provider(auth.Provider) && access.admits(entry.Purpose) {
+		entry, ok := managedEntryForAuth(s.entries, auth)
+		if ok && entry.Provider == Provider(auth.Provider) && consumerAdmitsAuth(access, entry, auth) {
 			admitted = append(admitted, auth)
 		}
 	}

@@ -29,6 +29,60 @@ func providerSourceHeader(t *testing.T, source ProviderConnectionRequestSource) 
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
+func TestProviderConnectionPassThroughIndependentCredentials(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name     string
+		names    []string
+		material map[string]string
+		status   int
+	}{
+		{"independent credentials", []string{"x-api-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-api-key": "upstream-secret"}, http.StatusOK},
+		{"missing companion", []string{"x-api-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret"}, http.StatusForbidden},
+		{"missing companion carrier", []string{"x-api-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-api-key": "upstream-secret"}, http.StatusForbidden},
+		{"undeclared companion material", []string{}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-api-key": "upstream-secret"}, http.StatusForbidden},
+		{"wrong companion metadata", []string{"x-other-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-api-key": "upstream-secret"}, http.StatusForbidden},
+		{"missing primary", []string{"x-api-key"}, map[string]string{"x-api-key": "upstream-secret"}, http.StatusServiceUnavailable},
+		{"unexpected credential", []string{"x-api-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-other": "undeclared"}, http.StatusForbidden},
+		{"case-equivalent collision", []string{"X-GATEWAY-TOKEN"}, map[string]string{"x-gateway-token": "Bearer gateway-secret"}, http.StatusForbidden},
+		{"control-bearing companion", []string{"x-api-key"}, map[string]string{"x-gateway-token": "Bearer gateway-secret", "x-api-key": "bad\r\nvalue"}, http.StatusForbidden},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			requests := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests++
+				if request.Header.Get("x-api-key") != "upstream-secret" || request.Header.Get("x-gateway-token") != "Bearer gateway-secret" || request.Header.Get("authorization") != "" {
+					t.Error("independent credential authority was not preserved")
+				}
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer upstream.Close()
+			descriptor, _ := json.Marshal(map[string]interface{}{"baseUrl": upstream.URL, "resolvedAddresses": []string{"127.0.0.1"}, "publicHeaders": map[string]string{}, "credentialHeaderName": "x-gateway-token", "additionalCredentialHeaderNames": testCase.names})
+			primary := testCase.material["x-gateway-token"]
+			delete(testCase.material, "x-gateway-token")
+			material, _ := json.Marshal(testCase.material)
+			router := gin.New()
+			router.Use(ProviderConnectionPassThroughMiddleware(ProviderConnectionPassThroughConfiguration{Protocol: ProtocolAnthropic, DownstreamBasePath: "/"}, nil))
+			router.Any("/*path", func(c *gin.Context) { c.Status(http.StatusTeapot) })
+			request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+			request.Header.Set(ProviderConnectionDescriptorHeader, base64.RawURLEncoding.EncodeToString(descriptor))
+			request.Header.Set(ProviderConnectionCredentialHeader, primary)
+			if testCase.name != "missing companion carrier" {
+				request.Header.Set(ProviderConnectionAdditionalCredentialsHeader, base64.RawURLEncoding.EncodeToString(material))
+			}
+			request.Header.Set("authorization", "Bearer worker")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != testCase.status {
+				t.Fatalf("expected status %d, got %d", testCase.status, recorder.Code)
+			}
+			if testCase.status != http.StatusOK && requests != 0 {
+				t.Fatal("refused credential reached upstream")
+			}
+		})
+	}
+}
+
 func TestProviderConnectionPassThroughAcceptsCanonicalSourceWithoutLocalCapacityCaps(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -114,17 +168,19 @@ func TestProviderConnectionPassThroughOwnsFinalHopAuthorizationForBothProtocols(
 		wantURL       string
 	}{
 		{"OpenAI responses", ProtocolOpenAIResponses, "/v1/responses?stream=true", "https://gateway.example/root", "authorization", "Bearer source-secret", "https://gateway.example/root/responses?stream=true"},
+		{"OpenAI chat", ProtocolOpenAIChat, "/v1/chat/completions", "https://gateway.example/api/v1", "authorization", "Bearer source-secret", "https://gateway.example/api/v1/chat/completions"},
 		{"Anthropic", ProtocolAnthropic, "/v1/messages", "https://anthropic.example/root", "x-api-key", "source-key", "https://anthropic.example/root/v1/messages"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			var got *http.Request
+			body := `{"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"cost":0.12,"cost_details":{"upstream_inference_cost":9}}}`
 			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				got = request.Clone(request.Context())
 				got.Header = request.Header.Clone()
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Header:     http.Header{"Content-Type": []string{"application/json"}, "Set-Cookie": []string{"private=1"}},
-					Body:       io.NopCloser(bytes.NewBufferString("ok")),
+					Body:       io.NopCloser(bytes.NewBufferString(body)),
 				}, nil
 			})
 			router := gin.New()
@@ -152,6 +208,9 @@ func TestProviderConnectionPassThroughOwnsFinalHopAuthorizationForBothProtocols(
 			router.ServeHTTP(recorder, request)
 			if recorder.Code != http.StatusOK || got == nil {
 				t.Fatalf("status = %d, request = %#v", recorder.Code, got)
+			}
+			if recorder.Body.String() != body {
+				t.Fatal("Provider terminal usage or reported cost changed in the pass-through response")
 			}
 			if got.URL.String() != testCase.wantURL || got.Header.Get(testCase.credentialKey) != testCase.credential {
 				t.Fatalf("final hop URL/header = %q / %q", got.URL, got.Header.Get(testCase.credentialKey))

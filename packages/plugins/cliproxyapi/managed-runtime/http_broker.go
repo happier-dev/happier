@@ -69,7 +69,7 @@ func (e *BrokerHTTPError) providerResponse(request *http.Request) *http.Response
 	if e.Code == "request_auth_unauthorized" || e.Code == "request_auth_purpose_forbidden" || e.Code == "request_auth_not_active" {
 		status, code = http.StatusForbidden, "source_unavailable"
 	}
-	// v7.2.95 carries the serving Gin context under this key into executor
+	// v8.0.61 carries the serving Gin context under this key into executor
 	// requests. Stamp the existing private refusal header before its Claude
 	// codec drops error.code; Happier's application owns the final body.
 	if serving, ok := request.Context().Value("gin").(*gin.Context); ok && serving != nil {

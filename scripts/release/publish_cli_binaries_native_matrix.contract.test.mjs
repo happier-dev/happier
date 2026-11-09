@@ -207,7 +207,7 @@ test('privileged CLI binary publishing pins every external action to its reviewe
   );
 });
 
-test('managed wrapper source, diagnostics, notices, and workflows agree on exact Go 1.26.6', async () => {
+test('managed wrapper source, diagnostics, notices, and workflows agree on exact Go 1.26.10', async () => {
   const [
     goMod,
     buildSource,
@@ -222,7 +222,7 @@ test('managed wrapper source, diagnostics, notices, and workflows agree on exact
     readFile(testsWorkflowPath, 'utf8'),
   ]);
 
-  assert.match(goMod, /^go 1\.26\.6$/m);
+  assert.match(goMod, /^go 1\.26\.10$/m);
   assert.match(
     goMod,
     /^tool golang\.org\/x\/vuln\/cmd\/govulncheck$/m,
@@ -233,11 +233,11 @@ test('managed wrapper source, diagnostics, notices, and workflows agree on exact
     /^\s*golang\.org\/x\/vuln v1\.6\.0 \/\/ indirect$/m,
     'the managed module must pin the reviewed govulncheck tool dependency in tidy form',
   );
-  assert.match(goMod, /^\s*github\.com\/router-for-me\/CLIProxyAPI\/v7 v7\.2\.95$/m);
-  assert.match(buildSource, /Go 1\.26\.6 toolchain is required/);
-  assert.match(notices, /^Go toolchain go1\.26\.6$/m);
-  assert.match(notices, /^source identity: go1\.26\.6$/m);
-  assert.match(notices, /^source: https:\/\/go\.dev\/dl\/go1\.26\.6\.src\.tar\.gz$/m);
+  assert.match(goMod, /^\s*github\.com\/router-for-me\/CLIProxyAPI\/v8 v8\.0\.61$/m);
+  assert.match(buildSource, /Go 1\.26\.10 toolchain is required/);
+  assert.match(notices, /^Go toolchain go1\.26\.10$/m);
+  assert.match(notices, /^source identity: go1\.26\.10$/m);
+  assert.match(notices, /^source: https:\/\/go\.dev\/dl\/go1\.26\.10\.src\.tar\.gz$/m);
 
   for (const [name, workflowRaw, jobName] of [
     ['publishing', publishWorkflowRaw, 'build_native'],
@@ -273,7 +273,7 @@ test('CLI binary publishing builds and validates each released target on its nat
       { platform_key: 'linux-arm64', runner: 'ubuntu-24.04-arm', cli_target: 'linux-arm64', go_target: 'linux-arm64' },
       { platform_key: 'darwin-x64', runner: 'macos-15-intel', cli_target: 'darwin-x64', go_target: 'darwin-amd64' },
       { platform_key: 'darwin-arm64', runner: 'macos-15', cli_target: 'darwin-arm64', go_target: 'darwin-arm64' },
-      { platform_key: 'windows-x64', runner: 'windows-2025', cli_target: 'windows-x64', go_target: 'windows-amd64' },
+      { platform_key: 'windows-x64', runner: 'windows-2022', cli_target: 'windows-x64', go_target: 'windows-amd64' },
     ],
   );
 
@@ -442,12 +442,12 @@ test('CLI binary publishing builds and validates each released target on its nat
   assert.match(buildRuns, /\bgo version -m "\$\{WRAPPER_PATH\}"/);
   assert.match(
     buildRuns,
-    /grep -F \$'\\tdep\\tgithub\.com\/router-for-me\/CLIProxyAPI\/v7\\tv7\.2\.95'/,
+    /grep -F \$'\\tdep\\tgithub\.com\/router-for-me\/CLIProxyAPI\/v8\\tv8\.0\.61'/,
     'the pinned CLIProxyAPI module is a dependency record in go version -m output',
   );
   assert.doesNotMatch(
     buildRuns,
-    /grep -F \$'\\tmod\\tgithub\.com\/router-for-me\/CLIProxyAPI\/v7/,
+    /grep -F \$'\\tmod\\tgithub\.com\/router-for-me\/CLIProxyAPI\/v8/,
     'the wrapper module is the sole mod record; CLIProxyAPI must be verified as a dep record',
   );
   assert.match(buildRuns, /\bgo version -m "\$\{PACKAGED_WRAPPER_PATH\}"/);

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *testing.T) {
@@ -192,6 +192,33 @@ func TestStrictServingMiddlewareBlocksEveryUnconfiguredRouteBeforeHandler(t *tes
 	}
 	if handlerCalls != 1 {
 		t.Fatalf("handler calls = %d, want only the allowed handler", handlerCalls)
+	}
+}
+
+// V8 Claude writes x-api-key directly to preserve wire casing. Credentials
+// remain case insensitive at Happier's final materialization boundary.
+func TestLeaseTransportRemovesCredentialHeadersRegardlessOfWireCasing(t *testing.T) {
+	broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("current", nil)}}
+	capture := &captureRoundTripper{}
+	provider, err := newLeaseRoundTripperProvider([]AuthEntry{testLeaseAuthEntry("claude", ProviderClaude, "anthropic-upstream")}, broker, capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "https://upstream.invalid/v1/messages", strings.NewReader("{}"))
+	request.Header = http.Header{"authorization": {"stale"}, "chatgpt-account-id": {"stale"}, "x-api-key": {"stale"}, "x-claude-code-session-id": {"stale"}, "anthropic-beta": {"preserved"}}
+	response, err := provider.RoundTripperFor(&coreauth.Auth{ID: "claude", Provider: "claude"}).RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	outbound := capture.requests()[0]
+	for name, values := range outbound.Header {
+		if strings.Contains(strings.Join(values, ""), "stale") {
+			t.Fatalf("stale credential header %s survived final lease", name)
+		}
+	}
+	if outbound.Header.Get("Authorization") != "Bearer current" || outbound.Header["anthropic-beta"][0] != "preserved" {
+		t.Fatal("lease or wire fingerprint was lost")
 	}
 }
 

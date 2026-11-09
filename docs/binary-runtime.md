@@ -1012,6 +1012,14 @@ asset-integrity checks. Go source diagnostics use the existing drift classifier,
 so correcting a failed native build resumes pending preparation; configuration and
 OS errors still fail fast. Installed vendor tools retain their lifecycle.
 
+The development CLIProxyAPI companion embeds SDK v8.0.61 and builds with Go
+1.26.10, selected by its managed-runtime `go.mod`. Catalog generation projects that
+SDK version into the wrapper health identity and plugin compatibility catalog;
+notices are generated from the compiled dependency closure, including published
+module replacements. Machines run the staged native companion without a runtime
+Go installation. Updating this companion requires the ordinary daemon/runtime
+reload to load the new executable; source validation alone does not reload it.
+
 Native server construction resolves `main.light.ts`, `main.ts`, and the packaged
 migration entry through that same source export owner. Bun bundles the authored
 graph directly, including the Iroh JavaScript loader; binary construction and
@@ -1041,6 +1049,11 @@ Server typechecking and public npm/SDK declaration tasks remain separate.
 Explicit web artifact construction and source QA share
 `build_source_web_ui.mjs#withSourceWebUiInputs`. It compiles authored plugin UI
 through the SDK compiler and existing inventory generator into private inputs.
+In 0.3 development, artifact reuse follows executable UI inputs and the artifact
+compiler; the evaluated manifest value is fingerprinted separately. App-provided
+external modules and declaration-inventory dependencies do not invalidate
+unchanged artifact bytes. Retained input membership is rediscovered when its
+compiler or graph policy changes.
 Preparation first captures the authored UI, workspace and build-tool inputs via
 the source build owner and existing `captureBuildInputFiles` primitive. Plugin
 compilation and finite Metro exports consume that same copied input view;
@@ -1493,20 +1506,24 @@ and keep startup pending until affected inputs change through the development re
 coordinator's classification and observation. Runtime producer failures return a typed
 refusal with a recovery action; configuration, dependency admission and OS failures
 still fail fast. Cancellation releases the pending preparation.
-Source CLI bundles also carry the public author SDK's JavaScript and declarations in a
-private, bundle-owned package closure. The source-runtime producer uses the existing
-compiler and workspace materializer with the source condition, without preparing workspace
-`dist` or requiring semantic typechecking. Plugin authoring resolves that physical closure;
-the CLI's source-runtime provenance and published SDK contracts are unchanged.
+Source CLI bundles also carry the public author SDK's JavaScript in a private,
+bundle-owned package closure. The source-runtime producer emits JavaScript with
+esbuild and retains the captured authored inputs, declaration configuration and
+resolved ambient type dependencies in each package. Ordinary daemon preparation
+launches no declaration compilers.
+Plugin authoring resolves that physical closure; its existing temporary workspace
+materializer emits declarations from those captured inputs, dependency first, only
+when an author operation needs them. Published SDK packages continue to provide
+their published declarations. The CLI's source-runtime provenance is unchanged.
 The author producer reuses individual packages from the selected bundle through the
 workspace build's existing input fingerprint owner. It compares each package's captured
-sources, shipped resources, compiler/tooling and declared external dependencies, plus
-its workspace dependencies' already emitted declarations. Unchanged packages copy their
-prior physical output; changed packages compile in dependency order, so a changed
-declaration invalidates its consumers. Runtime-only dependency edits do not recompile
-consumers of unchanged declarations. This reuse stays inside the captured-source bundle
-lifetime. The replacement daemon still binds the current dependency publication and
-inventories current host bundles; no separate author cache or service is retained.
+sources, shipped resources, compiler/tooling and declared external dependencies.
+Unchanged packages copy their prior physical output; changed packages emit JavaScript
+and retain their updated declaration inputs. A workspace dependency's implementation
+edit does not require its consumers to emit JavaScript again. This reuse stays inside
+the captured-source bundle lifetime. The replacement daemon still binds the current
+dependency publication and inventories current host bundles; no separate author cache
+or service is retained.
 Plugin UI preparation fingerprints its resolved executable import graph and
 declared shipped resources, including hosted-static inputs. An unconsumed plugin
 daemon source edit does not recompile its unchanged UI; a consumed UI edit still
@@ -1534,13 +1551,17 @@ execution host and any explicit UI export; workers do not choose a later boundar
 from their own clocks. The request joins producer work and waits for an eligible
 capture instead of compiling in the consumer stack.
 
-`--allow-older-source` explicitly permits a reload to adopt older completed
-compatible captures. `--source-after=<ISO timestamp>` requests a capture at or
-after a chosen boundary, for example to include a fix made after reload began.
-Without `--allow-older-source`, the later of request-start time and the explicit
-timestamp applies. With it, an explicit timestamp still applies; only the
-request-start requirement is removed. A producer capture older than the required
-boundary is refused; a timestamp in the future requires retrying after that time.
+For fast adoption, reload with `--source-after=<ISO timestamp of the fix>`.
+This explicit boundary replaces the default request-start time, allowing a
+completed rolling prebuild captured at or after the fix to be adopted without
+compiling again. For example, a prebuild captured at 12:01 can satisfy a reload
+requested at 12:05 with `--source-after=2026-11-09T12:00:00.000Z`. A plain reload
+at 12:05 still requires a capture at or after 12:05.
+
+`--allow-older-source` permits the newest completed compatible capture without
+the request-start requirement. An explicit `--source-after` still applies when
+both flags are present. A producer capture older than the required boundary is
+refused; a timestamp in the future requires retrying after that time.
 General source starts, web builds and daemon start/restart keep newest-completed
 adoption as their default and accept `--source-after` when a later capture is
 required. The underlying producer API keeps the same default; its caller supplies

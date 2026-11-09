@@ -1,9 +1,7 @@
 package managedruntime
 
 import (
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,24 +21,6 @@ type ManagedHealthIdentity struct {
 	Purposes            []QualifiedPurpose `json:"purposes"`
 	ModelListEnabled    bool               `json:"modelListEnabled"`
 	SourceClass         string             `json:"sourceClass"`
-}
-
-func (identity RuntimeIdentity) validate() error {
-	if err := validateBoundedIdentity(
-		identity.WrapperBuildVersion,
-		128,
-		"wrapper build version",
-	); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateBoundedIdentity(value string, limit int, label string) error {
-	if value == "" || value != strings.TrimSpace(value) || len(value) > limit {
-		return fmt.Errorf("%s is invalid", label)
-	}
-	return nil
 }
 
 func managedHealthIdentity(

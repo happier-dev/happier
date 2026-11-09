@@ -230,24 +230,23 @@ func TestManagedHealthIdentityHeadHasNoBody(t *testing.T) {
 	}
 }
 
-func TestRuntimeIdentityRejectsMissingOrMalformedBuildFact(t *testing.T) {
+func TestRuntimeIdentityBuildMetadataDoesNotVetoGateway(t *testing.T) {
 	t.Parallel()
-
-	valid := testRuntimeIdentity()
-	if err := valid.validate(); err != nil {
-		t.Fatalf("valid runtime identity rejected: %v", err)
-	}
-	for _, invalid := range []RuntimeIdentity{
+	for _, identity := range []RuntimeIdentity{
 		{},
 		{
 			WrapperBuildVersion: " 1.2.3 ",
 		},
 		{
-			WrapperBuildVersion: strings.Repeat("v", 129),
+			WrapperBuildVersion: strings.Repeat("v", 32768),
 		},
 	} {
-		if err := invalid.validate(); err == nil {
-			t.Fatalf("invalid runtime identity accepted: %#v", invalid)
+		config := Config{Host: "127.0.0.1", Port: reserveLoopbackPort(t),
+			DownstreamBearer: "fixture-downstream", RuntimeDir: t.TempDir(),
+			Protocols:          []ProviderProtocol{ProtocolOpenAIResponses},
+			ProviderConnection: &ProviderConnectionPassThroughConfiguration{Protocol: ProtocolOpenAIResponses, DownstreamBasePath: "/v1"}}
+		if _, err := NewGateway(config, identity, nil, nil); err != nil {
+			t.Fatalf("diagnostic build metadata vetoed gateway: %v", err)
 		}
 	}
 }

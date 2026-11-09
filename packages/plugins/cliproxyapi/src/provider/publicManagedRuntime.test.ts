@@ -115,8 +115,8 @@ function healthyIdentity(_boundPurposes: readonly ManagedPurpose[]) {
   const families = managedPurposeFamilies;
   return Object.freeze({
     v: 1,
-    contractVersion: 'happier.cliproxyapi-managed/v2',
-    sdkVersion: 'v7.2.95',
+    contractVersion: 'happier.cliproxyapi-managed/v3',
+    sdkVersion: 'v8.0.61',
     wrapperBuildVersion: 'cliproxyapi-test-build',
     protocols: [...new Set(families.flatMap((family) => family.protocols))],
     purposes: families.map((family) => Object.freeze({
@@ -505,6 +505,41 @@ async function healthIdentity(service: ManagedServiceHandle): Promise<unknown> {
 }
 
 describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
+  it('accepts managed health metadata beyond former byte caps with unordered declarations', async () => {
+    const identity = healthyIdentity(['openai-upstream']);
+    const extended = { ...identity, wrapperBuildVersion: ` ${'build'.repeat(8192)} `,
+      diagnostics: { ready: true }, protocols: [...identity.protocols].reverse(),
+      purposes: [...identity.purposes].reverse().map(purpose => ({ ...purpose, detail: 'ready',
+        consumer: { ...purpose.consumer, displayName: 'Managed gateway' } })) };
+    const service = { ...managedService(['openai-upstream']),
+      request: vi.fn(async () => ({ ...healthResponse(['openai-upstream']), body: Response.json(extended).body })) };
+    const result = await CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({ reason: 'sessionDemand',
+      endpointTemplateIds: requestedEndpointTemplateIds }, {
+      connectedAccounts: connectedAccounts(['openai-upstream']).service,
+      managedServices: { dependencies: {} as never, supervise: async () => service },
+      signal: new AbortController().signal,
+    });
+    expect(result.endpoints.map(endpoint => endpoint.endpointTemplateId)).toEqual(requestedEndpointTemplateIds);
+    expect(service.dispose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { contractVersion: 'wrong-contract' }, { sdkVersion: 'wrong-sdk' }, { v: 2 },
+    { protocols: ['openai-chat'] }, { purposes: [] },
+    { sourceClass: 'provider_connection' }, { modelListEnabled: false },
+  ])('refuses mismatched managed health facts and disposes the service (%j)', async mismatch => {
+    const service = { ...managedService(['openai-upstream']), request: vi.fn(async () => ({
+      ...healthResponse(['openai-upstream']), body: Response.json({ ...healthyIdentity(['openai-upstream']), ...mismatch }).body,
+    })) };
+    await expect(CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({ reason: 'sessionDemand',
+      endpointTemplateIds: requestedEndpointTemplateIds }, {
+      connectedAccounts: connectedAccounts(['openai-upstream']).service,
+      managedServices: { dependencies: {} as never, supervise: async () => service },
+      signal: new AbortController().signal,
+    })).rejects.toThrow('identity mismatch');
+    expect(service.dispose).toHaveBeenCalledOnce();
+  });
+
   it('G1 declares stable physical purpose families and consumer-scoped authority', async () => {
     const services = connectedAccounts(['openai-upstream']);
     const supervise = vi.fn<ManagedServices['supervise']>(async () => managedService(['openai-upstream', 'anthropic-upstream']));
@@ -654,7 +689,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
             'cliproxyapi-openai-chat',
             'cliproxyapi-anthropic',
           ],
-          boundModelId: 'gpt-5.5',
+          boundModelId: 'gpt-6.1-sol',
           unboundModelId: 'claude-sonnet-4-6',
         },
         {
@@ -662,7 +697,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
           boundPurposes: ['anthropic-upstream'] as const,
           expectedEndpointTemplateIds: ['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic'],
           boundModelId: 'claude-sonnet-4-6',
-          unboundModelId: 'gpt-5.5',
+          unboundModelId: 'gpt-6.1-sol',
         },
       ] as const) {
         const requestAuthEffects = { count: 0 };
@@ -671,14 +706,14 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
           response.writeHead(500, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ ok: false, error: { code: 'unexpected' } }));
   });
-        const outboundEffects = { count: 0 };
-        const outboundProxy = createServer((_request, response) => {
-          outboundEffects.count += 1;
+        const outboundTargets: string[] = [];
+        const outboundProxy = createServer((request, response) => {
+          outboundTargets.push(request.url ?? 'missing HTTP proxy target');
           response.writeHead(502);
           response.end();
         });
-        outboundProxy.on('connect', (_request, socket) => {
-          outboundEffects.count += 1;
+        outboundProxy.on('connect', (request, socket) => {
+          outboundTargets.push(request.url ?? 'missing CONNECT target');
           socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
         });
         const requestAuthPort = await listen(requestAuthServer);
@@ -745,7 +780,15 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
             expect(await responseStatus(result.service, route, 'POST', testCase.unboundModelId)).toBeGreaterThanOrEqual(400);
           }
           expect(requestAuthEffects.count).toBe(0);
-          expect(outboundEffects.count).toBe(0);
+          // SDK v8.0.61 starts the Grok version and model-catalog updaters even
+          // when a sparse consumer cannot select an upstream model. The proxy
+          // refuses their CONNECTs too; credential/profile/inference origins
+          // must remain absent instead of treating metadata fetches as those effects.
+          expect(outboundTargets.filter((target) => ![
+            'registry.npmjs.org:443',
+            'raw.githubusercontent.com:443',
+            'models.router-for.me:443',
+          ].includes(target))).toEqual([]);
         } finally {
           await wrapper?.handle.dispose();
           await close(requestAuthServer);
@@ -773,8 +816,8 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       headers: Object.freeze({ 'content-type': 'application/json' }),
       body: new Response(JSON.stringify({
         v: 1,
-        contractVersion: 'happier.cliproxyapi-managed/v2',
-        sdkVersion: 'v7.2.95',
+        contractVersion: 'happier.cliproxyapi-managed/v3',
+        sdkVersion: 'v8.0.61',
         wrapperBuildVersion: 'cliproxyapi-test-build',
         protocols: ['openai-responses'],
         purposes: [],

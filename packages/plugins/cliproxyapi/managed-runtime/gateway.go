@@ -9,10 +9,9 @@ import (
 	"strings"
 )
 
-const (
-	WrapperContractVersion = "happier.cliproxyapi-managed/v2"
-	PinnedSDKVersion       = "v7.2.95"
-)
+const PinnedSDKVersion = pinnedSDKVersion
+
+const WrapperContractVersion = "happier.cliproxyapi-managed/v3"
 
 type Provider string
 

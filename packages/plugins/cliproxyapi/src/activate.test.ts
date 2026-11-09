@@ -36,8 +36,8 @@ const healthySnapshot = Object.freeze({
 
 const healthyIdentity = Object.freeze({
   v: 1,
-  contractVersion: 'happier.cliproxyapi-managed/v2',
-  sdkVersion: 'v7.2.95',
+  contractVersion: 'happier.cliproxyapi-managed/v3',
+  sdkVersion: 'v8.0.61',
   wrapperBuildVersion: 'cliproxyapi-test-build',
   protocols: Object.freeze([
     'openai-chat',
@@ -423,7 +423,7 @@ describe('CLIProxyAPI public managed Provider activation', () => {
     expect(service.dispose).toHaveBeenCalledOnce();
   });
 
-  it('accepts a distinct bounded diagnostic build label without treating it as runtime provenance', async () => {
+  it('accepts a distinct diagnostic build label without treating it as runtime provenance', async () => {
     const request = vi.fn<ManagedServiceHandle['request']>(async () => response(
       JSON.stringify({
         ...healthyIdentity,
@@ -441,19 +441,9 @@ describe('CLIProxyAPI public managed Provider activation', () => {
 
   it.each([
     ['version', { ...healthyIdentity, v: 2 }],
+    ['pre-observation wrapper', { ...healthyIdentity, contractVersion: 'happier.cliproxyapi-managed/v2' }],
     ['contract', { ...healthyIdentity, contractVersion: 'wrong-contract' }],
     ['SDK pin', { ...healthyIdentity, sdkVersion: 'v7.2.94' }],
-    ['blank build', { ...healthyIdentity, wrapperBuildVersion: '' }],
-    ['untrimmed build', { ...healthyIdentity, wrapperBuildVersion: ' build-1 ' }],
-    ['oversized build', { ...healthyIdentity, wrapperBuildVersion: 'é'.repeat(65) }],
-    ['protocol order', {
-      ...healthyIdentity,
-      protocols: ['openai-responses', 'openai-chat', 'anthropic'],
-    }],
-    ['qualified purposes', {
-      ...healthyIdentity,
-      purposes: [healthyIdentity.purposes[1], healthyIdentity.purposes[0]],
-    }],
     ['qualified purpose consumer', {
       ...healthyIdentity,
       purposes: [
@@ -468,14 +458,6 @@ describe('CLIProxyAPI public managed Provider activation', () => {
       ],
     }],
     ['model-list fact', { ...healthyIdentity, modelListEnabled: false }],
-    ['unknown top-level fact', { ...healthyIdentity, unexpected: true }],
-    ['unknown nested purpose fact', {
-      ...healthyIdentity,
-      purposes: [
-        { ...healthyIdentity.purposes[0], unexpected: true },
-        healthyIdentity.purposes[1],
-      ],
-    }],
   ] as const)('rejects a mismatched %s fact', async (_name, identity) => {
     const service = createService(undefined, vi.fn(async () => response(
       JSON.stringify(identity),
@@ -489,7 +471,6 @@ describe('CLIProxyAPI public managed Provider activation', () => {
   it.each([
     ['malformed JSON', () => response('{"v":')],
     ['invalid UTF-8', () => response(new Uint8Array([0xc3, 0x28]))],
-    ['oversized body', () => response('x'.repeat(16 * 1024 + 1))],
     ['non-2xx status', () => response(JSON.stringify(healthyIdentity), { status: 503 })],
     ['wrong media type', () => response(JSON.stringify(healthyIdentity), {
       contentType: 'text/plain',

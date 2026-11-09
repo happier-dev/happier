@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 func TestPinnedSelectorBucketsAndManagedOneEntryInvariant(t *testing.T) {
@@ -52,7 +52,7 @@ func TestPinnedSelectorBucketsAndManagedOneEntryInvariant(t *testing.T) {
 	}
 }
 
-func TestPinnedSessionAffinityUsesProviderSessionAndRawModelBucket(t *testing.T) {
+func TestPinnedSessionAffinityUsesProviderSessionAndCanonicalModelBucket(t *testing.T) {
 	t.Parallel()
 
 	fallback := &recordingSelector{
@@ -76,7 +76,11 @@ func TestPinnedSessionAffinityUsesProviderSessionAndRawModelBucket(t *testing.T)
 	if err != nil {
 		t.Fatalf("repeated affinity Pick() error = %v", err)
 	}
-	otherRawModel, err := selector.Pick(context.Background(), "fixture", "model", opts, auths)
+	canonicalModel, err := selector.Pick(context.Background(), "fixture", "model", opts, auths)
+	if err != nil {
+		t.Fatalf("canonical-model affinity Pick() error = %v", err)
+	}
+	otherModel, err := selector.Pick(context.Background(), "fixture", "another-model", opts, auths)
 	if err != nil {
 		t.Fatalf("other-model affinity Pick() error = %v", err)
 	}
@@ -84,17 +88,18 @@ func TestPinnedSessionAffinityUsesProviderSessionAndRawModelBucket(t *testing.T)
 	if err != nil {
 		t.Fatalf("other-provider affinity Pick() error = %v", err)
 	}
-	if first.ID != "a" || repeated.ID != "a" || otherRawModel.ID != "b" || otherProvider.ID != "c" {
+	if first.ID != "a" || repeated.ID != "a" || canonicalModel.ID != "a" || otherModel.ID != "b" || otherProvider.ID != "c" {
 		t.Fatalf(
-			"session-affinity picks = %s, %s, %s, %s; want a, a, b, c",
+			"session-affinity picks = %s, %s, %s, %s, %s; want a, a, a, b, c",
 			first.ID,
 			repeated.ID,
-			otherRawModel.ID,
+			canonicalModel.ID,
+			otherModel.ID,
 			otherProvider.ID,
 		)
 	}
 	if fallback.calls != 3 {
-		t.Fatalf("fallback calls = %d, want distinct raw-model and provider buckets", fallback.calls)
+		t.Fatalf("fallback calls = %d, want canonical-model reuse and distinct provider buckets", fallback.calls)
 	}
 }
 

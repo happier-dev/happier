@@ -69,6 +69,10 @@ on:
         type: string
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         required: true
         type: string
@@ -126,11 +130,12 @@ concurrency:
 
 env:
   HAPPIER_BUILD_DEFAULT_PROFILE_JSON: '{"accountService":{"url":"https://api.happier.dev"},"home":{"url":"https://api.happier.dev","webappUrl":"https://cloud.happier.dev"},"personalHome":{"value":"offer"}}'
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
 
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -210,6 +215,7 @@ jobs:
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/v0.3"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/main") ;;
@@ -221,7 +227,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
     steps:
@@ -474,7 +480,7 @@ jobs:
             go_target: darwin-arm64
             wrapper_name: happier-cliproxyapi-managed
           - platform_key: windows-x64
-            runner: windows-2025
+            runner: windows-2022
             platform_os: windows
             cli_target: windows-x64
             bun_target: bun-windows-x64
@@ -615,8 +621,17 @@ jobs:
           go list -m -f '{{.Path}} {{.Version}}' all | LC_ALL=C sort > \
             "${PROVENANCE_DIR}/${PLATFORM_KEY}.module-list.txt"
           go version -m "${WRAPPER_PATH}" | tail -n +2 > "${PROVENANCE_DIR}/${PLATFORM_KEY}.binary-build-info.txt"
-          grep -F $'\tdep\tgithub.com/router-for-me/CLIProxyAPI/v7\tv7.2.95' \
+          grep -F $'\tdep\tgithub.com/router-for-me/CLIProxyAPI/v8\tv8.0.61' \
             "${PROVENANCE_DIR}/${PLATFORM_KEY}.binary-build-info.txt"
+
+      - name: Compile x64 GUI service launcher with the installed MSVC toolchain
+        if: matrix.platform_key == 'windows-x64'
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test native service launcher lifecycle
+        if: matrix.platform_key == 'windows-x64'
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
 
       - name: Build exact native CLI archive from the wrapper
         shell: bash
@@ -1319,14 +1334,14 @@ jobs:
           node scripts/pipeline/release/publish-cli-binaries.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --version "$RELEASE_VERSION" \
             --base-version "$CANDIDATE_BASE_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
             --skip-smoke \
-            --run-contracts "true" \
+            --run-contracts auto \
             --check-installers "true"
 
       - name: Publish authenticated exact candidate matrix
@@ -1348,14 +1363,14 @@ jobs:
           node scripts/pipeline/release/publish-cli-binaries.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --version "$RELEASE_VERSION" \
             --base-version "$CANDIDATE_BASE_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --finalized-artifacts \
             --skip-smoke \
-            --run-contracts "true" \
+            --run-contracts auto \
             --check-installers "true"
 
   promote_existing:
@@ -1447,7 +1462,7 @@ jobs:
           node scripts/pipeline/release/publish-cli-binaries.mjs \
             --channel "$RELEASE_CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

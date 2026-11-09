@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Exact v7.2.95 / f71ec0eb carrier evidence. Only the upstream HTTP transport
+// Pinned v8.0.61 / 681ce41b carrier characterization. Only the upstream HTTP transport
 // and request-auth broker are faked; routing, executors and codecs stay real.
 type crossProtocolCase struct {
 	name, path, model, purpose, host, terminal, toolKind string
@@ -26,10 +26,10 @@ func crossProtocolCases() []crossProtocolCase {
 	return []crossProtocolCase{
 		{
 			name: "Messages to Codex", provider: ProviderCodex, protocol: ProtocolAnthropic,
-			path: "/v1/messages", model: "gpt-5.5", purpose: "openai-upstream", host: "chatgpt.com",
+			path: "/v1/messages", model: "gpt-6.1-sol", purpose: "openai-upstream", host: "chatgpt.com",
 			terminal: `"type":"message_stop"`, toolKind: `"type":"tool_use"`,
-			request:      `{"model":"gpt-5.5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"use the tool"}],"tools":[{"name":"fixture_tool","description":"fixture","input_schema":{"type":"object","properties":{"value":{"type":"string"}}}}]}`,
-			continuation: `{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"use the tool"},{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"fixture_tool","input":{"value":"ok"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"fixture-result"}]}]}`,
+			request:      `{"model":"gpt-6.1-sol","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"use the tool"}],"tools":[{"name":"fixture_tool","description":"fixture","input_schema":{"type":"object","properties":{"value":{"type":"string"}}}}]}`,
+			continuation: `{"model":"gpt-6.1-sol","max_tokens":64,"messages":[{"role":"user","content":"use the tool"},{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"fixture_tool","input":{"value":"ok"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"fixture-result"}]}]}`,
 		},
 		{
 			name: "Responses to Claude", provider: ProviderClaude, protocol: ProtocolOpenAIResponses,
@@ -238,13 +238,16 @@ func TestPinnedSDKCrossProtocolAuxiliarySurfaces(t *testing.T) {
 			}
 			defer connection.Close()
 			_ = connection.SetReadDeadline(time.Now().Add(5 * time.Second))
-			if err := connection.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"claude-sonnet-4-6","input":"hello"}`)); err != nil {
+			if err := connection.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"claude-sonnet-4-6","input":[{"type":"message","role":"user","content":"hello"}]}`)); err != nil {
 				t.Fatal(err)
 			}
 			for {
 				_, payload, err := connection.ReadMessage()
 				if err != nil {
 					t.Fatal(err)
+				}
+				if strings.Contains(string(payload), `"type":"error"`) {
+					t.Fatalf("websocket response failed: %s", payload)
 				}
 				if strings.Contains(string(payload), `"type":"response.completed"`) {
 					break
@@ -274,12 +277,12 @@ func crossProtocolToolStream(claude bool) string {
 	item := json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"fixture_tool","arguments":"{\"value\":\"ok\"}","status":"completed"}`)
 	var stream strings.Builder
 	for _, event := range []map[string]any{
-		{"type": "response.created", "response": map[string]any{"id": "resp_tools", "model": "gpt-5.5", "status": "in_progress", "output": []any{}}},
+		{"type": "response.created", "response": map[string]any{"id": "resp_tools", "model": "gpt-6.1-sol", "status": "in_progress", "output": []any{}}},
 		{"type": "response.output_item.added", "output_index": 0, "item": json.RawMessage(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"fixture_tool","arguments":"","status":"in_progress"}`)},
 		{"type": "response.function_call_arguments.delta", "item_id": "fc_1", "output_index": 0, "delta": `{"value":"ok"}`},
 		{"type": "response.function_call_arguments.done", "item_id": "fc_1", "output_index": 0, "arguments": `{"value":"ok"}`},
 		{"type": "response.output_item.done", "output_index": 0, "item": item},
-		{"type": "response.completed", "response": map[string]any{"id": "resp_tools", "model": "gpt-5.5", "status": "completed", "output": []any{item}, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
+		{"type": "response.completed", "response": map[string]any{"id": "resp_tools", "model": "gpt-6.1-sol", "status": "completed", "output": []any{item}, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
 	} {
 		encoded, _ := json.Marshal(event)
 		stream.WriteString("data: " + string(encoded) + "\n\n")

@@ -1,8 +1,8 @@
-import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import type {
   ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';
 import type {
   ManagedServiceHandle,
+  ManagedServiceResponse,
   ManagedServiceSpec,
 } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -18,19 +18,6 @@ import {
   CLIPROXYAPI_PROVIDER_CONTRIBUTION,
   CLIPROXYAPI_PROVIDER_LOCAL_ID,
 } from './contribution.js';
-
-const MANAGED_HEALTH_IDENTITY_KEYS = Object.freeze([
-  'v',
-  'contractVersion',
-  'sdkVersion',
-  'wrapperBuildVersion',
-  'protocols',
-  'purposes',
-  'modelListEnabled',
-  'sourceClass',
-]);
-const MANAGED_HEALTH_PURPOSE_KEYS = Object.freeze(['consumer', 'purpose']);
-const MANAGED_HEALTH_CONSUMER_KEYS = Object.freeze(['pluginId', 'localId']);
 
 type ManagedPurposeFamily = typeof CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES[number];
 
@@ -57,17 +44,8 @@ function throwIfAborted(signal: AbortSignal): void {
     : new Error('CLIProxyAPI managed wrapper identity request was aborted');
 }
 
-function exactRecord(
-  value: unknown,
-  keys: readonly string[],
-): Readonly<Record<string, unknown>> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const actualKeys = Object.keys(value);
-  if (
-    actualKeys.length !== keys.length
-    || keys.some((key) => !Object.hasOwn(value, key))
-  ) return null;
-  return value as Readonly<Record<string, unknown>>;
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function matchesProtocols(
@@ -75,10 +53,7 @@ function matchesProtocols(
   expectedProtocols: readonly string[],
 ): boolean {
   return Array.isArray(value)
-    && value.length === expectedProtocols.length
-    && expectedProtocols.every((protocol, index) => (
-      value[index] === protocol
-    ));
+    && expectedProtocols.every(protocol => value.includes(protocol));
 }
 
 function matchesPurposes(
@@ -86,34 +61,23 @@ function matchesPurposes(
   expectedPurposes: ManagedPurposeSnapshot['healthPurposes'],
 ): boolean {
   return Array.isArray(value)
-    && value.length === expectedPurposes.length
-    && expectedPurposes.every((expected, index) => {
-      const purpose = exactRecord(value[index], MANAGED_HEALTH_PURPOSE_KEYS);
-      const consumer = purpose
-        ? exactRecord(purpose.consumer, MANAGED_HEALTH_CONSUMER_KEYS)
-        : null;
-      return purpose?.purpose === expected.purpose
-        && consumer?.pluginId === expected.consumer.pluginId
-        && consumer.localId === expected.consumer.localId;
-    });
+    && expectedPurposes.every(expected => value.some(purpose => isRecord(purpose)
+      && purpose.purpose === expected.purpose
+      && isRecord(purpose.consumer)
+      && purpose.consumer.pluginId === expected.consumer.pluginId
+      && purpose.consumer.localId === expected.consumer.localId));
 }
 
 function matchesManagedHealthIdentity(
   value: unknown,
   purposeSnapshot: ManagedPurposeSnapshot,
 ): boolean {
-  const identity = exactRecord(value, MANAGED_HEALTH_IDENTITY_KEYS);
-  if (!identity) return false;
-  const wrapperBuildVersion = identity.wrapperBuildVersion;
+  if (!isRecord(value)) return false;
+  const identity = value;
   return identity.v === CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.v
     && identity.contractVersion
       === CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.contractVersion
     && identity.sdkVersion === CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion
-    && typeof wrapperBuildVersion === 'string'
-    && wrapperBuildVersion.length > 0
-    && wrapperBuildVersion === wrapperBuildVersion.trim()
-    && new TextEncoder().encode(wrapperBuildVersion).byteLength
-      <= CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.wrapperBuildVersionMaxBytes
     && matchesProtocols(identity.protocols, purposeSnapshot.protocols)
     && matchesPurposes(identity.purposes, purposeSnapshot.healthPurposes)
     && identity.modelListEnabled === purposeSnapshot.modelListEnabled
@@ -143,7 +107,7 @@ async function cancelBody(
   }
 }
 
-async function readBoundedBody(
+async function readHealthBody(
   body: NonNullable<ManagedServiceResponse['body']>,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
@@ -162,17 +126,6 @@ async function readBoundedBody(
       if (chunk.done) break;
       if (!(chunk.value instanceof Uint8Array)) throw identityMismatch();
       totalBytes += chunk.value.byteLength;
-      if (
-        totalBytes
-        > CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.responseMaxBytes
-      ) {
-        try {
-          await reader.cancel();
-        } catch {
-          // The bounded-body failure remains authoritative.
-        }
-        throw identityMismatch();
-      }
       chunks.push(chunk.value);
     }
   } finally {
@@ -213,7 +166,7 @@ async function assertManagedHealthIdentity(
     await cancelBody(response.body);
     throw identityMismatch();
   }
-  const bytes = await readBoundedBody(response.body, signal);
+  const bytes = await readHealthBody(response.body, signal);
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));

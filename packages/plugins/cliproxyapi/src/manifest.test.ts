@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,7 +9,9 @@ import {
 } from '@happier-dev/protocol';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
-import { CLIPROXYAPI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
+const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 describe('CLIProxyAPI plugin manifest', () => {
   it('discloses the managed gateway environment without granting host resources', async () => {
@@ -35,10 +39,10 @@ describe('CLIProxyAPI plugin manifest', () => {
   });
 
   it('ships the managed-purpose presentation in every supported plugin locale', () => {
-    expect(CLIPROXYAPI_UI_TRANSLATION_BUNDLES.map((bundle) => bundle.locale)).toEqual([
+    expect(PACKAGED_UI_TRANSLATION_BUNDLES.map((bundle) => bundle.locale).sort()).toEqual([
       'en', 'de', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja',
-    ]);
-    for (const bundle of CLIPROXYAPI_UI_TRANSLATION_BUNDLES) {
+    ].sort());
+    for (const bundle of PACKAGED_UI_TRANSLATION_BUNDLES) {
       expect(bundle.messages).toEqual({
         'managedPurpose.openai.title': expect.any(String),
         'managedPurpose.anthropic.title': expect.any(String),
@@ -49,9 +53,6 @@ describe('CLIProxyAPI plugin manifest', () => {
   });
 
   it('uses only the strict data-only root and survives bundled or installed ingestion', () => {
-    expect(Object.keys(PLUGIN_MANIFEST).sort()).toEqual([
-      'brand', 'contributes', 'description', 'displayName', 'engines', 'entrypoints', 'hostAccess', 'id', 'runtime', 'schemaVersion', 'version',
-    ]);
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toEqual(
       ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST)),
     );
@@ -59,7 +60,7 @@ describe('CLIProxyAPI plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.providers[0].managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.5' })]),
+        staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.1-sol' })]),
       }),
       expect.objectContaining({
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
