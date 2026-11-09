@@ -1,13 +1,21 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
-import { act } from 'react-test-renderer';
-import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { act, createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { Modal } from '@/modal';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent, openArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { fetchArtifactBlob } from '@/sync/api/artifacts/apiArtifacts';
-import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createArtifactActionsClient, type ArtifactActionsClient } from './artifactActionsClient';
 
 const nativeBoundary = vi.hoisted(() => ({
     filesystem: null as ReturnType<typeof import('@/dev/testkit/mocks/expoFileSystem').createExpoFileSystemFileMock> | null,
@@ -44,18 +52,37 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-import { ArtifactBinaryBody } from './ArtifactBinaryBody';
+import { ArtifactBinaryBody, useArtifactBinaryActions } from './ArtifactBinaryBody';
+
+let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
+let account: LazyActionAccountContext;
+let accountSettings: ReturnType<typeof import('@/dev/testkit/harness/actionHomesHttpHarness').createAccountSettingsHttpBoundary>;
+const blobRequests = new Map<string, () => Promise<Response>>();
 
 beforeEach(async () => {
     await import('expo-file-system');
     nativeBoundary.filesystem!.files.clear();
     const { storage } = await import('@/sync/domains/state/storage');
-    storage.getState().applySettingsLocal({ filesImagePreviewCacheMaxEntries: 0, filesImagePreviewMaxBytes: 1_000_000 });
+    const settings = { filesImagePreviewCacheMaxEntries: 0, filesImagePreviewMaxBytes: 1_000_000 };
+    storage.getState().applySettingsLocal(settings);
+    blobRequests.clear();
+    const serverUrl = 'https://binary-body.test';
+    const { createAccountSettingsHttpBoundary } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    accountSettings = createAccountSettingsHttpBoundary({ serverUrl, initialAccounts: [{ accountId: 'artifact-account',
+        snapshot: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 }) }] });
+    home = await createPlainArtifactHomeFixture(serverUrl, { currentAccount: true, accountSettingsVersion: 1,
+        handleRequest: async (path, init) => {
+            const settingsResponse = accountSettings.handle(new URL(path, serverUrl), init);
+            if (settingsResponse) return settingsResponse;
+            const match = /^\/v1\/artifacts\/([^/]+)\/blobs\//.exec(path);
+            return match ? await blobRequests.get(decodeURIComponent(match[1]!))?.() ?? null : null;
+        } });
+    account = await captureLazyActionAccountContext(home.home.id);
 });
 
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(async () => { account?.dispose(); await home?.dispose(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
-function binarySource(mime: string, bytes = new Uint8Array([0, 255, 128])) {
+function binarySource(artifactId: string, mime: string, bytes = new Uint8Array([0, 255, 128])) {
     const reference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62', mime,
         sizeBytes: bytes.length, sha256: hashArtifactBinaryContent(bytes) };
     // Only captured HTTP is substituted; the actual API mode/schema and binary opening owners run.
@@ -65,7 +92,15 @@ function binarySource(mime: string, bytes = new Uint8Array([0, 255, 128])) {
         const stored = await fetchArtifactBlob({ token: 'token' }, artifactId, ref.blobId, 'plain', { request, signal });
         return openArtifactBinaryContent({ reference: ref, content: stored.content, mode: 'plain', encryption: null });
     };
-    return { reference, bytes, request, readBytes };
+    blobRequests.set(artifactId, () => request());
+    home.boundary.replaceStoredRow({ id: artifactId, ownerAccountId: account.accountId, access: 'owner', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent({ title: 'File' }), headerVersion: 1,
+        body: encodePlainArtifactStoredContent({ body: reference }), bodyVersion: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        seq: 1, createdAt: 1, updatedAt: 1 });
+    let exportEnabled = true;
+    const actions = createArtifactActionsClient({ serverId: home.home.id, accountId: account.accountId },
+        createFrontDoorActionExecute(undefined, { isActionEnabled: id => id !== 'artifact.export' || exportEnabled }));
+    return { reference, bytes, request, readBytes, actions, setExportEnabled: (enabled: boolean) => { exportEnabled = enabled; } };
 }
 
 function installDownloadDocument() {
@@ -83,10 +118,74 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
+    it('keeps an explicitly requested export approval in place and resumes the same client download once', async () => {
+        accountSettings.replaceAccountSettings(account.accountId, AccountSettingsV2GetResponseSchema.parse({
+            content: { t: 'plain', v: { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+                actions: { 'artifact.export': { approvalRequiredSurfaces: ['ui'] } } }) } }, version: 1,
+        }));
+        await home.hydrateAccountSettings();
+        const source = binarySource('approved-export', 'application/zip');
+        const anchor = installDownloadDocument();
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:approved-export');
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        const hook = await renderHook(() => useArtifactBinaryActions());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+        let pending: ReturnType<ArtifactActionsClient['exportArtifact']> | undefined;
+        act(() => {
+            pending = hook.getCurrent().actions?.exportArtifact({ artifactId: 'approved-export', destination: 'client',
+                reference: source.reference, fileName: 'approved.zip' });
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().approval.approvalStatus).toBe('open'));
+        const approvalId = hook.getCurrent().approval.approvalId;
+        expect(approvalId).toEqual(expect.any(String));
+        expect(hook.getCurrent().approval.artifact?.id).toBe(approvalId);
+        expect(hook.getCurrent().approval.approvalPending).toBe(true);
+        expect(anchor.click).not.toHaveBeenCalled();
+        expect(source.request).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
+        await expect(decideApprovalAsInbox(home.home.id, approvalId!, 'approve')).resolves.toMatchObject({ ok: true });
+        await expect(pending).resolves.toMatchObject({ ok: true, value: { status: 'saved', fileName: 'approved.zip' } });
+        expect(anchor.click).toHaveBeenCalledOnce();
+        await hook.rerender();
+        expect(anchor.click).toHaveBeenCalledOnce();
+        expect(router.push).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+    it('does not retarget a captured export from another Account to the active Account', async () => {
+        const source = binarySource('other-account-export', 'application/zip');
+        const hook = await renderHook(() => useArtifactBinaryActions(undefined,
+            { serverId: home.home.id, accountId: 'other-account' }));
+        const result = await hook.getCurrent().actions?.exportArtifact({ artifactId: 'other-account-export',
+            destination: 'client', reference: source.reference, fileName: 'other.zip' });
+        expect(result).toMatchObject({ ok: false, failure: { code: 'action_account_scope_changed' } });
+        expect(source.request).not.toHaveBeenCalled();
+        expect(hook.getCurrent().approval.approvalId).toBeNull();
+        expect(home.boundary.list()).toHaveLength(1);
+        await hook.unmount();
+    });
+    it('uses Action admission for Download and allows retry after export is enabled', async () => {
+        const source = binarySource('html', 'text/html');
+        source.setExportEnabled(false);
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:download');
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        const anchor = installDownloadDocument();
+        const screen = await renderScreen(<ArtifactBinaryBody artifactId="html" name="page.html" {...source} />);
+        await screen.pressByTestIdAsync('artifact:download');
+        await flushHookEffects();
+        expect(anchor.click).not.toHaveBeenCalled();
+        expect(source.request).not.toHaveBeenCalled();
+        expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull();
+        source.setExportEnabled(true);
+        await screen.pressByTestIdAsync('artifact:download');
+        await vi.waitFor(() => expect(anchor.click).toHaveBeenCalledOnce());
+        expect(screen.findByTestId('artifact:downloadFailed')).toBeNull();
+    });
     it.each(['image/svg+xml', 'application/pdf'])('materializes %s through the shared bytes owner', async mime => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        const source = binarySource(mime);
+        const source = binarySource(mime, mime);
         const blobs: Blob[] = [];
         vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
             if (!(blob instanceof Blob)) throw new Error('Expected preview Blob');
@@ -107,7 +206,7 @@ describe('ArtifactBinaryBody', () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES', '2');
-        const source = binarySource('image/svg+xml');
+        const source = binarySource('svg-budget', 'image/svg+xml');
         const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:oversized');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         try {
@@ -123,7 +222,13 @@ describe('ArtifactBinaryBody', () => {
     ] as const)('preserves PDF download custody through %s sharing %s', async (platform, outcome) => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
-        const source = binarySource('application/pdf');
+        // This case changes the OS after the Home fixture was captured on web;
+        // populate the native device credential boundary through its real owner.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const nativeCredential = await TokenStorage.setCredentialsForServerUrlWithRollback(
+            home.home.serverUrl, { serverId: home.home.id }, account.credentials);
+        expect(nativeCredential).not.toBeNull();
+        const source = binarySource('pdf', 'application/pdf');
         const filesystem = nativeBoundary.filesystem!;
         const files = filesystem.files;
         const androidShares: string[] = [];
@@ -149,7 +254,13 @@ describe('ArtifactBinaryBody', () => {
             expect(source.request).toHaveBeenCalledOnce();
             expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
             await screen.pressByTestIdAsync('artifact:download');
-            await act(async () => { await vi.waitFor(() => expect(androidShares.length + iosShares.length).toBe(1)); });
+            await waitForHomeGovernance(() => {
+                expect(androidShares.length + iosShares.length).toBe(1);
+                expect(screen.findByTestId('artifact:downloadFailed') !== null).toBe(outcome === 'failure');
+                if (platform !== 'android' || outcome === 'failure') {
+                    expect([...files.keys()].filter(uri => uri.includes('/happier-downloads/'))).toEqual([]);
+                }
+            });
             const shared = platform === 'android' ? androidShares : iosShares;
             if (platform === 'android' && outcome === 'success') expect([...files.entries()].filter(([uri]) => uri.includes('/happier-downloads/')).map(([, bytes]) => bytes)).toEqual([[...source.bytes]]);
             expect(shared).toHaveLength(1);
@@ -161,6 +272,7 @@ describe('ArtifactBinaryBody', () => {
             expect(screen.findByTestId('artifact:downloadFailed') !== null).toBe(outcome === 'failure');
             await screen.unmount();
         } finally {
+            await nativeCredential?.rollback();
             Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
         }
     });
@@ -168,10 +280,10 @@ describe('ArtifactBinaryBody', () => {
     it('cancels an old selection download and leaves the next file actionable', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        const first = binarySource('application/zip');
+        const first = binarySource('first', 'application/zip');
         const pending = createDeferred<Response>();
         first.request.mockImplementation(() => pending.promise);
-        const next = binarySource('text/html');
+        const next = binarySource('next', 'text/html');
         vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:next');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         const anchor = installDownloadDocument();
@@ -180,7 +292,7 @@ describe('ArtifactBinaryBody', () => {
             await screen.pressByTestIdAsync('artifact:download');
             await screen.update(<ArtifactBinaryBody artifactId="next" name="next.html" {...next} />);
             await screen.pressByTestIdAsync('artifact:download');
-            await flushHookEffects();
+            await waitForHomeGovernance(() => expect(anchor.click).toHaveBeenCalledOnce());
             expect(anchor.download).toBe('next.html');
             expect(anchor.click).toHaveBeenCalledOnce();
             pending.resolve(new Response(JSON.stringify({ blobId: first.reference.blobId, content: { t: 'plain', v: encodeBase64(first.bytes) } })));
@@ -193,7 +305,7 @@ describe('ArtifactBinaryBody', () => {
     it('shows private image bytes and releases the temporary preview on unmount', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        const source = binarySource('image/png');
+        const source = binarySource('image', 'image/png');
         const urls: Blob[] = [];
         vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
             if (!(blob instanceof Blob)) throw new Error('Expected binary preview Blob');
@@ -220,7 +332,7 @@ describe('ArtifactBinaryBody', () => {
     it('does not fetch or render HTML until explicit Download, and downloads verified bytes', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        const source = binarySource('text/html');
+        const source = binarySource('html', 'text/html');
         const downloaded: Blob[] = [];
         vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
             if (!(blob instanceof Blob)) throw new Error('Expected binary download Blob');
@@ -233,7 +345,7 @@ describe('ArtifactBinaryBody', () => {
             expect(source.request).not.toHaveBeenCalled();
             expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
             await screen.pressByTestIdAsync('artifact:download');
-            await flushHookEffects();
+            await waitForHomeGovernance(() => expect(anchor.click).toHaveBeenCalledOnce());
             expect(anchor.download).toBe('page.html');
             expect(anchor.click).toHaveBeenCalledOnce();
             expect(new Uint8Array(await downloaded[0]!.arrayBuffer())).toEqual(source.bytes);
@@ -243,7 +355,7 @@ describe('ArtifactBinaryBody', () => {
     it('does not disclose an Account-mode mismatch as a preview or download', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        const source = binarySource('image/png');
+        const source = binarySource('image', 'image/png');
         source.request.mockImplementation(async () => new Response(JSON.stringify({ blobId: source.reference.blobId,
             content: { t: 'encrypted', c: 'AA==' } })));
         const createUrl = vi.spyOn(URL, 'createObjectURL');
@@ -252,8 +364,7 @@ describe('ArtifactBinaryBody', () => {
             await flushHookEffects();
             expect(screen.findByTestId('artifact:previewFailed')).not.toBeNull();
             await screen.pressByTestIdAsync('artifact:download');
-            await flushHookEffects();
-            expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull();
+            await waitForHomeGovernance(() => expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull());
             expect(createUrl).not.toHaveBeenCalled();
         } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: previous }); }
     });

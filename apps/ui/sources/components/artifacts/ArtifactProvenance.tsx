@@ -11,20 +11,31 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useMachineDisplayNamesById, useSessionDisplayNameSource } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 import type { ArtifactProvenance as Provenance } from './artifactBrowserModel';
+
+/**
+ * What to say about an artifact no producer recorded a source for: that someone shared it, or nothing when
+ * it is simply the viewer's own (a word repeated on every row says nothing).
+ */
+export function readArtifactProvenanceFallback(artifact: Readonly<{ access?: string | null }>): string | null {
+    return artifact.access && artifact.access !== 'owner' ? t('artifacts.browser.provenance.sharedWithYou') : null;
+}
 
 /** The session and machine names a provenance names, from the store's narrow display projections. */
 function useProvenanceNames(provenance: Provenance): Readonly<{ sessionId: string | null; session: string; machine: string | null }> {
     const sessionId = 'sessionId' in provenance ? provenance.sessionId : null;
     const source = useSessionDisplayNameSource(sessionId ?? '');
+    const isSessionVisible = useSessionRecordingVisibility();
+    const identityVisible = sessionId === null || isSessionVisible({ sessionId, serverId: source?.serverId });
     const machineIds = React.useMemo(() => [provenance.machineId], [provenance.machineId]);
     const machines = useMachineDisplayNamesById(machineIds);
     const fileName = provenance.path.split(/[\\/]/).filter(Boolean).pop() ?? provenance.path;
     return {
         sessionId,
-        session: source ? getSessionName(source) : t('artifacts.browser.provenance.fromFile', { name: fileName }),
-        machine: machines[provenance.machineId] ?? null,
+        session: !identityVisible ? t('message.provenanceSession') : source ? getSessionName(source) : t('artifacts.browser.provenance.fromFile', { name: fileName }),
+        machine: identityVisible ? machines[provenance.machineId] ?? null : null,
     };
 }
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBody';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -9,7 +9,10 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useFilePreviewSource, type UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
-import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
+import { createArtifactActionsClient, createMountedArtifactActionExecute, type ArtifactActionsClient } from './artifactActionsClient';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
@@ -18,15 +21,31 @@ type Preview = Readonly<{ key: string }> & (
     | Readonly<{ phase: 'ready'; bytes: Uint8Array; signal: AbortSignal }>
 );
 
+/** The mounted client handoff and its existing in-place approval recipient. */
+export function useArtifactBinaryActions(injectedActions?: Pick<ArtifactActionsClient, 'exportArtifact'>,
+    capturedScope?: ServerAccountScope | null) {
+    const activeScope = useActiveServerAccountScope();
+    const scope = capturedScope === undefined ? activeScope : capturedScope;
+    const mounted = useMountedActionExecution(scope, { retainInvocation: true });
+    const actions = React.useMemo(() => scope
+        ? createArtifactActionsClient(scope, createMountedArtifactActionExecute(mounted.execute)) : null,
+    [scope, mounted.execute]);
+    return { actions: injectedActions ?? actions, ready: mounted.ready, approval: mounted.approval };
+}
+
 /** Binary transport stays with Sync; temporary sources belong to the shared preview owner. */
 export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: string; reference: ArtifactBlobReferenceV1;
     readBytes: (artifactId: string, reference: ArtifactBlobReferenceV1, signal?: AbortSignal) => Promise<Uint8Array>;
     /** Bytes opened by the parent view's completed finite Account operation. */
     initialBytes?: Uint8Array;
     onRetry?: () => void;
+    /** History retains the original Account even when another Home is focused. */
+    scope?: ServerAccountScope | null;
+    actions?: Pick<ArtifactActionsClient, 'exportArtifact'>;
 }>) {
     const { theme } = useUnistyles();
     const reference = props.reference;
+    const { actions } = useArtifactBinaryActions(props.actions, props.scope);
     const key = `${props.artifactId}:${reference.blobId}:${reference.sha256}`;
     const viewer = resolveFileViewerKind({ path: props.name, mimeType: reference.mime });
     const previewable = viewer.previewable;
@@ -42,7 +61,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             downloadController.current?.abort();
             downloadController.current = null;
         };
-    }, [key]);
+    }, [key, actions]);
     React.useEffect(() => {
         if (!previewable) return;
         const controller = new AbortController();
@@ -74,9 +93,10 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         downloadController.current = controller;
         setDownloading(true); setDownloadFailed(false);
         try {
-            const bytes = ready?.bytes ?? await props.readBytes(props.artifactId, reference, controller.signal);
-            controller.signal.throwIfAborted();
-            await saveFileBytes({ bytes, fileName: props.name, mimeType: reference.mime, isCurrent: () => !controller.signal.aborted });
+            const outcome = await actions?.exportArtifact({ artifactId: props.artifactId, destination: 'client',
+                reference, fileName: props.name }, { signal: controller.signal });
+            if (outcome && 'approvalId' in outcome) return;
+            if (!outcome?.ok || !('status' in outcome.value)) throw new Error('artifact_export_failed');
         } catch { if (!controller.signal.aborted) setDownloadFailed(true); }
         finally {
             if (downloadController.current === controller) downloadController.current = null;

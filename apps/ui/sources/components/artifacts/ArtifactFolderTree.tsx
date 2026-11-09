@@ -24,9 +24,11 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import {
   DropdownMenu,
   type DropdownMenuItem,
+  type DropdownMenuSelection,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -53,7 +55,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from '@/platform/randomUUID';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifacts } from '@/sync/domains/state/storage';
-import { refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { invalidatePromptLibraryCatalogProjection } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import {
   findPromptFolderByName,
   normalizePromptFolderName,
@@ -366,7 +368,7 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
   }, [folders]);
 
   // What each folder holds, its folders' items included, under the current filter.
-  const stored = useArtifacts();
+  const stored = useArtifacts(props.artifacts ? 'none' : props.filter.kind === 'prompt' ? 'promptLibrary' : 'browserListed');
   const listed = props.artifacts ?? stored;
   const counts = React.useMemo(() => {
     const result = new Map<string, number>();
@@ -641,9 +643,10 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
   const unavailable =
     scope !== null && !canWrite && (catalog.value !== null || catalog.status !== 'loading');
   const noFolders = canWrite && (folders?.folders.length ?? 0) === 0;
+  const folderPending = catalog.value === null && catalog.status === 'loading';
   const retry = React.useCallback(() => {
     if (settingsScope)
-      fireAndForget(refreshPromptLibraryCatalog(settingsScope), {
+      fireAndForget(invalidatePromptLibraryCatalogProjection(settingsScope), {
         tag: 'ArtifactFolderTree.retry',
       });
   }, [settingsScope]);
@@ -677,7 +680,17 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
             <View style={styles.menuColumn} />
           </View>
         ) : null}
-        <Tree
+        {/* Until the folders are first read, the tree's rows hold their place: a flat list would regroup under them on arrival. */}
+        {folderPending ? (
+          <ItemLoadStateRows
+            testID={`${props.testID}:loading`}
+            state={{ kind: 'loading' }}
+            rows={6}
+            lines={1}
+            shape="list"
+            accessibilityLabel={props.accessibilityLabel}
+          />
+        ) : <Tree
           testID={props.testID}
           accessibilityLabel={props.accessibilityLabel}
           items={items}
@@ -698,7 +711,7 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
           renderTrailing={renderTrailing}
           renderInlineEdit={renderInlineEdit}
           wrapRow={wrapRow}
-        />
+        />}
         <RootDropZone nodeRef={rootZoneNode} />
       </View>
       {noFolders && !currentEdit ? (
@@ -1082,6 +1095,8 @@ function useMoveMenu(
               // One title for the chooser, on a phone sheet as on a desktop menu (lab `c-art TAp`).
               title: chooserTitle,
               showCategoryTitles: true,
+              // "New folder…" is its own kind at the foot: a divider sets it apart (lab `c-art TA`).
+              separateCategories: true,
               items: [...destinations.map(
                 (destination, index): DropdownMenuItem => {
                   const place = destination.destination;
@@ -1184,7 +1199,7 @@ function RowMenu(
     open: boolean;
     onOpenChange: (open: boolean) => void;
     items: readonly DropdownMenuItem[];
-    onSelect: (id: string) => void;
+    onSelect: (id: string, selection?: DropdownMenuSelection) => void;
   }>,
 ) {
   const tree = useTreeContext();
@@ -1359,10 +1374,10 @@ function ArtifactRowMenu(
             ]
           : []),
       ];
-  const onSelect = (id: string) => {
+  const onSelect = (id: string, selection?: DropdownMenuSelection) => {
     if (move.select(id)) return;
     if (id === 'open') onOpenArtifact(artifactId);
-    else if (id === 'share') operations.share();
+    else if (id === 'share') operations.share(selection?.anchor);
     else if (id === 'history') operations.history();
     else if (id === 'delete')
       fireAndForget(operations.remove(), {

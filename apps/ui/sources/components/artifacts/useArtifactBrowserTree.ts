@@ -14,7 +14,7 @@ import { projectArtifactBrowserTree, type ArtifactBrowserFilter } from './artifa
 export function useArtifactBrowserTree(filter: ArtifactBrowserFilter, collapsedFolderIds?: ReadonlySet<string>,
     /** A surface already holding the Artifacts it lists (a fixture page) passes them; the store is the default. */
     listed?: readonly DecryptedArtifact[]) {
-    const stored = useArtifacts();
+    const stored = useArtifacts(listed ? 'none' : filter.kind === 'prompt' ? 'promptLibrary' : 'browserListed');
     const artifacts = listed ?? stored;
     const catalog = usePromptLibraryCatalogValue('folders');
     const tree = React.useMemo(() => projectArtifactBrowserTree(artifacts, filter,

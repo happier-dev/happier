@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 /** What a held operation is: a person's decision on a proposal, or Undo of an accepted one. */
 export type DocEditOperationKind = 'accept' | 'decline' | 'undo';
@@ -8,7 +9,11 @@ export type DocEditOperationKind = 'accept' | 'decline' | 'undo';
 /** `approvalId` is null while the Action is in flight and set once it is waiting on an approval. */
 export type HeldDocEditOperation = Readonly<{ kind: DocEditOperationKind; approvalId: string | null }>;
 
-const held = new Map<string, HeldDocEditOperation>();
+type DocEditOperation = HeldDocEditOperation | Readonly<{
+  kind: 'undo'; approvalId: null; restoredRevision: ArtifactRevisionV1;
+}>;
+
+const held = new Map<string, DocEditOperation>();
 const listeners = new Set<() => void>();
 const notify = () => { for (const listener of listeners) listener(); };
 
@@ -28,7 +33,7 @@ export function admitDocEditOperation(key: string, kind: DocEditOperationKind): 
   return true;
 }
 
-export function readDocEditOperation(key: string): HeldDocEditOperation | null {
+export function readDocEditOperation(key: string): DocEditOperation | null {
   return held.get(key) ?? null;
 }
 
@@ -44,9 +49,15 @@ export function releaseDocEditOperation(key: string): void {
   if (held.delete(key)) notify();
 }
 
+/** Keep the acknowledged Undo result for the card, its notice and a reopened thread alike. */
+export function settleDocEditUndo(key: string, restoredRevision: ArtifactRevisionV1): void {
+  held.set(key, { kind: 'undo', approvalId: null, restoredRevision });
+  notify();
+}
+
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
-export function useDocEditOperation(key: string | null): HeldDocEditOperation | null {
+export function useDocEditOperation(key: string | null): DocEditOperation | null {
   return React.useSyncExternalStore(subscribe, () => (key === null ? null : held.get(key) ?? null));
 }
 

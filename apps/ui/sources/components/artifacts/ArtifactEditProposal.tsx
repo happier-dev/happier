@@ -46,7 +46,7 @@ import { readArtifactActionFailure, type ArtifactActionFailure, type ArtifactAct
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 import { docProposalChangesOutsideSelection, readDocProposalSelection } from './docProposalSelection';
 import {
-  admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation,
+  admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation, settleDocEditUndo,
   useDocEditOperation, type DocEditOperationKind,
 } from './docEditOperation';
 
@@ -135,10 +135,10 @@ function DocEditApprovalContinuation(props: Readonly<{
       scope: props.client.scope,
       actionId: DOC_EDIT_ACTION[props.heldKind],
       onSucceeded: (value: unknown) => {
-        release();
         if (props.heldKind === 'undo') {
           settlement.current.settleUndo({ state: 'done', revision: (value as { revision: Revision }).revision });
         } else {
+          release();
           settlement.current.settleDecision(
             (value as { docEditProposalDispositionV1: DocEditProposalDispositionV1 }).docEditProposalDispositionV1,
           );
@@ -238,12 +238,18 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
   const [busy, setBusy] = React.useState<Busy>(null);
   const currency: Currency = refusal === 'movedOn' ? 'movedOn'
     : admitted ? revisionCurrency(currentRevision, base) : 'unknown';
-  const [undo, setUndo] = React.useState<UndoOutcome | null>(null);
+  const [undoFailure, setUndoFailure] = React.useState<Exclude<UndoOutcome, { state: 'done' }> | null>(null);
   // One admission for this proposal's Accept, Decline and Undo, across this card, its compact notice and a
   // remounted card (Back); a gated Action stays held until its approval settles.
   const operationKey = proposalRef ? docEditOperationKey(client.scope, proposalRef.messageId) : null;
   const operation = useDocEditOperation(operationKey);
   const approvalOperation = operation?.approvalId ? operation : null;
+  const undo: UndoOutcome | null = operation && 'restoredRevision' in operation
+    ? { state: 'done', revision: operation.restoredRevision } : undoFailure;
+  const settleUndo = React.useCallback((outcome: UndoOutcome) => {
+    if (outcome.state === 'done' && operationKey) settleDocEditUndo(operationKey, outcome.revision);
+    else if (outcome.state !== 'done') setUndoFailure(outcome);
+  }, [operationKey]);
 
   React.useEffect(() => {
     // A parent shares one read across visible Discussion cards. A standalone accepted receipt still
@@ -323,15 +329,15 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
       holdDocEditApproval(operationKey, outcome.approvalId);
       return;
     }
-    releaseDocEditOperation(operationKey);
-    setUndo(
+    if (!outcome.ok) releaseDocEditOperation(operationKey);
+    settleUndo(
       outcome.ok
         ? { state: 'done', revision: outcome.value.revision }
         : outcome.failure.code === VERSION_MISMATCH
           ? { state: 'conflict' }
           : { state: 'failed', failure: outcome.failure },
     );
-  }, [artifactId, base.bodyVersion, busy, client, disposition, operationKey]);
+  }, [artifactId, base.bodyVersion, busy, client, disposition, operationKey, settleUndo]);
 
   const docTitle = typeof admitted?.header.title === 'string' ? admitted.header.title : null;
   const readOnly = refusal === 'cantEdit' || admitted?.access === 'view';
@@ -495,7 +501,7 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
           heldApprovalId={approvalOperation.approvalId}
           settleDecision={settleDecision}
           refuseDecision={refuseDecision}
-          settleUndo={setUndo}
+          settleUndo={settleUndo}
         />
       ) : null}
       <HappierDocEditProposal
@@ -689,7 +695,8 @@ export function announceAccepted(
             openApproval(outcome.approvalId);
             return;
           }
-          releaseDocEditOperation(operationKey);
+          if (outcome.ok) settleDocEditUndo(operationKey, outcome.value.revision);
+          else releaseDocEditOperation(operationKey);
           publishPresentationNotice(outcome.ok
             ? { key: ACCEPTED_NOTICE_KEY, severity: 'info', message: t('artifacts.browser.proposal.undone', { n: outcome.value.revision.bodyVersion }) }
             : { key: ACCEPTED_NOTICE_KEY, severity: 'warning', message: outcome.failure.code === VERSION_MISMATCH

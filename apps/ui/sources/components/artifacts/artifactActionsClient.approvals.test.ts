@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    ApprovalRequestV2Schema,
-    ArtifactActionOutputSchemasV1,
-    decodePlainArtifactStoredContent,
-    normalizeActionsSettingsV1,
+    ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+    ArtifactActionOutputSchemasV1} from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import {
+    decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import {
     ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/externalActionApi';
 import { act, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -60,7 +64,21 @@ describe('Artifact surface pending approvals', () => {
         transport.download.mockReset();
     });
 
-    it.each(['create', 'update', 'restore', 'delete', 'publish'] as const)('recognizes a durable %s approval before parsing the final acknowledgement', async (operation) => {
+    it('runs an explicitly confirmed deletion once without creating a second approval', async () => {
+        const { serverId, artifacts } = await serveArtifactAccount('https://artifact-confirmed-delete.test');
+        const client = createArtifactActionsClient({ serverId, accountId: 'owner-1' });
+        const created = await client.createArtifact({ header: { kind: 'artifact.legacy', title: 'Draft' }, body: 'Draft body' });
+        if ('approvalId' in created || !created.ok) throw new Error('Expected the existing document');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        const result = await client.deleteArtifact({ artifactId: created.value.artifactId,
+            expectedRevision: created.value.revision }, { confirmed: true });
+        expect(result).toMatchObject({ ok: true });
+        expect(artifacts.list()).toHaveLength(0);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+    });
+
+    it.each(['create', 'update', 'restore', 'delete', 'publish', 'export'] as const)('recognizes a durable %s approval before parsing the final acknowledgement', async (operation) => {
         const actionId = operation === 'restore' ? 'artifact.revisions.restore'
             : operation === 'publish' ? 'artifact.publish_from_file' : `artifact.${operation}`;
         const { serverId, artifacts } = await serveArtifactAccount(`https://artifact-surface-${operation}-approval.test`, actionId);
@@ -69,19 +87,21 @@ describe('Artifact surface pending approvals', () => {
         const input = { artifactId: 'document-1', expectedRevision: { headerVersion: 2, bodyVersion: 3 } };
         const draft = { header: { kind: 'artifact.legacy', title: 'Draft' }, body: 'Draft body' };
         const publication = { path: 'src/file.ts', title: 'File' };
+        const exported = { artifactId: input.artifactId, destination: 'client' as const, fileName: 'Draft.pdf' };
         const outcome = operation === 'publish' ? await client.publishWorkspaceFile(publication, { sessionId: 'source-session' })
+            : operation === 'export' ? await client.exportArtifact(exported, { confirmed: true })
             : operation === 'create' ? await client.createArtifact(draft)
             : operation === 'update' ? await client.updateArtifact({ ...input, ...draft })
             : operation === 'restore'
             ? await client.restoreRevision({ ...input, bodyVersion: 1 })
-            : await client.deleteArtifact(input);
+            : await client.deleteArtifact(input, { confirmed: true });
         const rows = artifacts.list();
         expect(rows).toHaveLength(1);
         const approvalId = rows[0]!.id;
         const persisted = ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(approvalId)!));
         expect(persisted).toMatchObject({ status: 'open', actionId,
             executionOriginV1: { serverId, accountId: 'owner-1', actionId, authority: 'present_user' },
-            actionArgs: operation === 'publish' ? publication : operation === 'create' ? draft : operation === 'update' ? { ...input, ...draft }
+            actionArgs: operation === 'publish' ? publication : operation === 'export' ? exported : operation === 'create' ? draft : operation === 'update' ? { ...input, ...draft }
                 : operation === 'restore' ? { ...input, bodyVersion: 1 } : input });
         expect(outcome).toEqual({ approvalId });
         expect(artifacts.read('document-1')).toBeNull();

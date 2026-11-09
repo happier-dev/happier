@@ -1,10 +1,12 @@
 import * as React from 'react';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import type { ArtifactStorageUsageV1, PromptFoldersV1 } from '@happier-dev/protocol';
+import type { ArtifactStorageUsageV1} from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
@@ -28,8 +30,7 @@ import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useArtifacts, useArtifactsLoaded, useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { useArtifacts, useArtifactsLoaded, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { useArtifactInventoryRead } from './useArtifactInventoryRead';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
@@ -98,7 +99,7 @@ function countSavedToday(artifacts: readonly DecryptedArtifact[], nowMs: number)
  * opens in its own destination.
  */
 export function ArtifactsBrowserScreen(): React.ReactElement {
-    const artifacts = useArtifacts();
+    const artifacts = useArtifacts('browserListed');
     const loaded = useArtifactsLoaded('browserListed');
     const usage = useArtifactStorageUsage();
     const { value: folders } = usePromptLibraryCatalogValue('folders');
@@ -130,10 +131,10 @@ export function ArtifactsBrowser(props: Readonly<{
     const [query, setQuery] = React.useState('');
     const [kind, setKind] = React.useState<ArtifactBrowserKind | 'all'>('all');
     const [sort, setSort] = React.useState<ArtifactBrowserSort>('updated_desc');
-    const view = useLocalSetting('artifactsBrowserViewV1');
+    const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
     // A phone lists by default (one card per screen hides the collection); wider screens show cards.
     const presentation: BrowserPresentation = view?.presentation ?? (deviceType === 'phone' ? 'list' : 'grid');
-    const setPresentation = React.useCallback((next: BrowserPresentation) => getStorage().getState().applyLocalSettings({ artifactsBrowserViewV1: { presentation: next } }, { source: 'ui' }), []);
+    const setPresentation = React.useCallback((next: BrowserPresentation) => setView({ presentation: next }), [setView]);
     const filter = React.useMemo(() => ({ query, kind, sort }), [query, kind, sort]);
     const folderTree = React.useRef<ArtifactFolderTreeHandle>(null);
 
@@ -335,9 +336,9 @@ function useArtifactRowActions(row: ArtifactBrowserRow): CollectionRowActions {
             { id: 'history', label: t('artifacts.browser.actions.history') },
             ...(operations.canManage ? [{ id: 'delete', label: t('artifacts.delete'), destructive: true, disabled: operations.deleting }] : []),
         ],
-        onSecondaryAction: id => {
+        onSecondaryAction: (id, selection) => {
             if (id === 'open') commands?.open(row.key);
-            else if (id === 'share') operations.share();
+            else if (id === 'share') operations.share(resolvePressTriggerAnchor({ currentTarget: selection?.anchorRef?.current }));
             else if (id === 'history') operations.history();
             else if (id === 'delete') return operations.remove();
         },
@@ -577,7 +578,7 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
             return <ArtifactProvenanceLabel provenance={provenance} fallback={fallback ?? ''} presentation="line"
                 testID={`artifacts:row:${row.key}:provenance`} />;
         },
-        // A grid card's footer draws the age in its own right-aligned column (lab A1), so the kind stands alone.
+        // Shared card anatomy composes the held kind, age and provenance as quiet facts.
         ...(phone && presentation === 'list' ? {} : { reason: (row: ArtifactBrowserRow) => rowKindFact(row).label }),
         // The "Edited" column is a narrow tabular one: the bare age ("45m") fits where "45m ago" was cut off (lab A2).
         age: (row) => formatShortRelativeTime(row.artifact.updatedAt),

@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierHtmlSandboxFrame } from '@happier-dev/plugin-ui/presentation';
 
-import type { ArtifactBodyV1 } from '@happier-dev/protocol';
+import type { ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import type { ArtifactHtmlPreview } from '@/sync/domains/artifacts/artifactTypes';
 import { HostedFrameHost } from '@/components/ui/surfaces/framed/HostedFrameHost';
@@ -15,7 +15,7 @@ type Preview = Readonly<{ key: string; body: ArtifactBodyV1 | null | undefined }
     | (Readonly<{ phase: 'ready' }> & ArtifactHtmlPreview)
 );
 
-/** Sync owns authorization and isolated URL delivery; this view owns the opened frame's lifetime. */
+/** Sync owns authorized bundle delivery; this view owns the opaque frame's lifetime. */
 export function ArtifactHtmlBody(props: Readonly<{
     artifactId: string;
     headerVersion: number;
@@ -37,12 +37,7 @@ export function ArtifactHtmlBody(props: Readonly<{
         setPreview({ key, body, phase: 'loading' });
         void (props.preview ? Promise.resolve(props.preview) : props.readPreview(props.artifactId, controller.signal)).then(value => {
             if (controller.signal.aborted) return;
-            const url = new URL(value.url);
-            if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search
-                || (Platform.OS === 'web' && typeof window !== 'undefined' && url.origin === window.location.origin)) {
-                throw new Error('HTML preview must use an isolated origin');
-            }
-            setPreview({ key, body, phase: 'ready', url: url.toString(), bundle: value.bundle });
+            setPreview({ key, body, phase: 'ready', bundle: value.bundle });
         }).catch(() => {
             if (!controller.signal.aborted) setPreview({ key, body, phase: 'failed' });
         });

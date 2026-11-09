@@ -31,8 +31,7 @@ function setPlatform(value: 'web' | 'android') {
     Object.defineProperty(Platform, 'OS', { configurable: true, value });
 }
 
-const previewUrl = 'https://artifact-1.preview.example.test/a/artifact-1';
-const preview = { url: previewUrl, bundle: artifactHtmlBundleFromBodyV1('<h1>Report</h1>') };
+const preview = { bundle: artifactHtmlBundleFromBodyV1('<h1>Report</h1>') };
 const props = { artifactId: 'artifact-1', headerVersion: 1, bodyVersion: 1, body: '<h1>Report</h1>', name: 'Report' };
 
 async function loadPreviewGuest(screen: Awaited<ReturnType<typeof renderScreen>>) {
@@ -81,17 +80,14 @@ describe('ArtifactHtmlBody', () => {
         expect((await loadPreviewGuest(screen)).props.srcDoc).toContain('<h1>Report</h1>');
     });
 
-    it('refuses app-origin, inline, and credential-bearing preview URLs visibly', async () => {
+    it('shows a failed private read without mounting a guest', async () => {
         setPlatform('web');
         vi.stubGlobal('window', { location: { origin: 'https://app.example.test' } });
-        for (const url of ['https://app.example.test/a/artifact-1#d=bundle', 'data:text/html,<script>alert(1)</script>',
-            'blob:https://app.example.test/html', 'https://user:secret@preview.example.test/a/artifact-1']) {
-            const screen = await renderScreen(<ArtifactHtmlBody {...props} readPreview={async () => ({ ...preview, url })} />);
-            await flushHookEffects();
-            expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
-            expect(screen.findByTestId('artifact:htmlPreviewFailed')).not.toBeNull();
-            await screen.unmount();
-        }
+        const screen = await renderScreen(<ArtifactHtmlBody {...props} readPreview={async () => { throw new Error('Private read unavailable'); }} />);
+        await flushHookEffects();
+        expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
+        expect(screen.findByTestId('artifact:htmlPreviewFailed')).not.toBeNull();
+        await screen.unmount();
     });
 
     it('cancels obsolete previews when content, version or selection changes and ignores late results', async () => {
@@ -108,7 +104,7 @@ describe('ArtifactHtmlBody', () => {
         await screen.update(<ArtifactHtmlBody {...props} body="<h1>New report</h1>" readPreview={readPreview} />);
         await loadPreviewGuest(screen);
         expect(signals[0]!.aborted).toBe(true);
-        pending.resolve({ ...preview, url: 'https://old.preview.example.test/a/artifact-1' });
+        pending.resolve(preview);
         await flushHookEffects();
         expect(screen.findHostByTestId('artifact:htmlPreview')!.props.srcDoc).toContain('<h1>Report</h1>');
         const revision = createDeferred<ArtifactHtmlPreview>();
@@ -116,7 +112,7 @@ describe('ArtifactHtmlBody', () => {
         await screen.update(<ArtifactHtmlBody {...props} bodyVersion={2} readPreview={readPreview} />);
         expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
         expect(signals[1]!.aborted).toBe(true);
-        nextUrl = Promise.resolve({ url: 'https://artifact-2.preview.example.test/a/artifact-2', bundle: artifactHtmlBundleFromBodyV1('<h1>Second</h1>') });
+        nextUrl = Promise.resolve({ bundle: artifactHtmlBundleFromBodyV1('<h1>Second</h1>') });
         await screen.update(<ArtifactHtmlBody {...props} artifactId="artifact-2" readPreview={readPreview} />);
         revision.reject(new Error('Obsolete read failed'));
         const secondFrame = await loadPreviewGuest(screen);
@@ -131,7 +127,7 @@ describe('ArtifactHtmlBody', () => {
         setPlatform('web');
         const html = `<main>${'valid'.repeat(420_000)}</main>`;
         const screen = await renderScreen(<ArtifactHtmlBody {...props} readPreview={async () => ({
-            url: previewUrl, bundle: artifactHtmlBundleFromBodyV1(html),
+            bundle: artifactHtmlBundleFromBodyV1(html),
         })} />);
         const frame = await loadPreviewGuest(screen);
         expect(frame.props.srcDoc).toContain(html);
@@ -141,7 +137,7 @@ describe('ArtifactHtmlBody', () => {
 
     it('ignores a delayed frame failure after another artifact has opened', async () => {
         setPlatform('web');
-        const readPreview = async (id: string) => ({ url: `https://${id}.preview.example.test/a/${id}`, bundle: artifactHtmlBundleFromBodyV1(`<h1>${id}</h1>`) });
+        const readPreview = async (id: string) => ({ bundle: artifactHtmlBundleFromBodyV1(`<h1>${id}</h1>`) });
         const screen = await renderScreen(<ArtifactHtmlBody {...props} readPreview={readPreview} />);
         const oldFrameFailure = (await loadPreviewGuest(screen)).props.onError;
         await screen.update(<ArtifactHtmlBody {...props} artifactId="artifact-2" readPreview={readPreview} />);

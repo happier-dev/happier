@@ -7,7 +7,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-import { resetPromptLibraryCatalogEngineForTests, refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { resetPromptLibraryCatalogEngineForTests, refreshPromptLibraryCatalog, invalidatePromptLibraryCatalogProjection } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import { ArtifactFolderTree } from './ArtifactFolderTree';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -59,15 +59,23 @@ afterEach(async () => {
     vi.clearAllMocks();
 });
 
-async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; name: string; parentId: string | null }[] = [], browser = false, askFirst = false) {
+async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; name: string; parentId: string | null }[] = [], browser = false, askFirst = false, holdFirstRead = false) {
     const boundary = createPromptLibraryCatalogBoundary({ records: [{ key: 'folders', value: { v: 1, folders: [...initial] } }], revision: 4 });
     let outcome: 'updated' | 'conflict' | 'failed' = 'updated';
     let holdReads: Promise<void> | null = null;
+    let catalogReads = 0;
+    let releaseFirstRead: () => void = () => {};
+    if (holdFirstRead) holdReads = new Promise<void>(resolve => { releaseFirstRead = () => { holdReads = null; resolve(); }; });
     fixture = await createPlainArtifactHomeFixture(`https://inline-folders-${++homeCount}.test`, { handleRequest: async (path, init) => {
         if (path === '/v2/account/settings' && askFirst) return Response.json({ version: 0, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, actions: { 'artifact.folders.create': { approvalRequiredSurfaces: ['ui'] } } },
         } } });
-        if (path === '/v1/account/entity-rows/prompt-library' && holdReads) await holdReads;
+        if (path === '/v1/account/entity-rows/prompt-library') {
+            catalogReads++;
+            const response = await boundary.handle(path, init);
+            if (holdReads) await holdReads;
+            return response;
+        }
         if (path === '/v1/account/entity-rows/prompt-library/folders' && init?.method === 'POST') {
             if (outcome === 'conflict') return Response.json({ status: 'conflict', revision: 4 });
             if (outcome === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
@@ -83,7 +91,7 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
         : <CoreCollectionScope><ArtifactFolderTree testID={testID} accessibilityLabel="Folders"
             filter={{ query: '', kind, sort: 'title_asc' }} onOpenArtifact={() => {}} /></CoreCollectionScope>}</ModalProvider>);
     if (browser) await screen.pressByTestIdAsync('artifacts:view:folders');
-    await vi.waitFor(() => expect(screen.findByTestId(initial.length ? `${testID}:row:folder:${initial[0]!.id}` : `${testID}:invite:new`)).toBeTruthy());
+    if (!holdFirstRead) await vi.waitFor(() => expect(screen.findByTestId(initial.length ? `${testID}:row:folder:${initial[0]!.id}` : `${testID}:invite:new`)).toBeTruthy());
     const read = () => {
         const record = boundary.read('folders');
         if (record.key !== 'folders') throw new Error('Wrong record');
@@ -96,13 +104,43 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
         const menu = screen.findAll(node => node.props.testID === `folders:menu:folder:${folderId}` && typeof node.props.onSelect === 'function')[0];
         await act(async () => { menu!.props.onSelect(id); });
     };
-    return { screen, read, boundary, changeName, select, setOutcome: (next: typeof outcome) => { outcome = next; },
+    return { screen, read, boundary, changeName, select, releaseFirstRead, readCount: () => catalogReads,
+        setOutcome: (next: typeof outcome) => { outcome = next; },
         holdCatalogReads: () => {
             let release!: () => void;
             holdReads = new Promise<void>(resolve => { release = resolve; });
             return () => { holdReads = null; release(); };
         } };
 }
+
+it('Retry requests fresh folder authority instead of only joining the read already on screen', async () => {
+    const state = await setup('all', [{ id: 'original', name: 'Original', parentId: null }]);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const release = state.holdCatalogReads();
+    const before = state.readCount();
+    const pending = invalidatePromptLibraryCatalogProjection(storage.getState().settingsScope!);
+    try {
+        await vi.waitFor(() => expect(state.readCount()).toBe(before + 1));
+        const line = state.screen.findAll(node => typeof node.type === 'function' && node.type.name === 'SurfaceFreshnessLine')
+            .find(node => node.props.testID === 'folders:unavailable');
+        expect(line).toBeDefined();
+        await act(async () => { line!.props.action.onPress(); });
+        expect(await state.boundary.handle('/v1/account/entity-rows/prompt-library/folders', {
+            method: 'POST', body: JSON.stringify({ expectedRevision: 4, content: { t: 'plain', v: {
+                key: 'folders', value: { v: 1, folders: [
+                    { id: 'original', name: 'Original', parentId: null },
+                    { id: 'remote', name: 'Added remotely', parentId: null },
+                ] },
+            } } }),
+        })).toMatchObject({ status: 200 });
+        release();
+        await pending;
+        await vi.waitFor(() => expect(state.readCount()).toBe(before + 2));
+        expect(state.screen.findByTestId('folders:row:folder:original')).toBeTruthy();
+        await vi.waitFor(() => expect(state.screen.findByTestId('folders:row:folder:remote')).toBeTruthy());
+        await vi.waitFor(() => expect(state.screen.findByTestId('folders:unavailable')).toBeNull());
+    } finally { release(); await pending; }
+});
 
 it('uses current catalog authority and settles its durable receipt before a held refresh', async () => {
     const state = await setup('all');
@@ -119,6 +157,17 @@ it('uses current catalog authority and settles its durable receipt before a held
         expect(state.screen.findByTestId('folders:unavailable')).toBeNull();
     } finally { await act(async () => { release(); }); }
     await vi.waitFor(() => expect(state.screen.findByTestId('folders:unavailable')).toBeNull());
+});
+
+it('holds the tree rows in place until the folders are first read, then draws them grouped', async () => {
+    const state = await setup('all', [{ id: 'filed', name: 'Filed', parentId: null }], true, false, true);
+    // Before the folder catalog answers, the Notes document must not be drawn loose at the top level:
+    // it would jump under its folder once the folders arrive.
+    await vi.waitFor(() => expect(state.screen.findByTestId('artifacts:folders:loading')).toBeTruthy());
+    expect(state.screen.findByTestId('artifacts:folders:row:artifact:document')).toBeNull();
+    await act(async () => { state.releaseFirstRead(); });
+    await vi.waitFor(() => expect(state.screen.findByTestId('artifacts:folders:row:folder:filed')).toBeTruthy());
+    expect(state.screen.findByTestId('artifacts:folders:loading')).toBeNull();
 });
 
 it('removes an empty folder directly through its safe Action', async () => {

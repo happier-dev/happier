@@ -5,7 +5,7 @@ import type {
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
@@ -18,7 +18,7 @@ const EMPTY_CONTEXT = Object.freeze({});
 export function ArtifactWidgetBody(
   props: Readonly<{ artifactId: string; bodyVersion: number | undefined }>,
 ): React.ReactElement {
-  const runtime = useAppShellPluginUiProjection();
+  const runtime = useAppShellPluginUiProjectionCurrentness();
   const accountScope = useActiveServerAccountScope();
   const scope = React.useMemo<WidgetSurfaceRefV1 | null>(
     () => (accountScope ? { ...accountScope, owner: { kind: 'home' } } : null),
