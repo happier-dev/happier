@@ -1308,7 +1308,7 @@ describe('connected-service configuration Action owner', () => {
     describe('Account-direct key custody (one credential record)', () => {
         const anthropic = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
         const apiKeyMode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'api-key', kind: 'manual', outcomeReconciliation: 'none',
-            accountDirectSave: true, credentialOrigin: 'authentication',
+            accountDirectSave: true, credentialOrigin: 'authentication', apiKey: true,
             fields: [{ id: 'token', title: 'Anthropic API key', secret: true, schema: { type: 'string', minLength: 1 } }] });
         type Promotion = Parameters<NonNullable<ConnectedServiceConfigurationActionHostV1['promoteAccountCredentialSecrets']>>[0];
         function directHost(outcome: 'applied' | 'outcome_unknown' | 'conflict', promotions: Promotion[], rawWrites: unknown[]): ConnectedServiceConfigurationActionHostV1 {
@@ -1345,7 +1345,7 @@ describe('connected-service configuration Action owner', () => {
             const { secrets, credential } = promotions[0]!;
             expect(secrets).toEqual([{ resourceId: 'cred-key-1', displayName: 'Anthropic API key', kind: 'apiKey', value: 'sk-ant-one-record' }]);
             expect(credential).toMatchObject({ ref: account, authenticationModeId: 'api-key', expectedCredentialRevision: null,
-                savedSecretResourceIds: ['cred-key-1'] });
+                savedSecretResourceIds: ['cred-key-1'], metadata: { accessMode: 'apiKey' } });
             // Double custody: the credential row holds the reference, never the key bytes.
             expect(JSON.stringify(credential)).not.toContain('sk-ant-one-record');
             const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: account, authenticationModeId: 'api-key',

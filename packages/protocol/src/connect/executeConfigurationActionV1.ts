@@ -22,7 +22,7 @@ import {
 import type { ConnectedServiceQuotaGetInputV1 } from './providerAccountUsageHistory.js';
 import type { ConnectedServicePoolSelectionGetRequestV1 } from './connectedServicePoolSelection.js';
 import { classifyHomeDomainHttpMutationFailureV1 } from '../actions/homeDomainHttpBinding.js';
-import { isAccountDirectConnectedAccountModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import { isAccountDirectConnectedAccountModeV1, isConnectedAccountApiKeyModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema } from './qualifiedConnectedAccountContentEnvelope.js';
@@ -239,7 +239,8 @@ export async function executeConnectedServiceConfigurationActionV1(
       const payload = QualifiedConnectedAccountCredentialPayloadV1Schema.parse({ v: 1,
         values: Object.fromEntries(entered.filter(([key]) => !secretKeys.has(key))),
         ...(references.length ? { secretRefs: Object.fromEntries(references) } : {}) });
-      const metadata = { scopes: [], ...(args.displayName ? { displayName: args.displayName } : {}) };
+      const metadata = { scopes: [], ...(args.displayName ? { displayName: args.displayName } : {}),
+        ...(isConnectedAccountApiKeyModeV1(mode) ? { accessMode: 'apiKey' as const } : {}) };
       const content = await host.sealAccountCredential(projectQualifiedConnectedAccountCredentialPlaintextV1({ ref: args.account,
         authenticationModeId: mode.id, payload, metadata, now: Date.now() }));
       host.assertCurrent();
@@ -516,6 +517,13 @@ export async function executeConnectedServiceConfigurationActionV1(
       // A received durable receipt is not erased by a subsequent Account switch.
       return { applied: true };
     }
+    case 'connectedServices.pools.get': {
+      const { group: ref } = inputs[actionId].parse(input);
+      const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, ref));
+      const group = readGroup(await host.request({ method: 'GET', path: `/v4/connect/qualified/group?group=${encoded}` }), ref);
+      host.assertCurrent();
+      return { group };
+    }
     case 'connectedServices.pools.switchNow': {
       const body = inputs[actionId].parse(input);
       readGroup(await host.request({ method: 'POST', path: '/v4/connect/qualified/group/active-account', body }), body.group);
@@ -714,7 +722,8 @@ export async function executeConnectedServiceConfigurationActionV1(
   return { applied: true };
   } catch (error) {
     if (error instanceof Error && 'code' in error && typeof error.code === 'string'
-      && (actionId === 'connectedServices.accounts.credentials.save' || error.code === 'qualified_connected_accounts_inconsistent_peer')) {
+      && (actionId === 'connectedServices.accounts.credentials.save' || actionId === 'connectedServices.pools.get'
+        || error.code === 'qualified_connected_accounts_inconsistent_peer')) {
       return { ok: false, errorCode: error.code, error: error.code };
     }
     throw error;

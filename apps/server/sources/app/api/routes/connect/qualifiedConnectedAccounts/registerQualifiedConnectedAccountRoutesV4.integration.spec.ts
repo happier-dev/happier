@@ -65,6 +65,24 @@ const source = {
     bindingKind: "account",
 } as const;
 
+function createPoolActionExecutor(host: ConnectedServiceConfigurationActionHostV1) {
+    // Server tests keep their fixture inside rootDir. Only the HTTP boundary
+    // is admitted; every unrelated host port fails loudly.
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected pool Action host boundary'); };
+    return createActionExecutor({
+        executionRunStart: unexpected, executionRunList: unexpected, executionRunGet: unexpected,
+        detachedExecutionRunSend: unexpected, executionRunStop: unexpected, executionRunAction: unexpected,
+        executionRunWait: unexpected, sessionOpen: unexpected, sessionFork: unexpected, sessionRollback: unexpected,
+        sessionSpawnNew: unexpected, pathsListRecent: unexpected, machinesList: unexpected, serversList: unexpected,
+        reviewEnginesList: unexpected, agentsBackendsList: unexpected, agentsModelsList: unexpected,
+        sessionSendMessage: unexpected, sessionModeSet: unexpected, sessionModesList: unexpected,
+        sessionList: unexpected, sessionActivityGet: unexpected, sessionRecentMessagesGet: unexpected,
+        resetGlobalVoiceAgent: unexpected, daemonMemorySearch: unexpected, daemonMemoryGetWindow: unexpected,
+        daemonMemoryEnsureUpToDate: unexpected,
+        connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+    });
+}
+
 describe("qualified Connected Account V4 route family (integration)", () => {
     let harness: LightSqliteHarness;
 
@@ -910,6 +928,63 @@ describe("qualified Connected Account V4 route family (integration)", () => {
         });
     });
 
+    it('reads selected pool details through the Account Action and keeps another Account outside that pool', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none',
+        });
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        let headers = { 'x-test-user-id': account.id };
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const created = await app.inject({ method: 'POST', url: '/v4/connect/qualified/groups', headers,
+                payload: { service, group: { groupId: 'selected-detail', policy: { strategy: 'manual' } } } });
+            expect(created.statusCode, created.body).toBe(200);
+            let group = QualifiedConnectedAccountGroupResponseV4Schema.parse(created.json()).group;
+            for (const [index, connectedAccountId] of ['first', 'second'].entries()) {
+                const credential = await app.inject({ method: 'POST', url: '/v4/connect/qualified/credential', headers, payload: {
+                    ref: { service, accountId: connectedAccountId }, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+                    content: { t: 'plain', v: { token: 'selected-detail-fixture' } }, metadata: { scopes: [] },
+                } });
+                expect(credential.statusCode, credential.body).toBe(200);
+                const member = await app.inject({ method: 'POST', url: '/v4/connect/qualified/group/members', headers, payload: {
+                    group: group.ref, connectedAccountId, priority: (index + 1) * 100, enabled: index !== 0,
+                    expectedGeneration: group.generation, expectedIncarnation: group.incarnation,
+                } });
+                expect(member.statusCode, member.body).toBe(200);
+                group = QualifiedConnectedAccountGroupResponseV4Schema.parse(member.json()).group;
+            }
+            const selected = await app.inject({ method: 'POST', url: '/v4/connect/qualified/group/active-account', headers, payload: {
+                group: group.ref, connectedAccountId: 'second', expectedGeneration: group.generation,
+                expectedIncarnation: group.incarnation, expectedRuntimeStateRevision: group.runtimeStateRevision,
+            } });
+            expect(selected.statusCode, selected.body).toBe(200);
+            group = QualifiedConnectedAccountGroupResponseV4Schema.parse(selected.json()).group;
+            const host: ConnectedServiceConfigurationActionHostV1 = {
+                assertCurrent() {},
+                async request(request) {
+                    expect(request.method).toBe('GET');
+                    const reply = await app.inject({ method: request.method, url: request.path, headers });
+                    if (reply.statusCode !== 200) throw Object.assign(new Error('pool_read_refused'), { code: reply.json().error });
+                    return reply.json();
+                },
+                async mutatePurposeBindings() { throw new Error('read_must_not_write'); },
+                async resolveAgent() { throw new Error('read_must_not_probe'); },
+                async resetQuota() { throw new Error('read_must_not_refresh'); },
+            };
+            const executor = createPoolActionExecutor(host);
+            const read = () => executor.execute('connectedServices.pools.get', { group: group.ref },
+                { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } });
+            expect(await read()).toEqual({ ok: true, result: { group } });
+            expect(group.members.map(member => [member.connectedAccountId, member.enabled])).toEqual([['first', false], ['second', true]]);
+            expect(group.policy.strategy).toBe('manual');
+            expect(group.activeConnectedAccountId).toBe('second');
+            headers = { 'x-test-user-id': other.id };
+            expect(await read()).toMatchObject({ ok: false, errorCode: 'connect_group_not_found' });
+        });
+    });
+
     it('keeps a failed pre-write pool read definite and reorders through the real owner on explicit retry', async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
@@ -969,42 +1044,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 async resolveAgent() { throw new Error('reorder_must_not_probe'); },
                 async resetQuota() { throw new Error('reorder_must_not_refresh_quota'); },
             };
-            // The shared tests-package fixture is outside the server compiler's rootDir.
-            // Only the HTTP host port is admitted; every unrelated host boundary fails loudly.
-            const unexpectedHostBoundary = async (): Promise<never> => {
-                throw new Error('Unexpected Action host boundary during pool reorder');
-            };
-            const executor = createActionExecutor({
-                executionRunStart: unexpectedHostBoundary,
-                executionRunList: unexpectedHostBoundary,
-                executionRunGet: unexpectedHostBoundary,
-                detachedExecutionRunSend: unexpectedHostBoundary,
-                executionRunStop: unexpectedHostBoundary,
-                executionRunAction: unexpectedHostBoundary,
-                executionRunWait: unexpectedHostBoundary,
-                sessionOpen: unexpectedHostBoundary,
-                sessionFork: unexpectedHostBoundary,
-                sessionRollback: unexpectedHostBoundary,
-                sessionSpawnNew: unexpectedHostBoundary,
-                pathsListRecent: unexpectedHostBoundary,
-                machinesList: unexpectedHostBoundary,
-                serversList: unexpectedHostBoundary,
-                reviewEnginesList: unexpectedHostBoundary,
-                agentsBackendsList: unexpectedHostBoundary,
-                agentsModelsList: unexpectedHostBoundary,
-                sessionSendMessage: unexpectedHostBoundary,
-                sessionModeSet: unexpectedHostBoundary,
-                sessionModesList: unexpectedHostBoundary,
-                sessionList: unexpectedHostBoundary,
-                sessionActivityGet: unexpectedHostBoundary,
-                sessionRecentMessagesGet: unexpectedHostBoundary,
-                resetGlobalVoiceAgent: unexpectedHostBoundary,
-                daemonMemorySearch: unexpectedHostBoundary,
-                daemonMemoryGetWindow: unexpectedHostBoundary,
-                daemonMemoryEnsureUpToDate: unexpectedHostBoundary,
-                connectedServiceAction: ({ actionId, input }) =>
-                    executeConnectedServiceConfigurationActionV1(host, actionId, input),
-            });
+            const executor = createPoolActionExecutor(host);
             const moveUp = () => executor.execute('connectedServices.pools.reorder', { group: group.ref,
                 move: { accountId: 'second', position: { anchorId: 'first', placement: 'before' } },
             }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });

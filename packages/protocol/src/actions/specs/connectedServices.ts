@@ -176,6 +176,10 @@ function createConnectedServiceConfigurationActionSpecs() {
       { path: 'purpose', title: 'Qualified consumer purpose', widget: 'json', required: true },
       { path: 'target', title: 'Qualified account or pool', widget: 'json', required: true },
     ] } },
+  { ...common, id: 'connectedServices.pools.get', approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
+    title: 'Read connected-service pool', description: 'Read one qualified pool, its policy and ordered members without refreshing providers or requiring a Machine.',
+    bindings: { mcpToolName: 'connected_services_pools_get' }, inputSchema: inputs['connectedServices.pools.get'], outputSchema: outputs['connectedServices.pools.get'],
+    inputHints: { fields: [{ path: 'group', title: 'Qualified pool', widget: 'json', required: true }] } },
   { ...common, id: 'connectedServices.pools.create', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' }, title: 'Create connected-service pool', description: 'Create a pool through the qualified Connected Account owner.', bindings: { mcpToolName: 'connected_services_pools_create' }, inputSchema: inputs['connectedServices.pools.create'], outputSchema: outputs['connectedServices.pools.create'], inputHints: { fields: [
     { path: 'service', title: 'Qualified service', widget: 'json', required: true },
     { path: 'group', title: 'New pool identity, name and policy', widget: 'json', required: true },

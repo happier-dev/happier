@@ -30,6 +30,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   'connectedServices.accounts.default.set',
   'connectedServices.accounts.purposeDefault.set',
   'connectedServices.purposes.default.set',
+  'connectedServices.pools.get',
   'connectedServices.pools.create',
   'connectedServices.pools.patch',
   'connectedServices.pools.delete',
