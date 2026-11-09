@@ -59,6 +59,11 @@ describe('buildPiToolsForPermissionMode', () => {
 });
 
 describe('buildPiRpcArgs', () => {
+  it('selects the bound source without treating slashes in its model id as provider identity', () => {
+    const args = buildPiRpcArgs({ providerModelId: 'vendor/selected-model', connectedServiceId: 'openai' });
+    expect(args.slice(0, 6)).toEqual(['--provider', 'happier-provider', '--model', 'vendor/selected-model', '--models', 'happier-provider/*']);
+  });
+
   it('adds the session-private skills root without disabling native skills', () => {
     const args = buildPiRpcArgs({ skillsRoot: '/session/skills' });
     expect(args.filter((argument) => argument === '--skill')).toHaveLength(1);

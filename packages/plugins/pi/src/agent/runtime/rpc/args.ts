@@ -1,3 +1,5 @@
+import { PI_PROVIDER_ID } from '../../providerBinding.js';
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -24,28 +26,9 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-/**
- * Pi's startup model for the Anthropic connected service.
- *
- * Sibling rows in the same table pin their provider's model the same way; this
- * is Pi's own launch choice, not a Happier-wide Claude policy. It is declared
- * here so the plugin needs no host workspace package: the plugin scaffold
- * binds an external author to the public toolchain packages only.
- */
-const PI_ANTHROPIC_STARTUP_MODEL_ID = 'claude-opus-5';
-
 function resolvePiLaunchSelectionForConnectedService(serviceId: string | null | undefined): PiConnectedServiceLaunchSelection | null {
-  switch (serviceId) {
-    case 'openai-codex':
-      return { provider: 'openai-codex', startupModel: 'gpt-5.5', modelScope: 'openai-codex/*' };
-    case 'openai':
-      return { provider: 'openai', startupModel: 'gpt-5.4', modelScope: 'openai/*' };
-    case 'claude-subscription':
-    case 'anthropic':
-      return { provider: 'anthropic', startupModel: PI_ANTHROPIC_STARTUP_MODEL_ID, modelScope: 'anthropic/*' };
-    default:
-      return null;
-  }
+  const row = PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.find((row) => row.service.localId === serviceId);
+  return row ? { provider: row.native.providerId, startupModel: row.native.startupModel, modelScope: row.native.modelScope } : null;
 }
 
 export function readPiConnectedServiceIdFromEnv(env: Readonly<Record<string, string | undefined>>): string | null {
@@ -80,6 +63,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
   thinkingLevel?: string | null;
   resumeSessionId?: string | null;
   connectedServiceId?: string | null;
+  providerModelId?: string;
   env?: Readonly<Record<string, string | undefined>>;
   happierToolsExtension?: Readonly<{
     extensionPath: string;
@@ -87,7 +71,9 @@ export function buildPiRpcArgs(opts?: Readonly<{
     toolNames?: readonly string[];
   }>;
 }>): readonly string[] {
-  const launchSelection = resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
+  const launchSelection = opts?.providerModelId
+    ? { provider: PI_PROVIDER_ID, startupModel: opts.providerModelId, modelScope: `${PI_PROVIDER_ID}/*` }
+    : resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
   const restrictedTools = buildPiToolsForPermissionMode(opts?.permissionMode);
   const tools = restrictedTools
     ? [...new Set([...restrictedTools, ...(opts?.happierToolsExtension?.toolNames ?? [])])]
