@@ -71,7 +71,7 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
     signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
   return { requests, tools, provider: createDevcontainerProvider(tools) };
 }
-function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { setup?: PluginProcessResult; hostPath?: string; cleanupFailure?: boolean; runResult?: PluginProcessResult } = {}) {
+function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId?: string; setup?: PluginProcessResult; hostPath?: string; cleanupFailure?: boolean; runResult?: PluginProcessResult } = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = true;
   let currentId = containerId;
@@ -79,12 +79,13 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { setup?:
   let removed = false;
   let setupFailed = false;
   let ready = false;
+  const containerImageId = options.imageId ?? 'sha256:image';
   const volume = 'happier6d616e616765642d61-workspace';
   const exec: Pick<ExecService, 'run'> = { run: async request => {
     requests.push(request);
     expect(request.executable).toMatchObject({ id: { localId: runtime } });
     const args = request.args ?? [];
-    if (args[0] === 'image') return result([{ Id: 'sha256:image', Config: { User: 'coder', Env: ['TOKEN=private-image-env'] } }]);
+    if (args[0] === 'image') return result([{ Id: options.imageId ?? 'sha256:image', Config: { User: 'coder', Env: ['TOKEN=private-image-env'] } }]);
     if (args[0] === 'run') {
       labels = Object.fromEntries(args.flatMap((arg, index) => arg === '--label' ? [args[index + 1]!.split(/=(.*)/su).slice(0, 2)] : []));
       if (requests.filter(entry => entry.args?.[0] === 'run').length > 1) currentId = 'b'.repeat(64);
@@ -92,7 +93,7 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { setup?:
       ready = false;
       return options.runResult ?? result(`${currentId}\n`);
     }
-    if (args[0] === 'inspect') return removed ? result('', 1) : result([{ Id: currentId, Config: { Labels: labels }, State: { Running: running, Paused: false },
+    if (args[0] === 'inspect') return removed ? result('', 1) : result([{ Id: currentId, Image: containerImageId, Config: { Labels: labels }, State: { Running: running, Paused: false },
       Mounts: [options.hostPath ? { Type: 'bind', Source: options.hostPath, Destination: '/workspace' }
         : { Type: 'volume', Name: volume, Destination: '/workspace' }] }]);
     if (args[0] === 'exec') {
@@ -181,6 +182,19 @@ describe('Devcontainer native roles', () => {
       expect(JSON.stringify(options)).not.toContain('private-image-env');
       expect(new Set(dependencies)).toEqual(new Set([runtime]));
     } finally { await kit.dispose(); }
+  });
+  it('starts the retained image container after its source image tag changes while stopped', async () => {
+    const behavior = { imageId: 'sha256:original' };
+    const h = imageNative('docker', behavior);
+    const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest' } });
+    const acquired = await h.provider.acquire(reviewed.launch, 'managed-a');
+    if (acquired.kind !== 'bound') throw new Error('Expected prepared image container');
+    const retained = acquired.resource.value;
+    expect(await h.provider.power(retained, 'stop')).toEqual({ kind: 'confirmed' });
+    behavior.imageId = 'sha256:replacement';
+    expect(await h.provider.power(retained, 'start')).toEqual({ kind: 'confirmed' });
+    expect(h.requests.find(request => request.args?.[0] === 'start')?.args).toEqual(['start', containerId]);
+    expect(await h.provider.inspect(retained)).toMatchObject({ availability: 'present', power: 'running' });
   });
   it('uses an explicitly selected host bind without rewriting its ownership or requiring a setup script', async () => {
     const hostPath = await mkdtemp(join(configurationRoot, 'host,workspace-'));

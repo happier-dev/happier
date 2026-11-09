@@ -307,7 +307,7 @@ export function createDevcontainerProvider(input: Readonly<{
       let issued = false;
       try {
         const { resource } = await exact(raw);
-        if (intent === 'start') await assertDevcontainerEffectReview(nativeInput, resource, resource.reviewedEffectDigest);
+        if (intent === 'start' && !imageSource(resource)) await assertDevcontainerEffectReview(nativeInput, resource, resource.reviewedEffectDigest);
         issued = true;
         const result = intent === 'stop'
           ? await run(input.docker, ['stop', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder)
