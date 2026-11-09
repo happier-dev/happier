@@ -5,6 +5,7 @@ import { createGithubApiClient, createGithubNativeApiClient } from '../observati
 import { classifyGithubTransportFailure } from '../observations/githubResponseFailure.js';
 import { GithubCiReadError, readGithubCiOperation } from './reads.js';
 import { mutateGithubCi } from './mutations.js';
+import { createGithubReadCadence } from '../observations/githubChannelPollCadence.js';
 
 export type GithubCiInvocationContextV1<K extends ForgeCiOperationIdV1> =
   K extends 'downloadArtifact' | 'downloadJobLog' ? PluginInvocationContext : GithubHttpInvocationContextV1;
@@ -22,7 +23,16 @@ export async function executeGithubCiAction<K extends ForgeCiOperationIdV1>(oper
       ? await createGithubApiClient(context, input.credentialRef)
       : await createGithubNativeApiClient(context);
     switch (operation) {
-      case 'listWorkflows': case 'readWorkflow': case 'listRuns': case 'readRun': case 'listJobs': case 'readJob': case 'listArtifacts': case 'listEnvironments': case 'listAnnotations':
+      case 'listRuns': case 'readRun': case 'listJobs': case 'readJob': {
+        const cadence = createGithubReadCadence(client, Date.now());
+        const result = ForgeCiActionResultSchemasV1[operation].parse(
+          await readGithubCiOperation(operation, input as Parameters<typeof readGithubCiOperation>[1], cadence.client));
+        if (result.kind === 'unavailable') return result;
+        await cadence.acquireMissingBudget();
+        const refreshAfterMs = cadence.refreshAfterMs();
+        return { ...result, ...(refreshAfterMs === undefined ? {} : { refreshAfterMs }) };
+      }
+      case 'listWorkflows': case 'readWorkflow': case 'listArtifacts': case 'listEnvironments': case 'listAnnotations':
         return await readGithubCiOperation(operation, input as Parameters<typeof readGithubCiOperation>[1], client);
       case 'enableWorkflow': case 'disableWorkflow': case 'rerunAll': case 'rerunFailed': case 'rerunJob': case 'cancelRun': case 'forceCancelRun': case 'approveForkRun':
         return await mutateGithubCi(operation, input as Parameters<typeof mutateGithubCi>[1], client);

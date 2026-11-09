@@ -75,9 +75,20 @@ a same-job query replacement, the headless job surface keeps the canonical
 retained index visible; ambiguous log identities, another job or retired
 authority never supply that fallback. The pending query and retained index's
 coverage remain separate facts.
+Released job bodies and their indexes retire after the last mounted demand,
+at the end of the current effect turn. A same-turn same-job lease replacement
+keeps tail and Find continuity; reopening a job after demand ends reads it again.
 Use the log paged lease's `indexLog(steps?)` to index its window: that owner also
 records its actual first-page observation. A changed observation/cursor cannot
 reuse a completed old suffix merely because the first visible bytes match.
+
+In the current Developer Preview, `listRuns`, `readRun`, `listJobs` and `readJob`
+successes (including `notModified`) may carry provider-derived `refreshAfterMs`.
+The read owner schedules eligible mounted demand from that timing; omission
+leaves refresh manual. Adapters no longer supply a fixed poll interval. GitHub
+uses its existing read-cadence owner for REST budget and provider timing facts.
+Update the producer and consumer together: earlier closed result schemas reject
+the new optional field. No persisted data changes.
 
 Native hosts reuse that same index and Find model without a fabricated CI job
 or plugin surface. In this Developer Preview, `buildLogIndexV1` from `/runtime`
@@ -120,6 +131,80 @@ Explicit `excerpt` and `maxSerializedBytes` options are preserved unchanged;
 the builder fits both the summary-body budget and the complete Action carrier,
 including producer-observed missing evidence, and names the boundary that
 actually caused any omission.
+
+## Mounting the visible CI views
+
+In this 0.3 development-source Developer Preview, `/ui` exports visible views
+as well as headless controllers. Mount them inside a `defineUiSurface` tree
+from `@happier-dev/plugin-ui`, so the existing host, theme, translation and
+surface-activity providers surround every hook and control. Add this package's
+`/translations` contribution to your plugin's translations. Do not install a
+second Plugin UI provider around a nested CI view.
+
+Build one `ForgeCiBindingV1` for the admitted repository and invocation scope.
+Its `reads` comes from `useForgeCiReadsV1`; its `adapter` invokes your declared
+Actions through `createForgeCiAdapterV1`. Supply the operation-indexed
+`actionRefs`, forge/repository labels in `about`, and the admitted Connected
+Account in `account` (or `null` when unavailable). An optional `fix` callback
+hands selected failure evidence to your existing configured Session handoff.
+The binding carries no credentials and does not select a second Account.
+
+For an already selected run, use the shared detail with the mount's controlled
+model. Here `ci`, `view` and `selection` are the existing binding and mounted
+selection, and `state` comes from `useForgeCiMountedViewStateV1(view)`:
+
+```tsx
+import { ForgeCiRunDetailView } from '@happier-dev/forge-ci/ui';
+
+<ForgeCiRunDetailView
+  ci={ci}
+  selection={selection}
+  presentation="embedded"
+  view={view}
+  selectedJobId={state?.job?.jobId ?? null}
+  onOpenJob={job => {
+    void view?.invoke({ mountId: view.mountId, operation: { kind: 'selectJob', job } });
+  }}
+  onOpenSummary={() => view?.openSummary()}
+/>
+```
+
+Choose `embedded` for a PR Checks body, `pane` for a narrow details pane or
+phone route, or `page` for a full page; `page` also requires the host's declared
+`pageKind`. The caller owns navigation through `onOpenJob`, `onOpenSummary`,
+`onSelectAttempt` and optional `back`. For a pane whose header already carries
+the run identity, use `useForgeCiRunPaneHeaderV1` and `identity="host"`.
+`ForgeCiJobPanel` renders a standalone job with the same `ci` and `view`, a
+host-owned Find `surfaceId` and `page`/`pane` presentation. Pass `admittedJob`
+when the run already supplied its job projection.
+
+Create the model with `useForgeCiMountedViewV1` using the host's `mountId`,
+surface `signal`, phone placement and initial selection. Register that returned
+model with your existing mounted Action owner, and publish its operandless
+commands there; the hook does not register an Action. Route UI navigation and
+presentation changes through that same model's `invoke({ mountId, operation })`.
+Use `canApply` and `applyOperation` for the operations this particular view can
+serve and for host navigation. The model becomes unavailable outside its active
+mount. It owns presentation intent, not provider writes or Session delivery.
+
+`ForgeCiRailPanel` consumes accepted checkout `context` and the exact HEAD's
+`headRuns`; `branchRuns` supplies earlier pushes separately.
+`ForgeCiOverviewGlance` consumes the default branch's runs and can include a
+release glance. Both take explicit failure, observation time, retry and open-run
+callbacks, so retain the read owner's unavailable and incomplete states.
+`ForgeCiRunRow`, `ForgeCiJobRow`, `ForgeCiStateNotice` and
+`ForgeCiElapsedText` are the same presentation leaves for custom composition.
+
+Provider effects keep their declared Action confirmation and approval policy.
+`useForgeCiMutationV1` serializes a view's mutation and asks the shared reads
+owner to complete its readback; uncertain outcomes remain visible without
+automatic replay. `useForgeCiDownloadV1` uses the host download path and
+`ForgeCiDownloadNotice` presents the result. `ForgeCiRunWorkflowForm` uses
+`useForgeCiRunWorkflowV1`; when a workflow detail already owns that controller,
+pass it as `controller` to share the ref, draft and dispatch receipt. Its
+`onStarted` runs only for an exact provider-returned run ID. An accepted dispatch
+without a run remains accepted, and a lost answer remains unknown. Use
+`ForgeCiTriggerFields` for the same declared input fields in custom forms.
 
 ## Evolving the ABI
 

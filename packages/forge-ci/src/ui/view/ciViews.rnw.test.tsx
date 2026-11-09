@@ -75,7 +75,6 @@ function boundary(
   ) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
   const adapter = createForgeCiAdapterV1({
     actionRefs,
-    activeRunPollIntervalMs: 3000,
     invoke: async (action, input) => {
       calls.push(action.localId);
       inputs.push(input);
@@ -389,7 +388,6 @@ describe('live durations', () => {
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map((key) => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
     const adapter = createForgeCiAdapterV1({
       actionRefs,
-      activeRunPollIntervalMs: 3000,
       invoke: async (action) => {
         const id = action.localId;
         const value = id === 'readRun' ? run

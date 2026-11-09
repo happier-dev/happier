@@ -119,7 +119,7 @@ export function reconcileForgeCiRowsV1<T>(previous: readonly T[], incoming: read
     return replacing ? rows : incoming.length === 0 ? previous : [...previous, ...rows];
 }
 
-type Envelope = Readonly<{ kind: 'value'; value: unknown; validator?: string }> | Readonly<{ kind: 'notModified'; validator?: string }> | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
+type Envelope = Readonly<{ kind: 'value'; value: unknown; validator?: string; refreshAfterMs?: number }> | Readonly<{ kind: 'notModified'; validator?: string; refreshAfterMs?: number }> | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
 type Snapshot = Readonly<{ value: unknown; pending: boolean; failure: TriageSourceFailureV1 | null; checkedAtMs: number | null; retired: boolean }>;
 type Demand = { active: boolean; liveness: 'detail' | 'branchCounts'; adapter: ForgeCiAdapterV1 };
 type Entry = {
@@ -128,6 +128,7 @@ type Entry = {
     counts: ForgeCiBranchCountsProjectionV1; countListeners: Set<() => void>;
     abort: AbortController | undefined; request: Promise<void> | undefined; timer: ReturnType<typeof setTimeout> | undefined;
     transport: Demand | undefined;
+    refreshAfterMs: number | undefined;
 };
 type IndexedLog = Readonly<{ index: ForgeCiLogIndexV1; lastObservation: Extract<ForgeCiLogV1, { kind: 'available' }>; source: ForgeCiLogV1 }>;
 function phaseEligible(value: unknown, badge: boolean): boolean {
@@ -182,6 +183,30 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
         entry.transport = undefined;
         if (entry.snapshot.pending) publish(entry, { ...entry.snapshot, pending: false });
     };
+    const releaseLogJob = (released: Entry) => {
+        const jobKey = (entry: Entry) => {
+            const observed = entry.snapshot.value as ForgeCiLogV1 | null;
+            if (observed !== null) return forgeCiJobKeyV1(observed.job);
+            const input = entry.input as ForgeCiActionInputByOperationV1['readJobLog'];
+            const run = { v: 1, repository: input.repository, runId: input.runId } as const;
+            return forgeCiJobKeyV1({ jobId: input.jobId, selection: input.attempt === undefined
+                ? { kind: 'run', run } : { kind: 'attempt', attempt: { run, attemptId: input.attempt } } });
+        };
+        const releasedJobKey = jobKey(released);
+        const peers = [...entries].filter(([, entry]) => entry.operation === 'readJobLog'
+            && (jobKey(entry) === releasedJobKey || queryKey(entry.input.repository) === queryKey(released.input.repository)
+            && entry.input.runId === released.input.runId && entry.input.jobId === released.input.jobId
+            && entry.input.attempt === released.input.attempt));
+        if (peers.some(([, entry]) => entry.demands.size > 0)) return;
+        for (const [key, entry] of peers) {
+            const log = entry.snapshot.value as ForgeCiLogV1 | null;
+            if (log !== null) retractJobIndexes(log.job);
+            stop(entry);
+            entry.validator = undefined;
+            publish(entry, { ...entry.snapshot, value: null });
+            entries.delete(key);
+        }
+    };
     const retractPeerLogBodies = (source: Entry, log: Exclude<ForgeCiLogV1, { kind: 'available' }>) => {
         const jobKey = forgeCiJobKeyV1(log.job);
         for (const peer of entries.values()) {
@@ -203,7 +228,8 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
         // Provider backoff delays this query's existing active-demand timer. No
         // failure creates liveness, and a missing retry deadline stays manual.
         const retryDelay = (failure?.retryNotBeforeMs ?? 0) - Date.now();
-        const delay = retryDelay > 0 ? retryDelay : transport(entry)!.adapter.activeRunPollIntervalMs;
+        const delay = retryDelay > 0 ? retryDelay : entry.refreshAfterMs;
+        if (delay === undefined) return;
         entry.timer = setTimeout(() => { entry.timer = undefined; void refresh(entry); }, delay);
     };
     function refresh(entry: Entry): Promise<void> {
@@ -231,6 +257,7 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
                 entry.transport = undefined;
                 if (response.kind === 'value') {
                     entry.validator = response.validator;
+                    entry.refreshAfterMs = response.refreshAfterMs;
                     if (entry.operation === 'readJobLog') {
                         const log = response.value as ForgeCiLogV1;
                         if (log.kind !== 'available') { retractJobIndexes(log.job); retractPeerLogBodies(entry, log); }
@@ -238,6 +265,7 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
                     publish(entry, { value: reconcile(entry.snapshot.value, response.value), pending: false, failure: null, checkedAtMs: Date.now(), retired: false });
                 } else if (response.kind === 'notModified' && entry.snapshot.value !== null) {
                     entry.validator = response.validator ?? entry.validator;
+                    entry.refreshAfterMs = response.refreshAfterMs;
                     publish(entry, { ...entry.snapshot, pending: false, failure: null, checkedAtMs: Date.now() });
                 } else {
                     const failure = response.kind === 'unavailable' ? response.failure : { class: 'unsupportedContract' as const, code: 'conditional_body_unavailable' };
@@ -273,7 +301,7 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
         const key = `${scopeKey}:${operation}:${queryKey(query)}`;
         let entry = entries.get(key);
         if (!entry) {
-            entry = { operation, input: query, snapshot: { value: null, pending: false, failure: authorityFailure, checkedAtMs: null, retired }, demands: new Set(), semantic: new Set(), presentation: new Set(), counts: projectForgeCiBranchCountsV1(null, null), countListeners: new Set(), validator: undefined, abort: undefined, request: undefined, timer: undefined, transport: undefined };
+            entry = { operation, input: query, snapshot: { value: null, pending: false, failure: authorityFailure, checkedAtMs: null, retired }, demands: new Set(), semantic: new Set(), presentation: new Set(), counts: projectForgeCiBranchCountsV1(null, null), countListeners: new Set(), validator: undefined, abort: undefined, request: undefined, timer: undefined, transport: undefined, refreshAfterMs: undefined };
             entries.set(key, entry);
         }
         const owned = entry;
@@ -289,6 +317,10 @@ export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refu
             if (!active(owned)) stop(owned);
             else if (owned.transport === demand) { stop(owned); void refresh(owned); }
             else schedule(owned);
+            // React replaces same-job exact tail leases within one effect turn.
+            // Let that mounted demand take over before retiring the job's bodies
+            // and Find index; no abandoned job survives this turn.
+            if (owned.operation === 'readJobLog' && owned.demands.size === 0) queueMicrotask(() => releaseLogJob(owned));
         };
         options.signal?.addEventListener('abort', release, { once: true });
         if (options.signal?.aborted) release();

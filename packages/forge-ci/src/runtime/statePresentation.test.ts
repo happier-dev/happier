@@ -116,7 +116,7 @@ describe('one recent branch count producer', () => {
         let rows = [run('1', 'a', 'waiting', 'pending')];
         let requests = 0;
         const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, key === 'listRuns' ? { pluginId: 'fixture.forge', localId: key } : null])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef | null>>;
-        const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async () => { requests++; return { kind: 'value', value: page(structuredClone(rows)) }; } });
+        const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async () => { requests++; return { kind: 'value', value: page(structuredClone(rows)), refreshAfterMs: 3000 }; } });
         const reads = createForgeCiReadsV1({ adapter, scopeKey: 'exact-authority' });
         const resource = createForgeCiBranchCountsV1({ acquire: () => ({ reads, input: { repository, filters: { branch: 'main' } } }) });
         const abort = new AbortController();

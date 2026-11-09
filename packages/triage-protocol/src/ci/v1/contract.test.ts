@@ -11,6 +11,15 @@ import { createForgeCiConformanceVectorsV1 } from '../testing/v1/index.js';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 
 describe('CI executable V1 contract', () => {
+    it('admits provider refresh timing on active-read successes and 304s without requiring it on earlier results', () => {
+        const { run } = createForgeCiConformanceVectorsV1().github;
+        for (const value of [{ kind: 'value', value: run }, { kind: 'notModified', validator: 'same' }]) {
+            expect(ForgeCiActionResultSchemasV1.readRun.parse(value)).toEqual(value);
+            expect(ForgeCiActionResultSchemasV1.readRun.parse({ ...value, refreshAfterMs: 30_000 }))
+                .toEqual({ ...value, refreshAfterMs: 30_000 });
+            expect(ForgeCiActionResultSchemasV1.readRun.safeParse({ ...value, refreshAfterMs: -1 }).success).toBe(false);
+        }
+    });
     it('carries declared native step precision without changing the native endpoints', () => {
         const job = createForgeCiConformanceVectorsV1().github.job;
         if (job.steps.kind !== 'available') throw new Error('Conformance job must include steps');

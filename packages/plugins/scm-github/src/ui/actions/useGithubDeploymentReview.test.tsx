@@ -24,7 +24,7 @@ describe('deployment form data through the mounted public host', () => {
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
     // Action transport is the genuine host boundary; the adapter, query owner,
     // subscriptions and review hook below are all real production logic.
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async action => {
       calls.push(action.localId);
       return { kind: 'value', value: action.localId === 'readRun' ? run : {
         rows: action.localId === 'listDeployments' ? [{ id: '42', selection: { kind: 'run', run: ref }, environment: { id: '42', name: 'production' }, eligible: true }] : [],

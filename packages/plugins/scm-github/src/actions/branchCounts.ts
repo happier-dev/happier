@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime, PluginResourceContextV1 } from '@happier-dev/plugin-sdk/resources';
 import { createForgeCiAdapterV1, createForgeCiBranchCountsV1, createForgeCiReadsV1 } from '@happier-dev/forge-ci/runtime';
-import { GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS, GITHUB_CI_ACTION_REFS_V1 } from '../ui/actions/model.js';
+import { GITHUB_CI_ACTION_REFS_V1 } from '../ui/actions/model.js';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import type { ForgeCiActionInputByOperationV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { GithubWorkflowShaV1Schema } from './identity.js';
@@ -41,7 +41,6 @@ export const githubCiBranchCountsResourceV1: PluginDynamicResourceRuntime = {
     if (input === null) return { ...createForgeCiBranchCountsV1({ acquire: () => null }), dispose() {} };
     const adapter = createForgeCiAdapterV1({
       actionRefs: GITHUB_CI_ACTION_REFS_V1,
-      activeRunPollIntervalMs: GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS,
       async invoke(ref, operands, options) {
         const result = await readAction(ref, operands, options);
         if (!result.ok) throw new PluginError({ code: result.errorCode, message: result.error });

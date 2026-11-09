@@ -10,7 +10,7 @@ import { createForgeCiAdapterV1, createForgeCiReadsV1 } from '@happier-dev/forge
 import type { ForgeCiRunV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';
 import { decodeGithubPendingDeploymentsV1 } from '../../actions/deploymentReviews.js';
-import { GITHUB_CI_ACTION_REFS_V1, GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS } from './model.js';
+import { GITHUB_CI_ACTION_REFS_V1 } from './model.js';
 import { useGithubDeploymentBannerV1 } from './useGithubDeploymentBanner.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,7 +47,6 @@ describe('visible pending deployment banner demand', () => {
       enabled = setActive;
       const owner = React.useMemo(() => {
         const adapter = createForgeCiAdapterV1({ actionRefs: GITHUB_CI_ACTION_REFS_V1,
-          activeRunPollIntervalMs: GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS,
           invoke: (action, input, options) => host.executeAction(action, input, options) });
         return createForgeCiReadsV1({ adapter, scopeKey: 'banner' });
       }, [host]);
@@ -87,7 +86,7 @@ describe('visible pending deployment banner demand', () => {
       // Neither waiting-only queries nor a refused pending read establish a
       // foreground polling lifecycle or retry loop.
       vi.useFakeTimers();
-      await act(async () => { await vi.advanceTimersByTimeAsync(GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS * 3); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
       vi.useRealTimers();
       expect(calls).toHaveLength(2);
       // The already-presented review surface borrows the same canonical query;

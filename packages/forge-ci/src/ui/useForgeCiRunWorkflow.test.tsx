@@ -24,7 +24,7 @@ describe('the shared selected-workflow controller', () => {
     const next = { ...previous, ref: { ...previous.ref, runId: '4' } };
     let dispatched = false;
     const calls: JsonValue[] = [];
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
       if (action.localId === 'listRuns') {
         calls.push(input);
         return { kind: 'value', value: { rows: [dispatched ? next : previous], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null } };
@@ -71,7 +71,7 @@ describe('the shared selected-workflow controller', () => {
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
     const calls: { operation: string; input: unknown }[] = [];
     // Only the host Action transport is mocked; paging, leases and form admission are real.
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
       calls.push({ operation: action.localId, input });
       if (action.localId === 'readTrigger') return { kind: 'value', value: { workflowId: '42', ref: 'main', revision: 'a'.repeat(40), dispatchable: true, inputs: [{ name: 'target', type: 'environment', required: true }] } };
       if (action.localId === 'listEnvironments') {
@@ -122,7 +122,7 @@ describe('the shared selected-workflow controller', () => {
     const receipt = new Promise<ForgeCiMutationResultV1>(done => { resolve = done; });
     const started: string[] = [];
     // Host Action transport is the only mocked boundary. Adapter, read leases and trigger projection are real.
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
       calls.push({ operation: action.localId, input });
       if (action.localId === 'dispatchWorkflow') return receipt;
       const ref = (input as { ref: string }).ref;

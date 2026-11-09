@@ -118,13 +118,15 @@ export const ForgeCiActionInputSchemasV1 = Object.freeze({
     rejectDeployment: ForgeCiDeploymentReviewInputV1Schema,
     readFailureContext: ForgeCiFailureContextReadInputV1Schema,
 });
+/** Provider-derived cadence for the next demanded active read; omission never guesses a timer. */
+const activeReadTiming = { refreshAfterMs: defineProtocolNumber({ integer: true, minimum: 1 }).optional() };
 export const ForgeCiActionResultSchemasV1 = Object.freeze({
     listWorkflows: defineTriageConditionalReadV1(ForgeCiWorkflowPageV1Schema),
     readWorkflow: defineTriageConditionalReadV1(ForgeCiWorkflowV1Schema),
-    listRuns: defineTriageConditionalReadV1(ForgeCiRunPageV1Schema),
-    readRun: defineTriageConditionalReadV1(ForgeCiRunV1Schema),
-    listJobs: defineTriageConditionalReadV1(ForgeCiJobPageV1Schema),
-    readJob: defineTriageConditionalReadV1(ForgeCiJobV1Schema),
+    listRuns: defineTriageConditionalReadV1(ForgeCiRunPageV1Schema, activeReadTiming),
+    readRun: defineTriageConditionalReadV1(ForgeCiRunV1Schema, activeReadTiming),
+    listJobs: defineTriageConditionalReadV1(ForgeCiJobPageV1Schema, activeReadTiming),
+    readJob: defineTriageConditionalReadV1(ForgeCiJobV1Schema, activeReadTiming),
     readJobLog: defineTriageValueResultV1(ForgeCiLogV1Schema),
     listArtifacts: defineTriageConditionalReadV1(ForgeCiArtifactPageV1Schema),
     downloadArtifact: FileDownloadResultV1ProtocolSchema,

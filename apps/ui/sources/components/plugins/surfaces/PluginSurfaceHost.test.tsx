@@ -17357,8 +17357,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
             const host = usePluginHostApi();
             const { mountId } = useSurfaceContext();
             const [runId, select] = React.useState('42');
-            const adapter = React.useMemo(() => createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000,
-                invoke: (ref, input, options) => host.executeAction(ref, input, options) }), [host]);
+            const adapter = React.useMemo(() => createForgeCiAdapterV1({ actionRefs, invoke: (ref, input, options) => host.executeAction(ref, input, options) }), [host]);
             const reads = useForgeCiReadsV1({ adapter, scopeKey: 'read-lifetime-fixture', signal: context.signal });
             const query = useForgeCiQueryV1(reads, 'readRun', { repository, runId });
             const value = useForgeCiQueryValueV1(query);
@@ -17418,8 +17417,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const observed = new Map<string, Reads>();
         function ExecutorCi(context: RenderContext) {
             const host = usePluginHostApi();
-            const adapter = React.useMemo(() => createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000,
-                invoke: (ref, input, options) => host.executeAction(ref, input, options) }), [host]);
+            const adapter = React.useMemo(() => createForgeCiAdapterV1({ actionRefs, invoke: (ref, input, options) => host.executeAction(ref, input, options) }), [host]);
             const reads = useForgeCiReadsV1({ adapter, scopeKey: 'read-lifetime-fixture', signal: context.signal });
             const query = useForgeCiQueryV1(reads, 'readRun', { repository, runId: '42' });
             const value = useForgeCiQueryValueV1(query);

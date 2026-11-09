@@ -9,7 +9,7 @@ const vectors = createForgeCiConformanceVectorsV1();
 const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(operation => [operation, { pluginId: 'example.forge', localId: `ci/${operation}` }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
 
 function adapter(invoke: ForgeCiAdapterOptionsV1['invoke'], bindings = actionRefs) {
-    return createForgeCiAdapterV1({ actionRefs: bindings, invoke, activeRunPollIntervalMs: 3000 });
+    return createForgeCiAdapterV1({ actionRefs: bindings, invoke });
 }
 
 describe('public CI adapter', () => {
@@ -78,7 +78,6 @@ describe('public CI adapter', () => {
         const input = { repository: vectors.github.repository, runId: vectors.github.run.ref.runId, attempt: '2', validator: 'previous' };
         expect(await ci.readRun(input, { signal: controller.signal })).toEqual({ kind: 'value', value: vectors.github.run, validator: 'etag' });
         expect(invoke).toHaveBeenCalledWith(actionRefs.readRun, input, { signal: controller.signal });
-        expect(ci.activeRunPollIntervalMs).toBe(3000);
         invoke.mockResolvedValueOnce({ kind: 'value', value: { ...vectors.github.run, ref: { ...vectors.github.run.ref, invented: true } }, validator: 'etag' });
         expect(await ci.readRun(input)).toMatchObject({ kind: 'unavailable', failure: { class: 'unsupportedContract' } });
     });
@@ -86,7 +85,7 @@ describe('public CI adapter', () => {
     it('does not acquire transport for unsupported read, effect or receiver bindings', async () => {
         const invoke = vi.fn(async () => { throw new Error('unbound transport'); });
         const bindings = Object.fromEntries(Object.keys(actionRefs).map(operation => [operation, null])) as ForgeCiAdapterOptionsV1['actionRefs'];
-        const ci = createForgeCiAdapterV1({ actionRefs: bindings, invoke, activeRunPollIntervalMs: 3000 });
+        const ci = createForgeCiAdapterV1({ actionRefs: bindings, invoke });
         expect(await ci.readRun({ repository: vectors.github.repository, runId: '1' })).toMatchObject({ kind: 'unavailable', failure: { class: 'unsupportedContract' } });
         expect(await ci.cancelRun({ repository: vectors.github.repository, runId: '1' })).toMatchObject({ kind: 'rejected', failure: { class: 'unsupportedContract' } });
         expect(await ci.downloadJobLog({ repository: vectors.github.repository, runId: '1', jobId: '2', destination: { destinationId: 'receiver' } })).toMatchObject({ success: false, status: 'failed', errorCode: 'unsupportedContract' });

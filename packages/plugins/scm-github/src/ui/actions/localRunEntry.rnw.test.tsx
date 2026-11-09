@@ -78,7 +78,7 @@ describe('the supplied local action in the shared default job panel', () => {
       operation, { pluginId: GITHUB_PLUGIN_ID, localId: operation },
     ])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
     const calls: string[] = [];
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async action => {
       calls.push(action.localId);
       if (action.localId === 'readRun') return { kind: 'value', value: run };
       if (action.localId === 'listJobs') return { kind: 'value', value: {

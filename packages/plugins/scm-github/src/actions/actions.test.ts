@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createForgeCiAdapterV1, createForgeCiReadsV1 } from '@happier-dev/forge-ci/runtime';
+import { GITHUB_CI_ACTION_REFS_V1 } from '../ui/actions/model.js';
+import { GITHUB_CI_ACTION_IDS_V1 } from './actionIds.js';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { activate, activateAccount } from '../activate.js';
@@ -23,7 +27,11 @@ const forkOperands = { headSha: reviewedFork.headSha!, contributor: reviewedFork
   sourceRepository: reviewedFork.forkApproval!.sourceRepository! };
 
 async function invoke(id: string, input: JsonValue, respond: Parameters<typeof createStubGithubTransport>[0]['respond']) {
-  const transport = createStubGithubTransport({ respond,
+  const transport = createStubGithubTransport({ respond: async request => {
+    const response = await respond(request);
+    // Native HTTP supplies timing facts; this fixture explicitly requests one minute.
+    return response === undefined ? undefined : { ...response, headers: { 'x-poll-interval': '60', ...response.headers } };
+  },
     nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer synthetic' } } });
   const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
   try {
@@ -35,6 +43,52 @@ async function invoke(id: string, input: JsonValue, respond: Parameters<typeof c
 }
 
 describe('GitHub Actions through generated activation', () => {
+  it('paces active Forge reads from provider budget and 304 hints, with no reads while hidden or released', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-09T00:00:00Z'));
+    let completed = false;
+    const transport = createStubGithubTransport({
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer synthetic' } },
+      respond: request => ({ status: !completed && readTriageResponseHeaderV1(request.headers, 'if-none-match') ? 304 : 200,
+        headers: readTriageResponseHeaderV1(request.headers, 'if-none-match') ? { 'x-poll-interval': '45', etag: 'running' } : {
+          'x-ratelimit-remaining': '2', 'x-ratelimit-reset': String(Date.now() / 1000 + 60), etag: 'running',
+        },
+        body: completed ? nativeRun : { ...nativeRun, status: 'in_progress', conclusion: null },
+      }),
+    });
+    const adapter = createForgeCiAdapterV1({ actionRefs: GITHUB_CI_ACTION_REFS_V1, invoke: (action, input) => {
+        const operation = (Object.keys(GITHUB_CI_ACTION_IDS_V1) as Array<keyof typeof GITHUB_CI_ACTION_IDS_V1>)
+          .find(key => GITHUB_CI_ACTION_IDS_V1[key] === action.localId)!;
+        return executeGithubCiAction(operation, input, transport.context);
+      },
+    });
+    const reads = createForgeCiReadsV1({ adapter, scopeKey: 'provider-cadence' });
+    const lease = reads.acquire('readRun', { repository, runId: '81' });
+    try {
+      await lease.refresh();
+      expect(lease.getValue()?.state.phase).toBe('running');
+      expect(transport.requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(transport.requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(transport.requests).toHaveLength(2);
+      expect(lease.getValue()?.state.phase).toBe('running');
+      await vi.advanceTimersByTimeAsync(44_999);
+      expect(transport.requests).toHaveLength(2);
+      lease.setActive(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(transport.requests).toHaveLength(2);
+      completed = true;
+      lease.setActive(true);
+      await lease.refresh();
+      expect(transport.requests).toHaveLength(3);
+      expect(lease.getValue()?.state.phase).toBe('completed');
+      lease.release();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(transport.requests).toHaveLength(3);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { lease.release(); reads.retire(); vi.useRealTimers(); }
+  });
   it.each(['listRuns', 'approveDeployment', 'rejectDeployment'] as const)('consumes the exact declared credential for %s without falling back to native login', async operation => {
     const credentialRef = { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'selected-source-account' };
     const materializations: unknown[] = [];
@@ -194,7 +248,7 @@ describe('GitHub Actions through generated activation', () => {
   it('returns a conditional 304 without decoding an absent body', async () => {
     const { result, transport } = await invoke('github/actions/run-read', { repository, runId: '81', validator: 'etag-1' },
       () => ({ status: 304, headers: { etag: 'etag-1' } }));
-    expect(result).toEqual({ kind: 'notModified', validator: 'etag-1' });
+    expect(result).toEqual({ kind: 'notModified', validator: 'etag-1', refreshAfterMs: 60_000 });
     expect(transport.requests).toHaveLength(1);
   });
 

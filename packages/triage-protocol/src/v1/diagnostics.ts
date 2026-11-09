@@ -69,11 +69,13 @@ export function defineTriageValueResultV1<T>(value: ProtocolComposableSchema<T>)
     ]);
 }
 
-export function defineTriageConditionalReadV1<T>(value: ProtocolComposableSchema<T>) {
+export function defineTriageConditionalReadV1<T, TSuccessFields extends Readonly<Record<string, ProtocolComposableSchema<unknown>>> = Record<never, never>>(
+    value: ProtocolComposableSchema<T>, successFields?: TSuccessFields,
+) {
     const validator = defineProtocolString().optional();
     return defineProtocolUnion([
-        defineProtocolObject({ kind: defineProtocolLiteral('value'), value, validator }, { policy: 'closed' }),
-        defineProtocolObject({ kind: defineProtocolLiteral('notModified'), validator }, { policy: 'closed' }),
+        defineProtocolObject({ ...successFields, kind: defineProtocolLiteral('value'), value, validator }, { policy: 'closed' }),
+        defineProtocolObject({ ...successFields, kind: defineProtocolLiteral('notModified'), validator }, { policy: 'closed' }),
         TriageReadUnavailableV1Schema,
     ]);
 }

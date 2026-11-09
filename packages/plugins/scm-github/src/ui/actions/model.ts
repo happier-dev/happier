@@ -3,8 +3,6 @@ import type { ForgeCiOperationIdV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { GITHUB_CI_ACTION_IDS_V1 } from '../../actions/actionIds.js';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 
-/** Active native-query cadence only; the shared read owner controls eligibility and timers. */
-export const GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS = 3000;
 export const GITHUB_CI_ACTION_REFS_V1 = Object.freeze(Object.fromEntries(Object.entries(GITHUB_CI_ACTION_IDS_V1)
   .map(([operation, localId]) => [operation, { pluginId: GITHUB_PLUGIN_ID, localId }]))) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
 

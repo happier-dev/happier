@@ -35,7 +35,7 @@ function integerHeader(headers: Readonly<Record<string, string>>, name: string):
  * Explicit provider poll/retry instructions remain lower bounds. GraphQL has
  * a separate points budget, so its responses cannot replace the REST budget.
  * This collects facts only for the admitted read; the existing account request
- * owner still owns rate parking. Channels and the Session PR Resource each
+ * owner still owns rate parking. Channels, Forge CI and the Session PR Resource each
  * schedule their own demand from this same derivation, without a timer here.
  */
 export function createGithubReadCadence(

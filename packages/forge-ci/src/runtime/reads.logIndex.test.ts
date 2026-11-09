@@ -12,8 +12,7 @@ function controller() {
     let requests = 0;
     let currentLog: ForgeCiLogV1 = log('a\nb\nc');
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef | null>>;
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000,
-        invoke: async () => { requests++; return { kind: 'value', value: currentLog }; } });
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async () => { requests++; return { kind: 'value', value: currentLog }; } });
     return { reads: createForgeCiReadsV1({ adapter, scopeKey: 'account:credential:origin' }), requests: () => requests,
         setLog: (value: ForgeCiLogV1) => { currentLog = value; } };
 }
@@ -67,7 +66,7 @@ describe('read-controller-owned admitted log index', () => {
         reads.retire();
     });
 
-    it('reopens retained immutable query ranges without acquisition, while explicit refresh/invalidation remains live', async () => {
+    it('keeps same-turn same-job replacement continuous, then retires its last released body and index', async () => {
         const { reads, requests } = controller();
         const input = { repository, runId: '42', jobId: 'job', selection: { kind: 'all' } } as const;
         const first = reads.acquire('readJobLog', input);
@@ -84,6 +83,9 @@ describe('read-controller-owned admitted log index', () => {
         await returned.refresh();
         expect(requests()).toBe(2);
         returned.release();
+        await Promise.resolve();
+        expect(reads.getLogIndex(job)).toBeNull();
+        expect(returned.getValue()).toBeNull();
         reads.invalidate('readJobLog', input);
         expect(returned.getValue()).toBeNull();
         const reloaded = reads.acquire('readJobLog', input);
@@ -91,6 +93,30 @@ describe('read-controller-owned admitted log index', () => {
         expect(requests()).toBe(3);
         expect(reads.indexLog({ log: reloaded.getValue() })).not.toBe(index);
         reloaded.release(); reads.retire();
+    });
+
+    it('retains zero abandoned job bodies and indexes after browsing the twelve megabyte-log workload', async () => {
+        const { reads, setLog, requests } = controller();
+        const released = [];
+        const jobs = Array.from({ length: 12 }, (_, i) => ({ ...job, jobId: `job-${i}` }));
+        for (const current of jobs) {
+            setLog({ ...log('x'.repeat(1_048_576)), job: current });
+            const lease = reads.acquire('readJobLog', { repository, runId: '42', jobId: current.jobId, selection: { kind: 'all' } });
+            await lease.refresh();
+            expect(reads.indexLog({ log: lease.getValue() })?.plainText.length).toBe(1_048_576);
+            lease.release();
+            released.push(lease);
+            await Promise.resolve();
+        }
+        expect(requests()).toBe(12);
+        expect(released.filter(lease => lease.getValue() !== null)).toHaveLength(0);
+        expect(jobs.filter(ref => reads.getLogIndex(ref) !== null)).toHaveLength(0);
+        setLog({ ...log('new body'), job: jobs[0]! });
+        const reopened = reads.acquire('readJobLog', { repository, runId: '42', jobId: jobs[0]!.jobId, selection: { kind: 'all' } });
+        await reopened.refresh();
+        expect(requests()).toBe(13);
+        expect(reopened.getValue()).toMatchObject({ text: 'new body' });
+        reopened.release(); reads.retire();
     });
 
     it('retracts every retained projection of a job when an admitted read reports expiry', async () => {
@@ -108,5 +134,25 @@ describe('read-controller-owned admitted log index', () => {
         await full.refresh();
         expect(reads.indexLog({ log: full.getValue() })).not.toBe(original);
         full.release(); tail.release(); reads.retire();
+    });
+
+    it('keeps the same native job demanded through implicit and explicit attempt queries until both release', async () => {
+        const { reads, setLog } = controller();
+        const selected = { ...job, selection: { kind: 'attempt', attempt: { run: job.selection.run, attemptId: '2' } } } as const;
+        setLog({ ...log('native attempt'), job: selected });
+        const input = { repository, runId: '42', jobId: job.jobId, selection: { kind: 'all' } } as const;
+        const implicit = reads.acquire('readJobLog', input);
+        const explicit = reads.acquire('readJobLog', { ...input, attempt: '2' });
+        await Promise.all([implicit.refresh(), explicit.refresh()]);
+        const index = reads.indexLog({ log: explicit.getValue() });
+        implicit.release();
+        await Promise.resolve();
+        expect(reads.getLogIndex(selected)).toBe(index);
+        expect(explicit.getValue()).not.toBeNull();
+        explicit.release();
+        await Promise.resolve();
+        expect([implicit, explicit].filter(lease => lease.getValue() !== null)).toHaveLength(0);
+        expect(reads.getLogIndex(selected)).toBeNull();
+        reads.retire();
     });
 });

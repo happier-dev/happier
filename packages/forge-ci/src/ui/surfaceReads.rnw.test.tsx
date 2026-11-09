@@ -28,7 +28,7 @@ function boundary(logResponse?: (input: ForgeCiActionInputByOperationV1['readJob
   const vectors = { ...native, job: { ...native.job, checkRunId: 'check-202' } };
   const calls: string[] = [];
   const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
-  const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+  const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
     calls.push(action.localId);
     const log = { kind: 'available', job: vectors.job.ref, logId: 'immutable', text: 'failure\ncontext', startLine: 1, startByte: 0, complete: true, continuation: null } as const;
     if (action.localId === 'readJobLog' && logResponse) return logResponse(ForgeCiActionInputSchemasV1.readJobLog.parse(input), log);
@@ -70,7 +70,7 @@ describe('public mounted CI data wiring', () => {
     let acquisitions = 0;
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key,
       key === 'readRun' ? authority.readAuthority.consumer : { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (_action, _input, options) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (_action, _input, options) => {
       requests++;
       requestSignal = options?.signal;
       return new Promise(resolve => { settle = resolve; });
@@ -114,7 +114,7 @@ describe('public mounted CI data wiring', () => {
     const native = createForgeCiConformanceVectorsV1().github;
     const inputs: ForgeCiActionInputByOperationV1['listJobs'][] = [];
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
       if (action.localId === 'readRun') return { kind: 'value', value: native.run };
       const query = ForgeCiActionInputSchemasV1.listJobs.parse(input);
       inputs.push(query);
@@ -147,7 +147,7 @@ describe('public mounted CI data wiring', () => {
     const job = { ...native.job, checkRunId: 'check-202' };
     const calls: Array<Readonly<{ operation: string; cursor?: string }>> = [];
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
-    const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async (action, input) => {
+    const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async (action, input) => {
       if (action.localId === 'readJobLog') {
         const query = ForgeCiActionInputSchemasV1.readJobLog.parse(input);
         calls.push({ operation: action.localId, ...(query.cursor ? { cursor: query.cursor } : {}) });
@@ -234,7 +234,7 @@ describe('public mounted CI data wiring', () => {
     expect(await held.invoke({ mountId: 'mounted-ci', operation: { kind: 'setTimestampsVisible', visible: true } })).toEqual({ status: 'unavailable' });
   });
 
-  it('borrows the retained immutable index and body when the same job moves between mounts', async () => {
+  it('borrows the immutable index and preserves Find while the same job has mounted demand', async () => {
     let replacement = false;
     let finishTail: (() => void) | undefined;
     const logSelections: ForgeCiActionInputByOperationV1['readJobLog']['selection'][] = [];
@@ -284,10 +284,10 @@ describe('public mounted CI data wiring', () => {
       expect(currentViewer().findSnapshot.matches).toBe(heldMatches);
       expect(observed.at(-1)).toBe(first);
       expect(calls.filter(value => value === 'readJobLog')).toHaveLength(1);
-      await act(async () => { await pane.dispose(); });
-      mounted.splice(mounted.indexOf(pane), 1);
       const page = await mount(Body);
       await page.getByText('context');
+      await act(async () => { await pane.dispose(); });
+      mounted.splice(mounted.indexOf(pane), 1);
       expect(observed.at(-1)).toBe(first);
       expect(observed.at(-1)?.lines[0]?.tokens).toBe(first.lines[0]?.tokens);
       expect(calls.filter(value => value === 'readJobLog')).toHaveLength(1);

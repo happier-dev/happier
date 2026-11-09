@@ -12,10 +12,9 @@ export type ForgeCiAdapterOptionsV1 = Readonly<{
     actionRefs: Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef | null>>;
     invoke: (action: PluginContributionRef, input: JsonValue,
         options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
-    activeRunPollIntervalMs: number;
 }>;
 
-export type ForgeCiAdapterV1 = Readonly<{ activeRunPollIntervalMs: number }> & {
+export type ForgeCiAdapterV1 = {
     readonly [K in ForgeCiOperationIdV1]: (
         input: ForgeCiActionInputByOperationV1[K], options?: Readonly<{ signal?: AbortSignal }>,
     ) => Promise<ForgeCiActionResultByOperationV1[K]>;
@@ -142,5 +141,5 @@ export function createForgeCiAdapterV1(options: ForgeCiAdapterOptionsV1): ForgeC
         }),
     );
     // The canonical operation map supplies every key and its corresponding parser.
-    return Object.freeze({ ...methods, activeRunPollIntervalMs: options.activeRunPollIntervalMs }) as ForgeCiAdapterV1;
+    return Object.freeze(methods) as ForgeCiAdapterV1;
 }

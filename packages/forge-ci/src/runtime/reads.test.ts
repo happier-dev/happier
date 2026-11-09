@@ -31,12 +31,18 @@ function boundary<K extends ForgeCiOperationIdV1>(operation: K, respond: (input:
     const calls: { input: JsonValue; signal?: AbortSignal }[] = [];
     const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, key === operation ? { pluginId: 'fixture.forge', localId: key } : null])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef | null>>;
     const adapter = createForgeCiAdapterV1({
-        actionRefs, activeRunPollIntervalMs: 3000,
-        // Ordinary Action invocation is the external system boundary. The adapter,
+        actionRefs, // Ordinary Action invocation is the external system boundary. The adapter,
         // schemas and controller remain real beneath it.
         invoke: async (_action, input, options) => {
             calls.push({ input, signal: options?.signal });
-            return respond(input, options?.signal);
+            const result = await respond(input, options?.signal);
+            // The external provider supplies cadence; this fixture explicitly admits 3 s reads.
+            if (['listRuns', 'readRun', 'listJobs', 'readJob'].includes(operation)
+                && typeof result === 'object' && result !== null && 'kind' in result
+                && (result.kind === 'value' || result.kind === 'notModified')) {
+                return { ...result, refreshAfterMs: 3000 };
+            }
+            return result;
         },
     });
     return { adapter, calls, reads: createForgeCiReadsV1({ adapter, scopeKey: 'account:credential:origin' }) };
@@ -51,7 +57,7 @@ describe('exact CI read demand', () => {
         let readsStarted = 0;
         let writes = 0;
         const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
-        const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+        const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async action => {
             if (action.localId === 'dispatchWorkflow') {
                 writes++;
                 return { kind: 'confirmed', affected: { repository, workflowId: '9', ref: 'main', run: runRef }, receipt: { id: '42' } };
@@ -76,7 +82,7 @@ describe('exact CI read demand', () => {
     it('settles a declined dispatch with its cause and zero mutation rereads', async () => {
         let readsStarted = 0;
         const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
-        const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+        const adapter = createForgeCiAdapterV1({ actionRefs, invoke: async action => {
             if (action.localId === 'dispatchWorkflow') throw new PluginError({ code: 'denied', diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] });
             readsStarted++;
             return { kind: 'value', value: page([]) };

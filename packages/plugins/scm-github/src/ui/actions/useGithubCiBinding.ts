@@ -10,7 +10,6 @@ import {
 import { usePluginHostApi, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../observations/githubProviderContracts.js';
 import {
-  GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS,
   GITHUB_CI_ACTION_REFS_V1,
 } from './model.js';
 
@@ -47,8 +46,7 @@ export function useGithubCiBindingV1(
           invocation?: Readonly<{ signal?: AbortSignal }>,
         ) =>
           host.executeAction(action, input, invocation),
-        activeRunPollIntervalMs: GITHUB_ACTIONS_ACTIVE_POLL_INTERVAL_MS,
-      }),
+        }),
     [host],
   );
   // Separate supplied account disclosures, without treating them as credential
