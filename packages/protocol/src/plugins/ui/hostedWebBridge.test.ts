@@ -112,10 +112,21 @@ describe('hosted web bridge protocol', () => {
         identity: { instanceId: 'mount-1', mountNonce: 'nonce-1' },
         subPath: '/review/42/',
         launchInput: { reviewId: '42' },
+        launch: { kind: 'explicit', input: { reviewId: '42' } },
         composerRef: { kind: 'session', sessionId: 'session-1' },
       } });
 
     expect(bootstrap.payload.subPath).toBe('review/42');
+    expect(bootstrap.payload).toHaveProperty('launch', { kind: 'explicit', input: { reviewId: '42' } });
+    expect(PluginHostedWebBridgeBootstrapEnvelopeV1Schema.parse({ ...bootstrap, payload: {
+      ...bootstrap.payload, launch: { kind: 'explicit' },
+    } }).payload).toHaveProperty('launch', { kind: 'explicit' });
+    for (const launch of [{ kind: 'restore' }, { kind: 'explicit', authority: 'invented' },
+      { kind: 'explicit', input: () => undefined }]) {
+      expect(PluginHostedWebBridgeBootstrapEnvelopeV1Schema.safeParse({ ...bootstrap,
+        payload: { ...bootstrap.payload, launch },
+      }).success).toBe(false);
+    }
     expect(bootstrap.payload.composerRef).toEqual({ kind: 'session', sessionId: 'session-1' });
     expect(PluginHostedWebBridgeBootstrapEnvelopeV1Schema.safeParse({
       ...bootstrap,

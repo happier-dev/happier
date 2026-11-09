@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 import { randomUUID } from '@/platform/randomUUID';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useVisibleModalKind } from '@/modal';
-import { useVisibleModalId } from '@/modal/ModalProvider';
+import { useModalContentId, useVisibleModalId } from '@/modal/ModalProvider';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import {
     useAppShellPluginUiProjection,
@@ -51,7 +51,7 @@ import {
 } from './currentUiContextModel';
 
 /** `workspaceHosted`: this mount is content of the Details workspace, so it stays current while that workspace is. */
-type CurrentUiContextMountOwner = Readonly<{ workspaceHosted?: true }>;
+type CurrentUiContextMountOwner = Readonly<{ workspaceHosted?: true; modalId?: string }>;
 
 /**
  * The semantic command records remain private to the sole current mount
@@ -106,7 +106,7 @@ export type CurrentUiContextMountPublication = Readonly<{
  * and never exposes semantic command payloads to consumers.
  */
 export type CurrentUiContextMountPublisher = Readonly<{
-    createMount: (options?: Readonly<{ workspaceHosted?: true }>) => CurrentUiContextMountPublication;
+    createMount: (options?: CurrentUiContextMountOwner) => CurrentUiContextMountPublication;
 }>;
 
 /**
@@ -247,6 +247,11 @@ function currentMountProjection(record: CurrentUiContextMountRecord | null, area
     if (!record) return null;
     const foreground = record.semanticCommands.filter(entry => entry.foreground !== undefined
         && (modalVisible ? modalId !== null && entry.foreground.modalId === modalId : entry.foreground.modalId === null));
+    if (area === 'modal' && modalId !== null && record.owner.modalId === modalId) {
+        const ids = new Set(foreground.map(entry => entry.id));
+        const authorCount = record.enrichment.commands?.length ?? 0;
+        return { ...record.projection, commands: record.projection.commands.filter((entry, index) => index < authorCount || ids.has(entry.id)) };
+    }
     if (foreground.length) {
         const ids = new Set(foreground.map(entry => entry.id));
         return { commands: record.projection.commands.filter(entry => ids.has(entry.id)) };
@@ -468,7 +473,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     }), [readCurrentUiContext]);
 
     const createMount = React.useCallback<CurrentUiContextMountPublisher['createMount']>((options) => {
-        const owner: CurrentUiContextMountOwner = Object.freeze(options?.workspaceHosted ? { workspaceHosted: true } : {});
+        const owner: CurrentUiContextMountOwner = Object.freeze({ ...options });
         let disposed = false;
         const canUseProvider = (): boolean => !disposed && providerCurrentRef.current;
         const acquire = (): boolean => {
@@ -611,14 +616,26 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
 export function CurrentUiContextWorkspaceBoundary(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
     const publisher = React.useContext(CurrentUiContextMountPublisherContext);
     const workspacePublisher = React.useMemo<CurrentUiContextMountPublisher | null>(() => publisher && Object.freeze({
-        createMount: options => publisher.createMount({ ...options, workspaceHosted: true }),
+        createMount: (options?: CurrentUiContextMountOwner) => publisher.createMount({ ...options, workspaceHosted: true }),
     }), [publisher]);
     return <CurrentUiContextMountPublisherContext.Provider value={workspacePublisher}>{props.children}</CurrentUiContextMountPublisherContext.Provider>;
 }
 
 /** Optional outside AppShell so legacy previews omit the unavailable host method. */
 export function useCurrentUiContextMountPublisher(): CurrentUiContextMountPublisher | null {
-    return React.useContext(CurrentUiContextMountPublisherContext);
+    const publisher = React.useContext(CurrentUiContextMountPublisherContext);
+    const modalId = useModalContentId();
+    return React.useMemo(() => publisher && modalId !== null ? Object.freeze({
+        createMount: (options?: CurrentUiContextMountOwner) => publisher.createMount({ modalId, ...options }),
+    }) : publisher, [modalId, publisher]);
+}
+
+/** The existing modal host names the foreground; pages withdraw and restore through their ordinary publication. */
+export function useCurrentUiContextMountEligibility(): boolean {
+    const layoutEligible = usePluginSurfaceCurrentUiContextEligibility();
+    const visibleModalId = useVisibleModalId();
+    const modalId = useModalContentId();
+    return layoutEligible && modalId === visibleModalId;
 }
 
 /**
@@ -630,7 +647,7 @@ export function usePublishCurrentUiContext(
     enrichment: CurrentUiContextMountedEnrichment | null,
 ): Readonly<{ activateCurrent(signal?: AbortSignal): Promise<boolean> }> {
     const mountPublisher = useCurrentUiContextMountPublisher();
-    const currentUiContextEligible = usePluginSurfaceCurrentUiContextEligibility();
+    const currentUiContextEligible = useCurrentUiContextMountEligibility();
     const mountLifecycleActive = useCurrentUiContextMountLifecycleActive();
     const publicationRef = React.useRef<CurrentUiContextMountPublication | null>(null);
     const currentRef = React.useRef({ enrichment, currentUiContextEligible, mountLifecycleActive });

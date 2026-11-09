@@ -71,6 +71,7 @@ function createAuthorRenderContext(context: RenderContext): RenderContext {
     signal: context.signal,
     ...(context.activity === undefined ? {} : { activity: context.activity }),
     ...(context.launchInput === undefined ? {} : { launchInput: context.launchInput }),
+    ...(context.launch === undefined ? {} : { launch: context.launch }),
     ...(context.widgetPresentation === undefined ? {} : { widgetPresentation: context.widgetPresentation }),
     ...(context.subPath === undefined ? {} : { subPath: context.subPath }),
   });

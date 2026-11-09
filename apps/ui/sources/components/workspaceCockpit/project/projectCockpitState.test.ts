@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { resolveProjectCockpitRouteFromPathname, resolveProjectMobileSurfaceIntent,
+import { PROJECT_PAGES, resolveProjectCockpitRouteFromPathname, resolveProjectMobileSurfaceIntent,
     resolveProjectRoutePathForSurface, resolveProjectRightTabIdForSurface } from './projectCockpitState';
 
 describe('projectCockpitState', () => {
+    it('keeps an exact qualified plugin page and its local location in the Project cockpit', () => {
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr%2F1/plugins/acme.tools/builds/runs/42?serverId=home-a')).toMatchObject({
+            workspaceRefId: 'wr/1', selection: { kind: 'plugin', destination: { pluginId: 'acme.tools', localId: 'builds' }, subPath: 'runs/42' },
+        });
+    });
+    it('projects a phone companion without replacing a plugin page or its local location', () => {
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/plugins/acme.tools/builds/runs/42?mobileSurface=terminal'))
+            .toMatchObject({ surface: 'terminal', selection: { kind: 'plugin', subPath: 'runs/42' } });
+    });
+    it('restores a remembered qualified page only on the Project index, never over an explicit built-in route', () => {
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1', 'plugin:acme.tools:builds')).toMatchObject({
+            selection: { kind: 'plugin', destination: { pluginId: 'acme.tools', localId: 'builds' }, subPath: '' },
+        });
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/code', 'plugin:acme.tools:builds')).toEqual({
+            workspaceRefId: 'wr_1', page: 'code', surface: 'code',
+        });
+    });
+    it.each(PROJECT_PAGES.filter(page => page !== 'overview'))('opens the built-in %s page from its own route', (page) => {
+        expect(resolveProjectCockpitRouteFromPathname(`/projects/wr_1/${page}?serverId=home-a`)).toMatchObject({
+            workspaceRefId: 'wr_1', page,
+        });
+    });
+    it.each(['%ZZ', 'runs/%00', 'runs/%2E%2E', 'runs/%2Fprivate'])('rejects an invalid Project page location (%s)', (subPath) => {
+        expect(resolveProjectCockpitRouteFromPathname(`/projects/wr_1/plugins/acme.tools/builds/${subPath}`)).toBeNull();
+    });
     it.each(['/projects/open', '/projects/open/?sourceId=source', '/projects/sources', '/projects/sources/'])('does not treat the static selection route as an accepted checkout (%s)', (pathname) => {
         expect(resolveProjectCockpitRouteFromPathname(pathname)).toBeNull();
     });
@@ -23,7 +48,7 @@ describe('projectCockpitState', () => {
         expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({
             serverId: 'home-a', worktreeId: 'checkout-a', initialFile: 'src/a.ts', comparisonId: 'comparison-a' });
     });
-    it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'] as const)('preserves the %s page and exact checkout', (surface) => {
+    it.each(PROJECT_PAGES)('preserves the %s page and exact checkout', (surface) => {
         const href = resolveProjectRoutePathForSurface({ workspaceRefId: 'wr_1', surface,
             rawWorktreeId: 'checkout-a', serverId: 'home-a', layoutId: 'dashboard-a', comparisonId: 'comparison-a' });
         const url = new URL(href, 'https://app.happier.test');
@@ -42,6 +67,12 @@ describe('projectCockpitState', () => {
 
     it('does not admit unpublished three-tab aliases', () => {
         for (const alias of ['details', 'files', 'git']) expect(resolveProjectCockpitRouteFromPathname(`/projects/wr_1/${alias}`)).toBeNull();
+    });
+
+    it('keeps the terminal route as a companion on the overview page', () => {
+        expect(resolveProjectCockpitRouteFromPathname('/projects/wr_1/terminal')).toEqual({
+            workspaceRefId: 'wr_1', page: 'overview', surface: 'terminal',
+        });
     });
 
     it('an explicit page wins over stale persisted companion selection', () => {

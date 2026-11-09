@@ -35,7 +35,9 @@ describe('isMachinePageTabPushed', () => {
     it('names the pages a tab pushes, never a tab root or its alternate view', () => {
         expect(isMachinePageTabPushed({ id: 'services', page: 'service', service: 'web' })).toBe(true);
         expect(isMachinePageTabPushed({ id: 'services', page: 'roles' })).toBe(true);
+        expect(isMachinePageTabPushed({ id: 'plugin', pluginId: 'p', localId: 'l', pluginPath: '/a' })).toBe(true);
         expect(isMachinePageTabPushed({ id: 'services' })).toBe(false);
+        expect(isMachinePageTabPushed({ id: 'plugin', pluginId: 'p', localId: 'l' })).toBe(false);
         expect(isMachinePageTabPushed({ id: 'storage', view: 'disk' })).toBe(false);
     });
 });

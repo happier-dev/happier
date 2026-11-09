@@ -25,6 +25,8 @@ export type PluginSurfaceLaunchInputStore<TLaunch extends Readonly<{
     retire: (authority?: PluginSurfaceLaunchAuthority) => void;
     /** Retires the pending value unless one exact authority still owns it. */
     retireOutside: (authorities: readonly PluginSurfaceLaunchAuthority[]) => void;
+    /** Reconcile the same pending slot when its owning adapter admits new authority facts. */
+    updatePending: (update: (launch: TLaunch) => TLaunch | null) => void;
     /**
      * Removes a pending record only when a known different authority owns its
      * host destination. Missing authority does not establish a replacement.
@@ -87,6 +89,14 @@ export function createPluginSurfaceLaunchInputStore<TLaunch extends Readonly<{
             retireOutside(authority ? [authority] : []);
         },
         retireOutside,
+        updatePending: (update) => {
+            if (!pending) return;
+            const next = update(pending);
+            if (next === pending) return;
+            pending = next && next.authority.accountLifetime?.isCurrent() !== false
+                ? Object.freeze({ ...next }) as TLaunch : null;
+            notify();
+        },
         retireHandoffIfAuthorityChanged: (query) => {
             if (!pending || handoffKeyFor(pending) !== query.handoffKey) return;
             if (

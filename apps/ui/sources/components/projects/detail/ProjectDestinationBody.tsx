@@ -16,9 +16,11 @@ import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCo
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
-import { useLocalSetting, usePersistProjectLastMobileSurface, useWorkspaceRefs } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys, writeProjectSelectionPreference } from '@/sync/domains/settings/projectSelectionPersistence';
+import { useProjectLastMobileSurface, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
+import { persistProjectSelectionUiState, useProjectSelectionUiState } from '@/sync/domains/state/projectSelectionUiState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 export const ProjectDestinationBody = React.memo(() => {
     const routerRef = useProjectRouteRouterRef();
@@ -32,24 +34,26 @@ export const ProjectDestinationBody = React.memo(() => {
     const workspaceRefs = useWorkspaceRefs();
     const preferenceKeys = React.useMemo(() => workspaceRef
         ? resolveProjectSelectionPreferenceKeys(workspaceRefs, workspaceRef) : null, [workspaceRef, workspaceRefs]);
-    const pageRoute = resolveProjectCockpitRouteFromPathname(pathname, null, readProjectRouteStringParam(params.mobileSurface));
+    const rememberedPage = useProjectLastMobileSurface(workspaceRefId, workspaceRef?.serverId ?? serverId);
+    const surfaceHint = readProjectRouteStringParam(params.mobileSurface);
+    const pageRoute = React.useMemo(() => resolveProjectCockpitRouteFromPathname(pathname, rememberedPage, surfaceHint),
+        [pathname, rememberedPage, surfaceHint]);
     const page = pageRoute?.page ?? 'overview';
+    const pageSelection = pageRoute?.selection;
     const surface = pageRoute?.surface ?? page;
     const showWorktrees = readProjectRouteStringParam(params.showWorktrees) === '1';
     const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(workspaceRefId, workspaceRef?.serverId ?? serverId));
     const pane = useAppPaneScope(scopeId, () => null);
     const paneContext = React.useContext(AppPaneContext);
     const resourcePending = useProjectInitialResource(pane, workspaceRef);
-    const roots = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
-    const worktreeIds = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const persistPage = usePersistProjectLastMobileSurface();
+    const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = useProjectSelectionUiState(preferenceKeys);
     const fallbackRootPath = workspaceRef?.rootPath ?? readProjectRouteStringParam(params.activeRootPath) ?? '';
     const selection = readProjectRouteWorktreeSelection({
         rawWorktreeId: params.worktreeId,
         rawLegacyActiveRootPath: params.activeRootPath,
         defaultRootPath: fallbackRootPath,
-        persistedActiveRootPath: readProjectSelectionPreference(roots, preferenceKeys),
-        persistedWorktreeId: readProjectSelectionPreference(worktreeIds, preferenceKeys),
+        persistedActiveRootPath,
+        persistedWorktreeId,
     });
     const { requestedRootPath, didRecoverMissingWorktree, resolvedRootPath: activeRootPath, resolvedWorktreeId: activeWorktreeId, availableWorktrees } = useResolvedRepoWorktreeSelection({
         serverId: workspaceRef?.serverId ?? serverId ?? '',
@@ -57,15 +61,17 @@ export const ProjectDestinationBody = React.memo(() => {
         defaultRootPath: fallbackRootPath,
         requestedRootPath: selection.requestedRootPath,
         requestedWorktreeId: selection.requestedWorktreeId,
+        refreshOnMount: pageSelection?.kind !== 'plugin',
     });
     const replaceSelection = React.useCallback((path: string, nextShowWorktrees = showWorktrees) => {
         if (!workspaceRef || !path.trim()) return;
         const details = paneContext?.getSnapshot().state.scopes[scopeId]?.details;
-        replaceProjectRouteSelection({
+        return replaceProjectRouteSelection({
             router: routerRef.current,
             workspaceRefId,
             serverId: workspaceRef.serverId,
             segment: page,
+            selection: pageSelection,
             surface,
             routeParams: params,
             initialResource: readProjectSelectedRouteResource(details ? buildDetailsWorkspaceStateView(details) : null) ?? (resourcePending ? undefined : null),
@@ -74,22 +80,13 @@ export const ProjectDestinationBody = React.memo(() => {
             activeWorktreeId: path === workspaceRef.rootPath ? null : findVisibleRepoWorktreeByPath(availableWorktrees, path)?.id ?? null,
             showWorktrees: nextShowWorktrees,
         });
-    }, [availableWorktrees, page, paneContext, scopeId, params, resourcePending, routerRef, showWorktrees, surface, workspaceRef, workspaceRefId]);
+    }, [availableWorktrees, page, pageSelection, paneContext, scopeId, params, resourcePending, routerRef, showWorktrees, surface, workspaceRef, workspaceRefId]);
     const selectRootPath = React.useCallback((path: string) => replaceSelection(path), [replaceSelection]);
     React.useEffect(() => {
         if (!isFocused || !workspaceRef || !preferenceKeys) return;
-        persistPage(workspaceRefId, page, workspaceRef.serverId);
         const worktreeId = activeWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL;
-        if (roots?.[preferenceKeys.storageKey] === activeRootPath && worktreeIds?.[preferenceKeys.storageKey] === worktreeId) return;
-        getStorage().getState().applyLocalSettings({
-            ...(roots?.[preferenceKeys.storageKey] !== activeRootPath ? {
-                projectLastActiveRootPathByWorkspaceRefId: writeProjectSelectionPreference(roots, preferenceKeys, activeRootPath),
-            } : {}),
-            ...(worktreeIds?.[preferenceKeys.storageKey] !== worktreeId ? {
-                projectLastActiveWorktreeIdByWorkspaceRefId: writeProjectSelectionPreference(worktreeIds, preferenceKeys, worktreeId),
-            } : {}),
-        }, { source: 'ui' });
-    }, [activeRootPath, activeWorktreeId, isFocused, page, persistPage, preferenceKeys, roots, worktreeIds, workspaceRef, workspaceRefId]);
+        persistProjectSelectionUiState(preferenceKeys, activeRootPath, worktreeId);
+    }, [activeRootPath, activeWorktreeId, isFocused, preferenceKeys, workspaceRef]);
     const setShowWorktrees = React.useCallback((value: boolean) => replaceSelection(activeRootPath, value), [activeRootPath, replaceSelection]);
     const actions = useProjectRouteActions({ workspaceRef, activeRootPath, activeWorktreeId, showWorktrees, pane });
     // A page's pushed detail (a phone Service) takes the bar's Back while it is open; otherwise Back leaves the Project.
@@ -105,6 +102,9 @@ export const ProjectDestinationBody = React.memo(() => {
         onOpenBrowser: actions.openBrowser,
         onOpenTerminal: () => actions.openTerminal({ exitOverview: true }),
     });
+    if (pageRoute === null && pathname.includes('/plugins/')) {
+        return <><Stack.Screen options={screenOptions} /><SurfaceStateCard kind="unavailable" title={t('common.unavailable')} /></>;
+    }
     return <ProjectPageBackProvider value={registerPageBack}>
         <Stack.Screen options={screenOptions} />
         <ProjectDetailScreen
@@ -115,6 +115,7 @@ export const ProjectDestinationBody = React.memo(() => {
             attachedDashboard={readProjectAttachedDashboardSelection(params)}
             recoveryToastKey={didRecoverMissingWorktree ? `${workspaceRefId}:${requestedRootPath}` : null}
             page={page}
+            selection={pageSelection}
             surface={surface}
             activeRootPath={activeRootPath}
             activeWorktreeId={activeWorktreeId}

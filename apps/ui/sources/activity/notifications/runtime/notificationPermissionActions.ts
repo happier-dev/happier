@@ -1,124 +1,91 @@
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import type { ParsedNotificationTap } from '../notificationRouting';
-import { resolveNotificationSavedHome } from '../resolveNotificationSavedHome';
-import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { withTimeout } from '@/utils/timing/time';
 import { markNotificationPermissionRecoveryNeeded } from './notificationPermissionRecovery';
 
+type Execution = typeof import('./notificationPermissionActionExecution');
 export type NotificationPermissionOutcome = Readonly<{
     status: 'ignored' | 'not_sent' | 'confirmed' | 'rejected' | 'unconfirmed' | 'conflict';
 }>;
-
-// Delivery/presentation bookkeeping only; this cannot authorize a mutation.
+export type NotificationPermissionActionOptions = Readonly<{
+    allowExecution?: boolean; signal?: AbortSignal;
+    // Genuine bundle loading boundary; internal parsing, admission and RPC remain real.
+    importExecution?: () => Promise<Execution>;
+}>;
+export type NotificationPermissionActionContext = Readonly<{
+    signal: AbortSignal; onIssued(): void; onTargetResolved(scope: ServerAccountScope): void;
+}>;
 const handledResponses = new Set<string>();
-const responses = new Map<string, { action: 'allow' | 'deny'; promise: Promise<NotificationPermissionOutcome> }>();
-
 export function isNotificationPermissionAction(parsed: ParsedNotificationTap): boolean {
     return parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1
         || parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1;
 }
-
+export function isNotificationExecutionAction(parsed: ParsedNotificationTap): boolean {
+    return isNotificationPermissionAction(parsed)
+        || parsed.command.kind === 'executeAction' && parsed.command.actionId === 'session.user_action.answer';
+}
 function responseKey(parsed: ParsedNotificationTap): string | null {
-    if (!isNotificationPermissionAction(parsed)) return null;
+    if (!isNotificationExecutionAction(parsed)) return null;
     if (!parsed.dedupeKey && parsed.command.kind !== 'executeAction') return null;
     return JSON.stringify([parsed.accountId, parsed.dedupeKey, parsed.command]);
 }
-
 export function wasNotificationResponseHandled(parsed: ParsedNotificationTap): boolean {
-    const key = responseKey(parsed);
-    return key !== null && handledResponses.has(key);
+    const key = responseKey(parsed); return key !== null && handledResponses.has(key);
 }
-
 export function markNotificationResponseHandled(parsed: ParsedNotificationTap): void {
-    const key = responseKey(parsed);
-    if (key !== null) handledResponses.add(key);
+    const key = responseKey(parsed); if (key !== null) handledResponses.add(key);
 }
-
-function reportOutcome(outcome: NotificationPermissionOutcome): NotificationPermissionOutcome {
+function report(outcome: NotificationPermissionOutcome, scope?: ServerAccountScope): NotificationPermissionOutcome {
     if (outcome.status !== 'ignored' && outcome.status !== 'confirmed') {
-        console.warn('[notifications] Permission action requires in-app review:', outcome.status);
-        try { markNotificationPermissionRecoveryNeeded(); }
-        catch { console.warn('[notifications] Permission action recovery storage unavailable'); }
+        console.warn('[notifications] Notification response requires in-app review:', outcome.status);
+        try { markNotificationPermissionRecoveryNeeded(scope); }
+        catch { console.warn('[notifications] Notification response recovery storage unavailable'); }
     }
     return outcome;
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Live Android callbacks share one exact request; a cached response only presents recovery. */
-export async function executeNotificationPermissionAction(
-    parsed: ParsedNotificationTap,
-    options: Readonly<{ allowExecution?: boolean }> = {},
+/** One lifetime includes cold execution loading, target preparation and dispatch. */
+async function run(options: NotificationPermissionActionOptions,
+    execute: (implementation: Execution, context: NotificationPermissionActionContext) => Promise<NotificationPermissionOutcome>,
 ): Promise<NotificationPermissionOutcome> {
-    if (!isNotificationPermissionAction(parsed)) return { status: 'ignored' };
-    if (options.allowExecution === false) return reportOutcome({ status: 'not_sent' });
-    markNotificationResponseHandled(parsed);
-    const command = parsed.command;
-    if (command.kind !== 'executeAction' || command.actionId !== 'session.permission.respond'
-        || !isRecord(command.payload)) return reportOutcome({ status: 'not_sent' });
-    const { sessionId, requestId, turnId, decision } = command.payload;
-    if (typeof sessionId !== 'string' || !sessionId.trim() || typeof requestId !== 'string' || !requestId.trim()
-        || typeof turnId !== 'string' || !turnId.trim() || (decision !== 'allow' && decision !== 'deny')) {
-        return reportOutcome({ status: 'not_sent' });
-    }
-    const serverUrl = command.target.serverUrl;
-    if (!serverUrl) return reportOutcome({ status: 'not_sent' });
-    const home = resolveNotificationSavedHome({ serverId: command.target.serverId, serverUrl });
-    if (!home) return reportOutcome({ status: 'not_sent' });
     const lifetime = new AbortController();
+    const onAbort = () => lifetime.abort();
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) lifetime.abort();
     let issued = false;
+    let scope: ServerAccountScope | undefined;
+    let rejectAborted: (() => void) | undefined;
     try {
-        return reportOutcome(await withTimeout(async () => {
-            const binding = await resolveServerCredentialAccountScope(home.id);
-            if (binding.kind !== 'bound' || lifetime.signal.aborted
-                || parsed.accountId && parsed.accountId !== binding.scope.accountId) return { status: 'not_sent' } as const;
-            const key = JSON.stringify([binding.scope.serverId, binding.scope.accountId, sessionId, turnId, requestId]);
-            const pending = responses.get(key);
-            if (pending) return pending.action === decision ? pending.promise : { status: 'conflict' } as const;
-            const send = (async (): Promise<NotificationPermissionOutcome> => {
-                let finished = false;
-                let rejectAborted: (() => void) | undefined;
-                const aborted = new Promise<never>((_, reject) => {
-                    rejectAborted = () => reject(new Error('Notification permission action ended'));
-                    lifetime.signal.addEventListener('abort', rejectAborted, { once: true });
-                });
-                try {
-                    await Promise.race([(async () => {
-                        const { sessionRespondToPermissionWithServerAccountScope } = await import('@/sync/ops/sessions');
-                        if (lifetime.signal.aborted) throw new Error('Notification permission action ended');
-                        await sessionRespondToPermissionWithServerAccountScope(sessionId, {
-                            id: requestId, turnId, approved: decision === 'allow',
-                            decision: decision === 'allow' ? 'approved' : 'denied',
-                        }, { scope: binding.scope, networkMode: 'background-task', signal: lifetime.signal,
-                            onIssued: () => {
-                                if (finished || lifetime.signal.aborted) throw new Error('Notification permission action ended');
-                                issued = true;
-                            } });
-                    })(), aborted]);
-                    return { status: issued ? 'confirmed' : 'not_sent' };
-                } catch (error) {
-                    return { status: !issued ? 'not_sent' : readRpcErrorCode(error)?.startsWith('permission_')
-                        ? 'rejected' : 'unconfirmed' };
-                } finally {
-                    finished = true;
-                    if (rejectAborted) lifetime.signal.removeEventListener('abort', rejectAborted);
-                }
-            })();
-            responses.set(key, { action: decision, promise: send });
-            void send.then((outcome) => {
-                // Reuse only an actual acknowledgement for this exact occurrence.
-                // All other outcomes stay retryable within this JS runtime.
-                if (outcome.status !== 'confirmed' && responses.get(key)?.promise === send) responses.delete(key);
-            });
-            return await send;
-        }, DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, 'notification permission action'));
-    } catch {
-        return reportOutcome({ status: issued ? 'unconfirmed' : 'not_sent' });
-    } finally {
+        if (lifetime.signal.aborted) return report({ status: 'not_sent' });
+        const aborted = new Promise<never>((_, reject) => {
+            rejectAborted = () => reject(new Error('Notification response ended'));
+            lifetime.signal.addEventListener('abort', rejectAborted, { once: true });
+        });
+        const context: NotificationPermissionActionContext = {
+            signal: lifetime.signal, onTargetResolved: target => { scope = target; },
+            onIssued: () => { if (lifetime.signal.aborted) throw new Error('Notification response ended'); issued = true; },
+        };
+        return report(await withTimeout(() => Promise.race([(async () => {
+            const implementation = await (options.importExecution ?? (() => import('./notificationPermissionActionExecution')))();
+            if (lifetime.signal.aborted) return { status: 'not_sent' } as const;
+            return execute(implementation, context);
+        })(), aborted]), DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, 'notification response'), scope);
+    } catch { return report({ status: issued ? 'unconfirmed' : 'not_sent' }, scope); }
+    finally {
+        options.signal?.removeEventListener('abort', onAbort);
+        if (rejectAborted) lifetime.signal.removeEventListener('abort', rejectAborted);
         lifetime.abort();
     }
+}
+export function executeNotificationPermissionAction(parsed: ParsedNotificationTap,
+    options: NotificationPermissionActionOptions = {},
+): Promise<NotificationPermissionOutcome> {
+    if (options.allowExecution === false) return Promise.resolve({ status: 'not_sent' });
+    return run(options, (implementation, context) => implementation.executeNotificationPermissionAction(parsed, options, context));
+}
+export function handleNotificationBackgroundTask(body: unknown,
+    options: NotificationPermissionActionOptions = {},
+): Promise<NotificationPermissionOutcome> {
+    return run(options, (implementation, context) => implementation.handleNotificationBackgroundTask(body, options, context));
 }

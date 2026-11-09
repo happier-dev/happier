@@ -6,6 +6,22 @@ const workspaceRef: WorkspaceRefV1 = { id: 'wr_1', serverId: 'home-a', machineId
     rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1, lastOpenedAtMs: null };
 
 describe('project route state', () => {
+    it('keeps plugin identity and local location when the checkout changes without leaking built-in selection', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+            selection: { kind: 'plugin', destination: { pluginId: 'acme.tools', localId: 'builds' }, subPath: 'runs/42/page' },
+            activeRootPath: '/feature', defaultRootPath: '/repo', activeWorktreeId: 'worktree-a',
+            routeParams: { codePath: 'private.ts', initialFile: 'other.ts', layoutId: 'private-dashboard', comparisonId: 'private-comparison' } });
+        const url = new URL(href, 'https://happier.test');
+        expect(url.pathname).toBe('/projects/wr_1/plugins/acme.tools/builds/runs/42/page');
+        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', worktreeId: 'worktree-a' });
+    });
+    it('retains a plugin page while showing its phone companion', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+            selection: { kind: 'plugin', destination: { pluginId: 'acme.tools', localId: 'builds' }, subPath: 'runs/42' },
+            surface: 'terminal', activeRootPath: '/repo', defaultRootPath: '/repo' });
+        expect(new URL(href, 'https://happier.test').searchParams.get('mobileSurface')).toBe('terminal');
+        expect(new URL(href, 'https://happier.test').pathname).toBe('/projects/wr_1/plugins/acme.tools/builds/runs/42');
+    });
     it.each([{ kind: 'folder', path: '' }, { kind: 'folder', path: 'folder.with.dot' }, { kind: 'file', path: ' leading /LICENSE ' }] as const)('retains the literal Code page independently of Details: %j', location => {
         const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
             segment: 'code', activeRootPath: '/feature', defaultRootPath: '/repo', activeWorktreeId: 'feature',

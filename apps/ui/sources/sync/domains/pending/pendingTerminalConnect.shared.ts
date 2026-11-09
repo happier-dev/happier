@@ -12,6 +12,11 @@ export type PendingTerminalPairing = Readonly<{
     expiresAtMs: number;
 }>;
 
+/** One issued-expiry comparison for terminal admission and retained continuation custody. */
+export function isTerminalPairingExpired(pairing: PendingTerminalPairing, nowMs = Date.now()): boolean {
+    return pairing.expiresAtMs <= nowMs;
+}
+
 export type PendingTerminalConnect = Readonly<{
     publicKeyB64Url: string;
     serverUrl: string;
@@ -70,7 +75,7 @@ export function toRecord(
             }
             : undefined;
     if (value.pairing && !pairing) return null;
-    if (pairing && pairing.expiresAtMs <= Date.now()) return null;
+    if (pairing && isTerminalPairingExpired(pairing)) return null;
     const descriptor = value.homeConnectionDescriptor === undefined
         ? undefined
         : HomeConnectionDescriptorV1Schema.safeParse(value.homeConnectionDescriptor);
@@ -121,7 +126,7 @@ export function parsePendingTerminalConnectRecord(value: unknown): PendingTermin
             }
             : undefined;
     if (pairingRecord && !pairing) return null;
-    if (pairing && pairing.expiresAtMs <= Date.now()) return null;
+    if (pairing && isTerminalPairingExpired(pairing)) return null;
     const descriptor = record.homeConnectionDescriptor === undefined
         ? undefined
         : StoredHomeConnectionDescriptorV1Schema.safeParse(record.homeConnectionDescriptor);

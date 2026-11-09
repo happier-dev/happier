@@ -160,6 +160,8 @@ describe('workspace browser URL transport', () => {
             id: 'plugin:acme.notes:notes', pluginId: 'acme.notes', descriptorId: 'notes', localId: 'notes',
             label: 'Notes', icon: 'note', order: 40, disabledReason: null,
             placement: {} as NonNullable<Parameters<typeof resolveCompactAppDestinations>[0]['pages'][number]>['placement'],
+            target: { kind: 'app' },
+            visible: true,
             routePath: '/plugins/acme.notes/notes',
         }] });
         let layout = createWorkspaceState({ id: 'A', target: { kind: 'session', params: { id: 'A1', serverId: 'home-a' } }, pinned: false, preview: false });

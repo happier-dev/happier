@@ -152,6 +152,7 @@ describe('hosted-web plugin UI public client factory', () => {
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
             identity,
             launchInput: { noteId: 'note-7' },
+            launch: { kind: 'explicit', input: { noteId: 'note-7' } },
             subPath: 'work/ideas.md',
             transport: {
                 subscribe(next) { listener = next; return { dispose: () => { listener = undefined; } }; },
@@ -182,6 +183,7 @@ describe('hosted-web plugin UI public client factory', () => {
         expect(context.surface).toEqual(surface);
         expect(context.activity).toEqual({ active: true });
         expect(context.launchInput).toEqual({ noteId: 'note-7' });
+        expect(context).toHaveProperty('launch', { kind: 'explicit', input: { noteId: 'note-7' } });
         expect(context.subPath).toBe('work/ideas.md');
         expect(context.signal.aborted).toBe(false);
 
@@ -252,6 +254,7 @@ describe('hosted-web plugin UI public client factory', () => {
         const context = await createPluginUiRenderContext();
 
         expect('launchInput' in context).toBe(false);
+        expect('launch' in context).toBe(false);
         expect('subPath' in context).toBe(false);
     });
 });

@@ -20,10 +20,14 @@ async function loadRouteBody(contextKey: string): Promise<{ default: React.Compo
 }
 
 const workflowEditorBody = () => loadRouteBody(workspaceRouteFiles['workflows/[id]']!);
+// Every Project page route exports the same Project body. One loader (one lazy type) keeps the
+// Project host, its chrome and panes mounted when only its page changes (Overview -> Code, plugin pages).
+const projectPageBody = () => loadRouteBody(workspaceRouteFiles['projects/[workspaceRefId]']!);
 // One loader/type per Machine leaf in either door. The shell supplies the door context.
 const machinePageBodies = new Map<string, () => Promise<{ default: React.ComponentType }>>();
 export const workspaceRouteBodies: Readonly<Record<string, () => Promise<{ default: React.ComponentType }>>> =
     Object.fromEntries(Object.entries(workspaceRouteFiles).map(([key, contextKey]) => {
+        if (key === 'projects/[workspaceRefId]' || key.startsWith('projects/[workspaceRefId]/')) return [key, projectPageBody];
         const machineKey = workspaceMachinePageRouteKey(key);
         if (machineKey) {
             let load = machinePageBodies.get(machineKey);

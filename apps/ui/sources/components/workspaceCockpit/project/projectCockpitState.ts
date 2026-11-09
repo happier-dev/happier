@@ -1,7 +1,9 @@
+import { normalizeProjectNavigationItemId } from '@/sync/domains/settings/mobileSurfacePinning';
 import { PluginUiDestinationReferenceV1Schema, type PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
+import { parsePluginProjectPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { buildPluginSurfaceDestinationId } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 
-export const PROJECT_PAGES = ['overview', 'code', 'changes', 'scripts', 'services', 'context', 'memory'] as const;
+export const PROJECT_PAGES = ['overview', 'code', 'changes', 'scripts', 'services', 'deployments', 'context', 'memory'] as const;
 export type ProjectPageV1 = typeof PROJECT_PAGES[number];
 export type ProjectPageSelection =
     | Readonly<{ kind: 'builtin'; page: ProjectPageV1 }>
@@ -30,6 +32,8 @@ export function normalizeProjectRememberedSelectionId(value: string | null | und
     return plugin ? projectPageSelectionId(plugin) : null;
 }
 export type ProjectRouteKind = ProjectPageV1 | 'index' | 'terminal';
+/** Every built-in page (and the phone terminal) has its own route; the list above is the one owner of the names. */
+const PROJECT_ROUTE_PATH = new RegExp(`^/projects/([^/]+)(?:/(${[...PROJECT_PAGES, 'terminal'].join('|')}))?/?$`);
 
 export function normalizeProjectPage(value: string | null | undefined): ProjectPageV1 | null {
     const normalized = value?.trim() ?? '';
@@ -45,7 +49,7 @@ export function normalizeProjectMobileSurface(value: string | null | undefined):
 }
 
 export function resolveProjectPageForSurface(surface: ProjectMobileSurface): ProjectPageV1 {
-    return normalizeProjectPage(surface) ?? (surface === 'browse' ? 'code' : surface === 'git' ? 'changes' : 'overview');
+    return normalizeProjectPage(normalizeProjectNavigationItemId(surface)) ?? 'overview';
 }
 
 export function resolveProjectRightTabIdForSurface(surface: ProjectMobileSurface): string | null {
@@ -100,7 +104,8 @@ export function resolveProjectRoutePathForSurface(input: Readonly<{
     const basePath: `/projects/${string}/${ProjectPageV1}` = `/projects/${encodeURIComponent(input.workspaceRefId)}/${page}`;
     const searchParams = new URLSearchParams();
     for (const [key, raw] of Object.entries(input.routeParams ?? {})) {
-        if (key === 'workspaceRefId' || key === 'pageId' || key === 'worktreeId' || key === 'activeRootPath' || key === 'mobileSurface') continue;
+        if (key === 'workspaceRefId' || key === 'pageId' || key === 'pluginId' || key === 'localId' || key === 'subPath'
+            || key === 'worktreeId' || key === 'activeRootPath' || key === 'mobileSurface') continue;
         const value = Array.isArray(raw) ? raw[0] : raw;
         if (value !== undefined) searchParams.set(key, value);
     }
@@ -131,16 +136,28 @@ export function resolveProjectCockpitRouteFromPathname(
     pathname: string | null | undefined,
     persistedSurface?: string | null,
     explicitSurfaceHint?: string | null,
-): Readonly<{ workspaceRefId: string; page: ProjectPageV1; surface: ProjectMobileSurface }> | null {
+): Readonly<{ workspaceRefId: string; page: ProjectPageV1; surface: ProjectMobileSurface; selection?: ProjectPageSelection }> | null {
+    const plugin = parsePluginProjectPageRoutePath(pathname ?? '');
+    if (plugin) {
+        const query = (pathname ?? '').split('?', 2)[1]?.split('#', 1)[0];
+        const hint = normalizeProjectMobileSurface(explicitSurfaceHint ?? new URLSearchParams(query).get('mobileSurface'));
+        return { workspaceRefId: plugin.workspaceRefId,
+        // Companion APIs keep their closed built-in vocabulary. Selection alone owns the page body.
+        page: 'overview', surface: hint && !normalizeProjectPage(hint) ? hint : 'overview', selection: { kind: 'plugin',
+            destination: { pluginId: plugin.pluginId, localId: plugin.localId }, subPath: plugin.subPath } };
+    }
+    if ((pathname ?? '').split(/[?#]/, 1)[0]?.includes('/plugins/')) return null;
     let url: URL;
     try { url = new URL(pathname ?? '', 'https://happier.invalid'); } catch { return null; }
-    const match = /^\/projects\/([^/]+)(?:\/(overview|code|changes|scripts|services|context|memory|terminal))?\/?$/.exec(url.pathname);
+    const match = PROJECT_ROUTE_PATH.exec(url.pathname);
     if (!match) return null;
     let workspaceRefId: string;
     try { workspaceRefId = decodeURIComponent(match[1]!); } catch { return null; }
     // Static selection flows precede checkout acceptance and have no cockpit.
     if (workspaceRefId === 'open' || workspaceRefId === 'sources') return null;
     const routeKind = match[2] as ProjectRouteKind | undefined;
+    const rememberedPlugin = routeKind === undefined ? readProjectPluginSelectionId(persistedSurface) : null;
+    if (rememberedPlugin) return { workspaceRefId, page: 'overview', surface: 'overview', selection: rememberedPlugin };
     const surface = resolveProjectMobileSurfaceIntent({ routeKind: routeKind ?? 'index', persistedSurface,
         explicitSurfaceHint: explicitSurfaceHint ?? url.searchParams.get('mobileSurface') });
     return { workspaceRefId, page: normalizeProjectPage(routeKind) ?? resolveProjectPageForSurface(surface), surface };

@@ -18,7 +18,7 @@ import type {
 } from '@/sync/domains/plugins/ui/projection';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { reconcilePluginUiProjectionValue } from '@/sync/domains/plugins/ui/projection';
-import { buildPluginAppPageRoutePath, buildPluginProjectPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
+import { buildPluginPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
 export type { PluginPageTarget } from './pluginPageRoute';
 export { buildPluginAppPageRoutePath, PLUGIN_APP_PAGE_ROUTE_PREFIX } from './pluginPageRoute';
 
@@ -109,7 +109,7 @@ export function readPluginPageSubPath(value: string | readonly string[] | undefi
 
 export function selectPluginPagePlacements(
     model: PluginUiProjectionModel | null | undefined,
-    slot: Readonly<{ container: 'appPage'; targetKind: 'app' | 'project' }>,
+    slot: Readonly<{ container: 'appPage'; targetKind: PluginPageTarget['kind'] }>,
 ): readonly PluginUiSurfacePlacementProjection[] {
     return model
         ? selectPluginSurfacePlacementsForBinding(model, slot)
@@ -171,10 +171,7 @@ export function resolvePluginPages(input: Readonly<{
             ...(description === undefined ? {} : { description }),
             ...(destination.placement.display.headerStyle === 'toolbar' ? { headerStyle: 'toolbar' as const } : {}),
             localId: destination.placement.binding.destination.localId,
-            routePath: input.target.kind === 'app' ? buildPluginAppPageRoutePath({
-                pluginId: destination.pluginId,
-                localId: destination.placement.binding.destination.localId,
-            }) : buildPluginProjectPageRoutePath({ ...input.target, pluginId: destination.pluginId,
+            routePath: buildPluginPageRoutePath({ ...input.target, pluginId: destination.pluginId,
                 localId: destination.placement.binding.destination.localId }),
             ...(columnPlacement ? { columnPlacement } : {}),
         }));

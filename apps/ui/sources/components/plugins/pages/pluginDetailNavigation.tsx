@@ -9,7 +9,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { PluginDetailCockpitTabBar } from './PluginDetailNavigationViews';
-import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
+import type { PluginSurfaceOpenHandler, PluginSurfaceOpenRequest } from '@/components/plugins/surfaces/openPluginSurface';
 import { createPluginPageNavigationOwner } from './pluginPageNavigationOwner';
 
 export type PluginDetailNavigationModel = Readonly<{
@@ -35,6 +35,13 @@ export function usePluginDetailNavigation(input: Readonly<{
     presented: boolean;
     title: string;
     openSurface?: PluginSurfaceOpenHandler;
+    /**
+     * The page's own surface input as it is now: its launch input and current location. A companion opened from this
+     * page receives the launch input as its own, and reads both through `openedFrom` in its surface context, so it
+     * shows the page's entity without a second selection. (A pane has no location grammar: the resolver refuses a
+     * `subPath` for a non-page container, so the location travels only as that read.)
+     */
+    surfaceInput?: Readonly<{ launchInput?: PluginSurfaceOpenRequest['input']; subPath: string | null }>;
 }>) {
     const owner = React.useMemo(() => createPluginPageNavigationOwner(), [input.identity, input.lifetime]);
     React.useEffect(() => () => owner.clear(), [owner]);
@@ -42,6 +49,14 @@ export function usePluginDetailNavigation(input: Readonly<{
     const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
     const navigation = snapshot.navigation;
     const pageKind = navigation ? buildQualifiedPluginContributionKey(navigation.pageKind) : input.identity;
+    // Read at open time so selecting a companion never waits on a re-render; the published model carries the same values.
+    const surfaceInputRef = React.useRef(input.surfaceInput);
+    surfaceInputRef.current = input.surfaceInput;
+    const pageLaunchInput = input.surfaceInput?.launchInput;
+    const pageSubPath = input.surfaceInput?.subPath ?? null;
+    const openedFrom = React.useMemo(() => navigation ? Object.freeze({ pageKind: navigation.pageKind,
+        ...(pageLaunchInput === undefined ? {} : { launchInput: pageLaunchInput }), subPath: pageSubPath }) : undefined,
+    [navigation?.pageKind.pluginId, navigation?.pageKind.localId, Boolean(navigation), pageLaunchInput, pageSubPath]);
     const declaredItems = navigation?.items;
     const items = React.useMemo(() => declaredItems ? resolveDetailNavigationItems({ scope: 'plugin', items: declaredItems }) : EMPTY_ITEMS, [declaredItems]);
     const pages = React.useMemo(() => items.filter(item => item.navigation.kind !== 'companion'), [items]);
@@ -53,10 +68,12 @@ export function usePluginDetailNavigation(input: Readonly<{
     const detail = usePresentedDetailNavigation({ pageKind, identity: input.identity, scope: input.scope,
         title: input.title, items, activeId: navigation?.value ?? '', phone: phoneDevice,
         presented: input.live && input.presented && navigation !== null && (!phoneDevice || navigation.phonePresented !== false),
-        rootHosted: true, registerSide: false, selectPage: owner.select,
+        rootHosted: true, registerSide: false, selectPage: owner.select, ...(openedFrom ? { openedFrom } : {}),
         companion: { items: companions, activeId: null, close: () => {}, select: id => {
             const item = navigation?.items.find(item => item.value === id);
-            if (item && item.kind !== 'page') void input.openSurface?.({ destination: item.companion });
+            if (!item || item.kind === 'page') return;
+            const pageInput = surfaceInputRef.current?.launchInput;
+            void input.openSurface?.({ destination: item.companion, ...(pageInput === undefined ? {} : { input: pageInput }) });
         } },
         phoneChrome: execute => {
             if (!model) return null;
@@ -75,7 +92,7 @@ export function usePluginDetailNavigation(input: Readonly<{
         phoneDevice, cockpit, phone.placements, phone.pageTabs, pages, desktop.pinned, desktop.overflow]);
     const model = React.useMemo<PluginDetailNavigationModel | null>(() => navigation ? detail.model : null,
         [Boolean(navigation), detail.model]);
-    return { owner, projection, model };
+    return { owner, projection, model, readColumn: detail.readColumn };
 }
 
 export const selectPluginDetailNavigationItem = selectPresentedDetailNavigationItem;

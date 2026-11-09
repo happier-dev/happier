@@ -114,32 +114,6 @@ const RECOGNIZED_STATUSES: ReadonlySet<CoverageStatus> = new Set<CoverageStatus>
 const DEFERRED_ALLOWLIST: Readonly<Record<string, string>> = Object.freeze({});
 
 // ---------------------------------------------------------------------------
-// Reason-aware deferral guard (HONESTY/H1). A deferral is legitimate ONLY while its backing owner
-// genuinely does NOT exist. This ledger names the owner each remaining deferral waits on and marks
-// whether that owner now EXISTS end-to-end. The guard fails the build if any allowlisted id's owner
-// is marked existing — forcing the stale deferral to be pruned (the plan's "fail if a deferral
-// reason references a now-existing owner"). It is keyed on OWNER existence, NOT on the `surfaces.ui`
-// bit, so it does not re-introduce the inverted invariant DEFER-Z removed (surfacing an id never
-// fails the build; keeping a deferral whose owner has landed does).
-//
-// The owners that landed this wave (recording service, diagnostics store, context attach store,
-// preview daemon routes, observability executor, and finally the live managed-Chromium sidecar CDP
-// interaction transport) had their ids SURFACED + PRUNED from the allowlist together, so they no
-// longer appear here. With the allowlist now EMPTY (DZ-2), this ledger is empty too — every former
-// owner exists, and there are no standing deferrals to guard.
-// ---------------------------------------------------------------------------
-
-const DEFERRAL_OWNER_LEDGER: Readonly<Record<string, Readonly<{ owner: string; exists: boolean }>>> =
-  Object.freeze(
-    Object.fromEntries(
-      Object.keys(DEFERRED_ALLOWLIST).map((key) => [
-        key,
-        { owner: 'liveManagedChromiumSidecarCdpInteractionTransport', exists: false },
-      ]),
-    ),
-  );
-
-// ---------------------------------------------------------------------------
 // Item shape.
 // ---------------------------------------------------------------------------
 
@@ -437,8 +411,8 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
   {
     stage: 'launcherOrOpenPath',
     ref: 'pluginAppPageNavigation',
-    sourcePath: 'apps/ui/sources/components/appShell/plugins/pluginAppPageNavigation.ts',
-    codeIdentifier: 'export function usePluginAppPageDestinationHandler',
+    sourcePath: 'apps/ui/sources/components/plugins/pages/pluginPageNavigation.ts',
+    codeIdentifier: 'export function usePluginPageDestinationHandler',
     supportedSlotKeys: ['appPage:app'],
   },
   {
@@ -1083,65 +1057,6 @@ describe('coverage matrix — Stage B (enforcement)', () => {
     }
   });
 
-  // FORWARD-ONLY RATCHET (DZ-1). The allowlist is a CEILING, not a floor: the
-  // count of unimplemented ids may never EXCEED the allowlist size (that is a new
-  // unlisted gap, caught above too), but it MAY fall below it — that is exactly
-  // what shipping a deferred id looks like. This replaces the old inverted pair
-  // (`every deferred-allowlist entry stays unimplemented` + `=== allowlist.length`)
-  // that turned wiring a deferred id into a build break.
-  it('keeps the deferred allowlist as a forward-only ceiling (unimplemented <= allowlist)', () => {
-    const unimplemented = matrix.filter((i) => i.status === 'unimplemented');
-    expect(unimplemented.length).toBeLessThanOrEqual(Object.keys(DEFERRED_ALLOWLIST).length);
-  });
-
-  // Proves the ratchet is forward-only: simulate shipping an allowlisted id by
-  // pruning its entry. The matrix is unchanged (the test does not re-wire real
-  // specs), so `unimplemented` momentarily exceeds the *pruned* allowlist by one.
-  // Under the OLD equality/`stays-unimplemented` invariant that very state was a
-  // build break — the contradiction that legalized deferral. Under the ratchet it
-  // must instead be the GREEN, recoverable state: pruning is sufficient and the
-  // only remaining work is wiring (which lowers `unimplemented` back under the
-  // ceiling). We assert pruning never makes the *kept* "no NEW unlisted id" guard
-  // fire for an id that was already allowlisted.
-  it('shipping an allowlisted id requires only pruning and never fails the build', () => {
-    const allowlistKeys = Object.keys(DEFERRED_ALLOWLIST);
-    if (allowlistKeys.length === 0) {
-      // DZ-2 target reached: nothing left to prune. The ratchet holds vacuously.
-      const unimplemented = matrix.filter((i) => i.status === 'unimplemented');
-      expect(unimplemented.length).toBe(0);
-      return;
-    }
-    for (const shippedKey of allowlistKeys) {
-      // The id whose deferral we are pruning. After wiring it would be
-      // runtime-owned; here it is still `unimplemented` in the unchanged matrix,
-      // standing in for "shipped, allowlist not yet pruned" — the exact case the
-      // inverted invariant rejected. The ratchet must accept it.
-      const prunedAllowlist = new Set(
-        allowlistKeys.filter((key) => key !== shippedKey),
-      );
-      // 1) Pruning is a strict shrink — forward-only.
-      expect(prunedAllowlist.size).toBe(allowlistKeys.length - 1);
-      // 2) The "no NEW unlisted unimplemented id" guard would still fire for any
-      //    id that is unimplemented AND not in the (now-pruned) allowlist EXCEPT
-      //    the freshly-shipped one — which is allowed to lag because wiring it to
-      //    runtime-owned is the next step and only LOWERS the unimplemented count.
-      const unlistedAfterPrune = matrix
-        .filter((i) => i.status === 'unimplemented')
-        .map((i) => i.key)
-        .filter((key) => key !== shippedKey && !prunedAllowlist.has(key));
-      expect(
-        unlistedAfterPrune,
-        'pruning a shipped allowlist entry must not orphan any OTHER unimplemented id',
-      ).toEqual([]);
-      // 3) The ratchet inequality still holds against the pruned ceiling once the
-      //    shipped id is wired (its status becomes runtime-owned → not counted).
-      const unimplementedAfterWiring = matrix
-        .filter((i) => i.status === 'unimplemented' && i.key !== shippedKey)
-        .length;
-      expect(unimplementedAfterWiring).toBeLessThanOrEqual(prunedAllowlist.size);
-    }
-  });
-
   it('no normalized destination slot remains unimplemented', () => {
     const unimplementedSlots = matrix.filter(
       (i) => i.family === 'destinationSlot' && i.status === 'unimplemented',
@@ -1327,17 +1242,6 @@ describe('coverage matrix — Stage B (enforcement)', () => {
     expect(dead.map((i) => i.key)).toEqual([]);
   });
 
-  it('the deferred set is bounded and runtime-action-scoped (no creeping deferrals)', () => {
-    // Every deferral is a runtime action (the only in-scope family that legitimately
-    // carries labeled support-matrix deferrals). Families/destination slots must
-    // never be deferred — they are structural and must be live or absent.
-    for (const key of Object.keys(DEFERRED_ALLOWLIST)) {
-      expect(key.startsWith('runtimeAction:'), `deferral '${key}' must be a runtime action`).toBe(true);
-    }
-    // Guard against unbounded growth: keep the deferred surface visible + small.
-    expect(Object.keys(DEFERRED_ALLOWLIST).length).toBeLessThanOrEqual(40);
-  });
-
   it('reaches the DZ-2 target end-state: the deferred allowlist is EMPTY (no surfaced runtime action is unimplemented)', () => {
     // The browser-diagnostics interaction verbs were the last deferrals; their live sidecar CDP
     // interaction transport owner landed (DIAG-INTERACTION), so the allowlist is now ∅. The only
@@ -1467,9 +1371,6 @@ describe('coverage matrix — historical UI surface disposition', () => {
 //      ordinary UI callers retain the dangerous default. Every surfaced danger /
 //      mutating-browser / launcher / terminate / recording / eval id stays
 //      floored, and safe reads are NOT over-gated (full features).
-//   3. Reason-aware deferral guard — every remaining allowlist entry waits on an
-//      owner that genuinely does NOT exist; a now-existing owner fails the build.
-//
 // The literal cross-package drive of the cli/ui assembled runtime-action
 // executors (assert no `*_unavailable`/`*_unbacked`) lives in the lane-owned
 // execution-crossing tests (apps/cli browser/actions runtimeActionExecutor +
@@ -1556,16 +1457,6 @@ describe('coverage matrix — Stage C (executor-backed coverage + consent floor)
     }
   });
 
-  it('reason-aware guard: no allowlisted deferral may reference a now-existing owner', () => {
-    for (const key of Object.keys(DEFERRED_ALLOWLIST)) {
-      const ledger = DEFERRAL_OWNER_LEDGER[key];
-      expect(ledger, `allowlist entry '${key}' must declare its blocking owner in the ledger`).toBeDefined();
-      expect(
-        ledger?.exists,
-        `allowlist entry '${key}' waits on owner '${ledger?.owner}' which now EXISTS — prune the stale deferral.`,
-      ).toBe(false);
-    }
-  });
 });
 
 // ===========================================================================

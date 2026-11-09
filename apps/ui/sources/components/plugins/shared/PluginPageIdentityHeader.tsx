@@ -23,13 +23,30 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
     description?: string;
     /** The header the loaded page draws (`PluginAppPage.headerStyle`); the identity is said the same way. */
     headerStyle?: 'toolbar';
+    /**
+     * The navigation leaves the page's name to its large title (a phone's toolbar page, `PluginPageContent`): the
+     * identity is that large title, where the loaded Collection draws it.
+     */
+    largeTitle?: boolean;
+    /**
+     * `host`: the page is a tab of a host page whose own header already names it (a Machine page), so a page that
+     * has not loaded draws no second identity above its state. Default `page`.
+     */
+    identityOwner?: 'page' | 'host';
     children: React.ReactNode;
 }>): React.ReactElement {
     const app = useAppShellPluginUiProjection();
     // Where navigation chrome already shows the title (a phone) the page header is the one identity, as for every page.
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const installedPackage = app.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null;
-    const identity = React.useMemo<PluginSurfacePageIdentity>(() => {
+    const identity = React.useMemo<PluginSurfacePageIdentity | null>(() => {
+        if (props.identityOwner === 'host') return null;
+        if (props.largeTitle === true) {
+            return {
+                header: <PageHeader testID={`plugin-page-identity-large-title:${props.pluginId}`} title={props.title} alwaysShowTitle />,
+                loadingFrame: 'collection',
+            };
+        }
         if (props.headerStyle === 'toolbar' && !chromeShowsTitle) {
             return { header: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} />, loadingFrame: 'collection' };
         }
@@ -47,7 +64,7 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
             ),
             loadingFrame: 'column',
         };
-    }, [app.machineId, app.serverId, chromeShowsTitle, installedPackage, props.description, props.headerStyle, props.pluginId, props.title]);
+    }, [app.machineId, app.serverId, chromeShowsTitle, installedPackage, props.description, props.headerStyle, props.identityOwner, props.largeTitle, props.pluginId, props.title]);
     return <PluginSurfacePageHeaderContext.Provider value={identity}>{props.children}</PluginSurfacePageHeaderContext.Provider>;
 }
 
@@ -75,6 +92,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         gap: theme.space.s8,
         minHeight: HAPPIER_PAGE_METRICS.collectionToolbarHeightPx,
+        // The same top space the loaded Collection page opens with (plugin-ui `Collection`), so the title stays put.
+        marginTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
     },
     title: {
         flexShrink: 1,

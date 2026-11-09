@@ -4,6 +4,7 @@ import type { ComposerRefV1, PluginUiHostApiWireIdentityV1 } from '@happier-dev/
 
 import type { JsonValue } from '../identity.js';
 import type { PluginUiHostApiClientTransport } from './clientTransport.js';
+import type { RenderContext } from './hostApi.js';
 
 /** Host-private bootstrap seam installed inside an isolated hosted-web realm. */
 export const PLUGIN_UI_HOST_API_CLIENT_BOOTSTRAP_KEY = '__HAPPIER_PLUGIN_UI_HOST_API_CLIENT_V1__';
@@ -21,6 +22,7 @@ export interface PluginUiHostApiClientBootstrap {
      * them, so an author reading the key still learns the difference.
      */
     readonly launchInput?: JsonValue;
+    readonly launch?: RenderContext['launch'];
     readonly subPath?: string;
     /** Exact host-stamped Composer mount identity, never an author launch fact. */
     readonly composerRef?: ComposerRefV1;
@@ -39,6 +41,9 @@ export function readPluginUiHostApiClientBootstrap(): PluginUiHostApiClientBoots
     const subscribe: unknown = Reflect.get(transportValue, 'subscribe');
     const apiRange: unknown = Reflect.get(value, 'apiRange');
     if (typeof send !== 'function' || typeof subscribe !== 'function' || (apiRange !== undefined && typeof apiRange !== 'string')) return undefined;
+    // Invalid explicit-open provenance must not become a restored mount.
+    const launch = PluginHostedWebBridgeBootstrapPayloadV1Schema.shape.launch.safeParse(Reflect.get(value, 'launch'));
+    if (!launch.success) return undefined;
     // Bounded at the Protocol owner, exactly as the mounted host parses them.
     // An out-of-bounds or illegal value is DROPPED rather than passed through:
     // the surface still mounts, and the author sees "no launch fact" instead of
@@ -59,6 +64,7 @@ export function readPluginUiHostApiClientBootstrap(): PluginUiHostApiClientBoots
         identity: identity.data,
         ...(authorPlugin.data === undefined ? {} : { authorPlugin: authorPlugin.data }),
         ...(launchInput?.success ? { launchInput: launchInput.data as JsonValue } : {}),
+        ...(launch.data === undefined ? {} : { launch: launch.data }),
         ...(subPath?.success ? { subPath: subPath.data } : {}),
         ...(composerRef?.success ? { composerRef: composerRef.data } : {}),
         transport: {

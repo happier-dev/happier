@@ -17,14 +17,20 @@ import type { WorkspaceCodeLocation } from '@/components/projects/files/code/Wor
 import {
     resolveProjectMobileSurfaceIntent,
     normalizeProjectMobileSurface,
+    normalizeProjectPage,
+    readProjectPluginSelectionId,
     resolveProjectRoutePathForSurface,
     type ProjectPageV1,
+    type ProjectPageSelection,
     type ProjectRouteContext,
     type ProjectMobileSurface,
     type ProjectAttachedDashboardSelection,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { buildPluginProjectPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 
 export type ProjectFileRouteTarget = Extract<SessionPaneUrlDetailsTarget, { kind: 'file' }>;
+export type ProjectRouteHref = ReturnType<typeof resolveProjectRoutePathForSurface>
+    | `/projects/${string}/plugins/${string}/${string}`;
 
 /** Code's page location is separate from an optional file tab in Details. Paths are literal. */
 export function readProjectCodeRouteLocation(params: Readonly<Record<string, unknown>>): WorkspaceCodeLocation | null {
@@ -254,6 +260,7 @@ export function serializeProjectInitialResource(resource: ProjectFileRouteTarget
 
 export function buildProjectRouteHref(input: Readonly<{
     workspaceRefId: string;
+    selection?: ProjectPageSelection;
     segment?: ProjectRouteSegment;
     surface?: ProjectMobileSurface;
     activeRootPath: string;
@@ -266,7 +273,17 @@ export function buildProjectRouteHref(input: Readonly<{
     companion?: PluginUiNewSessionSeedOriginV1['companion'] | null;
     /** A newly selected Details destination replaces the old Details and initial-resource intent. */
     details?: SessionPaneUrlDetailsTarget | null;
-}> & ProjectRouteContext): ReturnType<typeof resolveProjectRoutePathForSurface> {
+}> & ProjectRouteContext): ProjectRouteHref {
+    if (input.selection?.kind === 'plugin') {
+        const href = buildPluginProjectPageRoutePath({ workspaceRefId: input.workspaceRefId,
+            serverId: input.serverId, ...resolveProjectRouteSelectionQuery(input),
+            ...input.selection.destination, subPath: input.selection.subPath });
+        if (!input.surface || normalizeProjectPage(input.surface)) return href as ProjectRouteHref;
+        const [path, rawQuery] = href.split('?', 2);
+        const query = new URLSearchParams(rawQuery);
+        query.set('mobileSurface', input.surface);
+        return `${path}?${query}` as ProjectRouteHref;
+    }
     const resourceParams: Record<string, string> = {};
     if (input.showWorktrees) resourceParams.showWorktrees = '1';
     const routeParams = { ...input.routeParams };
@@ -301,18 +318,18 @@ export function buildProjectRouteHref(input: Readonly<{
     }
     return resolveProjectRoutePathForSurface({
         ...input,
-        page: input.segment ?? 'overview',
-        surface: input.surface ?? input.segment ?? 'overview',
+        page: input.selection?.kind === 'builtin' ? input.selection.page : input.segment ?? 'overview',
+        surface: input.surface ?? (input.selection?.kind === 'builtin' ? input.selection.page : input.segment) ?? 'overview',
         ...(input.details !== undefined ? { comparisonId: input.details?.kind === 'scmReview' ? input.details.comparison?.comparisonId ?? null : null } : {}),
         ...resolveProjectRouteSelectionQuery(input),
         routeParams: { ...routeParams, ...resourceParams },
     });
 }
 
-export function replaceProjectRouteSelection(input: Parameters<typeof buildProjectRouteHref>[0] & Readonly<{
-    router: { replace: (href: ReturnType<typeof buildProjectRouteHref>) => void };
-}>): void {
-    input.router.replace(buildProjectRouteHref(input));
+export function replaceProjectRouteSelection<T>(input: Parameters<typeof buildProjectRouteHref>[0] & Readonly<{
+    router: { replace: (href: ReturnType<typeof buildProjectRouteHref>) => T };
+}>): T {
+    return input.router.replace(buildProjectRouteHref(input));
 }
 
 export { type ProjectMobileSurface };
@@ -325,8 +342,14 @@ export function resolveProjectOpenHref(input: Readonly<{
     persistedMobileSurface?: string | null;
     persistedActiveRootPath?: string | null;
     persistedWorktreeId?: string | null;
-}>): ReturnType<typeof resolveProjectRoutePathForSurface> {
+}>): ProjectRouteHref {
     const activeRootPath = readProjectRouteStringParam(input.persistedActiveRootPath ?? undefined) ?? input.workspaceRef.rootPath;
+    const rememberedPage = readProjectPluginSelectionId(input.persistedMobileSurface);
+    if (input.deviceType === 'phone' && rememberedPage) return buildProjectRouteHref({
+        workspaceRefId: input.workspaceRef.id, serverId: input.workspaceRef.serverId,
+        selection: rememberedPage, activeRootPath, defaultRootPath: input.workspaceRef.rootPath,
+        activeWorktreeId: input.persistedWorktreeId,
+    });
     const surface = input.deviceType === 'phone' ? resolveProjectMobileSurfaceIntent({
         routeKind: 'index', activeRightTabId: input.rememberedRightTabId, persistedSurface: input.persistedMobileSurface,
     }) : 'overview';

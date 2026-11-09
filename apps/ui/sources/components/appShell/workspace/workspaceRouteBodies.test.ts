@@ -20,10 +20,32 @@ beforeEach(() => {
 });
 
 describe('workspace loading through the canonical Expo context', () => {
+    it('hosts checkout-independent deployment Projects through their registered body', async () => {
+        context.load.mockImplementation(key => {
+            if (key !== './(app)/deployments/[projectSourceId].tsx') throw new Error('wrong deployment entry');
+            return { WorkspaceRouteBody: Body };
+        });
+        expect(workspaceRouteBodies['deployments/[projectSourceId]']).toBeTypeOf('function');
+        await expect(workspaceRouteBodies['deployments/[projectSourceId]']!()).resolves.toEqual({ default: Body });
+    });
+    it('retains the Project host loader when a plugin page moves from root to a nested local location', () => {
+        expect(workspaceRouteBodies['projects/[workspaceRefId]/plugins/[pluginId]/[localId]'])
+            .toBe(workspaceRouteBodies['projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath]']);
+    });
+    it.each(['projects/[workspaceRefId]/plugins/[pluginId]/[localId]', 'projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath]'])('hosts the Project plugin route through the canonical Expo context (%s)', async (key) => {
+        context.load.mockReturnValue({ WorkspaceRouteBody: Body });
+        expect(workspaceRouteBodies[key]).toBeTypeOf('function');
+        await expect(workspaceRouteBodies[key]!()).resolves.toEqual({ default: Body });
+    });
+    it('keeps one Project host body type across its pages, so switching a Project page does not remount the Project', () => {
+        const projectKeys = Object.keys(workspaceRouteFiles).filter(key => key === 'projects/[workspaceRefId]' || key.startsWith('projects/[workspaceRefId]/'));
+        expect(projectKeys.length).toBeGreaterThan(8);
+        for (const key of projectKeys) expect(workspaceRouteBodies[key], key).toBe(workspaceRouteBodies['projects/[workspaceRefId]/overview']);
+    });
     it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'])('hosts the canonical Project %s page through its Expo body', async (page) => {
         const key = `projects/[workspaceRefId]/${page}`;
         context.load.mockImplementation((moduleKey) => {
-            if (moduleKey !== `./(app)/projects/[workspaceRefId]/${page}.tsx`) throw new Error('wrong Project page requested');
+            if (!moduleKey.startsWith('./(app)/projects/[workspaceRefId]/')) throw new Error('wrong Project page requested');
             return { WorkspaceRouteBody: Body };
         });
         expect(workspaceRouteBodies[key]).toBeTypeOf('function');

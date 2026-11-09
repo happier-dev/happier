@@ -1,9 +1,19 @@
-import { type DaemonReactNativeHostRuntimeIdentityV1 } from '@happier-dev/protocol';
+import { type DaemonReactNativeHostRuntimeIdentityV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
+    GeneratedArtifactHtmlBundleV1Schema,
+    type ArtifactHtmlBundleV1,
+} from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import {
+    createHostedWebAssetNativePolicyTableV1,
+    deriveGeneratedHostedWebAssetPolicyV1,
     PluginUiArtifactsManifestEntryV2Schema,
+    type HostedWebAssetPolicyFailureCode,
     type HostedWebAssetPolicyInput,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
+
+import { encodeBase64 } from '@/encryption/base64';
+import type { PluginUiPersistentArtifactStore } from '@/sync/domains/plugins/ui/artifactByteCache';
 
 import {
     createActivePluginAccountHostedArtifactSourceCandidate,
@@ -28,6 +38,7 @@ import type {
     PluginArtifactDaemonTransport,
     PluginArtifactLeasePersistentScope,
     PluginArtifactSourceCandidate,
+    PluginArtifactPersistentAccountOperation,
     PluginDaemonProjectionArtifactSelection,
     PluginSelectedArtifactLease,
     PluginSelectedArtifactLeaseAcquireResult,
@@ -51,6 +62,7 @@ import type {
     PluginNativeArtifactPersistentStore,
 } from './nativeArtifactResource';
 import type { PluginAccountAvailabilityReader } from './reader';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { createBundledPluginUiAppExactArtifactSource } from './bundledAppExactArtifactSource';
 
 /** Semantic selected slot context around digest-only executable byte identity. */
@@ -72,6 +84,8 @@ export type PluginHostedWebArtifactLeaseInput = Readonly<{
     reader: PluginAccountAvailabilityReader;
     artifactGraph: unknown;
     cacheIdentity: PluginHostedWebArtifactIdentity;
+    /** Exact installed custody when no Account intent selects this release. */
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     persistent?: PluginHostedWebArtifactLeasePersistentScope;
     signal?: AbortSignal;
@@ -153,6 +167,7 @@ export async function acquirePluginHostedWebArtifactLease(
 
     const acquired = await acquirePluginSelectedArtifactLease({
         reader: input.reader,
+        executionOrigin: input.executionOrigin,
         accountLifetime: input.accountLifetime,
         ...(input.signal ? { signal: input.signal } : {}),
         slot: Object.freeze({
@@ -266,6 +281,182 @@ export type PluginHostedWebArtifactAvailabilityProducerDependencies = Readonly<{
         | 'removePersistentArtifact'
     >;
 }>;
+
+export type PluginBrowserHostedWebArtifactHandle = Readonly<{
+    bundle: ArtifactHtmlBundleV1;
+    isCurrent: () => boolean;
+    onRevoke: PluginSelectedArtifactLease['onRevoke'];
+    dispose: () => void;
+    accountHosting?: Promise<PluginAccountHostedArtifactPublicationResult>;
+}>;
+
+export type PluginHostedWebBrowserArtifactAvailability =
+    | Readonly<{ kind: 'available'; handle: PluginBrowserHostedWebArtifactHandle }>
+    | Readonly<{
+        kind: 'unavailable';
+        code: Extract<PluginSelectedArtifactLeaseAcquireResult, { kind: 'unavailable' }>['code']
+            | HostedWebAssetPolicyFailureCode
+            | 'artifact_file_not_declared'
+            | 'hosted_web_artifact_tier_invalid'
+            | 'hosted_web_artifact_policy_invalid'
+            | 'hosted_web_artifact_bundle_invalid';
+    }>;
+
+/**
+ * Browser transport of the selected, verified graph. Policy remains with the
+ * same Protocol response-table producer as native delivery; the bundle omits
+ * rejected resources and retains the source lease's pushed revocation.
+ */
+export async function projectSelectedHostedWebBrowserArtifactAvailability(
+    input: Pick<PluginSelectedHostedWebArtifactInput, 'lease' | 'isCurrent'>,
+): Promise<PluginHostedWebBrowserArtifactAvailability> {
+    const unavailable = (code: Extract<PluginHostedWebBrowserArtifactAvailability, { kind: 'unavailable' }>['code']) => {
+        input.lease.dispose();
+        return Object.freeze({ kind: 'unavailable' as const, code });
+    };
+    const isCurrent = () => input.isCurrent() && input.lease.isCurrent();
+    if (!isCurrent()) return unavailable('artifact_lease_revoked');
+    if (input.lease.artifact.tier !== 'hostedWeb') return unavailable('hosted_web_artifact_tier_invalid');
+    const policy = deriveGeneratedHostedWebAssetPolicyV1(input.lease.artifactGraph);
+    if (!policy) return unavailable('hosted_web_artifact_policy_invalid');
+    const built = createHostedWebAssetNativePolicyTableV1({ ...policy, requestPath: '/' });
+    if (!built.ok) return unavailable(built.code);
+
+    const contentTypes = new Map<string, string>();
+    for (const route of built.table.routes) {
+        if (route.outcome.kind === 'content') {
+            contentTypes.set(route.outcome.resourceId, route.outcome.contentType.split(';', 1)[0].trim());
+        }
+    }
+    const files: Array<readonly [string, ArtifactHtmlBundleV1['files'][string]]> = [];
+    for (const binding of built.resourceBindings) {
+        const mime = contentTypes.get(binding.resourceId);
+        if (!mime) return unavailable('hosted_web_artifact_policy_invalid');
+        const read = await input.lease.readFile(binding.relativePath);
+        if (read.kind !== 'available') return unavailable(read.code);
+        if (!isCurrent()) return unavailable('artifact_lease_revoked');
+        files.push([binding.relativePath.slice(policy.assetRootId.length + 1), {
+            mime,
+            contentBase64: encodeBase64(read.bytes),
+        }]);
+    }
+    const bundle = GeneratedArtifactHtmlBundleV1Schema.safeParse({
+        v: 1,
+        entrypoint: policy.entryPath.slice(policy.assetRootId.length + 1),
+        files: Object.fromEntries(files),
+    });
+    if (!bundle.success) return unavailable('hosted_web_artifact_bundle_invalid');
+    if (!isCurrent()) return unavailable('artifact_lease_revoked');
+    return Object.freeze({
+        kind: 'available',
+        handle: Object.freeze({
+            bundle: bundle.data,
+            isCurrent,
+            onRevoke: input.lease.onRevoke,
+            dispose: input.lease.dispose,
+        }),
+    });
+}
+
+type HostedWebArtifactAvailabilityCache = ReturnType<PluginHostedWebArtifactAvailabilityProducerDependencies['getCache']>;
+
+function captureHostedWebArtifactOperation(
+    input: PluginHostedWebArtifactAvailabilityInput,
+    cache: HostedWebArtifactAvailabilityCache,
+): PluginArtifactPersistentAccountOperation | null {
+    if (!input.accountLifetime.isCurrent() || !input.isCurrent()) return null;
+    cache.bindAccountLifetime(input.accountLifetime);
+    if (!input.accountLifetime.isCurrent() || !input.isCurrent()) return null;
+    return cache.capturePersistentAccountOperation({
+        scope: input.accountLifetime.scope,
+        isCurrent: () => input.accountLifetime.isCurrent() && input.isCurrent(),
+    });
+}
+
+/** One source setup and publication path for both physical frame transports. */
+async function acquireHostedWebArtifactForAvailability(input: Readonly<{
+    availability: PluginHostedWebArtifactAvailabilityInput;
+    cache: HostedWebArtifactAvailabilityCache;
+    operation: PluginArtifactPersistentAccountOperation;
+    persistentStore: PluginUiPersistentArtifactStore;
+}>): Promise<PluginSelectedArtifactLeaseAcquireResult> {
+    const availability = input.availability;
+    const selected = await acquirePluginHostedWebArtifactLease({
+        ...availability,
+        appExact: createBundledPluginUiAppExactArtifactSource(),
+        persistent: Object.freeze({
+            scope: availability.accountLifetime.scope,
+            store: input.persistentStore,
+            isCurrent: input.operation.isCurrent,
+            removePersistentArtifact: (identity) => input.cache.removePersistentArtifact(identity, input.operation.isCurrent),
+        }),
+        accountHosted: createActivePluginAccountHostedArtifactSourceCandidate({
+            accountLifetime: availability.accountLifetime,
+        }),
+    });
+    if (selected.kind !== 'available') return selected;
+    if (!input.operation.isCurrent()) {
+        selected.lease.dispose();
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    }
+    const publication = await publishVerifiedPluginArtifactToAccountHosting({
+        reader: availability.reader,
+        accountLifetime: availability.accountLifetime,
+        lease: selected.lease,
+        signal: availability.accountHostingSignal ?? availability.signal,
+    });
+    if (!input.operation.isCurrent()) {
+        selected.lease.dispose();
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    }
+    return publication
+        ? Object.freeze({ ...selected, accountHosting: publication.completion })
+        : selected;
+}
+
+export function createPluginHostedWebBrowserArtifactAvailabilityProducer(
+    dependencies: Pick<PluginHostedWebArtifactAvailabilityProducerDependencies, 'getCache'>,
+): Readonly<{ acquire: (input: PluginHostedWebArtifactAvailabilityInput) => Promise<PluginHostedWebBrowserArtifactAvailability> }> {
+    return Object.freeze({
+        acquire: async (input) => {
+            const cache = dependencies.getCache();
+            const operation = captureHostedWebArtifactOperation(input, cache);
+            if (!operation) return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+            // Browser uses the cache's generic Account operation, without the
+            // native locator/registration extension or another storage owner.
+            const persistentStore: PluginUiPersistentArtifactStore = Object.freeze({
+                read: operation.readPersistentArtifact,
+                write: async (record) => {
+                    const disposition = await operation.writePersistentArtifact(record);
+                    if (disposition === null) throw new Error('artifact_persistent_operation_invalidated');
+                    return disposition;
+                },
+                remove: operation.removePersistentArtifact,
+                removeAccount: async (scope) => {
+                    if (areServerAccountScopesEqual(scope, operation.scope)) await operation.removePersistentArtifactsForAccount();
+                },
+            });
+            try {
+                const selected = await acquireHostedWebArtifactForAvailability({ availability: input, cache, operation, persistentStore });
+                if (selected.kind !== 'available') return selected;
+                const result = await projectSelectedHostedWebBrowserArtifactAvailability({
+                    lease: selected.lease,
+                    isCurrent: operation.isCurrent,
+                });
+                return result.kind === 'available' && selected.accountHosting
+                    ? Object.freeze({
+                        ...result,
+                        handle: Object.freeze({ ...result.handle, accountHosting: selected.accountHosting }),
+                    })
+                    : result;
+            } finally {
+                // Release drains storage work; captured Account currentness
+                // remains valid for the mounted lease after this operation.
+                operation.release();
+            }
+        },
+    });
+}
 
 /**
  * A native registration only remains meaningful while the selected source
@@ -399,14 +590,7 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
                 return Object.freeze({ kind: 'unavailable', code: 'native_artifact_store_unavailable' });
             }
             const cache = dependencies.getCache();
-            cache.bindAccountLifetime(input.accountLifetime);
-            if (!input.accountLifetime.isCurrent() || !input.isCurrent()) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-            }
-            const operation = cache.capturePersistentAccountOperation({
-                scope: input.accountLifetime.scope,
-                isCurrent: () => input.accountLifetime.isCurrent() && input.isCurrent(),
-            });
+            const operation = captureHostedWebArtifactOperation(input, cache);
             if (!operation) {
                 return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
             }
@@ -415,50 +599,13 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
                 operation,
             });
             try {
-                const selected = await acquirePluginHostedWebArtifactLease({
-                    reader: input.reader,
-                    artifactGraph: input.artifactGraph,
-                    cacheIdentity: input.cacheIdentity,
-                    accountLifetime: input.accountLifetime,
-                    ...(input.signal ? { signal: input.signal } : {}),
-                    appExact: createBundledPluginUiAppExactArtifactSource(),
-                    persistent: Object.freeze({
-                        scope: input.accountLifetime.scope,
-                        store: persistentStore,
-                        isCurrent: operation.isCurrent,
-                        removePersistentArtifact: (identity) => cache.removePersistentArtifact(
-                            identity,
-                            operation.isCurrent,
-                        ),
-                    }),
-                    ...(input.daemon ? { daemon: input.daemon } : {}),
-                    ...(input.daemons ? { daemons: input.daemons } : {}),
-                    ...(input.daemonProjectionSelection
-                        ? { daemonProjectionSelection: input.daemonProjectionSelection }
-                        : {}),
-                    accountHosted: createActivePluginAccountHostedArtifactSourceCandidate({
-                        accountLifetime: input.accountLifetime,
-                    }),
+                const selected = await acquireHostedWebArtifactForAvailability({
+                    availability: input,
+                    cache,
+                    operation,
+                    persistentStore,
                 });
                 if (selected.kind !== 'available') return selected;
-                if (!operation.isCurrent()) {
-                    selected.lease.dispose();
-                    return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-                }
-                // Account hosting is the only source a new uncached client can
-                // reach while every daemon is offline, and this frame's tier is
-                // no exception: these verified bytes are the only copy this
-                // process holds beside a current Account authority.
-                const publication = await publishVerifiedPluginArtifactToAccountHosting({
-                    reader: input.reader,
-                    accountLifetime: input.accountLifetime,
-                    lease: selected.lease,
-                    signal: input.accountHostingSignal ?? input.signal,
-                });
-                if (!operation.isCurrent()) {
-                    selected.lease.dispose();
-                    return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-                }
                 const result = await materializeSelectedHostedWebArtifactAvailability({
                     selected: {
                         lease: selected.lease,
@@ -474,10 +621,10 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
                     persistentStore,
                 });
                 if (result.kind !== 'available') selected.lease.dispose();
-                return result.kind === 'available' && publication
+                return result.kind === 'available' && selected.accountHosting
                     ? Object.freeze({
                         ...result,
-                        handle: Object.freeze({ ...result.handle, accountHosting: publication.completion }),
+                        handle: Object.freeze({ ...result.handle, accountHosting: selected.accountHosting }),
                     })
                     : result;
             } finally {
@@ -498,4 +645,14 @@ export function acquirePluginHostedWebArtifactAvailability(
     input: PluginHostedWebArtifactAvailabilityInput,
 ): Promise<PluginHostedWebArtifactAvailability> {
     return installedHostedWebArtifactAvailabilityProducer.acquire(input);
+}
+
+const installedHostedWebBrowserArtifactAvailabilityProducer = createPluginHostedWebBrowserArtifactAvailabilityProducer({
+    getCache: getInstalledPluginReactNativeBundleCache,
+});
+
+export function acquirePluginHostedWebBrowserArtifactAvailability(
+    input: PluginHostedWebArtifactAvailabilityInput,
+): Promise<PluginHostedWebBrowserArtifactAvailability> {
+    return installedHostedWebBrowserArtifactAvailabilityProducer.acquire(input);
 }

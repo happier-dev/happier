@@ -13,6 +13,7 @@ export function usePluginSurfaceActionApproval(input: Readonly<{
     scopeKey: string;
     serverId?: string | null;
     hasCustomExecutor: boolean;
+    scopeActionOwner?: import('@/sync/ops/actions/scopeActionFamily').MountedScopeActionOwner;
 }>) {
     const { accountLifetime, serverId, hasCustomExecutor } = input;
     const approval = useActionApprovalContinuation({
@@ -36,7 +37,9 @@ export function usePluginSurfaceActionApproval(input: Readonly<{
                 onExecuted: async () => 'ignored',
             });
         };
-        const executor = scopedHomeActionExecutor(accountLifetime.scope, { onBlockingApprovalPending: present });
+        const executor = scopedHomeActionExecutor(accountLifetime.scope, {
+            onBlockingApprovalPending: present, scopeActionOwner: input.scopeActionOwner,
+        });
         const observe = async (operation: ReturnType<typeof executor>, signal?: AbortSignal) => {
             const result = await operation;
             const receipt = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
@@ -47,6 +50,6 @@ export function usePluginSurfaceActionApproval(input: Readonly<{
             confirmed: (...args: Parameters<typeof executor>) => observe(executor.confirmed(...args), args[2]?.signal),
             prepare: executor.prepare,
         });
-    }, [accountLifetime, hasCustomExecutor, requestApproval, serverId]);
+    }, [accountLifetime, hasCustomExecutor, requestApproval, serverId, input.scopeActionOwner]);
     return { approval, pendingApproval, execute };
 }

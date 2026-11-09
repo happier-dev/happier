@@ -193,6 +193,7 @@ function asBootstrap(
         ...(payload.authorPlugin === undefined ? {} : { authorPlugin: payload.authorPlugin }),
         transport,
         ...(payload.launchInput === undefined ? {} : { launchInput: payload.launchInput }),
+        ...(payload.launch === undefined ? {} : { launch: payload.launch }),
         ...(payload.subPath === undefined ? {} : { subPath: payload.subPath }),
         ...(payload.composerRef === undefined ? {} : { composerRef: payload.composerRef }),
     }, HOSTED_WEB_GUEST_ACCOUNT_DATA_KEY, { value: readAccountDataTransport }));

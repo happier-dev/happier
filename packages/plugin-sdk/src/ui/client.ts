@@ -89,6 +89,7 @@ export const createPluginUiRenderContext = async (
         // without input" indistinguishable from "opened with an explicit
         // undefined" for an author reading the key.
         ...(bootstrap.launchInput === undefined ? {} : { launchInput: bootstrap.launchInput }),
+        ...(bootstrap.launch === undefined ? {} : { launch: bootstrap.launch }),
         ...(bootstrap.subPath === undefined ? {} : { subPath: bootstrap.subPath }),
     };
     const accountDataTransport = readHostedWebAccountDataTransport(bootstrap);

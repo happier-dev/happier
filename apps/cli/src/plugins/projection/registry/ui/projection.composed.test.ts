@@ -9,7 +9,7 @@ import {
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
 import { PLUGIN_UI_HOST_API_VERSION_V1, type PluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { buildPluginProjectionV2 } from '../projection/v2';
 import { projectPluginUiDeclarationEntries, projectPluginUiRendererAvailability, projectPluginUiRendererRef } from './projection';
@@ -27,6 +27,37 @@ import {
     type PluginRuntimeOccurrenceId,
 } from '@/plugins/runtime/runtimeSlots';
 
+// The real page catalog reaches UI chrome; native theme selection is a platform
+// boundary in this CLI composition. Keep projection and mount owners real.
+await vi.hoisted(async () => {
+    const path = new URL('../../../../../../ui/sources/dev/vitestRnShim.ts', import.meta.url).href;
+    const { installVitestRnShim } = await import(path);
+    installVitestRnShim();
+});
+vi.mock('react-native-unistyles', async () => {
+    const path = new URL('../../../../../../ui/sources/dev/testkit/mocks/unistyles.ts', import.meta.url).href;
+    const { createUnistylesMock } = await import(path);
+    return createUnistylesMock();
+});
+// Expo's native update event emitter is likewise absent from the CLI host.
+vi.mock('expo-updates', async () => {
+    const path = new URL('../../../../../../ui/sources/dev/testkit/mocks/expoUpdates.ts', import.meta.url).href;
+    const { createExpoUpdatesMock } = await import(path);
+    return createExpoUpdatesMock();
+});
+vi.mock('@shopify/react-native-skia', async () => {
+    const path = new URL('../../../../../../ui/sources/dev/testkit/mocks/reactNativeSkia.ts', import.meta.url).href;
+    const { createReactNativeSkiaMock } = await import(path);
+    return createReactNativeSkiaMock();
+});
+// No image is rendered here; mirror the UI testkit's native image placeholder.
+vi.mock('expo-image', () => ({ Image: 'Image' }));
+vi.mock('expo-file-system', async () => {
+    const path = new URL('../../../../../../ui/sources/dev/testkit/mocks/expoFileSystem.ts', import.meta.url).href;
+    const { createExpoFileSystemFileMock } = await import(path);
+    return createExpoFileSystemFileMock().module;
+});
+
 type ComposedPagePlacement = Readonly<{
     id: string;
     pluginId: string;
@@ -41,13 +72,13 @@ type ComposedPagePlacement = Readonly<{
 const { normalizePluginUiProjection }: Readonly<{
     normalizePluginUiProjection(projection: ReturnType<typeof PluginProjectionV2Schema.parse>, platform: 'web'): unknown;
 }> = await import(new URL('../../../../../../ui/sources/sync/domains/plugins/ui/projection.ts', import.meta.url).href);
-const { resolvePluginAppPages, selectPluginAppPagePlacements }: Readonly<{
-    selectPluginAppPagePlacements(model: unknown): readonly ComposedPagePlacement[];
-    resolvePluginAppPages(input: Readonly<{ placements: readonly ComposedPagePlacement[] }>): readonly Readonly<{
+const { resolvePluginPages, selectPluginPagePlacements }: Readonly<{
+    selectPluginPagePlacements(model: unknown, slot: Readonly<{ container: 'appPage'; targetKind: 'app' }>): readonly ComposedPagePlacement[];
+    resolvePluginPages(input: Readonly<{ target: Readonly<{ kind: 'app' }>; placements: readonly ComposedPagePlacement[] }>): readonly Readonly<{
         placement: ComposedPagePlacement;
         columnPlacement?: ComposedPagePlacement;
     }>[];
-}> = await import(new URL('../../../../../../ui/sources/components/appShell/plugins/pluginAppPages.ts', import.meta.url).href);
+}> = await import(new URL('../../../../../../ui/sources/components/plugins/pages/pluginPages.ts', import.meta.url).href);
 const { readPluginSurfaceMountBinding }: Readonly<{
     readPluginSurfaceMountBinding(input: Readonly<{
         descriptor: ComposedPagePlacement;
@@ -81,15 +112,15 @@ it('mounts an installed manifest-root page through the physical static decoder w
         loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} }, provenance: 'external',
     }));
     const model = normalizePluginInstalledUiDeclarations(projectPluginUiDeclarationEntries(registry), 'web');
-    const placement = selectPluginAppPagePlacements(model)[0];
+    const placement = selectPluginPagePlacements(model, { container: 'appPage', targetKind: 'app' })[0];
     expect(placement).toBeDefined();
     if (!placement) throw new Error('Expected installed page placement');
     expect(placement).toHaveProperty('display.description', { key: 'page.purpose', fallback: 'Review incoming work.' });
     expect(placement).toHaveProperty('widgetAreas', [{ name: 'pinned', contextSchema: { type: 'object', additionalProperties: false } }]);
     const liveRegistry = { ...registry, occurrenceIdsByPluginId: { [plugin.pluginId]: admittedOccurrenceForPlugin(plugin.pluginId) } };
     const liveModel = normalizePluginUiProjection(buildPluginProjectionV2({ registry: liveRegistry, generation: 1 }), 'web');
-    expect(selectPluginAppPagePlacements(liveModel)[0]).toHaveProperty('display.description', { key: 'page.purpose', fallback: 'Review incoming work.' });
-    expect(selectPluginAppPagePlacements(liveModel)[0]).toHaveProperty('widgetAreas', [{ name: 'pinned', contextSchema: { type: 'object', additionalProperties: false } }]);
+    expect(selectPluginPagePlacements(liveModel, { container: 'appPage', targetKind: 'app' })[0]).toHaveProperty('display.description', { key: 'page.purpose', fallback: 'Review incoming work.' });
+    expect(selectPluginPagePlacements(liveModel, { container: 'appPage', targetKind: 'app' })[0]).toHaveProperty('widgetAreas', [{ name: 'pinned', contextSchema: { type: 'object', additionalProperties: false } }]);
     expect(readPluginSurfaceMountBinding({ descriptor: placement, renderer: placement.renderer })).toMatchObject({ kind: 'destination' });
     const admitted = admitDeclarativeStaticModel({ model: placement.renderer.model, expectedPluginId: plugin.pluginId });
     expect(admitted?.root).toMatchObject({ kind: 'text', text: 'Installed page' });
@@ -195,13 +226,9 @@ function createEmptyResolvedContributionRegistry(
     return {
         agents: [],
                 actions: [],
-        tools: [],
-        commands: [],
         resources: [],
         activationTargets: [],
         actionsById: new Map(),
-        toolsById: new Map(),
-        commandsById: new Map(),
         resourcesById: new Map(),
                 catalogEntriesById: {},
         agentDefinitionsById: new Map(),
@@ -914,7 +941,7 @@ describe('plugin UI projection family', () => {
         // mount reader. A renderer-only column would pass projection assertions
         // while remaining unavailable at the mount boundary.
         const model = normalizePluginUiProjection(PluginProjectionV2Schema.parse(projection), 'web');
-        const [page] = resolvePluginAppPages({ placements: selectPluginAppPagePlacements(model) });
+        const [page] = resolvePluginPages({ target: { kind: 'app' }, placements: selectPluginPagePlacements(model, { container: 'appPage', targetKind: 'app' }) });
         expect(page).toBeDefined();
         const column = page?.columnPlacement;
         expect(column).toBeDefined();
@@ -986,13 +1013,13 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.preview',
                 localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
                 manifestPath: '/plugins/acme/z.plugin.json',
-                definition: { locale: 'en', messages: { title: 'Zulu V2' } },
+                definition: { locale: 'en', resourceId: 'copy-zulu' },
             },
             {
                 pluginId: 'acme.preview',
                 localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
                 manifestPath: '/plugins/acme/a.plugin.json',
-                definition: { locale: 'en', messages: { title: 'Alpha V2' } },
+                definition: { locale: 'en', resourceId: 'copy-alpha' },
             },
         ] as const;
         const project = (translations: readonly (typeof v2Translations)[number][]) => {
@@ -1009,12 +1036,12 @@ describe('plugin UI projection family', () => {
 
         expect(forward).toEqual(reversed);
         expect(forward).toMatchObject({
-            bundles: { en: { title: 'Zulu V2' } },
+            resourceIdsByLocale: { en: 'copy-zulu' },
             diagnostics: ['duplicate_translation_locale'],
         });
     });
 
-    it('ships only the locales a client can read when the describe request names one', () => {
+    it('ships complete locale Resource references independently of requested language', () => {
         const contributedLocales = ['en', 'fr', 'ja', 'ru'] as const;
         const registry = {
             ...createEmptyResolvedContributionRegistry('acme.preview'),
@@ -1022,7 +1049,7 @@ describe('plugin UI projection family', () => {
                 pluginId: 'acme.preview',
                 localeIdentity: { pluginId: 'acme.preview', locale },
                 manifestPath: `/plugins/acme/${locale}.plugin.json`,
-                definition: { locale, messages: { title: `title-${locale}` } },
+                definition: { locale, resourceId: `copy-${locale}` },
             })),
         } as unknown as ResolvedContributionRegistry;
 
@@ -1033,26 +1060,16 @@ describe('plugin UI projection family', () => {
         } as Parameters<typeof buildPluginProjectionV2>[0])
             .familiesById.pluginUi?.entriesById['translations:acme.preview'] as unknown as Readonly<{
                 locales: readonly string[];
-                bundles: Readonly<Record<string, Readonly<Record<string, string>>>>;
+                resourceIdsByLocale: Readonly<Record<string, string>>;
             }>;
 
-        // The only reader (`resolvePluginUiTranslationBundle`) merges the preferred
-        // locale over English and never touches another one, so nothing else belongs
-        // on the wire.
         const narrowed = project('fr');
-        expect(Object.keys(narrowed.bundles)).toEqual(['en', 'fr']);
-        expect(narrowed.bundles).toEqual({
-            en: { title: 'title-en' },
-            fr: { title: 'title-fr' },
+        expect(narrowed.resourceIdsByLocale).toEqual({
+            en: 'copy-en', fr: 'copy-fr', ja: 'copy-ja', ru: 'copy-ru',
         });
-        // `locales` stays the full availability fact; only the payload narrows.
         expect(narrowed.locales).toEqual(['en', 'fr', 'ja', 'ru']);
-
-        // An English client needs exactly one bundle.
-        expect(Object.keys(project('en').bundles)).toEqual(['en']);
-
-        // A client that names no locale — an older one — still receives everything.
-        expect(Object.keys(project().bundles)).toEqual(['en', 'fr', 'ja', 'ru']);
+        expect(project('en')).toEqual(narrowed);
+        expect(project()).toEqual(narrowed);
     });
 
     it('projects connected-account descriptors only through the canonical connectedAccounts family', async () => {
@@ -1185,6 +1202,11 @@ describe('plugin UI projection family', () => {
             identity: { pluginId: 'acme.triage', localId: 'entries' },
             action: { pluginId: 'acme.triage', localId: 'entries/search-v1' },
         });
+        const declaration = projectPluginUiDeclarationEntries(registry)['searchProvider:acme.triage:entries'];
+        expect(declaration).toMatchObject({ id: 'searchProvider:acme.triage:entries',
+            identity: { pluginId: 'acme.triage', localId: 'entries' },
+            action: { pluginId: 'acme.triage', localId: 'entries/search-v1' } });
+        expect(declaration).not.toHaveProperty('occurrenceId');
     });
 
     it('keeps a search provider on its closed wire arm when its plugin has a machine execution origin', () => {
@@ -1681,10 +1703,8 @@ describe('plugin UI projection family', () => {
             'reactNativeBundle:acme.generated-rnw:panel-renderer'
         ]).toMatchObject({ artifactSelectionOwner: 'daemonProjection' });
 
-        // A missing physical frame fact does not leave a renderer-local
-        // unavailable terminal. The canonical surface-placement selector
-        // consumes the hosted renderer's fallback decision and adopts the
-        // next declared renderer in its existing chain.
+        // A physical host with no adapter adopts the next declared renderer
+        // in its existing chain, even when the hosted Artifact is readable.
         const adapterUnavailableProjection = buildPluginProjectionV2({
             registry,
             generation: 31,
@@ -1718,6 +1738,7 @@ describe('plugin UI projection family', () => {
             },
         });
         expect(adapterUnavailableEntries['surfacePlacement:acme.generated-rnw:hosted-view']).toMatchObject({
+            binding: { renderer: { pluginId: 'acme.generated-rnw', localId: 'panel-renderer' } },
             renderer: { kind: 'reactNative', contributionId: 'panel-renderer' },
             availability: { state: 'available', reason: 'available' },
         });

@@ -23,7 +23,7 @@ import {
     type UiSurfaceNetworkOriginV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type { PluginSurfaceTarget, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import type { PluginSurfaceTarget, SurfaceContext, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import {
@@ -38,6 +38,7 @@ import type {
 import { resolveHostedWebRuntimeDiagnostics } from '@/sync/domains/plugins/ui/hostedWebRuntime';
 import type { PluginUiArtifactAdoption } from '@/sync/domains/plugins/ui/artifactAdoption';
 import type { PluginNativeArtifactResourceHandle } from '@/sync/domains/plugins/availability/nativeArtifactResource';
+import type { PluginBrowserHostedWebArtifactHandle } from '@/sync/domains/plugins/availability/hostedWebArtifactLease';
 import type {
     BrowserDiagnosticsEngineBridgeConfig,
     BrowserFrameNavigationCommand,
@@ -46,8 +47,7 @@ import { BrowserFrameError } from '@/components/browser/frame/BrowserFrameError'
 import { BrowserFrameLoading } from '@/components/browser/frame/BrowserFrameLoading';
 import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { createInlineHostedHtmlSecurityPolicy } from '@/components/browser/adapters/HostedPluginTargetSecurity';
-import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
-import { getPreferredLanguage } from '@/text';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     createPluginSurfaceContext,
@@ -79,6 +79,8 @@ import { createHostedFrameIntrinsicHeightReporter } from '@/components/plugins/h
 import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/PluginSurfaceInteractionBoundary';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useUiSurfaceRendererMount } from '@/components/plugins/hostApi/useUiSurfaceRendererMount';
 import { measureWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 
@@ -202,14 +204,15 @@ function canRenderProjectedHostedWebRuntime(
         return true;
     }
 
-    // The Registry truthfully reports that web/desktop installed Artifact
-    // bytes have no packaged-frame adapter. A native opaque Artifact handle
-    // is the separate exact native-frame source; a legacy daemon Session
-    // preview has its own produced HTTP(S) endpoint. Other projection
+    // Portable declarations have no physical-frame fact yet. A native opaque
+    // Artifact handle or browser bundle supplies an exact admitted source;
+    // a legacy daemon Session preview has its own produced HTTP(S) endpoint,
+    // even when the packaged-frame adapter is unavailable. Other projection
     // fallbacks (feature, policy, integrity, currentness) remain terminal and
     // cannot be bypassed by an address.
+    const reason = readRecord(runtime?.decision)?.reason;
     return hasExactEndpoint
-        && readRecord(runtime?.decision)?.reason === 'hosted_web_frame_adapter_unavailable';
+        && (reason === 'hosted_web_frame_adapter_unknown' || reason === 'hosted_web_frame_adapter_unavailable');
 }
 
 type HostedWebBridgeCorrelation = Readonly<{
@@ -348,9 +351,6 @@ function resolveHostedWebPaneUnavailableDiagnosticCode(input: Readonly<{
     if (input.bridgeRequested && !input.bridgeNonceAvailable) {
         return resolveDownstreamDiagnostic('hosted_web_bridge_nonce_unavailable');
     }
-    if (input.frameFailure === 'ready_timeout') {
-        return resolveDownstreamDiagnostic('hosted_web_bridge_timeout');
-    }
     if (input.frameFailure) {
         return resolveDownstreamDiagnostic('hosted_web_preview_unavailable');
     }
@@ -424,7 +424,6 @@ export function PluginHostedWebPane(props: Readonly<{
     navigationCommand?: BrowserFrameNavigationCommand;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     mountLifetime: Parameters<typeof useUiSurfaceRendererMount>[0]['lifetime'];
-    readyTimeoutMs?: number | null;
     onBridgeMessage?: (envelope: PluginHostedWebBridgeEnvelopeV1) => void;
     /** Validated current-mount content height; the outer placement owns sizing. */
     onIntrinsicHeightChange?: (height: number) => void;
@@ -489,6 +488,7 @@ export function PluginHostedWebPane(props: Readonly<{
      * with the same meaning it has on the native side.
      */
     launchInput?: PluginUiLaunchInputV1;
+    launch?: RenderContext['launch'];
     subPath?: PluginUiSubPathV1;
     /** Exact host-stamped Composer mount identity, absent from generic mounts. */
     composerRef?: ComposerRefV1;
@@ -500,6 +500,11 @@ export function PluginHostedWebPane(props: Readonly<{
     nativeArtifactAdoption?: PluginUiArtifactAdoption<
         'hostedWebNative',
         PluginNativeArtifactResourceHandle
+    > | null;
+    /** Selected browser bytes retain Artifact's existing lease and revocation. */
+    browserArtifactAdoption?: PluginUiArtifactAdoption<
+        'hostedWebBrowser',
+        PluginBrowserHostedWebArtifactHandle
     > | null;
     /**
      * Exact facts captured with the incumbent adoption. They are presentation
@@ -519,6 +524,7 @@ export function PluginHostedWebPane(props: Readonly<{
     artifactCandidatePreparing?: boolean;
 }>): React.ReactElement {
     const { theme, rt } = useUnistyles();
+    const localize = usePluginLocalizedTextResolver({ projection: props.pluginUiProjection });
     const descriptor = props.projectedContribution === undefined
         ? props.pluginUiProjection?.hostedWebById[props.contributionId]
         : props.projectedContribution;
@@ -527,23 +533,28 @@ export function PluginHostedWebPane(props: Readonly<{
     const interactionEnabled = props.interactionEnabled ?? Boolean(props.hostApi);
     const effectiveInteractionEnabled = interactionEnabled && props.focusEligible !== false;
     const inlineDocument = props.inlineDocument;
+    const browserArtifactAdoption = platform === 'web' && descriptor?.generatedV2 === true
+        ? props.browserArtifactAdoption ?? null : null;
+    const browserArtifactHandle = browserArtifactAdoption?.handle ?? null;
+    const rendererDocument = inlineDocument ?? browserArtifactHandle?.bundle;
     const occurrenceId = typeof descriptor?.occurrenceId === 'string'
         ? descriptor.occurrenceId
         : null;
     const launchInputSemanticKey = stableJsonStringify({
         present: props.launchInput !== undefined,
         value: props.launchInput,
+        launch: props.launch,
     });
     const rendererDocumentKey = React.useMemo(() => stableJsonStringify({
         endpointUrl: props.endpointUrl,
-        bundle: inlineDocument,
+        bundle: rendererDocument,
         network: props.inlineDocumentNetwork,
         networkOrigins: props.inlineDocumentNetworkOrigins,
         launchInputSemanticKey,
         occurrenceId,
         mountInstanceKey: props.mountInstanceKey,
         subPath: props.subPath,
-    }), [props.endpointUrl, inlineDocument, props.inlineDocumentNetwork, props.inlineDocumentNetworkOrigins, launchInputSemanticKey, occurrenceId, props.mountInstanceKey, props.subPath]);
+    }), [props.endpointUrl, rendererDocument, props.inlineDocumentNetwork, props.inlineDocumentNetworkOrigins, launchInputSemanticKey, occurrenceId, props.mountInstanceKey, props.subPath]);
     const allowedMessageKinds = inlineDocument ? INLINE_DOCUMENT_MESSAGES : descriptor ? readAllowedMessageKinds(descriptor.bridge) : [];
     const canonicalHostOrigin = resolveHostedFrameHostOrigin();
     const canonicalWireAllowed = allowedMessageKinds.includes('hostApi');
@@ -553,9 +564,6 @@ export function PluginHostedWebPane(props: Readonly<{
     const hostApiBridgeHandlerRef = React.useRef<PluginHostedWebHostApiBridgeHandler | null>(null);
     const lifecycle = useHostedFrameLifecycle({
         lifetimeKey: rendererDocumentKey,
-        readyRequired,
-        readyTimeoutMs: props.readyTimeoutMs ?? null,
-        onReadyTimeout: () => { hostApiBridgeHandlerRef.current?.recordReadyTimeout(); },
         onRetireAttempt: (reason) => {
             if (reason === 'unexpected_navigation') frameSinkRef.current = null;
             hostApiBridgeHandlerRef.current?.dispose();
@@ -570,7 +578,7 @@ export function PluginHostedWebPane(props: Readonly<{
     });
     const bridgeIdentity = rendererMount.identity;
     const bridgeNonce = bridgeIdentity?.mountNonce ?? null;
-    const opaqueArtifactFrame = platform === 'web' && props.opaqueArtifactFrame === true;
+    const opaqueArtifactFrame = platform === 'web' && (props.opaqueArtifactFrame === true || browserArtifactHandle !== null);
     const hostedRuntime = hasDescriptor
         ? resolveHostedWebRuntimeDiagnostics({
             hostedWeb: descriptor,
@@ -623,9 +631,10 @@ export function PluginHostedWebPane(props: Readonly<{
         && readServiceKind(descriptor?.service) === 'staticAssets'
     ) ? props.nativeArtifactAdoption ?? null : null;
     const nativeArtifactHandle = nativeArtifactAdoption?.handle ?? null;
-    const artifactCurrentness = nativeArtifactHandle;
+    const artifactAdoption = nativeArtifactAdoption ?? browserArtifactAdoption;
+    const artifactCurrentness = artifactAdoption?.handle ?? null;
     artifactCurrentnessRef.current = artifactCurrentness;
-    const [nativeArtifactFrameEnabled, setNativeArtifactFrameEnabled] = React.useState(false);
+    const [artifactFrameEnabled, setArtifactFrameEnabled] = React.useState(false);
     const [nativeArtifactAdapterUnavailableHandle, setNativeArtifactAdapterUnavailableHandle] = React.useState<NativeArtifactFrameHandle | null>(null);
     const [nativeInlineDocumentUnavailable, setNativeInlineDocumentUnavailable] = React.useState(false);
     const [nativeArtifactFrameLoadStateForHandle, setNativeArtifactFrameLoadStateForHandle] = React.useState<NativeArtifactFrameLoadStateForHandle>({
@@ -641,12 +650,12 @@ export function PluginHostedWebPane(props: Readonly<{
     const nativeArtifactAdapterUnavailable = nativeArtifactHandle !== null
         && nativeArtifactAdapterUnavailableHandle === nativeArtifactHandle;
     React.useLayoutEffect(() => {
-        const adoption = nativeArtifactAdoption;
+        const adoption = artifactAdoption;
         const handle = adoption?.handle ?? null;
-        setNativeArtifactFrameEnabled(false);
+        setArtifactFrameEnabled(false);
         setNativeArtifactAdapterUnavailableHandle(null);
-        setNativeArtifactFrameLoadStateForHandle({ handle, state: 'loading' });
-        setNativeArtifactHistoryStateForHandle({ handle, canGoBack: false });
+        setNativeArtifactFrameLoadStateForHandle({ handle: nativeArtifactHandle, state: 'loading' });
+        setNativeArtifactHistoryStateForHandle({ handle: nativeArtifactHandle, canGoBack: false });
         setNativeArtifactGoBackCommand(null);
         if (!handle) return;
 
@@ -659,14 +668,19 @@ export function PluginHostedWebPane(props: Readonly<{
         if (!handle.isCurrent()) {
             return;
         }
-        setNativeArtifactFrameEnabled(true);
+        setArtifactFrameEnabled(true);
         return () => {
             // Target/occurrence replacement owns the consumed handle's normal
             // teardown. This executes in layout cleanup before a replacement
             // frame is committed, so stale bytes cannot remain mounted.
             if (!props.retainCandidateAdoptionOnUnmount) disposeForTarget();
         };
-    }, [nativeArtifactAdoption, occurrenceId, props.mountInstanceKey, props.retainCandidateAdoptionOnUnmount]);
+    }, [artifactAdoption, nativeArtifactHandle, occurrenceId, props.mountInstanceKey, props.retainCandidateAdoptionOnUnmount]);
+    const hasBrowserArtifactSource = browserArtifactHandle?.isCurrent() ?? false;
+    const browserArtifactActivationPending = hasBrowserArtifactSource && !artifactFrameEnabled;
+    const browserArtifactDocument = browserArtifactHandle && hasBrowserArtifactSource && artifactFrameEnabled
+        ? browserArtifactHandle.bundle : undefined;
+    const frameDocument = inlineDocument ?? browserArtifactDocument;
     React.useLayoutEffect(() => {
         setNativeInlineDocumentUnavailable(false);
     }, [rendererDocumentKey]);
@@ -680,13 +694,13 @@ export function PluginHostedWebPane(props: Readonly<{
                 storagePartitionId: nativeArtifactHandle.storagePartitionId,
             })
         : null;
-    const nativeArtifactFrame = nativeArtifactFrameEnabled && nativeArtifactFrameOrigin && nativeArtifactHandle
+    const nativeArtifactFrame = artifactFrameEnabled && nativeArtifactFrameOrigin && nativeArtifactHandle
         ? Object.freeze({
             artifactHandleToken: nativeArtifactHandle.token,
             frameOrigin: nativeArtifactFrameOrigin,
         })
         : null;
-    const nativeArtifactActivationPending = nativeArtifactFrameOrigin !== null && !nativeArtifactFrameEnabled;
+    const nativeArtifactActivationPending = nativeArtifactFrameOrigin !== null && !artifactFrameEnabled;
     const nativeArtifactFrameLoadState = nativeArtifactFrameLoadStateForHandle.handle === nativeArtifactHandle
         ? nativeArtifactFrameLoadStateForHandle.state
         : 'loading';
@@ -759,11 +773,17 @@ export function PluginHostedWebPane(props: Readonly<{
         ) {
             return false;
         }
-        nativeArtifactGoBackCommandIdRef.current += 1;
-        setNativeArtifactGoBackCommand({
-            commandId: `hosted-artifact-history-back-${nativeArtifactGoBackCommandIdRef.current}`,
-            kind: 'goBack',
-        });
+        // Guest history can replace the edited document just as route Back can.
+        // Consume the native event now, but send the command only after the
+        // host's existing dirty decision admits this still-current frame.
+        fireAndForget(Promise.resolve(runGuardedNavigation(() => {
+            if (artifactCurrentnessRef.current !== handle || !handle.isCurrent()) return;
+            nativeArtifactGoBackCommandIdRef.current += 1;
+            setNativeArtifactGoBackCommand({
+                commandId: `hosted-artifact-history-back-${nativeArtifactGoBackCommandIdRef.current}`,
+                kind: 'goBack',
+            });
+        })), { tag: 'plugin-hosted-page-back' });
         return true;
     }, [effectiveInteractionEnabled, nativeArtifactGuestHistoryActive, nativeArtifactHandle]);
     const requestAndroidNativeArtifactGoBack = React.useCallback(
@@ -793,9 +813,11 @@ export function PluginHostedWebPane(props: Readonly<{
             target: binding.target,
             activity: Object.freeze({ active: effectiveInteractionEnabled && isSurfaceCurrent() }),
             surface: createPluginSurfaceContext({
+                mountId: bridgeIdentity.instanceId,
                 mount: binding.mount,
                 target: binding.target,
                 accountEncryptionMode: binding.accountEncryptionMode,
+                accountLifetime: props.accountLifetime,
                 environment: surfaceEnvironment,
                 translations: binding.translations,
                 targetedContributions: binding.targetedContributions,
@@ -813,6 +835,7 @@ export function PluginHostedWebPane(props: Readonly<{
         effectiveInteractionEnabled,
         isSurfaceCurrent,
         surfaceEnvironment,
+        props.accountLifetime,
     ]);
     // Collection UI-query messages are meaningful only once the canonical
     // hosted bootstrap exists. A descriptor cannot expose Data by declaring a
@@ -894,7 +917,7 @@ export function PluginHostedWebPane(props: Readonly<{
             canonicalHostApi.surface.targetedContributions?.target.occurrenceId ?? '',
         ].join('')
         : null;
-    const frameOrigin = (inlineDocument ? 'null' : null)
+    const frameOrigin = (inlineDocument || hasBrowserArtifactSource ? 'null' : null)
         ?? nativeArtifactFrame?.frameOrigin
         ?? (nativeArtifactActivationPending ? nativeArtifactFrameOrigin : null)
         ?? endpoint?.origin
@@ -966,6 +989,7 @@ export function PluginHostedWebPane(props: Readonly<{
                     bootstrap: {
                         frameOrigin,
                         ...(props.launchInput === undefined ? {} : { launchInput: props.launchInput }),
+                        ...(props.launch === undefined ? {} : { launch: props.launch }),
                         ...(props.subPath === undefined ? {} : { subPath: props.subPath }),
                         ...(props.composerRef === undefined ? {} : { composerRef: props.composerRef }),
                     },
@@ -1049,12 +1073,12 @@ export function PluginHostedWebPane(props: Readonly<{
             // attached. The following React update only removes presentation;
             // it is not a second retirement owner.
             lifecycle.retire();
-            setNativeArtifactFrameEnabled(false);
+            setArtifactFrameEnabled(false);
         };
         const subscription = handle.onRevoke(retire);
         if (!handle.isCurrent()) retire();
         return () => subscription.dispose();
-    }, [artifactCurrentness, lifecycle.retire, nativeArtifactHandle]);
+    }, [artifactCurrentness, lifecycle.retire]);
     const attachHostMessages = React.useCallback((send: (message: unknown) => void) => {
         frameSinkRef.current = send;
         return () => {
@@ -1098,22 +1122,23 @@ export function PluginHostedWebPane(props: Readonly<{
     const bridgeRequested = Boolean((props.onBridgeMessage || hostApiBridgeHandler) && bridgeAllowedMessageKinds.size > 0);
     const hasNativeArtifactFrame = nativeArtifactFrame !== null;
     const hasNativeArtifactSource = hasNativeArtifactFrame || nativeArtifactActivationPending;
+    const hasArtifactSource = hasNativeArtifactSource || hasBrowserArtifactSource;
     const hasDaemonEndpointFrame = hostedRuntime?.state === 'ready' && endpoint !== null;
     const projectionPolicyRenderable = Boolean(inlineDocument) || hasDescriptor
         && canRenderPluginUiProjectionEntry(descriptor, policyContext);
     const runtimeRenderable = Boolean(inlineDocument) || hasDescriptor
         && canRenderProjectedHostedWebRuntime(
             descriptor.runtime,
-            hasDaemonEndpointFrame || hasNativeArtifactSource,
+            hasDaemonEndpointFrame || hasArtifactSource,
         );
-    const endpointRenderable = Boolean(inlineDocument) || hasNativeArtifactSource || endpoint !== null;
+    const endpointRenderable = Boolean(inlineDocument) || hasArtifactSource || endpoint !== null;
     const unavailableDiagnosticCode = resolveHostedWebPaneUnavailableDiagnosticCode({
         upstreamDiagnosticCode: upstreamUnavailableDiagnosticCode,
         descriptorPresent: hasDescriptor || inlineDocument !== undefined,
         projectionPolicyRenderable,
         runtimeRenderable,
         hasDaemonEndpointFrame,
-        hasSource: inlineDocument !== undefined || hasDaemonEndpointFrame || hasNativeArtifactSource,
+        hasSource: inlineDocument !== undefined || hasDaemonEndpointFrame || hasArtifactSource,
         nativeArtifactAdapterUnavailable: nativeArtifactAdapterUnavailable || nativeInlineDocumentUnavailable,
         sandboxAvailable: sandbox !== null,
         securityAvailable: security !== null,
@@ -1158,7 +1183,7 @@ export function PluginHostedWebPane(props: Readonly<{
         );
     }
 
-    if (nativeArtifactActivationPending) {
+    if (nativeArtifactActivationPending || browserArtifactActivationPending) {
         return <BrowserFrameLoading testID="plugin-hosted-web-frame" />;
     }
 
@@ -1216,12 +1241,7 @@ export function PluginHostedWebPane(props: Readonly<{
     const literalTitle = typeof display?.title === 'string' && display.title.trim().length > 0
         ? display.title.trim()
         : null;
-    const frameTitle = props.title ?? literalTitle ?? resolvePluginUiText({
-        projection: props.pluginUiProjection,
-        pluginId: props.surfaceContext.pluginId,
-        // Without the current locale the shared resolver answers from the
-        // plugin's English bundle no matter what the reader selected.
-        locale: getPreferredLanguage(),
+    const frameTitle = props.title ?? literalTitle ?? localize(props.surfaceContext.pluginId, {
         key: typeof display?.titleKey === 'string' ? display.titleKey : null,
         fallback: typeof display?.developerFallback === 'string'
             ? display.developerFallback
@@ -1251,7 +1271,7 @@ export function PluginHostedWebPane(props: Readonly<{
     return (
         <PluginSurfaceInteractionBoundary
             surfaceId={surface.surfaceId}
-            hasContent={inlineDocument !== undefined}
+            hasContent={frameDocument !== undefined}
             snapshotTitle={frameTitle}
             enabled={interactionEnabled}
             focusEligible={props.focusEligible}
@@ -1287,10 +1307,11 @@ export function PluginHostedWebPane(props: Readonly<{
                 sandbox={sandbox}
                 title={frameTitle}
                 {...(frameUrl ? { url: frameUrl } : {})}
-                {...(inlineDocument && bridgeIdentity && canonicalHostOrigin ? {
-                    bundle: inlineDocument,
-                    networkOrigins: props.inlineDocumentNetworkOrigins,
-                    network: props.inlineDocumentNetwork,
+                {...(frameDocument && bridgeIdentity && canonicalHostOrigin ? {
+                    bundle: frameDocument,
+                    generatedArtifact: browserArtifactDocument !== undefined,
+                    networkOrigins: browserArtifactDocument ? undefined : props.inlineDocumentNetworkOrigins,
+                    network: browserArtifactDocument ? 'none' : props.inlineDocumentNetwork,
                     bootstrapConfig: { identity: bridgeIdentity, frameOrigin: 'null', hostOrigin: canonicalHostOrigin },
                     // Inline and generated documents here are the trusted plugin's own UI.
                     pluginAuthored: true,
