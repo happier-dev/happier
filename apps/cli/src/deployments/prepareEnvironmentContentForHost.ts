@@ -68,7 +68,11 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 const wire = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
                     input: { serverId: request.context.externalActionExecutionAuthorization?.binding.serverIdentityId
                         ?? request.input.serverId, environmentId } });
-                const headers = await host.resolveRequestHeaders(request.context, request.actionId, wire);
+                // Template preparation admits the selected Environment's read Action.
+                // Native authoring retains its original create/update purpose.
+                const metadataActionId = request.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.templates.instantiate'
+                    ? 'deployments.environments.get' : request.actionId;
+                const headers = await host.resolveRequestHeaders(request.context, metadataActionId, wire);
                 if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
                 const response = await axios.request<unknown>({ method: wire.method, url: `${host.serverHttpBaseUrl}${wire.path}`,
                     headers, signal: request.context.signal, validateStatus: () => true });

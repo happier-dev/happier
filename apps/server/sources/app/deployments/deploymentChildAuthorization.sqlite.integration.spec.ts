@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPrepareDeploymentBindingsForHost } from '../../../../cli/src/deployments/secrets/prepareDeploymentBindingsForHost';
@@ -1633,6 +1635,78 @@ describe('deployment children retain their controller Action authority', () => {
             } });
         await expect(dispatch({ actionId, envelope, principal: { accountId: f.account.id, authentication,
             authority: 'present_user' } })).resolves.toMatchObject({ kind: 'response' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('prepares a template addition to an existing %s Environment through signed Home HTTP', async contentMode => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, contentMode });
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: contentMode === 'plain' ? null : {
+            type: 'dataKey' as const, machineKey: f.accountKeys.secretKey, publicKey: f.accountKeys.publicKey,
+        } };
+        const publish = async (addDatabase: boolean) => {
+            const document = JSON.stringify({ services: { app: { image: 'example/app:1' },
+                ...(addDatabase ? { postgres: { image: 'postgres:17' } } : {}) } });
+            const content = { ...createDeploymentEnvironmentDetailV1().content, definition: { kind: 'stored', document,
+                contentRevision: addDatabase ? 2 : 1, composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
+                profiles: [], services: addDatabase ? ['app', 'postgres'] : ['app'] } };
+            const key = nacl.randomBytes(32);
+            const seal = async (value: unknown) => contentMode === 'plain'
+                ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value))
+                : new Uint8Array(await sealSessionDataKeyBundleV0(value, key));
+            const created = await createArtifact({ actorUserId: f.account.id, artifactId: crypto.randomUUID(),
+                kind: 'v1:other:deployment-environment.v1',
+                header: await seal({ kind: 'deployment-environment.v1', title: content.name }),
+                body: await seal({ body: JSON.stringify(content) }),
+                dataEncryptionKey: contentMode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+                    : sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: f.accountKeys.publicKey, randomBytes: nacl.randomBytes }) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: await publish(false) });
+        const candidate = await publish(true);
+        const input = { ...f.templateInput, environment: { ...f.templateInput.environment, expectedRevision: f.environmentRevision } };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.templates.instantiate', machineId: f.controller.id, target, requestId: envelope.requestId,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const exchanges: Array<{ method: string; path: string; status: number }> = [];
+        await withAuthenticatedTestApp(app => {
+            registerAccountProfileRoute(app);
+            registerAccountSettingsRoutes(app);
+            featuresRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            artifactsRoutes(app);
+            registerDeploymentRoutes(app);
+            app.addHook('onResponse', async (request, reply) => {
+                exchanges.push({ method: request.method, path: request.url.split('?')[0]!, status: reply.statusCode });
+            });
+        }, async app => {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const channel = await createRequesterCurrentnessSocketHarness();
+            let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+            try {
+                requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                if (!requester) throw new Error(`Expected admitted requester: ${JSON.stringify(exchanges)}`);
+                const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                    installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                if (!authorization?.requesterHttpProjection) throw new Error('Expected signed requester HTTP projection');
+                // Real requester custody, signer, Home policy, Artifact codecs and content admission run together.
+                const prepare = createPrepareEnvironmentContentForHost({ credentials, serverHttpBaseUrl: origin,
+                    resolveRequestHeaders: (_context, effectActionId, request) =>
+                        authorization.requesterHttpProjection!.createRequestHeaders({ ...request, effectActionId }) });
+                const result = await prepare({ actionId: 'deployments.environments.update',
+                    input: { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, ...candidate },
+                    context: { externalActionExecutionAuthorization: authorization } });
+                expect(result, JSON.stringify(exchanges)).toBeNull();
+                expect(exchanges).toContainEqual({ method: 'GET', path: `/v1/deployments/environments/${f.environment.id}`, status: 200 });
+                expect(exchanges).toContainEqual({ method: 'GET', path: `/v1/artifacts/${candidate.contentArtifactId}`, status: 200 });
+            } finally { await requester?.dispose(); await channel.close(); }
+        }, { authentication: 'real' });
     });
 
     it('saves an authored variable binding through signed requester preparation and real Home HTTP', async () => {
