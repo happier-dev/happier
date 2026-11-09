@@ -455,11 +455,9 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             subject={subject}
             sourceName={sourceName}
             gitRef={ref}
-            subdir={choiceBase.subdir ?? ''}
             compact={!twoPanes}
             onChooseSource={openSourceSheet}
             onChangeRef={setRef}
-            onChangeSubdir={setSubdir}
             repositoryAddress={!subject && effectiveUse === 'clone' ? {
               value: repositoryAddress.resolution.kind === 'idle' ? '' : repositoryAddress.resolution.address,
               error: repositoryAddress.refusal && repositoryAddress.refusal !== 'projects.sources.loading'
@@ -509,7 +507,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             }}
             testIdPrefix="projects.open"
           /> : null}
-          <ProjectOpenOutcome open={open} gitRef={ref}
+          <ProjectOpenSubfolderRow subject={subject} subdir={choiceBase.subdir ?? ''} onChangeSubdir={setSubdir} />
+          <ProjectOpenOutcome open={open} gitRef={ref} subfolder={choiceBase.subdir ?? null}
             machineName={(id) => machineNames.get(id) ?? getMachineDisplayName(machines.find((candidate) => candidate.id === id) ?? null) ?? id}
             sentenceMachineName={sentenceMachineName}
             onChooseCandidate={candidate => {
@@ -613,11 +612,9 @@ function ProjectOpenSubjectSection(
     subject: ProjectOpenSubject | null;
     sourceName: string | null;
     gitRef: string | null;
-    subdir: string;
     compact: boolean;
     onChooseSource: () => void;
     onChangeRef: (ref: string | null) => void;
-    onChangeSubdir: (subdir: string) => void;
     /** A clone with no repository yet: the address to read. */
     repositoryAddress: Readonly<{ value: string; error: string | null; onCommit: (text: string) => void }> | null;
   }>,
@@ -710,18 +707,33 @@ function ProjectOpenSubjectSection(
         compact={props.compact}
         onChange={props.onChangeRef}
       />
-      {repository ? (
-        <FieldValueItem
-          testID="projects.open.subject.folder"
-          title={t('projects.open.folder')}
-          value={props.subdir}
-          placeholder={source?.subdir ?? t('projects.sources.wholeRepository')}
-          fieldTestID="projects.open.subject.subdir"
-          monospace
-          autoCapitalize="none"
-          onCommit={props.onChangeSubdir}
-        />
-      ) : null}
+    </ItemGroup>
+  );
+}
+
+/** The optional narrowing of a repository, after where it goes: most Opens leave it empty. */
+function ProjectOpenSubfolderRow(
+  props: Readonly<{
+    subject: ProjectOpenSubject | null;
+    subdir: string;
+    onChangeSubdir: (subdir: string) => void;
+  }>,
+) {
+  const source = props.subject?.kind === 'source' ? props.subject.source : null;
+  const repository = source?.repository ?? (props.subject?.kind === 'repository' ? props.subject.selector : null);
+  if (!repository) return null;
+  return (
+    <ItemGroup>
+      <FieldValueItem
+        testID="projects.open.subject.folder"
+        title={t('projects.open.subfolderInRepository')}
+        value={props.subdir}
+        placeholder={source?.subdir ?? t('projects.sources.wholeRepository')}
+        fieldTestID="projects.open.subject.subdir"
+        monospace
+        autoCapitalize="none"
+        onCommit={props.onChangeSubdir}
+      />
     </ItemGroup>
   );
 }
@@ -771,6 +783,8 @@ function describeProjectOpenUse(
 
 /** What the last confirmation came to, while it stays on this screen: its step, or the outcome and next action. */
 function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProjectOpen>; gitRef: string | null;
+    /** The subfolder this Open asked for, so a refusal can name it. */
+    subfolder: string | null;
     machineName(machineId: string): string;
     sentenceMachineName(machineId: string): string;
     onChooseCandidate(candidate: Parameters<typeof workspaceAddressFromRefV1>[0]): void }>) {
@@ -821,7 +835,7 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                 description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
                 details={[result.code]} />;
             return <AttentionBanner testID="projects.open.refused" tone="danger"
-                {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, null, result.failureCause)} />;
+                {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, null, result.failureCause, props.subfolder)} />;
     }
 }
 

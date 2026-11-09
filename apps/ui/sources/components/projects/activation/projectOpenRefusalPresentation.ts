@@ -12,7 +12,9 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     remediation?: Extract<OpenProjectResultV1, { kind: 'refused' }>['remediation'],
     /** The repository being opened, as the Source row shows it; null when none is known. */
     repository?: string | null,
-    failureCause?: ActionFailureCauseV1): ProjectOpenRefusalPresentation {
+    failureCause?: ActionFailureCauseV1,
+    /** The subfolder this Open asked for; null when it asked for the whole repository. */
+    subfolder?: string | null): ProjectOpenRefusalPresentation {
     const failed = failureCause ? (failureCause.errorCode ?? failureCause.errorClass) : null;
     const details = failed && failed !== code ? [code, failed] : [code];
     const shown = (title: string, description?: string): ProjectOpenRefusalPresentation =>
@@ -32,6 +34,8 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (code.includes('unreachable') || code.includes('offline'))
         return shown(t('workspaceSync.start.blocked.targetMachineOffline'), t('projects.open.machineOfflineHint'));
     if (gitRef && code.includes('ref')) return shown(t('projects.open.refMissing', { ref: gitRef }), t('projects.open.refMissingHint'));
+    if (code === 'repository_subfolder_missing') return shown(t('projects.open.subfolderMissing'),
+        t('projects.open.subfolderMissingHint', { subfolder: subfolder?.trim() || t('projects.open.subfolderInRepository') }));
     // These two sentences already say what to do next.
     if (code.includes('folder') || code.includes('path')) return shown(t('projects.open.invalidFolder'));
     if (code.includes('source') && code.includes('changed')) return shown(t('projects.open.sourceChanged'));

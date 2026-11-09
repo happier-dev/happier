@@ -243,7 +243,10 @@ export function buildProjectOpenInput(selection: OpenProjectDraftSelectionV1, ch
       ? { source: { ...input.source, path: editing.folderPath } } : {}),
     ...(selection.source?.kind === 'workspace' ? { source: { ...selection.source, checkout } } : {}),
     ...(capturedSource ? { source: capturedSource } : {}) });
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  // A cleared field means "not set": no key at all, because the attempt is retained as strict JSON.
+  const { ref, subdir, ...request } = parsed.data;
+  return { ...request, ...(ref ? { ref } : {}), ...(subdir ? { subdir } : {}) };
 }
 
 /** Hydration uses captured values, not refreshed mutable Source catalog defaults. */

@@ -57,4 +57,10 @@ describe('Project Open refusal presentation', () => {
         expect(shown.description).toBe(t('projects.open.failedHint'));
         expect(shown.details).toEqual(['project_open_unavailable', 'TypeError']);
     });
+    it('names a subfolder the repository lacks and says what to fix, with the code behind Details (TL-A 11-08)', () => {
+        const shown = projectOpenRefusalPresentation('repository_subfolder_missing', null, undefined, 'owner/repo', undefined, 'packages/missing');
+        expect(shown.title).toBe(t('projects.open.subfolderMissing'));
+        expect(shown.description).toBe(t('projects.open.subfolderMissingHint', { subfolder: 'packages/missing' }));
+        expect(shown.details).toEqual(['repository_subfolder_missing']);
+    });
 });

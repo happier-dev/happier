@@ -226,7 +226,7 @@ export const ProjectOpenUseSection = React.memo(function ProjectOpenUseSection(
             <FieldValueItem
               key={`${row.use}:destination`}
               testID="projects.open.destination"
-              title={t('projects.open.folder')}
+              title={t(row.use === 'clone' ? 'projects.open.cloneInto' : 'projects.open.copyInto')}
               value={props.destination}
               placeholder={props.destinationPlaceholder}
               autoCapitalize="none"

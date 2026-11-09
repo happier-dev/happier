@@ -133,6 +133,14 @@ describe('materializeProjectCheckout', () => {
     }
   });
 
+  it('names a subfolder the checkout lacks apart from an unsafe path', async () => {
+    const root = await temporaryRoot();
+    await expect(materializeProjectCheckout({
+      sourceDirectory: root, sourceRootPath: root,
+      subdir: 'not-in-the-repository', materialization: { kind: 'attach' },
+    })).rejects.toMatchObject({ code: 'repository_subfolder_missing' });
+  });
+
   it('accepts an authorized root alias while retaining its physical identity', async () => {
     const root = await temporaryRoot();
     const aliases = await temporaryRoot();

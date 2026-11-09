@@ -350,6 +350,23 @@ describe('Project Open rendered choices', () => {
         expect(screen.findByTestId('projects.open.destination')).toBeTruthy();
     });
 
+    it('names the clone destination and the repository subfolder by what they mean, destination first (TL-A 11-08)', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000086';
+        const seeded = await seedOpenDraft(draftId);
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId: 'home' }} />);
+        const where = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.where');
+        await vi.waitFor(() => expect(where()).toBeDefined());
+        await act(async () => { where()!.props.onSelect(seeded.machine.id); });
+        await act(async () => { screen.pressByTestId('projects.open.destination.change'); });
+        const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+        const fields = screen.findAllByType(FieldValueItem).filter(node => ['projects.open.destination', 'projects.open.subject.folder'].includes(node.props.testID));
+        expect(fields.map(node => [node.props.testID, node.props.title])).toEqual([
+            ['projects.open.destination', t('projects.open.cloneInto')],
+            ['projects.open.subject.folder', t('projects.open.subfolderInRepository')],
+        ]);
+    });
+
     it('submits the shown clone destination and renders missing clone support through the real projects.open Action path', async () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } =

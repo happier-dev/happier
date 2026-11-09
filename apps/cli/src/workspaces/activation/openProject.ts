@@ -515,6 +515,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         ? { error: error instanceof Error ? error.stack ?? error.message : String(error) } : {}) });
     if (isPluginError(error) && error.data.failureCause?.phase === 'project_open.checkout_ref') return refused(error.code, error);
     if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code, error.cause);
+    // Raised while materializing, before any Account row is submitted: the checkout is kept and nothing else
+    // happened, so the outcome is known even though the clone ran.
+    if (codeOf(error) === 'repository_subfolder_missing') return refused('repository_subfolder_missing', error);
     return effectsIssued ? outcomeUnknown('Exception after materialization or row submission') : refused(context.signal.aborted ? 'cancelled' : codeOf(error), context.signal.aborted ? undefined : error);
   } finally {
     try {

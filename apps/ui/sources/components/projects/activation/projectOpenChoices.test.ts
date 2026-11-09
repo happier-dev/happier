@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { OpenProjectDraftSelectionV1Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/drafts/sessionDrafts';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { buildWorkspaceContentPolicy } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
@@ -73,6 +74,18 @@ const base: ProjectOpenChoiceState = {
 };
 
 describe('Project Open choices', () => {
+  it('leaves a cleared subfolder and ref out of the request, so the attempt can be retained as a draft (TL-A 11-08)', () => {
+    const draft = OpenProjectDraftSelectionV1Schema.parse({ serverId: 'home', machineId: 'devbox',
+      source: { kind: 'repository', selector: source.repository }, subdir: 'no-such-folder', ref: 'gone',
+      materialization: { kind: 'clone', destinationParentPath: '/home/me', destinationDirectoryName: 'checkout' },
+      editing: { destination: '/home/me/checkout', branch: '', subdir: '', ref: '' } });
+    const input = buildProjectOpenInput(draft, []);
+    expect(input).not.toBeNull();
+    expect(input).not.toHaveProperty('subdir');
+    expect(input).not.toHaveProperty('ref');
+    expect(StrictJsonValueSchema.safeParse(input).success).toBe(true);
+  });
+
   it('retains a direct repository selection through the same canonical clone editor', () => {
     const selection = { serverId: 'home', machineId: 'devbox', source: { kind: 'repository' as const, selector: source.repository },
       materialization: { kind: 'clone' as const, destinationParentPath: '/clones', destinationDirectoryName: 'repo' } };
