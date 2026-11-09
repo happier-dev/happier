@@ -20,14 +20,16 @@ type PublicSdkInventory = Readonly<{
     kind: string;
   }>[];
 }>;
-// Projected once while Vitest collects the suite, not inside an assertion.
-const publicSdkInventory: PublicSdkInventory = await (
-  await import(apiSurfaceSourceModulePath) as Readonly<{
-    readCurrentApiSurfaceInventory(): Promise<PublicSdkInventory>;
-  }>
-).readCurrentApiSurfaceInventory();
+// Materialize only when a public-surface assertion needs it. Production import
+// fences do not depend on generated API projection being currently buildable.
+let publicSdkInventory: Promise<PublicSdkInventory> | undefined;
 async function readPublicSdkInventory(): Promise<PublicSdkInventory> {
-  return publicSdkInventory;
+  return publicSdkInventory ??= (async () => {
+    const publisher = await import(apiSurfaceSourceModulePath) as Readonly<{
+      readCurrentApiSurfaceInventory(): Promise<PublicSdkInventory>;
+    }>;
+    return publisher.readCurrentApiSurfaceInventory();
+  })();
 }
 const publicAgentRuntimeEntryPath = join(
   workspaceRoot,
@@ -347,41 +349,68 @@ function isProtocolModuleSpecifier(value: ts.Expression | undefined): value is t
   return Boolean(value && ts.isStringLiteral(value) && isProtocolModulePath(value.text));
 }
 
-async function readProtocolImports(path: string): Promise<readonly string[]> {
-  const source = await readFile(path, 'utf8');
-  // Pre-process first and build a full AST only when a real module specifier
-  // reaches Protocol, so naming the package in a comment neither counts as a
-  // reach nor costs an AST.
-  if (!ts.preProcessFile(source, true, true).importedFiles.some((entry) => (
-    isProtocolModulePath(entry.fileName)
+function protocolImportNames(
+  source: string,
+  path: string,
+  rootValuesOnly = false,
+): readonly string[] {
+  // Pre-process first and build a full AST only for a real dependency edge.
+  if (!ts.preProcessFile(source, true, true).importedFiles.some(entry => (
+    rootValuesOnly ? entry.fileName === '@happier-dev/protocol' : isProtocolModulePath(entry.fileName)
   ))) return [];
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
   const importedSymbols: string[] = [];
+  const matches = (value: ts.Expression | undefined): value is ts.StringLiteral => (
+    rootValuesOnly
+      ? Boolean(value && ts.isStringLiteral(value) && value.text === '@happier-dev/protocol')
+      : isProtocolModuleSpecifier(value)
+  );
   for (const statement of sourceFile.statements) {
     if (ts.isImportDeclaration(statement)) {
-      if (!isProtocolModuleSpecifier(statement.moduleSpecifier)) continue;
+      if (!matches(statement.moduleSpecifier)
+        || (rootValuesOnly && statement.importClause?.isTypeOnly)) continue;
       const bindings = statement.importClause?.namedBindings;
       if (!bindings || !ts.isNamedImports(bindings) || statement.importClause?.name) {
         importedSymbols.push('<non-named-import>');
         continue;
       }
-      importedSymbols.push(...bindings.elements.map((element) => (
-        element.propertyName?.text ?? element.name.text
-      )));
+      if (rootValuesOnly && bindings.elements.length === 0) importedSymbols.push('<empty-import>');
+      importedSymbols.push(...bindings.elements
+        .filter(element => !rootValuesOnly || !element.isTypeOnly)
+        .map(element => element.propertyName?.text ?? element.name.text));
       continue;
     }
     if (ts.isExportDeclaration(statement)) {
-      if (!isProtocolModuleSpecifier(statement.moduleSpecifier)) continue;
+      if (!matches(statement.moduleSpecifier) || (rootValuesOnly && statement.isTypeOnly)) continue;
       if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) {
         importedSymbols.push('<non-named-import>');
         continue;
       }
-      importedSymbols.push(...statement.exportClause.elements.map((element) => (
-        element.propertyName?.text ?? element.name.text
-      )));
+      if (rootValuesOnly && statement.exportClause.elements.length === 0) importedSymbols.push('<empty-export>');
+      importedSymbols.push(...statement.exportClause.elements
+        .filter(element => !rootValuesOnly || !element.isTypeOnly)
+        .map(element => element.propertyName?.text ?? element.name.text));
     }
+    if (rootValuesOnly && ts.isImportEqualsDeclaration(statement)
+      && !statement.isTypeOnly && ts.isExternalModuleReference(statement.moduleReference)
+      && matches(statement.moduleReference.expression)) importedSymbols.push('<import-equals>');
+  }
+  if (rootValuesOnly) {
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && matches(node.arguments[0])
+        && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+          || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+        importedSymbols.push(node.expression.kind === ts.SyntaxKind.ImportKeyword ? '<dynamic-import>' : '<require>');
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
   }
   return importedSymbols;
+}
+
+async function readProtocolImports(path: string): Promise<readonly string[]> {
+  return protocolImportNames(await readFile(path, 'utf8'), path);
 }
 
 async function readNamedImports(path: string, moduleSpecifier: string): Promise<readonly string[]> {
@@ -514,15 +543,16 @@ async function readHostWorkspacePackageNames(): Promise<readonly string[]> {
   return names.filter((name): name is string => name !== null);
 }
 
-async function readPluginRuntimeSourcePaths(directory: string): Promise<readonly string[]> {
+async function readPluginRuntimeSourcePaths(directory: string, includeTestSupport = false): Promise<readonly string[]> {
   const paths = await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
     if (entry.name === 'node_modules' || entry.name === 'dist') return [];
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      return await readPluginRuntimeSourcePaths(path);
+      return await readPluginRuntimeSourcePaths(path, includeTestSupport);
     }
     if (!/\.tsx?$/u.test(entry.name)) return [];
-    if (/\.(?:test|test-support|testkit)\.tsx?$/u.test(entry.name)) return [];
+    if (/\.(?:test|testkit)\.tsx?$/u.test(entry.name)) return [];
+    if (!includeTestSupport && /\.test-support\.tsx?$/u.test(entry.name)) return [];
     return [path];
   }));
   return paths.flat();
@@ -604,6 +634,44 @@ function readMeasuredPluginRuntimeHostPackageReaches(): Promise<Readonly<Record<
 }
 
 describe('first-party plugin public SDK import fence', () => {
+  it('allows type-only Protocol root dependencies while recognizing runtime dependency edges', () => {
+    for (const source of [
+      "import type { Fact } from '@happier-dev/protocol'; export type { Fact } from '@happier-dev/protocol';",
+      "import { type Fact } from '@happier-dev/protocol'; export { type Fact } from '@happier-dev/protocol';",
+      "type Fact = import('@happier-dev/protocol').Fact;",
+    ]) expect(protocolImportNames(source, 'fixture.ts', true), source).toEqual([]);
+    for (const source of [
+      "import { fact } from '@happier-dev/protocol';",
+      "export { fact } from '@happier-dev/protocol';",
+      "import '@happier-dev/protocol';",
+      "import('@happier-dev/protocol');",
+      "import facts = require('@happier-dev/protocol');",
+      "require('@happier-dev/protocol');",
+    ]) expect(protocolImportNames(source, 'fixture.ts', true), source).not.toEqual([]);
+  });
+
+  it('keeps SDK and plugin production values off the Protocol root entrypoint', async () => {
+    const sdkPaths = await readPluginRuntimeSourcePaths(join(workspaceRoot, 'packages', 'plugin-sdk', 'src'), true);
+    const pluginPaths = (await Promise.all(
+      (await readdir(pluginSourceRoot, { withFileTypes: true }))
+        .filter(entry => entry.isDirectory() && entry.name !== 'node_modules')
+        .map(async entry => {
+          const sourceRoot = join(pluginSourceRoot, entry.name, 'src');
+          try {
+            return await readPluginRuntimeSourcePaths(sourceRoot, true);
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+            throw error;
+          }
+        }),
+    )).flat();
+    const violations = (await Promise.all([...sdkPaths, ...pluginPaths].map(async path => {
+      const values = protocolImportNames(await readFile(path, 'utf8'), path, true);
+      return values.length > 0 ? { path: path.slice(workspaceRoot.length + 1), values } : null;
+    }))).filter(value => value !== null).sort((left, right) => left.path.localeCompare(right.path));
+    expect(violations).toEqual([]);
+  }, 20_000);
+
   it('keeps first-party Agent runtime event tests on the canonical public SDK entrypoint', async () => {
     for (const [relativePath, expectedImports] of Object.entries(AGENT_RUNTIME_EVENT_TEST_IMPORTS)) {
       const sourcePath = join(workspaceRoot, relativePath);
@@ -662,66 +730,62 @@ describe('first-party plugin public SDK import fence', () => {
     }
   });
 
-  it('projects Happier provider facts through focused first-party owners', async () => {
-    const claudeValues = [
-      'RawJSONLinesSchema',
-      'CLAUDE_SETTING_SOURCES_V2',
-      'CLAUDE_REMOTE_DEBUG_CATEGORIES',
-      'CLAUDE_UNIFIED_TERMINAL_HOSTS',
-      'CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES',
-      'CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES',
-      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE',
-      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY',
-      'MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS',
-      'normalizeClaudeRemoteAdvancedOptionsJson',
-      'normalizeClaudeUnifiedTerminalHost',
-      'normalizeClaudeUnifiedTerminalResumeChoice',
-      'normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy',
-      'isValidClaudeRemoteAdvancedOptionsJson',
-      'ANTHROPIC_EFFORT_LEVELS',
-      'buildAnthropicModelOptions',
-      'normalizeAnthropicModelDisplayName',
-      'formatAnthropicEffortLevelLabel',
-    ];
-    const claudeTypes = [
-      'RawJSONLines',
-      'ClaudeRawUsage',
-      'ClaudeSettingSourceV2',
-      'ClaudeRemoteDebugCategory',
-      'ClaudeUnifiedTerminalHost',
-      'ClaudeUnifiedTerminalResumeChoice',
-      'ClaudeUnifiedTerminalWorkspaceTrustPolicy',
-      'AnthropicEffortLevel',
-    ];
-    expect(await readPublicSdkValueOwners(claudeValues)).toEqual(Object.fromEntries(
-      claudeValues.map((name) => [name, './first-party/claude']),
-    ));
-    expect(await readPublicSdkOwners(claudeTypes)).toEqual(Object.fromEntries(
-      claudeTypes.map((name) => [name, './first-party/claude']),
-    ));
-    const symbols = [
-      'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
-      'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',
-      'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
-      'OPENAI_CODEX_OAUTH_PROFILE',
+  it('keeps canonical Agent facts outside the SDK and generic evidence on its public owner', async () => {
+    const genericEvidenceTypes = [
       'ProviderLimitCategory',
+      'ProviderLimitEvidenceClassification',
+      'ProviderLimitEvidenceConfidence',
+      'ProviderLimitEvidenceContext',
+      'ProviderLimitEvidenceProvenance',
+    ];
+    const genericEvidenceValues = [
+      'PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1',
       'classifyProviderLimitEvidence',
     ];
-    const connectedAccountExports = await readNamedExports(join(
-      workspaceRoot,
-      'packages/plugin-sdk/src/first-party/connected-accounts/index.public.ts',
-    ));
-    expect(connectedAccountExports).toEqual(expect.arrayContaining(symbols));
+    const inventory = await readPublicSdkInventory();
+    for (const [kind, names] of [
+      ['type', genericEvidenceTypes], ['value', genericEvidenceValues],
+    ] as const) {
+      for (const name of names) {
+        expect(inventory.symbols.filter((entry) => entry.kind === kind && entry.exportName === name)
+          .map((entry) => entry.specifier).sort(), name).toEqual([
+          './connected-accounts',
+        ]);
+      }
+    }
 
+    // The compatibility projection already records each canonical Agent leaf;
+    // derive consumer ownership from it rather than duplicating that export list.
+    const projectionPath = join(workspaceRoot, 'packages/plugin-sdk/src/connectedAccounts.ts');
+    const projection = ts.createSourceFile(
+      projectionPath, await readFile(projectionPath, 'utf8'), ts.ScriptTarget.Latest, true,
+    );
+    const agentFactOwners = new Map(projection.statements.flatMap((statement) => {
+      if (!ts.isExportDeclaration(statement)
+        || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)
+        || !statement.moduleSpecifier.text.startsWith('@happier-dev/protocol/agents/')
+        || !statement.exportClause || !ts.isNamedExports(statement.exportClause)) return [];
+      const owner = statement.moduleSpecifier.text;
+      return statement.exportClause.elements.map((element) => [element.name.text, owner] as const);
+    }));
     for (const { sourcePath, symbols } of FIRST_PARTY_CONNECTED_ACCOUNT_FACT_IMPORTS) {
+      for (const symbol of symbols) {
+        const isGenericEvidence = genericEvidenceValues.includes(symbol);
+        const owner = isGenericEvidence
+          ? '@happier-dev/plugin-sdk/connected-accounts'
+          : agentFactOwners.get(symbol);
+        expect(owner, symbol).toBeDefined();
+        if (!isGenericEvidence) expect(owner, symbol).toMatch(/^@happier-dev\/protocol\/agents\/[^/]+\//u);
+        expect(await readNamedImportsOrExports(sourcePath, owner!)).toContain(symbol);
+        if (!isGenericEvidence) {
+          expect(await readNamedImportsOrExports(
+            sourcePath, '@happier-dev/plugin-sdk/connected-accounts',
+          )).not.toContain(symbol);
+        }
+      }
       expect(await readNamedImportsOrExports(
-        sourcePath,
-        '@happier-dev/plugin-sdk/first-party/connected-accounts',
-      )).toEqual(expect.arrayContaining([...symbols]));
-      expect(await readNamedImportsOrExports(
-        sourcePath,
-        '@happier-dev/plugin-sdk/connected-accounts',
-      )).toEqual(expect.not.arrayContaining([...symbols]));
+        sourcePath, '@happier-dev/plugin-sdk/first-party/connected-accounts',
+      )).toEqual([]);
       expect(await readNamedImports(
         sourcePath,
         '@happier-dev/protocol/connect/claude-subscription-materialization',
@@ -762,7 +826,14 @@ describe('first-party plugin public SDK import fence', () => {
       '@happier-dev/plugin-ui',
     ]);
 
-    const measured = await readMeasuredPluginRuntimeHostPackageReaches();
+    const measured = Object.fromEntries(
+      Object.entries(await readMeasuredPluginRuntimeHostPackageReaches())
+        .map(([plugin, specifiers]) => [
+          plugin,
+          specifiers.filter((specifier) => !isProtocolModulePath(specifier)),
+        ] as const)
+        .filter(([, specifiers]) => specifiers.length > 0),
+    );
     expect(measured).toEqual(EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES);
     // This is the one full first-party-plugin source inventory. Under shared
     // compiler/build contention it exceeded Vitest's 5s default (7.545s
@@ -789,16 +860,18 @@ describe('first-party plugin public SDK import fence', () => {
     expect(claudeTsconfig.exclude).toContain('src/**/*.testkit.ts');
   });
 
-  it('keeps Protocol out of every first-party plugin runtime source', async () => {
+  it('keeps first-party Agent and Provider facts on exported Protocol subpaths', async () => {
+    const protocolManifest = JSON.parse(await readFile(
+      join(workspaceRoot, 'packages', 'protocol', 'package.json'),
+      'utf8',
+    )) as Readonly<{ exports: Readonly<Record<string, unknown>> }>;
     const reaches = await readMeasuredPluginRuntimeHostPackageReaches();
-    const protocolReaches = Object.fromEntries(
-      Object.entries(reaches)
-        .map(([plugin, specifiers]) => [
-          plugin,
-          specifiers.filter((specifier) => isProtocolModulePath(specifier)),
-        ] as const)
-        .filter(([, specifiers]) => specifiers.length > 0),
-    );
-    expect(protocolReaches).toEqual({});
+    for (const specifier of new Set(Object.values(reaches).flat())) {
+      if (!isProtocolModulePath(specifier)) continue;
+      const subpath = specifier === '@happier-dev/protocol'
+        ? '.'
+        : `.${specifier.slice('@happier-dev/protocol'.length)}`;
+      expect(Object.hasOwn(protocolManifest.exports, subpath), specifier).toBe(true);
+    }
   });
 });

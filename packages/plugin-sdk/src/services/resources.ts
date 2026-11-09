@@ -20,6 +20,7 @@ import type { JsonValue, PluginContributionRef, PluginJsonSchema } from '../iden
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { PluginAccountStorageScope } from '../storage.js';
 import type { ActionExecuteResult } from '../actions/service.js';
+import type { TriageEntryRefV1 } from '../protocol/triageEntryRef.js';
 
 export type { PluginResourceKind } from '@happier-dev/protocol';
 /** @realm any */
@@ -199,6 +200,9 @@ export type PluginNotificationDeliveryResult = PluginNotificationSendResult;
 export type PluginNotificationBatchResult = Readonly<{
     deliveries: readonly PluginNotificationSendResult[];
     replayed: boolean;
+    /** Present for itemId sends after private notice custody acknowledges them.
+     * Only a new/recovered opening reports opened; equal writes and replay do not. */
+    notice?: Readonly<{ artifactId: string; changed: boolean; opened: boolean }>;
 }>;
 export type PluginNotificationChannelSummary = Readonly<{
     id: string;
@@ -219,10 +223,18 @@ export type PluginNotificationPreferences = Readonly<{
     revision: string;
 }>;
 export interface NotificationsService {
-    /** itemId is stable across sends; clientRequestId identifies one immutable send. */
+    /** itemId is stable across sends; clientRequestId identifies one immutable send.
+     * type also selects attention without an Inbox notice; page/resolved require itemId. */
     send(request: { clientRequestId: string; categoryId: string; title: string; body?: string; channelIds?: readonly string[]; data?: JsonValue;
+        /** Per-notification operands for declared Action buttons; references remain category-owned. */
+        buttonInputs?: Readonly<Record<string, JsonValue>>;
         itemId?: string; type?: 'decision' | 'approval' | 'blocked' | 'update' | 'mention';
-        page?: Readonly<{ pageId: string; subPath?: string }>; resolved?: boolean }, options?: { signal?: AbortSignal }): Promise<PluginNotificationBatchResult>;
+        page?: Readonly<{ pageId: string; subPath?: string }>; resolved?: boolean;
+        /** Opts this notice into open/recovered health lifecycle; ordinary notices omit it. */
+        healthPhase?: 'open' | 'recovered';
+        /** Data-only manual Investigate intent. Requires itemId; current Action admission owns execution. */
+        investigation?: Readonly<{ kind: 'alertEntry'; entry: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }> }>
+    }, options?: { signal?: AbortSignal }): Promise<PluginNotificationBatchResult>;
     listChannels(options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<{ items: readonly PluginNotificationChannelSummary[]; nextCursor?: string }>;
     listCategories(options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<{ items: readonly PluginNotificationCategorySummary[]; nextCursor?: string }>;
     preferences(categoryId: string, options?: { signal?: AbortSignal }): Promise<PluginNotificationPreferences>;

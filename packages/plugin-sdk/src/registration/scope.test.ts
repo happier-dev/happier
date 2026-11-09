@@ -520,6 +520,10 @@ describe('plugin registration scope targets', () => {
                 detection,
                 branch,
                 workspaceIntegration: {
+                    async resolveCommitRef() { return 'a'.repeat(40); },
+                    async exportCommit(input) {
+                        return { commitSha: input.commitSha, entries: [], async dispose() {} };
+                    },
                     prepareReviewWorkspace,
                     verifyPreparedReviewWorkspace,
                     resolveWorkspaceTransfer,
@@ -553,6 +557,11 @@ describe('plugin registration scope targets', () => {
         expect(Object.isFrozen(registration.value.handlers.workspaceIntegration)).toBe(false);
         const context = { cwd: '/workspace', projectKey: 'project', detection: { isRepo: true, rootPath: '/workspace', mode: '.git' as const } };
         const signal = new AbortController().signal;
+        expect(await registration.value.handlers.workspaceIntegration?.resolveCommitRef?.({ context, signal, ref: 'selected-release' }))
+            .toBe('a'.repeat(40));
+        expect(await registration.value.handlers.workspaceIntegration?.exportCommit?.({ context, signal,
+            commitSha: 'a'.repeat(40), artifactDirectory: '/artifacts' }))
+            .toMatchObject({ commitSha: 'a'.repeat(40), entries: [] });
         expect(await registration.value.handlers.branch?.operationSkip?.({ request: { operation: 'rebase' }, context, signal }))
             .toEqual({ success: true, stdout: 'skipped' });
         expect(await registration.value.handlers.branch?.conflictAcceptSide?.({ request: { path: 'file', side: 'ours' }, context, signal }))

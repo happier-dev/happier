@@ -71,6 +71,7 @@ export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
 export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
 /** Canonical Launch Profile V2 identity admission for feature Action references. */
 export { ProtocolLaunchProfileIdV2Schema } from './launchProfileId.js';
+export { ProtocolLaunchProfilePlacementPreferenceV1Schema, ProtocolLaunchProfileCheckoutPreferenceV1Schema, resolveLaunchProfilePlacementDirectoryIntentV1, type LaunchProfilePlacementPreferenceV1, type LaunchProfileCheckoutPreferenceV1, type SessionDirectoryIntentV1 } from './launchProfilePreferences.js';
 /** Canonical policy deferral for feature protocols forwarding host Action results. */
 export { ProtocolActionApprovalRequestCreatedResultSchema } from './actionApproval.js';
 /** Declared environment requirements contain names and policy, never secret values. */

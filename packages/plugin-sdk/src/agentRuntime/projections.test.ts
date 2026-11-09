@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 
 import {
   AgentExecutionRunEventSchema as canonicalAgentExecutionRunEventSchema,
@@ -132,6 +133,12 @@ const DECLARATION_CLOSURE_GENUINE_EXPORTS = [
 ] as const;
 
 const DECLARATION_REFINED_EXPORTS = new Set([
+  'HandoffExistingStateRequestV1',
+  'TERMINAL_BRACKETED_PASTE_END',
+  'TERMINAL_BRACKETED_PASTE_START',
+  'isSessionPermissionShellToolName',
+  'matchSessionPermissionToolIdentifier',
+  'parseSessionPermissionToolIdentifier',
   'AcpForkSessionResultV1',
   'AcpLoadSessionResultV1',
   'AcpSessionOperationsV1',
@@ -214,20 +221,10 @@ const INDEX_PORTABLE_PROTOCOL_RUNTIME_EXPORTS = new Set([
   'VendorPluginCatalogV1',
 ]);
 
+let sdkProgram: ts.Program | undefined;
 function createSdkProgram(): ts.Program {
-  const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
-  const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-    ...ts.sys,
-    onUnRecoverableConfigFileDiagnostic(diagnostic) {
-      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-    },
-  });
-  if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-  return ts.createProgram({
-    rootNames: parsed.fileNames,
-    options: parsed.options,
-    projectReferences: parsed.projectReferences,
-  });
+  if (sdkProgram) return sdkProgram;
+  return sdkProgram = createSdkSourceProgram();
 }
 
 function sourceFile(program: ts.Program, relativePath: string): ts.SourceFile {
@@ -339,6 +336,51 @@ function namedExportsFromSpecifier(
   });
 }
 
+// Settled canonical projections absent from the historical finalProjection fixture.
+// Direct symbol identity and private-export guards below remain authoritative.
+const SETTLED_ADDITIONAL_PROJECTION_EXPORTS = [
+  'AgentSessionCompactionCapability',
+  'AgentSessionCompactionIdleCapability',
+  'PluginAgentSessionCompactionCapabilityV2',
+  'PROMPT_CACHE_DURATIONS',
+  'AGENT_STARTUP_FAILURE_PREVIEWS',
+  'AgentAccountUsageSubscription',
+  'AgentAcpUsageLimitDiagnosticDefinition',
+  'AgentConnectedAccountSharedStateFileMergeV1',
+  'AgentSessionMcpToolPolicy',
+  'AgentSessionSkillDelivery',
+  'AgentStartupFailureCode',
+  'AgentTranscriptIdentityCodec',
+  'AgentTranscriptSourceIdentityRequest',
+  'AgentTranscriptSourceIdentityResult',
+  'GoalControlFailure',
+  'HandoffExistingStateRequestV1',
+  'McpToolIdentityV1',
+  'PluginAgentAcpMcpInputPolicyV2',
+  'PluginAgentAcpSkillsSessionDeliveryV2',
+  'ResolvedUsageModelPrice',
+  'SessionGoalControlFailureV1Schema',
+  'TERMINAL_BRACKETED_PASTE_END',
+  'TERMINAL_BRACKETED_PASTE_START',
+  'UsageAccountingMetadata',
+  'UsageModelCostEstimate',
+  'UsageModelPriceCatalog',
+  'UsageModelPriceOverridesV1',
+  'UsageModelPriceRates',
+  'canPublishSessionResumeIdentity',
+  'estimateUsageModelCost',
+  'isRuntimeConfigUpdateOutcomeDeferred',
+  'isSessionModeSelectionUnavailable',
+  'isSessionPermissionShellToolName',
+  'listHappierToolAutoApprovedNameSpellingsV1',
+  'listHappierToolAutoApprovedNamesV1',
+  'matchSessionPermissionToolIdentifier',
+  'parseMcpToolWireNameV1',
+  'parseSessionPermissionToolIdentifier',
+  'readAgentStartupFailureCode',
+  'resolveUsageTokenCategories',
+] as const;
+
 async function approvedExportNames(): Promise<readonly string[]> {
   const contractSource = await readFile(
     new URL('../agents.finalProjection.contract.ts', import.meta.url),
@@ -371,6 +413,7 @@ async function approvedExportNames(): Promise<readonly string[]> {
         && !DAEMON_SEPARATED_EXPORTS.has(name)
       )),
     ...APPROVED_VALUE_ONLY_EXPORTS,
+    ...SETTLED_ADDITIONAL_PROJECTION_EXPORTS,
     ...DECLARATION_CLOSURE_GENUINE_EXPORTS,
   ].sort();
   expect(new Set(names).size).toBe(names.length);
@@ -613,8 +656,15 @@ describe('Agent runtime package-local publication projection', () => {
     expect(runtimeExports.map((entry) => entry.name).sort())
       .toEqual(directlyOwnedRuntimeExports.sort());
     expect(new Set(runtimeExports.map((entry) => entry.specifier)))
-      .toEqual(new Set(['@happier-dev/protocol/runtime']));
-    expect([...namedExportsFromSpecifier(indexSource, '@happier-dev/protocol/runtime')].sort())
+      .toEqual(new Set([
+        '@happier-dev/protocol/runtime',
+        '@happier-dev/protocol/providers/materialization/v1',
+        '@happier-dev/protocol/usage/contextUsage',
+        '@happier-dev/protocol/usage/usageAnalyticsContracts',
+        '@happier-dev/protocol/voice/realtime/agentSession',
+      ]));
+    expect(directNamedExports(indexSource).filter((entry) => INDEX_PORTABLE_PROTOCOL_RUNTIME_EXPORTS.has(entry.name))
+      .map((entry) => entry.name).sort())
       .toEqual([...INDEX_PORTABLE_PROTOCOL_RUNTIME_EXPORTS].sort());
   });
 

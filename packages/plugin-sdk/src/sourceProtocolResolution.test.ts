@@ -55,15 +55,35 @@ const privateSourceSpecifiers = [
 ] as const;
 
 describe('Plugin SDK source Protocol resolution', () => {
-    it('resolves only public SDK and Protocol exports to their canonical source owners', async () => {
+    it.each(['vitest.config.ts', 'vitest.source.config.ts'])('resolves public workspace exports to their canonical source owners with %s', async (config) => {
         const server = await createServer({
-            configFile: resolve(import.meta.dirname, '../vitest.source.config.ts'),
+            configFile: resolve(import.meta.dirname, '..', config),
             logLevel: 'error',
-            server: { middlewareMode: true },
+            optimizeDeps: { noDiscovery: true, include: [] },
+            server: { middlewareMode: true, hmr: false, watch: null },
         });
 
         try {
-            for (const testCase of [...pluginSdkSourceCases, ...protocolSourceCases]) {
+            for (const testCase of [
+                ...pluginSdkSourceCases,
+                ...protocolSourceCases,
+                {
+                    specifier: '@happier-dev/release-runtime/releaseRings',
+                    source: resolve(import.meta.dirname, '../../release-runtime/src/releaseRings.ts'),
+                },
+                {
+                    specifier: '@happier-dev/email-transports-protocol/v1',
+                    source: resolve(import.meta.dirname, '../../email-transports-protocol/src/v1/index.ts'),
+                },
+                {
+                    specifier: '@happier-dev/forge-ci/runtime',
+                    source: resolve(import.meta.dirname, '../../forge-ci/src/runtime.ts'),
+                },
+                {
+                    specifier: '@happier-dev/plugin-ui/ansi',
+                    source: resolve(import.meta.dirname, '../../plugin-ui/src/ansi.ts'),
+                },
+            ]) {
                 const resolved = await server.pluginContainer.resolveId(
                     testCase.specifier,
                     resolve(import.meta.dirname, './composerReferenceProviders.ts'),

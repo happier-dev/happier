@@ -293,15 +293,15 @@ describe('protocol-authoring composition algebra', () => {
         );
         expect(sessions).toContain('SessionIdSchema: ProtocolComposableSchema<SessionId>');
         expect(automations).toMatch(
-            /export\s*\{[^}]*\bAutomationIdV1Schema\b[^}]*\}\s*from '@happier-dev\/protocol\/automations\/result-delivery';/u,
+            /export\s*\{[^}]*\bAutomationIdV1Schema\b[^}]*\}\s*from '@happier-dev\/protocol\/automations\/automationIdV1';/u,
         );
         expect(automations).not.toContain('canonicalAutomationIdV1Schema');
         expect(automations).not.toContain('export const AutomationIdV1Schema');
         expect(targetedContributions).toContain(
             'PluginTargetedContributionSelectionV1Schema: ProtocolComposableSchema<PluginTargetedContributionSelectionV1>',
         );
-        expect(connectedAccounts).toContain(
-            "QualifiedConnectedAccountRefJsonSchema,\n    QualifiedConnectedAccountRefSchema,\n} from '@happier-dev/protocol/connect/qualified-connected-account-persistence';",
+        expect(connectedAccounts).toMatch(
+            /export\s*\{[^}]*\bQualifiedConnectedAccountRefSchema\b[^}]*\}\s*from '@happier-dev\/protocol\/connect\/qualified-connected-account-persistence';/u,
         );
         expect(connectedAccounts).not.toContain('canonicalQualifiedConnectedAccountRefSchema');
         expect(connectedAccounts).not.toContain('export const QualifiedConnectedAccountRefSchema');

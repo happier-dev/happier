@@ -14,7 +14,7 @@ const display = {
 
 describe('browser SDK helpers', () => {
     it('publishes browser contribution helpers beside the retained toolchain packet', async () => {
-        const sourceText = await readFile(new URL('./index.ts', import.meta.url), 'utf8');
+        const sourceText = await readFile(new URL('./index.public.ts', import.meta.url), 'utf8');
         const sourceFile = ts.createSourceFile(
             'browser/index.ts',
             sourceText,

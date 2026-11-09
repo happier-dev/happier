@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -8,7 +9,7 @@ test('row completion updates the public Resource and empty rows can be restored'
     const kit = await createPluginTestkit({ manifest: module.manifest, module });
     const resource = kit.registration('resources', 'rows');
     assert.ok(resource);
-    const options = { context: { kind: 'global' }, signal: new AbortController().signal };
+    const options = createTestResourceInvocationContext({ context: { kind: 'global' }, signal: new AbortController().signal });
     try {
         assert.equal((await kit.invokeAction('set-complete', { rowId: 'release-guide', completed: true })).ok, true);
         assert.equal(JSON.parse(await resource.read(options)).rows[0].completed, true);

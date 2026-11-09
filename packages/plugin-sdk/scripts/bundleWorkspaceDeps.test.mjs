@@ -14,7 +14,7 @@ import {
   readdir,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 
@@ -24,7 +24,7 @@ import {
   withWorkspaceBundleLock,
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
-import { installNativeAdmissionFixture } from '../../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 import { ensureWorkspacePackagesBuiltByName, defaultWorkspaceBuildBoundary } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { isPidAlive } from '../../../apps/stack/scripts/utils/proc/pids.mjs';
@@ -46,7 +46,7 @@ async function createPreparedScriptAdmissionFixture(t) {
   await mkdir(dirname(scriptPath), { recursive: true });
   await writeFile(resolve(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*', 'apps/*'] }));
   await writeFile(resolve(root, 'pnpm-lock.yaml'), '# fixture\n');
-  await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'packages: []\n');
+  await writeFile(resolve(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n  - apps/*\n');
   for (const name of ['cli', 'ui', 'server']) {
     await mkdir(resolve(root, 'apps', name), { recursive: true });
     await writeFile(resolve(root, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
@@ -74,7 +74,7 @@ async function createPreparedScriptAdmissionFixture(t) {
   await writeFile(yarn, `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { callerHoldsDependencyConsumption } from ${JSON.stringify(new URL('../../../apps/stack/scripts/utils/proc/dependency_refresh.mjs', import.meta.url).href)};
+import { isDependencyRefreshMutationActive } from ${JSON.stringify(new URL('../../../apps/stack/scripts/utils/proc/dependency_refresh.mjs', import.meta.url).href)};
 const script = process.argv.at(-1);
 if (script === 'build') {
   if (process.cwd().endsWith('/prerequisite')) {
@@ -89,9 +89,10 @@ const token = process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN;
 const admissionClass = token ? readFileSync(resolve(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT,
   'owners', token.replace(':', '-'), 'class'), 'utf8').trim() : null;
 writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ token: token ?? null, admissionClass,
-  dependencyCustody: callerHoldsDependencyConsumption(process.env),
+  dependencyWriterActive: isDependencyRefreshMutationActive({ installDir: process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR || ${JSON.stringify(root)}, env: process.env }),
   leases: JSON.parse(process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]'),
   script, cwd: process.cwd(), pid: process.pid, staged: process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR }));
+process.stdout.write('SDK_FIXTURE_PREPARED\\n');
 if (script === 'failure:prepared') process.exit(7);
 if (script === 'cancel:prepared') setInterval(() => {}, 1000);
 else {
@@ -117,13 +118,28 @@ esac
     let stderr = '';
     child.stderr.on('data', chunk => { stderr += chunk; });
     const done = new Promise((resolveDone, rejectDone) => { child.once('error', rejectDone); child.once('close', (status, signal) => resolveDone({ status, signal, stderr })); });
+    // Readiness follows the child, without imposing a second admission deadline.
+    const waitForOutput = (stream, expected) => new Promise(resolveReady => {
+      let output = '';
+      const onData = chunk => {
+        output += chunk;
+        if (output.includes(expected)) {
+          stream.off('data', onData);
+          resolveReady(true);
+        }
+      };
+      stream.on('data', onData);
+      child.once('close', () => { stream.off('data', onData); resolveReady(false); });
+    });
+    const prepared = waitForOutput(child.stdout, 'SDK_FIXTURE_PREPARED\n');
+    const waiting = waitForOutput(child.stderr, 'waiting for heavyweight admission');
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await done; });
-    return { child, done, stderr: () => stderr };
+    return { child, done, prepared, waiting, stderr: () => stderr };
   };
   return { ...native, root, pluginSdkDir, env, marker, memory, locks, start };
 }
 
-test('SDK prepared public entrypoint acquires dependency consumption and both publication leases before admission', { skip: process.platform !== 'linux' }, async t => {
+test('SDK prepared public entrypoint waits for dependency writers and acquires both publication leases before admission', { skip: process.platform !== 'linux' }, async t => {
   for (const heldIndex of [0, 1, 'dependency']) await t.test(heldIndex === 0 ? 'bundle' : heldIndex === 1 ? 'package' : 'dependency', async t => {
     const fixture = await createPreparedScriptAdmissionFixture(t);
     let running;
@@ -141,7 +157,7 @@ test('SDK prepared public entrypoint acquires dependency consumption and both pu
     assert.equal((await running.done).status, 0);
     const result = JSON.parse(await readFile(fixture.marker, 'utf8'));
     assert.ok(result.token, 'the selected script must run beneath genuine admission');
-    assert.equal(result.dependencyCustody, true, 'nested compilation must inherit installed-tree consumption before publication admission');
+    assert.equal(result.dependencyWriterActive, false, 'nested compilation starts after the installed-tree writer completes');
     assert.deepEqual(result.leases.map(value => JSON.parse(value).path).sort(), [...fixture.locks].sort());
     assert.equal(result.script, 'build:prepared');
     assert.equal(result.staged, fixture.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR);
@@ -151,14 +167,15 @@ test('SDK prepared public entrypoint acquires dependency consumption and both pu
 test('SDK prepared public entrypoint releases both leases while waiting for memory', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createPreparedScriptAdmissionFixture(t);
   await writeFile(fixture.memory, '1 73400320\n');
+  const pressure = await holdNativeAdmissionFixtureMemory(t, fixture, { totalKiB: 73400320, availableKiB: 1 });
   const running = fixture.start();
-  for (let attempt = 0; !running.stderr().includes('waiting for heavyweight admission'); attempt++) {
-    if (attempt === 500) assert.fail(`SDK preparation did not wait for native capacity: ${running.stderr()}`);
-    await new Promise(resolveWait => setTimeout(resolveWait, 10));
+  try {
+    assert.equal(await running.waiting, true, `SDK preparation did not wait for native capacity: ${running.stderr()}`);
+    for (const lockPath of fixture.locks) await withWorkspaceBundleLock(() => {}, { lockPath, timeoutMs: 100 });
+    assert.deepEqual(await readdir(resolve(fixture.admissionRoot, 'owners')), [basename(pressure.ownerPath)]);
+  } finally {
+    await pressure.release(() => writeFile(fixture.memory, '73400320 73400320\n'));
   }
-  for (const lockPath of fixture.locks) await withWorkspaceBundleLock(() => {}, { lockPath, timeoutMs: 100 });
-  assert.deepEqual(await readdir(resolve(fixture.admissionRoot, 'owners')), []);
-  await writeFile(fixture.memory, '73400320 73400320\n');
   assert.equal((await running.done).status, 0);
   assert.ok(JSON.parse(await readFile(fixture.marker, 'utf8')).token);
 });
@@ -186,7 +203,7 @@ test('SDK prepared public entrypoint reuses producer leases inside captured work
   assert.deepEqual(result.built, ['@happier-dev/plugin-sdk']);
   const prepared = JSON.parse(await readFile(fixture.marker, 'utf8'));
   assert.notEqual(prepared.cwd, fixture.pluginSdkDir, 'the prepared script consumes captured source');
-  assert.equal(prepared.dependencyCustody, true, 'captured compilation retains the original installed-tree custody');
+  assert.equal(prepared.dependencyWriterActive, false, 'captured compilation starts after the original installed-tree writer completes');
   assert.deepEqual([...new Set(prepared.leases.map(value => JSON.parse(value).path))].sort(), [...fixture.locks].sort(),
     'captured compilation must not create another publication owner');
   assert.match(await readFile(resolve(fixture.pluginSdkDir, 'dist/index.js'), 'utf8'), /ready/);
@@ -198,13 +215,9 @@ test('SDK prepared public entrypoint propagates script failure and cancellation 
   assert.equal(failure.status, 1);
   assert.match(failure.stderr, /failure:prepared failed with exit code 7/);
   const running = fixture.start('cancel:prepared');
-  let prepared;
-  for (let attempt = 0; ; attempt++) {
-    prepared = await readFile(fixture.marker, 'utf8').then(JSON.parse).catch(() => null);
-    if (prepared?.script === 'cancel:prepared') break;
-    if (attempt === 500) assert.fail(`prepared child did not start: ${running.stderr()}`);
-    await new Promise(resolveWait => setTimeout(resolveWait, 10));
-  }
+  assert.equal(await running.prepared, true, `prepared child did not start: ${running.stderr()}`);
+  const prepared = JSON.parse(await readFile(fixture.marker, 'utf8'));
+  assert.equal(prepared.script, 'cancel:prepared');
   running.child.kill('SIGTERM');
   assert.notEqual((await running.done).status, 0);
   for (let attempt = 0; isPidAlive(prepared.pid); attempt++) {
@@ -239,22 +252,20 @@ childProcess.spawn = (command, args, options) => original(command === canonical 
 syncBuiltinESMExports();\n`);
   fixture.env.NODE_OPTIONS = `${fixture.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(spawnBoundary).href}`;
   await writeFile(fixture.memory, '1 73400320\n');
+  const pressure = await holdNativeAdmissionFixtureMemory(t, fixture, { totalKiB: 73400320, availableKiB: 1 });
   const running = fixture.start();
   try {
-    for (let attempt = 0; !running.stderr().includes('waiting for heavyweight admission'); attempt++) {
-      if (attempt === 500) assert.fail(`prerequisite did not queue: ${running.stderr()}`);
-      await new Promise(resolveWait => setTimeout(resolveWait, 10));
-    }
+    assert.equal(await running.waiting, true, `prerequisite did not queue: ${running.stderr()}`);
     running.child.kill('SIGTERM');
     const completion = await Promise.race([running.done, new Promise(resolveWait => setTimeout(() => resolveWait('pending'), 5000))]);
     assert.notEqual(completion, 'pending', 'SDK cancellation must retire the queued prerequisite before its compiler starts');
     assert.notEqual(completion.status, 0);
     assert.equal(await readFile(fixture.marker, 'utf8').catch(() => null), null);
-    assert.deepEqual(await readdir(resolve(fixture.admissionRoot, 'owners')), []);
+    assert.deepEqual(await readdir(resolve(fixture.admissionRoot, 'owners')), [basename(pressure.ownerPath)]);
     assert.deepEqual(await readdir(resolve(fixture.admissionRoot, 'waiters')), []);
   } finally {
     // A RED assertion must still release this test's legitimate queued work.
-    await writeFile(fixture.memory, '73400320 73400320\n');
+    await pressure.release(() => writeFile(fixture.memory, '73400320 73400320\n'));
     await running.done;
   }
 });
@@ -265,6 +276,16 @@ test('plugin-sdk workspace bundling uses the canonical repository bundle lock by
   assert.equal(
     resolvePluginSdkWorkspaceBundleLockPath({ repoRoot }),
     resolveWorkspaceBundleLockPath(repoRoot),
+  );
+});
+
+test('plugin-sdk captured readers share the producer publication lock', () => {
+  assert.equal(
+    resolvePluginSdkWorkspaceBundleLockPath({
+      repoRoot: '/capture',
+      env: { HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: '/producer' },
+    }),
+    resolveWorkspaceBundleLockPath('/producer'),
   );
 });
 
@@ -333,6 +354,7 @@ test('declaration preparation derives stale Plugin SDK DTOs through the canonica
   await assert.rejects(() => runPluginSdkPreparedScript('check:action-type-map', options));
 });
 
+
 test('plugin-sdk workspace bundling preserves an explicit lock override', () => {
   assert.equal(
     resolvePluginSdkWorkspaceBundleLockPath({ repoRoot: '/repo', lockPath: '/tmp/explicit.lock' }),
@@ -389,6 +411,36 @@ test('plugin-sdk declaration preparation publishes the exact workspace graph con
   });
 });
 
+test('plugin-sdk prepared scripts supply their heap budget to real Node descendants', async t => {
+  const root = await mkdtemp(resolve(tmpdir(), 'happier-sdk-prepared-heap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packageManager = resolve(root, 'pnpm.mjs');
+  const resultPath = resolve(root, 'heap.json');
+  // Substitute only the package-manager executable boundary. Both Node heaps
+  // are measured in real processes launched through the production owner.
+  await writeFile(packageManager, `import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { getHeapStatistics } from 'node:v8';
+const descendant = Number(execFileSync(process.execPath,
+  ['--input-type=module', '-e', "import { getHeapStatistics } from 'node:v8'; console.log(getHeapStatistics().heap_size_limit)"],
+  { encoding: 'utf8' }));
+writeFileSync(process.env.SDK_HEAP_RESULT, JSON.stringify({
+  launcher: getHeapStatistics().heap_size_limit, descendant, marker: process.env.SDK_HEAP_MARKER,
+}));
+`);
+  for (const nodeOptions of [undefined, '--no-warnings --max-old-space-size=128']) {
+    const env = { ...process.env, npm_execpath: packageManager, SDK_HEAP_RESULT: resultPath, SDK_HEAP_MARKER: 'preserved' };
+    if (nodeOptions === undefined) delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = nodeOptions;
+    await runPluginSdkPreparedScript('check:api-governance:locked', { pluginSdkDir: root, env });
+    const result = JSON.parse(await readFile(resultPath, 'utf8'));
+    assert.equal(result.marker, 'preserved');
+    assert.ok(result.launcher >= 8192 * 1024 * 1024, `launcher heap was ${result.launcher}`);
+    assert.ok(result.descendant >= 8192 * 1024 * 1024, `descendant heap was ${result.descendant}`);
+    assert.equal(env.NODE_OPTIONS, nodeOptions, 'the caller environment must remain unchanged');
+  }
+});
+
 test('plugin-sdk prepared readers preserve the caller environment until their script exits', async () => {
   const calls = [];
   const child = new EventEmitter();
@@ -414,6 +466,7 @@ test('plugin-sdk prepared readers preserve the caller environment until their sc
       env: {
         npm_execpath: '/tooling/pnpm',
         HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: 'held-by-reader',
+        NODE_OPTIONS: '--max-old-space-size=8192',
       },
       stdio: 'inherit',
       ownedProcessGroup: true,
@@ -439,7 +492,9 @@ test('plugin-sdk declaration preparation reuses prerequisites admitted by the ca
   });
 });
 
-test('plugin-sdk keeps publication preparation separate from ordinary source validation', async () => {
+test('plugin-sdk validation shares declaration preparation without publishing API outputs', async () => {
+  // SDKVENDOR owner decision (2026-10-28): validation prepares its worker-local
+  // vendored closure through the build owner; API publication stays explicit.
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
   const publicationPreparers = [
@@ -454,6 +509,10 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
     'build:finite',
     'api:finite',
     'build',
+    'test:source',
+    'test:finite',
+    'typecheck:local',
+    'typecheck:finite',
   ];
   for (const scriptName of publicationPreparers) {
     assert.match(
@@ -474,7 +533,7 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
   assert.equal(packageJson.scripts.prebuild, undefined);
   assert.equal(packageJson.scripts['pretypecheck:source'], undefined);
   assert.equal(packageJson.scripts['pretypecheck:tests'], undefined);
-  assert.equal(packageJson.scripts['test:source'], 'vitest run --config vitest.source.config.ts');
+  assert.equal(packageJson.scripts['test:source:prepared'], 'vitest run --config vitest.source.config.ts');
   assert.equal(packageJson.scripts['test:local'], 'pnpm --silent run test:source && pnpm --silent run test:local:adjacent');
   const adjacentScript = packageJson.scripts['test:local:adjacent'];
   assert.doesNotMatch(adjacentScript, /bundleWorkspaceDeps|prepare:declarations/u);
@@ -514,8 +573,6 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
     packageJson.scripts['test:prepared'].startsWith('vitest run --config vitest.config.ts && '),
     'the prepared test lane must use the authored-source collection boundary before adjacent tests',
   );
-  assert.equal(packageJson.scripts['test:finite'], 'pnpm --silent run test:prepared');
-  assert.equal(packageJson.scripts['typecheck:finite'], 'pnpm --silent run typecheck:tests:prepared');
 });
 
 test('plugin-sdk runtime bundling admits the resolved artifact closure and publishes it once', async () => {
@@ -616,7 +673,7 @@ test('plugin-sdk artifact bundling rebuilds newer stale workspace output from cu
 
     assert.equal(bundledProtocolContents, 'export const generation = "current";\n');
     assert.deepEqual(admissionCalls, [
-      { packageNames: ['@happier-dev/cli-common'], force: true },
+      { packageNames: ['@happier-dev/cli-common'], force: undefined },
       { packageNames: ['@happier-dev/protocol'], force: true },
     ]);
   } finally {
@@ -654,7 +711,7 @@ test('plugin-sdk live bundling keeps workspace admission incremental', async () 
   });
 
   assert.deepEqual(admissionCalls, [
-    { packageNames: ['@happier-dev/cli-common'], force: false },
+    { packageNames: ['@happier-dev/cli-common'], force: undefined },
     { packageNames: ['@happier-dev/protocol'], force: undefined },
   ]);
   assert.deepEqual(publications, [{

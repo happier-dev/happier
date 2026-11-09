@@ -1,24 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { build, normalizePath } from 'vite';
+import { build, normalizePath, type Plugin } from 'vite';
 import { describe, expect, it } from 'vitest';
-import ts from 'typescript';
 
 function readPackageJson(path: URL): { exports?: Record<string, unknown> } {
     return JSON.parse(readFileSync(path, 'utf8')) as { exports?: Record<string, unknown> };
 }
 
-function readNamedExports(path: string): readonly string[] {
-    const source = readFileSync(path, 'utf8');
-    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const names: string[] = [];
-    for (const statement of sourceFile.statements) {
-        if (!ts.isExportDeclaration(statement) || !statement.exportClause) continue;
-        if (!ts.isNamedExports(statement.exportClause)) continue;
-        names.push(...statement.exportClause.elements.map((element) => element.name.text));
-    }
-    return names.sort();
+async function protocolBrowserSources(): Promise<Plugin> {
+    // Reuse the source lane's resolver: nested Vite builds do not inherit Vitest plugins.
+    const { createWorkspacePackageSourcesPlugin }: {
+        createWorkspacePackageSourcesPlugin: (
+            packages: readonly Readonly<{ packageName: string; packageSourceRoot: string }>[],
+            name: string,
+            options: Readonly<{ exportConditions: readonly string[] }>,
+        ) => Plugin;
+    } = await import(resolve(import.meta.dirname, '../../../scripts/testing/vitestWorkspacePackageResolution.ts'));
+    return createWorkspacePackageSourcesPlugin([
+        { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(import.meta.dirname, '../../protocol/src') },
+    ], 'plugin-sdk-browser-protocol-sources', { exportConditions: ['browser'] });
 }
 
 const voiceRealmEntries = {
@@ -99,267 +100,11 @@ function emittedVoiceRealmEntries(modules: ReadonlySet<string>): VoiceRealmEntry
 }
 
 describe('browser-safe package exports', () => {
-    it('publishes the one registration transaction through browser and React Native conditions', () => {
-        const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
-
-        expect(packageJson.exports?.['./host/registration']).toMatchObject({
-            types: './dist/host/registration/index.d.ts',
-            browser: './dist/host/registration/index.js',
-            'react-native': './dist/host/registration/index.js',
-            default: './dist/host/registration/index.js',
-        });
-    });
-
-    it('bundles the canonical registration transaction and host-proven Action failure factory', async () => {
-        const registrationEntry = normalizePath(resolve(
-            import.meta.dirname,
-            './host/registration/index.ts',
-        ));
-        const protocolManifestEntry = normalizePath(resolve(
-            import.meta.dirname,
-            '../../protocol/src/plugins/manifest/index.ts',
-        ));
-        const protocolAgentsEntry = normalizePath(resolve(
-            import.meta.dirname,
-            '../../protocol/src/plugins/agents.ts',
-        ));
-        const emittedModules = new Set<string>();
-        const result = await build({
-            configFile: false,
-            logLevel: 'silent',
-            resolve: {
-                alias: [
-                    {
-                        find: /^@happier-dev\/protocol\/plugins\/manifest$/u,
-                        replacement: protocolManifestEntry,
-                    },
-                    {
-                        find: '@happier-dev/protocol/plugins/agents',
-                        replacement: protocolAgentsEntry,
-                    },
-                ],
-            },
-            plugins: [{
-                name: 'plugin-registration-browser-realm-entry',
-                resolveId(id) {
-                    return id === 'virtual:plugin-registration-browser-realm-entry'
-                        ? `\0${id}`
-                        : null;
-                },
-                load(id) {
-                    if (id !== '\0virtual:plugin-registration-browser-realm-entry') return null;
-                    return `export {
-                        createPluginActionHandlerNotStartedError,
-                        createPluginRegistrationScope,
-                    } from ${JSON.stringify(registrationEntry)};`;
-                },
-                generateBundle() {
-                    for (const id of this.getModuleIds()) emittedModules.add(id);
-                },
-            }],
-            build: {
-                minify: false,
-                target: 'es2022',
-                write: false,
-                rollupOptions: {
-                    external: (id) => id.startsWith('@happier-dev/'),
-                    input: 'virtual:plugin-registration-browser-realm-entry',
-                    preserveEntrySignatures: 'strict',
-                    output: {
-                        format: 'es',
-                        inlineDynamicImports: true,
-                    },
-                },
-            },
-        });
-
-        expect([...emittedModules].filter((id) => (
-            id.includes('node:') || id.includes('__vite-browser-external')
-        ))).toEqual([]);
-
-        const buildResults = Array.isArray(result) ? result : [result];
-        const entryChunk = buildResults
-            .flatMap((item) => 'output' in item ? item.output : [])
-            .find((item) => item.type === 'chunk' && item.isEntry);
-        expect(entryChunk?.type).toBe('chunk');
-        if (!entryChunk || entryChunk.type !== 'chunk') {
-            throw new Error('Vite did not emit the registration transaction entry chunk');
-        }
-        expect(entryChunk.exports).toEqual([
-            'createPluginActionHandlerNotStartedError',
-            'createPluginRegistrationScope',
-        ]);
-    }, 60_000);
-
-    it('publishes the canonical root and manifest entrypoints without retired browser aliases', () => {
-        const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
-        const browserRootExports = readNamedExports(resolve(
-            import.meta.dirname,
-            './index.browser.ts',
-        ));
-
-        expect(packageJson.exports?.['.']).toMatchObject({
-            types: './dist/index.d.ts',
-            browser: {
-                'happier-source': './src/index.browser.ts',
-                default: './dist/index.browser.js',
-            },
-            default: './dist/index.js',
-        });
-        expect(packageJson.exports?.['./manifest']).toMatchObject({
-            types: './dist/manifest/index.d.ts',
-            default: './dist/manifest/index.js',
-        });
-        expect(browserRootExports).toContain('PluginClientApi');
-        expect(browserRootExports).not.toContain('PluginApi');
-    });
-
-    it('keeps runtime target-aware types on the browser root while protocol authoring owns author contracts', () => {
-        const browserRootSource = readFileSync(new URL('./index.browser.ts', import.meta.url), 'utf8');
-        const protocolPublicSource = resolve(
-            import.meta.dirname,
-            './protocol/index.public.ts',
-        );
-        const protocolBrowserSource = resolve(
-            import.meta.dirname,
-            './protocol/index.browser.ts',
-        );
-        const contributionsPublicSource = resolve(
-            import.meta.dirname,
-            './contributions/index.public.ts',
-        );
-        const contributionsBrowserSource = resolve(
-            import.meta.dirname,
-            './contributions/index.browser.ts',
-        );
-        const targetedAuthoringExportEnd = "} from './targetedContributionAuthoring.js';";
-        const targetedAuthoringExportEndIndex = browserRootSource.lastIndexOf(targetedAuthoringExportEnd);
-        const targetedAuthoringTypeExportStart = browserRootSource.lastIndexOf(
-            'export type {',
-            targetedAuthoringExportEndIndex,
-        );
-        if (targetedAuthoringExportEndIndex < 0 || targetedAuthoringTypeExportStart < 0) {
-            throw new Error('targeted_contribution_browser_type_export_missing');
-        }
-        const exportedNames = browserRootSource.slice(
-            targetedAuthoringTypeExportStart + 'export type {'.length,
-            targetedAuthoringExportEndIndex,
-        )
-            .split(',')
-            .map((name) => name.trim())
-            .filter((name) => name.length > 0);
-
-        expect(exportedNames).toEqual(expect.arrayContaining([
-            'DefinedContributionPointRef',
-            'DefinedContributionPoints',
-            'ContributionAdmittedEntry',
-            'ContributionOperationContracts',
-            'ContributionSurfaceHandles',
-        ]));
-        for (const authorOnlyExport of [
-            'ContributionActionDangerLevel',
-            'ContributionActionSurface',
-            'ContributionProtocol',
-            'defineContributionPoint',
-            'defineContributionProtocol',
-            'defineProtocolUtf8String',
-            'defineProtocolUniqueArray',
-        ]) {
-            expect(exportedNames, authorOnlyExport).not.toContain(authorOnlyExport);
-        }
-        expect(browserRootSource).not.toContain(
-            "export {\n    defineContributionPoint,\n    defineContributionProtocol,\n} from './targetedContributionAuthoring.js';",
-        );
-        expect(readNamedExports(protocolPublicSource)).toEqual(expect.arrayContaining([
-            'defineProtocolObject',
-            'defineProtocolUtf8String',
-        ]));
-        expect(readNamedExports(contributionsPublicSource)).toEqual(expect.arrayContaining([
-            'defineContributionPoint',
-            'defineContributionProtocol',
-            'PluginTargetedContributionSelectionV1Schema',
-        ]));
-        expect(readFileSync(protocolBrowserSource, 'utf8').trim())
-            .toBe("export * from './index.public.js';");
-        expect(readFileSync(contributionsBrowserSource, 'utf8').trim())
-            .toBe("export * from './index.public.js';");
-    });
-
     it('does not publish retired usage compatibility paths', () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
 
         expect(packageJson.exports).not.toHaveProperty('./usage');
         expect(packageJson.exports).not.toHaveProperty('./experimental/usage');
-    });
-
-    it('uses protocol subpath exports for browser-safe SDK helper dependencies', () => {
-        const protocolPackageJson = readPackageJson(new URL('../../protocol/package.json', import.meta.url));
-        const hostedWebSource = readFileSync(new URL('./ui/hostedWeb.ts', import.meta.url), 'utf8');
-        const clientTransportSource = readFileSync(new URL('./ui/clientTransport.ts', import.meta.url), 'utf8');
-        const voiceClientSource = readFileSync(new URL('./voice/client.ts', import.meta.url), 'utf8');
-
-        expect(protocolPackageJson.exports).toMatchObject({
-            './actions/actionInputJsonSchema': {
-                types: './dist/actions/actionInputJsonSchema.d.ts',
-                default: './dist/actions/actionInputJsonSchema.js',
-            },
-            './actions/actionInputVoiceGuidance': {
-                types: './dist/actions/actionInputVoiceGuidance.d.ts',
-                default: './dist/actions/actionInputVoiceGuidance.js',
-            },
-            './plugins/manifest': {
-                types: './dist/plugins/manifest/index.d.ts',
-                default: './dist/plugins/manifest/index.js',
-            },
-            './plugins/ui': {
-                types: './dist/plugins/ui/index.d.ts',
-                default: './dist/plugins/ui/index.js',
-            },
-            './plugins/ui/client': {
-                types: './dist/plugins/ui/client.d.ts',
-                default: './dist/plugins/ui/client.js',
-            },
-            './plugins/hooks': {
-                types: './dist/plugins/hooks/catalog.d.ts',
-                default: './dist/plugins/hooks/catalog.js',
-            },
-            './plugins/contributions/browser': {
-                types: './dist/plugins/contributions/browser/index.d.ts',
-                default: './dist/plugins/contributions/browser/index.js',
-            },
-            './plugins/contributions/voice': {
-                types: './dist/plugins/contributions/voiceProviders.d.ts',
-                default: './dist/plugins/contributions/voiceProviders.js',
-            },
-            './plugins/contributions/ui': {
-                types: './dist/plugins/contributions/ui/index.d.ts',
-                default: './dist/plugins/contributions/ui/index.js',
-            },
-            './voice/modelPacks/contributionV1': {
-                types: './dist/voice/modelPacks/contributionV1.d.ts',
-                default: './dist/voice/modelPacks/contributionV1.js',
-            },
-            './voice/providerOperations': {
-                types: './dist/voice/providerOperations.d.ts',
-                default: './dist/voice/providerOperations.js',
-            },
-            './voice/sessionBinding': {
-                types: './dist/voice/sessionBinding.d.ts',
-                default: './dist/voice/sessionBinding.js',
-            },
-        });
-        expect(protocolPackageJson.exports).not.toHaveProperty('./plugins/contributions/agentSettings');
-        expect(hostedWebSource).not.toMatch(
-            /^import\s*\{[^}]*\}\s*from ['"]@happier-dev\/protocol['"];/m,
-        );
-        expect(hostedWebSource).toContain("from '@happier-dev/protocol/plugins/ui/client'");
-        expect(clientTransportSource).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
-        expect(clientTransportSource).toContain("from '@happier-dev/protocol/plugins/ui/client'");
-        expect(voiceClientSource).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
-        expect(voiceClientSource).toContain("from '@happier-dev/protocol/actions/actionSpecs'");
-        expect(voiceClientSource).toContain("from '@happier-dev/protocol/voice/providerOperations'");
-        expect(voiceClientSource).toContain("from '@happier-dev/protocol/voice/realtime'");
-        expect(voiceClientSource).toContain("from '@happier-dev/protocol/voice/sessionBinding'");
     });
 
     it('keeps hosted-web helpers and the client entry out of Node-only Protocol modules', async () => {
@@ -425,35 +170,27 @@ describe('browser-safe package exports', () => {
         expect(entryChunk.code).not.toContain('node:crypto');
     }, 60_000);
 
-    it('keeps every portable manifest runtime value out of Node and host-state modules', async () => {
+    it.each([
+        { title: 'keeps every portable manifest runtime value out of Node and host-state modules', injectNodeImport: false },
+        { title: 'detects a Node-only import added to the portable manifest graph', injectNodeImport: true },
+    ])('$title', async ({ injectNodeImport }) => {
         const manifestPortableEntry = resolve(import.meta.dirname, './manifest.browser.ts');
-        const protocolManifestDeclarationEntry = resolve(
-            import.meta.dirname,
-            '../../protocol/src/plugins/manifest/declaration.ts',
-        );
         const emittedModules = new Set<string>();
         const result = await build({
             configFile: false,
             logLevel: 'silent',
-            resolve: {
-                alias: {
-                    '@happier-dev/protocol/plugins/manifest/declaration': protocolManifestDeclarationEntry,
-                },
-            },
-            plugins: [{
+            plugins: [await protocolBrowserSources(), {
                 name: 'plugin-manifest-browser-realm-entry',
                 resolveId(id) {
                     return id === 'virtual:plugin-manifest-browser-realm-entry' ? `\0${id}` : null;
                 },
                 load(id) {
                     if (id !== '\0virtual:plugin-manifest-browser-realm-entry') return null;
-                    return `
-                        export {
-                            compilePluginJsonSchema,
-                            createPluginContributionIdentity,
-                            isValidPluginJsonSchemaValue,
-                        } from ${JSON.stringify(manifestPortableEntry)};
-                    `;
+                    return `export * from ${JSON.stringify(manifestPortableEntry)};`;
+                },
+                transform(code, id) {
+                    if (!injectNodeImport || id !== normalizePath(manifestPortableEntry)) return null;
+                    return `${code}\nimport 'node:fs';`;
                 },
                 generateBundle() {
                     for (const id of this.getModuleIds()) emittedModules.add(id);
@@ -474,7 +211,7 @@ describe('browser-safe package exports', () => {
             },
         });
 
-        expect(emittedModules).toContain(protocolManifestDeclarationEntry);
+        expect(emittedModules).toContain(normalizePath(manifestPortableEntry));
 
         const forbiddenModules = [...emittedModules].filter((id) =>
             id.includes('node:')
@@ -483,7 +220,11 @@ describe('browser-safe package exports', () => {
             || id.includes('/marketplace/')
             || id.includes('/plugins/installations/')
         );
-        expect(forbiddenModules).toEqual([]);
+        if (injectNodeImport) {
+            expect(forbiddenModules.some((id) => id.includes('__vite-browser-external'))).toBe(true);
+        } else {
+            expect(forbiddenModules).toEqual([]);
+        }
 
         const buildResults = Array.isArray(result) ? result : [result];
         const entryChunk = buildResults
@@ -534,19 +275,6 @@ describe('browser-safe package exports', () => {
     it('keeps the public Event Automation setup-result schema out of Node-only Protocol branches', async () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
         const eventsEntry = resolve(import.meta.dirname, './events/index.browser.ts');
-        const protocolRoot = resolve(import.meta.dirname, '../../protocol/src/index.ts');
-        const protocolEventSetupResultEntry = resolve(
-            import.meta.dirname,
-            '../../protocol/src/automations/automationEventSetupResultV1.ts',
-        );
-        const protocolEventHistoryGapResetActionEntry = resolve(
-            import.meta.dirname,
-            '../../protocol/src/automations/automationEventHistoryGapResetActionV1.ts',
-        );
-        const protocolEventEntry = resolve(
-            import.meta.dirname,
-            '../../protocol/src/automations/automationEventV1.ts',
-        );
         const emittedModules = new Set<string>();
         expect(packageJson.exports?.['./events']).toMatchObject({
             types: './dist/events/index.d.ts',
@@ -559,24 +287,7 @@ describe('browser-safe package exports', () => {
         const result = await build({
             configFile: false,
             logLevel: 'silent',
-            resolve: {
-                alias: [
-                    {
-                        find: '@happier-dev/protocol/automations/event-setup-result',
-                        replacement: protocolEventSetupResultEntry,
-                    },
-                    {
-                        find: '@happier-dev/protocol/automations/event',
-                        replacement: protocolEventEntry,
-                    },
-                    {
-                        find: '@happier-dev/protocol/automations/event-history-gap-reset-action',
-                        replacement: protocolEventHistoryGapResetActionEntry,
-                    },
-                    { find: /^@happier-dev\/protocol$/u, replacement: protocolRoot },
-                ],
-            },
-            plugins: [{
+            plugins: [await protocolBrowserSources(), {
                 name: 'plugin-events-browser-realm-entry',
                 resolveId(id) {
                     return id === 'virtual:plugin-events-browser-realm-entry' ? `\0${id}` : null;

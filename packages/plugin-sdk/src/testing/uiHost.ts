@@ -1186,6 +1186,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 message: failure.message,
                 ...(failure.retryable ? { retryable: true } : {}),
                 ...(failure.details === undefined ? {} : { details: failure.details }),
+                ...(failure.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: failure.actionHandlerInvocation }),
                 ...(failure.diagnostics === undefined ? {} : { diagnostics: [...failure.diagnostics] }),
             },
         });

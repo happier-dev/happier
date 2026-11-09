@@ -20,7 +20,7 @@ it('configures the hosted guest Mini core with English errors', async () => {
     }
 });
 
-it('configures English in the independently bundled hosted guest before parsing', async () => {
+it('keeps English errors and Action input admission in the independently bundled hosted guest', async () => {
     const repoRoot = resolve(import.meta.dirname, '../../../..');
     const entry = resolve(import.meta.dirname, 'hostedHtmlGuestEntry.ts');
     const result = await build({
@@ -33,7 +33,9 @@ it('configures English in the independently bundled hosted guest before parsing'
             { name: 'observe-guest-mini-error', setup(builder) {
                 builder.onLoad({ filter: /hostedHtmlGuestEntry\.ts$/ }, async args => ({
                     contents: await readFile(args.path, 'utf8')
-                        + "\nimport { z } from 'zod/mini'; globalThis.__happierGuestMiniIssue = z.string().check(z.minLength(3)).safeParse('ab').error?.issues[0]?.message;",
+                        + "\nimport { z } from 'zod/mini'; globalThis.__happierGuestMiniIssue = z.string().check(z.minLength(3)).safeParse('ab').error?.issues[0]?.message;"
+                        + "\nimport { PluginUiExecuteActionRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';"
+                        + "\nglobalThis.__happierGuestActionInputAdmitted = PluginUiExecuteActionRequestV1Schema.safeParse({ action: { pluginId: 'acme.forge', localId: 'read-links' }, input: { entries: Array.from({ length: 100 }, (_, index) => ({ entryRef: { source: { pluginId: 'acme.forge', localId: 'forge' }, kindId: 'pull-request', collisionScope: 'acme/repository', entryId: String(index) } })) } }).success;",
                     loader: 'ts', resolveDir: dirname(args.path),
                 }));
             } },
@@ -47,7 +49,13 @@ it('configures English in the independently bundled hosted guest before parsing'
             } },
         ],
     });
-    const realm = { window: {}, TextEncoder, TextDecoder, __happierGuestMiniIssue: undefined as string | undefined };
-    runInNewContext(result.outputFiles[0].text, realm);
+    // VM contexts lack the browser clone intrinsic. Rehome the native clone's
+    // JSON in that realm so its plain-object prototypes match browser behavior.
+    const realm = { window: {}, TextEncoder, TextDecoder,
+        cloneJson: (value: unknown) => JSON.stringify(structuredClone(value)),
+        __happierGuestMiniIssue: undefined as string | undefined,
+        __happierGuestActionInputAdmitted: undefined as boolean | undefined };
+    runInNewContext('globalThis.structuredClone = value => JSON.parse(cloneJson(value));\n' + result.outputFiles[0].text, realm);
     expect(realm.__happierGuestMiniIssue).toBe('Too small: expected string to have >=3 characters');
+    expect(realm.__happierGuestActionInputAdmitted).toBe(true);
 });

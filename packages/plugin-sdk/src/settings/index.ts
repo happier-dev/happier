@@ -1,15 +1,1 @@
-export { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from './projections.js';
-export type { PluginSettingFieldIdV2 } from './projections.js';
-export type { PluginSettingsActionDeclaration } from './projections.js';
-export type { PluginSettingsActionInput } from './projections.js';
-export type { PluginSettingsActionResult } from './projections.js';
-export type { PluginSettingsActionRuntime } from './projections.js';
-export type { PluginSettingsContribution } from './projections.js';
-export type { ScopedSettingsService } from './projections.js';
-export type { SettingDescriptor } from './projections.js';
-export type { SettingField } from './projections.js';
-export type { SettingsChange } from './projections.js';
-export type { SettingsMutationResult } from './projections.js';
-export type { SettingsScopeRef } from './projections.js';
-export type { SettingsService } from './projections.js';
-export type { SettingsSnapshot } from './projections.js';
+export * from './index.public.js';

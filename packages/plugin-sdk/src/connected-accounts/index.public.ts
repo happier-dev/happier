@@ -1,5 +1,16 @@
 export type { AuthCallbackCreateInput } from '../connectedAccounts.js';
 export { classifyConnectedAccountTokenEndpointFailure, parseConnectedAccountTokenEndpointFailure } from './projections.js';
+export {
+    PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,
+    classifyProviderLimitEvidence,
+} from '../cloud/providerLimitEvidence.js';
+export type {
+    ProviderLimitCategory,
+    ProviderLimitEvidenceClassification,
+    ProviderLimitEvidenceConfidence,
+    ProviderLimitEvidenceContext,
+    ProviderLimitEvidenceProvenance,
+} from '../cloud/providerLimitEvidence.js';
 export type { AuthCallbackMode } from '../connectedAccounts.js';
 export type { AuthCallbackWaitInput } from '../connectedAccounts.js';
 export type { AuthFailureCode } from '../connectedAccounts.js';
@@ -23,9 +34,10 @@ export type { PluginConnectedAccountAuthCompletionResult as ConnectedAccountAuth
 export type { PluginConnectedAccountFailureRetryEvidence as ConnectedAccountFailureRetryEvidence } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
+export type { ConnectedAccountPortableAuthenticationContext } from '../connectedAccounts.js';
 export type { ConnectedAccountAuthenticationModeRuntime } from '../connectedAccounts.js';
 export type { ConnectedAccountAuthenticationRuntime } from '../connectedAccounts.js';
-export type { ConnectedAccountPortableAuthenticationContext, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
+export type { ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
 export type { PluginConnectedAccountBindingEvent as ConnectedAccountBindingEvent } from '../services/connectedAccounts.js';
 export type { ConnectedAccountBindingSummary } from '../connectedAccounts.js';
 export type { ConnectedAccountServiceKey } from '../connectedAccounts.js';
@@ -129,5 +141,3 @@ export {
   normalizeConnectedAccountAccessTokenFingerprint,
   type ConnectedAccountAccessTokenFingerprint,
 } from './tokenFingerprint.js';
-
-export type { ConnectedAccountEstablishedReadContext } from '../connectedAccounts.js';

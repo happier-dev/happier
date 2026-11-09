@@ -1,17 +1,19 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runInNewContext, runInThisContext } from 'node:vm';
+import { evaluatePortableCommonJs } from '../../test-support/evaluatePortableCommonJs.js';
 import { createRequire } from 'node:module';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { transformSync } from '@babel/core';
 
 import { compileUniversalPluginUiCommonJs } from './universalCommonJsCompiler.js';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../cli-common/sourceRuntimeEntries.mjs';
 import { resolve } from 'node:path';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { derivePluginAccountContributionRegistrationRights, derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { createPluginRegistrationScope, readPluginActionInputParser } from '../../host/registration/index.js';
+import { createPluginRegistrationScope } from '../../registration/scope.js';
+import { readPluginActionInputParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import type { PluginAccountActivationModule } from '../../activation.js';
 import { manifest as authoredAccountManifest, activate as activateAuthoredRoot } from '../../../fixtures/account-actions/src/index.js';
 
@@ -34,6 +36,19 @@ vi.mock('node:module', async (importOriginal) => {
         return require;
     } };
 });
+
+/**
+ * Hermes compiles `new Function` with function-scoped `let`/`const`: `hermesc -dump-ir` shows one frame
+ * slot per loop binding, so loop closures share it. Evaluate the artifact under exactly those semantics.
+ */
+function evaluateWithHermesBindingSemantics(bytes: Uint8Array, hostModules: Readonly<Record<string, unknown>>) {
+    const source = transformSync(new TextDecoder().decode(bytes), { configFile: false, babelrc: false, sourceType: 'script', plugins: [{
+        visitor: { VariableDeclaration(path: { node: { kind: string } }) { path.node.kind = 'var'; } },
+    }] })!.code!;
+    const module = { exports: {} as Record<string, () => unknown> };
+    new Function('module', 'exports', 'require', source)(module, module.exports, (specifier: string) => hostModules[specifier]);
+    return module.exports;
+}
 
 afterEach(async () => {
     moduleResolutionBoundary.reactUnavailable = false;
@@ -70,6 +85,24 @@ async function compileFixture(root: string, entry: string, artifactId: string) {
 }
 
 describe('compileUniversalPluginUiCommonJs', () => {
+    it('keeps React hooks and loop closures intact under the native engine\'s binding semantics', async () => {
+        const { root, entry } = await fixture(`
+            import * as React from 'react';
+            export function read() {
+                const handlers = [];
+                for (const label of ['a', 'b']) handlers.push(() => label);
+                for (let index = 0; index < 2; index += 1) { const doubled = index * 2; handlers.push(() => doubled); }
+                return { memo: React.useMemo(), labels: handlers.map((handler) => handler()) };
+            }
+        `);
+        const compiled = await compileUniversalPluginUiCommonJs({ projectRoot: root, entryPath: entry, artifactId: 'hermes-bindings', requestedExports: ['read'] });
+        const { read } = evaluateWithHermesBindingSemantics(compiled.bytes, {
+            // A real React namespace ends with `version`, the value the shared binding read on device.
+            react: { useMemo: () => 'memoized', version: '19.2.0' },
+        });
+        expect(read!()).toEqual({ memo: 'memoized', labels: ['a', 'b', 0, 2] });
+    });
+
     it('compiles a portable Account activation entry when the compiler cannot resolve host-provided React', async () => {
         moduleResolutionBoundary.reactUnavailable = true;
         const { root, entry } = await fixture('export function activate() { return { account: true }; }');
@@ -84,7 +117,9 @@ describe('compileUniversalPluginUiCommonJs', () => {
             rights: derivePluginDaemonContributionRegistrationRights(manifest.contributes) });
         try {
             await activateAuthoredRoot(scope.api);
-            expect(scope.commit()).toEqual([]);
+            expect(scope.commit().map(({ family, localId }) => ({ family, localId }))).toEqual(
+                manifest.contributes.connectedAccountDescriptors.map(({ id }) => ({ family: 'connectedAccountDescriptors', localId: id })),
+            );
         } finally { await scope.dispose(); }
     });
     it('compiles and activates a separately authored Account plugin through the shared registration owner', async () => {
@@ -93,31 +128,34 @@ describe('compileUniversalPluginUiCommonJs', () => {
         const packageJson = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')) as {
             exports: Record<string, string>;
         };
+        const authoredManifest = PluginManifestV2Schema.parse(authoredAccountManifest);
+        const execution = authoredManifest.contributes.actions.find(action => action.execution.target === 'account')?.execution;
+        if (execution?.target !== 'account') throw new Error('Fixture must declare an Account action');
+        const { artifactId, exportName } = execution.account;
         const result = await compileUniversalPluginUiCommonJs({
-            projectRoot, entryPath: resolve(projectRoot, packageJson.exports['./happier-plugin-ui/account-runtime']!), artifactId: 'account-runtime',
-            requestedExports: ['manifest', 'activate'], exportConditions: ['happier-source'],
+            projectRoot, entryPath: resolve(projectRoot, packageJson.exports[`./happier-plugin-ui/${artifactId}`]!), artifactId,
+            requestedExports: ['manifest', exportName], exportConditions: ['happier-source'],
             resolveSourceImport: (specifier) => packages.has(packageNameOfSpecifier(specifier))
                 ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
         });
-        expect(result.externalSpecifiers).toEqual([]);
         const module = { exports: {} as Record<string, unknown> };
-        // UI and CLI portable CommonJS loaders execute in the invoking realm;
-        // a separate VM realm would make ordinary host JSON fail prototype admission.
-        const evaluate = runInThisContext(`(function(module, exports) { ${new TextDecoder().decode(result.bytes)}\n})`) as (
-            module: { exports: Record<string, unknown> }, exports: Record<string, unknown>,
-        ) => void;
-        evaluate(module, module.exports);
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         const manifest = PluginManifestV2Schema.parse(module.exports.manifest);
-        expect(manifest).toEqual(PluginManifestV2Schema.parse(authoredAccountManifest));
+        expect(manifest).toEqual(authoredManifest);
         const scope = createPluginRegistrationScope({ pluginId: manifest.id,
-            target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activate' },
-            rights: derivePluginAccountContributionRegistrationRights(manifest.contributes, { artifactId: 'account-runtime', exportName: 'activate' }),
+            target: { realm: 'account', artifactId, exportName },
+            rights: derivePluginAccountContributionRegistrationRights(manifest.contributes, { artifactId, exportName }),
         });
-        if (typeof module.exports.activate !== 'function') throw new Error('Missing portable activation export');
+        const activate = module.exports[exportName];
+        if (typeof activate !== 'function') throw new Error('Missing portable activation export');
         // The independently compiled module is the executable system boundary.
-        await (module.exports.activate as PluginAccountActivationModule['activate'])(scope.api);
+        await (activate as PluginAccountActivationModule['activate'])(scope.api);
         const registrations = scope.commit();
-        expect(registrations.map((registration) => registration.localId)).toEqual(manifest.contributes.actions.map((action) => action.id));
+        expect(registrations.map((registration) => registration.localId)).toEqual([
+            ...manifest.contributes.actions.map((action) => action.id),
+            ...manifest.contributes.resources.map((resource) => resource.id),
+            ...manifest.contributes.connectedAccountDescriptors.map((descriptor) => descriptor.id),
+        ]);
         const read = registrations.find((registration) => registration.localId === 'read');
         expect(readPluginActionInputParser(read?.value)?.({ key: 'retained' }).success).toBe(true);
         expect(readPluginActionInputParser(read?.value)?.({ key: 'retained', machineId: 'forged' }).success).toBe(false);
@@ -141,7 +179,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
         expect(result.bytes.byteLength).toBeGreaterThan(0);
     });
 
-    it('configures bundled Mini before an authored entry parses during module evaluation', async () => {
+    it('uses host Mini locale when an authored entry parses during module evaluation', async () => {
         const { root, entry } = await fixture([
             "import { z } from 'zod/mini';",
             "const parsed = z.string().check(z.minLength(3)).safeParse('ab');",
@@ -152,14 +190,14 @@ describe('compileUniversalPluginUiCommonJs', () => {
         await symlink(zodPackageRoot, join(root, 'node_modules', 'zod'), process.platform === 'win32' ? 'junction' : 'dir');
         const result = await compileFixture(root, entry, 'mini-import-time-error');
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(new TextDecoder().decode(result.bytes), { module, exports: module.exports });
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         if (typeof module.exports.renderSurface !== 'function') throw new Error('Missing renderSurface');
         expect(module.exports.renderSurface()).toBe('Too small: expected string to have >=3 characters');
     });
 
     it.each([
-        ['sessions', 'AgentPermissionIntentV1Schema', '"default"', '"default"'],
-        ['manifest', 'PluginContributionIdentityV1Schema', '{ pluginId: "happier.triage", localId: "entries" }', '{ pluginId: "happier.triage", localId: "entries" }'],
+        ['sessions', 'AgentPermissionIntentV1Schema', '"default"', 'default'],
+        ['manifest', 'PluginContributionIdentityV1Schema', '{ pluginId: "happier.triage", localId: "entries" }', { pluginId: 'happier.triage', localId: 'entries' }],
     ])('bundles a narrow %s parser without unrelated catalog, compilation or signing', async (subpath, schema, value, expected) => {
         const { root, entry } = await fixture(`import { ${schema} } from '@happier-dev/plugin-sdk/${subpath}'; export const renderSurface = () => ${schema}.parse(${value});`);
         const packages = await readWorkspacePackages(resolve(import.meta.dirname, '../../../../..'));
@@ -172,9 +210,9 @@ describe('compileUniversalPluginUiCommonJs', () => {
             .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path));
         expect(retained.filter(path => /[/\\](?:ajv|ajv-formats|semver|tweetnacl|@noble)[/\\]/u.test(path))).toEqual([]);
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(new TextDecoder().decode(result.bytes), { module, exports: module.exports, TextEncoder, TextDecoder });
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         if (typeof module.exports.renderSurface !== 'function') throw new Error('Missing renderSurface');
-        expect(module.exports.renderSurface()).toEqual(runInNewContext(`(${expected})`));
+        expect(module.exports.renderSurface()).toEqual(expected);
     });
 
     it('bundles Action validation without the unused host catalog, JSON Schema compiler or signing', async () => {
@@ -194,7 +232,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
         expect(retained.filter(path => /[/\\](?:ajv|ajv-formats|semver|tweetnacl|@noble)[/\\]/u.test(path))).toHaveLength(0);
         expect(retained.filter(path => /[/\\]actions[/\\]actionSpecs\.(?:ts|js)$/u.test(path))).toHaveLength(0);
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(new TextDecoder().decode(result.bytes), { module, exports: module.exports, TextEncoder, TextDecoder });
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         if (typeof module.exports.renderSurface !== 'function') throw new Error('Missing renderSurface');
         expect(module.exports.renderSurface()).toEqual({ value: { label: 'portable' },
             picker: { inputType: { pluginId: 'happier.triage', localId: 'entries' }, semantic: 'entries' }, deferred: false });
@@ -213,7 +251,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
                 ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native'] }) : undefined,
         });
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(new TextDecoder().decode(result.bytes), { module, exports: module.exports, TextEncoder, TextDecoder, structuredClone });
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         if (typeof module.exports.renderSurface !== 'function') throw new Error('Missing renderSurface');
         expect(module.exports.renderSurface()).toEqual(expected);
     });
@@ -271,7 +309,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
             Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path));
         expect(retained.filter(path => /[/\\](?:protocol|zod|ajv|ajv-formats|semver|tweetnacl|@noble)[/\\]/u.test(path))).toEqual([]);
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(new TextDecoder().decode(result.bytes), { module, exports: module.exports });
+        evaluatePortableCommonJs(new TextDecoder().decode(result.bytes), module);
         expect(module.exports.renderSurface).toBeTypeOf('function');
         if (typeof module.exports.renderSurface !== 'function') throw new Error('Missing renderSurface');
         expect(module.exports.renderSurface()).toBe('1.2K');
@@ -396,7 +434,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
         expect(new TextDecoder().decode(result.bytes)).not.toContain('sourceMappingURL');
     });
 
-    it('bundles non-host dependency families instead of publishing them as host externals', async () => {
+    it('shares public schema owners while bundling other dependency families', async () => {
         const { root, entry } = await fixture([
             "import { marker as zodMarker } from 'zod';",
             "import { marker as protocolMarker } from '@happier-dev/protocol';",
@@ -421,9 +459,12 @@ describe('compileUniversalPluginUiCommonJs', () => {
             requestedExports: ['renderSurface'],
         });
 
-        expect(result.externalSpecifiers).toEqual([]);
+        expect(result.externalSpecifiers).toEqual(['@happier-dev/plugin-sdk', 'zod']);
         const output = new TextDecoder().decode(result.bytes);
-        for (const [, marker] of markers) expect(output).toContain(marker);
+        for (const [packageName, marker] of markers) {
+            if (packageName === 'zod' || packageName === '@happier-dev/plugin-sdk') expect(output).not.toContain(marker);
+            else expect(output).toContain(marker);
+        }
     });
 
     it('rejects an unexpected external retained by esbuild before publication', async () => {

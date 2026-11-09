@@ -3,7 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 
 import { build } from 'esbuild';
 
-import { PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2, PLUGIN_UI_HOST_API_VERSION_V1, PluginUiArtifactsManifestV2Schema, computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
+import { PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
+import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { PluginUiArtifactsManifestV2 } from '../hostedWebRuntime.js';
 
@@ -128,7 +130,7 @@ async function collectHostedStaticFiles(
             platform: 'browser',
             conditions: exportConditions ? [...exportConditions] : undefined,
             plugins: resolveSourceImport ? [{ name: 'hosted-ui-source-inputs', setup(builder) {
-                builder.onResolve({ filter: /^[^./#]/u }, ({ path }) => {
+                builder.onResolve({ filter: /^[^./#]/ }, ({ path }) => {
                     const sourcePath = resolveSourceImport(path);
                     return sourcePath ? { path: sourcePath } : undefined;
                 });

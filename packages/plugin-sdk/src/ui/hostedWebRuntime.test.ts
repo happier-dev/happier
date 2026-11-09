@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginUiArtifactDigestV1Schema, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import {
     defineHostedWebRuntimeMode,
@@ -56,7 +56,7 @@ describe('hosted web UI runtime SDK helpers', () => {
         });
 
         expect(manifest.entries).toHaveLength(2);
-        expect(() => PluginUiArtifactsManifestV2Schema.parse({
+        expect(() => defineUiArtifactsManifest({
             version: 2,
             entries: [
                 {
@@ -65,6 +65,7 @@ describe('hosted web UI runtime SDK helpers', () => {
                     entry: 'react-native/native-preview/entry.cjs.bundle',
                     files: [file('react-native/native-preview/entry.cjs.bundle')],
                     digest: digest('d'),
+                    // @ts-expect-error Deliberately invalid bundler exercises runtime manifest validation.
                     builtWith: { bundler: 'vite', version: '6.0.0' },
                     executable: { exports: ['renderSurface'] },
                     hostUiApiRange: '^1.0.0',

@@ -40,6 +40,7 @@ export type { PluginDeclarativeToneV2 } from '../manifest.js';
 export { PluginIdJsonSchema } from '../manifest.js';
 export { PluginIdSchema } from '../manifest.js';
 export type { PluginJsonSchemaValidator } from '../manifest.js';
+export { resolvePluginLocalizedStringV2Text } from '../manifest.js';
 export type { PluginAvailabilityDescriptor } from '../manifest.js';
 export type { PluginAgentUiContribution } from '../manifest.js';
 export type { PluginBrowserContributionDisplay } from '../manifest.js';

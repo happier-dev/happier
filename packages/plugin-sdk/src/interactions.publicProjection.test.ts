@@ -118,7 +118,7 @@ describe('transient interaction public projection', () => {
     it('publishes only the direct Protocol vocabulary and no retired question aliases', async () => {
         const barrel = ts.createSourceFile(
             'interactions/index.ts',
-            await readFile(new URL('./interactions/index.ts', import.meta.url), 'utf8'),
+            await readFile(new URL('./interactions/index.public.ts', import.meta.url), 'utf8'),
             ts.ScriptTarget.Latest,
             true,
             ts.ScriptKind.TS,

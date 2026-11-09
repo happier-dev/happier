@@ -17,7 +17,8 @@ export const parseLimaVersion: (output: unknown) => number[] | null = native.par
 export const limaVersionAtLeast: (actual: readonly number[] | null, minimum?: readonly number[]) => boolean = native.limaVersionAtLeast;
 export const limaInstanceField: (instance: LimaInstance | null, lower: string, upper?: string) => unknown = native.limaInstanceField;
 export const runLimaCommand: (options: { executor: LimaExecutor; store?: string; args: readonly string[]; input?: string | Uint8Array; interactive?: boolean }) => Promise<LimaCommandResult> = native.runLimaCommand;
-export const inspectLimaCapabilities: (options: { executor: LimaExecutor }) => Promise<{ hostOS: string; hostArch: string; vmTypes: readonly string[] }> = native.inspectLimaCapabilities;
+export const inspectLimaCapabilities: (options: { executor: LimaExecutor }) => Promise<{ hostOS: string; hostArch: string; vmTypes: readonly string[];
+  limaHome?: string; defaultTemplate?: Readonly<Record<string, unknown>> }> = native.inspectLimaCapabilities;
 export const inspectLimaInstance: (options: LimaInstanceOptions) => Promise<LimaInstance | null> = native.inspectLimaInstance;
 export const changeLimaPower: (options: LimaInstanceOptions & { intent: 'start' | 'stop'; force?: boolean }) => Promise<{ changed: boolean; status: string }> = native.changeLimaPower;
 export const createLimaInstance: (options: LimaInstanceOptions & { createArgs: readonly string[] }) => Promise<{ created: boolean; reconciled: boolean; instance: LimaInstance }> = native.createLimaInstance;

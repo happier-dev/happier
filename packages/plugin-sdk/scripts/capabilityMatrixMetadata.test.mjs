@@ -5,6 +5,24 @@ import test from 'node:test';
 
 import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mjs';
 
+test('retains unused implemented manifest families as Preview author capabilities', () => {
+  const families = CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies;
+  const preview = Object.entries(families)
+    .filter(([, row]) => row.availabilityDisposition === 'preview')
+    .map(([id]) => id)
+    .sort();
+  assert.deepEqual(preview, [
+    'atmospherePictures', 'botTemplates', 'captureSources', 'daemonDatabases', 'mcp.servers',
+    'notificationChannels', 'openableContentViewers', 'skills', 'voiceModelPacks',
+    'workItems', 'workflows',
+  ]);
+  // Notifications have current Channels and SCM GitHub category declarations.
+  assert.equal(families.notifications.availabilityDisposition, 'available');
+  for (const [family, declaration] of Object.entries(families)) {
+    if (!preview.includes(family)) assert.equal(declaration.availabilityDisposition, 'available', family);
+  }
+});
+
 test('records only availability and exceptional lifecycle facts', () => {
   for (const rows of Object.values(CAPABILITY_MATRIX_DECLARATIONS_V1)) {
     for (const declaration of Object.values(rows)) {
@@ -22,7 +40,7 @@ test('records only availability and exceptional lifecycle facts', () => {
   });
 });
 
-test('the invocation-service host binds every published service id', async () => {
+test('the cited invocation-service owner really binds every published service id', async () => {
   // Service rows cite one host binder for all of `PluginServices`. That claim
   // is only true while the host descriptor map covers exactly the published
   // ids; a published id with no host descriptor has no binder and must be

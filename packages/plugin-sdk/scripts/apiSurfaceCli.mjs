@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 import {
+  API_SURFACE_REALMS,
   apiSurfaceEntrypointBrowserRuntimeTarget,
   apiSurfaceEntrypointBrowserSourceModule,
   createApiSurfaceGenerationPlan,
@@ -36,10 +37,18 @@ import {
   assertInventoryMatchesPreparedDeclarationSurface,
   projectPreparedDeclarationSurface,
 } from '../../../scripts/api-governance/emittedDeclarationSurface.mjs';
-import { assertVendoredWorkspaceDeclarationsAreCurrent, findRepoRoot } from './vendoredWorkspaceDeclarations.mjs';
+import {
+  assertVendoredWorkspaceDeclarationsAreCurrent,
+  captureVendoredWorkspaceDeclarationIdentity,
+  findRepoRoot,
+  VENDORED_WORKSPACE_DECLARATION_IDENTITY_ENV_VAR,
+} from './vendoredWorkspaceDeclarations.mjs';
+import { preparePluginSdkWorkspaceDeclarations, resolvePluginSdkWorkspaceBundleLockPath } from './bundleWorkspaceDeps.mjs';
 import { renderDeclarationDiffSample, summarizeDeclarationDiff } from '../../../scripts/api-governance/declarationDiff.mjs';
 import { planGovernanceOutputs } from '../../../scripts/api-governance/apiGovernance.mjs';
 import { parseStructuredDeprecationTags } from '../../../scripts/api-governance/structuredDeprecation.mjs';
+import { callerHoldsWorkspaceBundleLock, withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { readPublicationSpecExports } from './publicationSpecExports.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), '..');
@@ -1122,8 +1131,6 @@ function assertDeclaredRealm(realm, sourceModule) {
   return realm;
 }
 
-const API_SURFACE_REALMS = new Set(['any', 'browser', 'react-native', 'client', 'daemon', 'build']);
-
 /**
  * Projects what every canonical source module exports — the export names, their
  * type/value kinds and their declared realms. This is the package-source input
@@ -1581,9 +1588,79 @@ function namedImportTypeSymbol(checker, node) {
     : null;
 }
 
-function collectTypeNodeNamedTypes(checker, node, referencedTypes) {
-  if (!node) return;
-  if (ts.isTypeReferenceNode(node)) {
+function hasExplicitSignatureType(declaration) {
+  return (ts.isVariableDeclaration(declaration) || ts.isFunctionDeclaration(declaration))
+    && declaration.type !== undefined;
+}
+
+function isHostTypeDeclaration(declaration, metadata = declarationPackageMetadata(declaration.getSourceFile())) {
+  return Boolean(metadata && /^(?:src|dist)\/host\//u.test(
+    relativeOutputPath(metadata.root, declaration.getSourceFile().fileName),
+  ));
+}
+
+function indexedSignatureMemberDeclarations(checker, node) {
+  if (!ts.isIndexedAccessTypeNode(node) || !ts.isLiteralTypeNode(node.indexType)) return null;
+  const index = node.indexType.literal;
+  if (!ts.isStringLiteral(index) && !ts.isNumericLiteral(index)) return null;
+  const ownerNode = node.objectType;
+  if (ownerNode.typeArguments?.length) return null;
+  const owner = ts.isTypeReferenceNode(ownerNode)
+    ? checker.getSymbolAtLocation(ownerNode.typeName)
+    : ts.isImportTypeNode(ownerNode) ? namedImportTypeSymbol(checker, ownerNode) : null;
+  if (!owner || resolvedSymbol(checker, owner).declarations?.some((declaration) => (
+    isHostTypeDeclaration(declaration)
+  ))) return null;
+  const member = checker.getPropertyOfType(checker.getTypeFromTypeNode(ownerNode), index.text);
+  const declarations = member?.declarations;
+  if (!declarations?.length) return null;
+  for (const declaration of declarations) {
+    if (isHostTypeDeclaration(declaration)) return null;
+    if ((!ts.isPropertySignature(declaration) && !ts.isPropertyDeclaration(declaration)) || !declaration.type) {
+      return null;
+    }
+    // A generic declaration's annotation still needs substitution. Retain the
+    // existing full traversal for those and for unresolved member projections.
+    for (let parent = declaration; parent && !ts.isSourceFile(parent); parent = parent.parent) {
+      if (parent.typeParameters?.length) return null;
+    }
+  }
+  return declarations;
+}
+
+function collectTypeNodeNamedTypes(checker, node, referencedTypes, seenNodes = new Set()) {
+  if (!node || seenNodes.has(node)) return;
+  seenNodes.add(node);
+  const indexedMembers = indexedSignatureMemberDeclarations(checker, node);
+  if (indexedMembers) {
+    // Context['member'] exposes that annotated member, not the owner's other
+    // members and their potentially recursive host implementation graph.
+    for (const declaration of indexedMembers) {
+      collectDeclarationSignatureTypeNodes(checker, declaration, referencedTypes, seenNodes);
+    }
+    return;
+  }
+  if (ts.isTypeQueryNode(node) || (ts.isImportTypeNode(node) && node.isTypeOf)) {
+    const name = ts.isTypeQueryNode(node) ? node.exprName : node.qualifier;
+    const queried = name && checker.getSymbolAtLocation(name);
+    const symbol = queried && resolvedSymbol(checker, queried);
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    if (symbol && declaration) {
+      // The checker can erase an annotated private alias to Readonly<T>.
+      // A typeof declaration still carries that annotation to consumers.
+      const declarations = symbol.declarations ?? [declaration];
+      for (const signatureDeclaration of declarations) {
+        collectDeclarationSignatureTypeNodes(checker, signatureDeclaration, referencedTypes, seenNodes);
+      }
+      // Explicit signatures are finite syntax graphs. Instantiating them as
+      // well can expand recursive generics into a new type at every step.
+      const hasExplicitSignature = declarations.every(hasExplicitSignatureType);
+      if (!hasExplicitSignature) {
+        collectNamedSignatureTypes(checker,
+          checker.getTypeOfSymbolAtLocation(symbol, declaration), referencedTypes, new Set());
+      }
+    }
+  } else if (ts.isTypeReferenceNode(node)) {
     const symbol = checker.getSymbolAtLocation(node.typeName);
     const referencedType = symbol ? resolvedSymbol(checker, symbol) : null;
     if (referencedType && !(referencedType.flags & ts.SymbolFlags.TypeParameter)) {
@@ -1601,10 +1678,10 @@ function collectTypeNodeNamedTypes(checker, node, referencedTypes) {
       referencedTypes.set(referencedType, node.qualifier.getText());
     }
   }
-  ts.forEachChild(node, (child) => collectTypeNodeNamedTypes(checker, child, referencedTypes));
+  ts.forEachChild(node, (child) => collectTypeNodeNamedTypes(checker, child, referencedTypes, seenNodes));
 }
 
-function collectDeclarationSignatureTypeNodes(checker, declaration, referencedTypes) {
+function collectDeclarationSignatureTypeNodes(checker, declaration, referencedTypes, seenNodes = new Set()) {
   if (
     ts.isFunctionDeclaration(declaration)
     || ts.isMethodDeclaration(declaration)
@@ -1616,38 +1693,38 @@ function collectDeclarationSignatureTypeNodes(checker, declaration, referencedTy
     || ts.isIndexSignatureDeclaration(declaration)
   ) {
     for (const typeParameter of declaration.typeParameters ?? []) {
-      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes);
-      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes);
+      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes, seenNodes);
+      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes, seenNodes);
     }
     for (const parameter of declaration.parameters) {
-      collectTypeNodeNamedTypes(checker, parameter.type, referencedTypes);
+      collectTypeNodeNamedTypes(checker, parameter.type, referencedTypes, seenNodes);
     }
-    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes);
+    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes, seenNodes);
     return;
   }
   if (ts.isVariableDeclaration(declaration)) {
-    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes);
+    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes, seenNodes);
     return;
   }
   if (ts.isPropertyDeclaration(declaration) || ts.isPropertySignature(declaration)) {
-    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes);
+    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes, seenNodes);
     return;
   }
   if (ts.isTypeAliasDeclaration(declaration)) {
     for (const typeParameter of declaration.typeParameters ?? []) {
-      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes);
-      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes);
+      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes, seenNodes);
+      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes, seenNodes);
     }
-    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes);
+    collectTypeNodeNamedTypes(checker, declaration.type, referencedTypes, seenNodes);
     return;
   }
   if (ts.isInterfaceDeclaration(declaration) || ts.isClassDeclaration(declaration)) {
     for (const typeParameter of declaration.typeParameters ?? []) {
-      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes);
-      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes);
+      collectTypeNodeNamedTypes(checker, typeParameter.constraint, referencedTypes, seenNodes);
+      collectTypeNodeNamedTypes(checker, typeParameter.default, referencedTypes, seenNodes);
     }
     for (const heritageClause of declaration.heritageClauses ?? []) {
-      collectTypeNodeNamedTypes(checker, heritageClause, referencedTypes);
+      collectTypeNodeNamedTypes(checker, heritageClause, referencedTypes, seenNodes);
     }
     for (const member of declaration.members) {
       if (ts.canHaveModifiers(member)) {
@@ -1657,7 +1734,7 @@ function collectDeclarationSignatureTypeNodes(checker, declaration, referencedTy
           || modifier.kind === ts.SyntaxKind.ProtectedKeyword
         ))) continue;
       }
-      collectTypeNodeNamedTypes(checker, member, referencedTypes);
+      collectTypeNodeNamedTypes(checker, member, referencedTypes, seenNodes);
     }
   }
 }
@@ -1787,13 +1864,7 @@ function directTypeAliasTargetSymbol(checker, symbol) {
   return null;
 }
 
-function isHostTypeDeclaration(declaration, metadata = declarationPackageMetadata(declaration.getSourceFile())) {
-  return Boolean(metadata && /^(?:src|dist)\/host\//u.test(
-    relativeOutputPath(metadata.root, declaration.getSourceFile().fileName),
-  ));
-}
-
-function assertAuthorSignatureTypeClosure({ program, inventory, sources, packageRoot, bundledDependencies = [] }) {
+function assertAuthorSignatureTypeClosure({ program, inventory, sources, packageRoot, bundledDependencies }) {
   const checker = program.getTypeChecker();
   const sourceByModule = new Map(sources.map((source) => [source.sourceModule, source]));
   const sourceFileByModule = new Map(
@@ -1894,29 +1965,22 @@ function assertAuthorSignatureTypeClosure({ program, inventory, sources, package
         }
       }
       const referencedTypes = new Map(directReferencedTypes);
-      const hasExplicitVariableType = (symbol.declarations ?? []).some((symbolDeclaration) => (
-        ts.isVariableDeclaration(symbolDeclaration) && symbolDeclaration.type !== undefined
-      ));
-      const hasExplicitFunctionReturnType = (symbol.declarations ?? []).some((symbolDeclaration) => (
-        ts.isFunctionDeclaration(symbolDeclaration) && symbolDeclaration.type !== undefined
-      ));
+      const hasExplicitSignature = (symbol.declarations ?? []).some(hasExplicitSignatureType);
       if (
         valueType
         && !schemaProjection
-        && !hasExplicitVariableType
-        && !hasExplicitFunctionReturnType
+        && !hasExplicitSignature
       ) {
         const namedValueType = namedSignatureTypeSymbol(checker, valueType);
+        collectNamedSignatureTypes(checker, valueType, referencedTypes, seenTypes);
         if (
-          namedValueType
-          && (
+          !namedValueType
+          || !(
             reachableAuthorTypes.has(namedValueType)
             || isTypeScriptPlatformType(program, namedValueType)
             || isPublishedThirdPartyType(program, namedValueType)
           )
         ) {
-          collectNamedSignatureTypes(checker, valueType, referencedTypes, seenTypes);
-        } else {
           collectPublicTypeMembers(
             checker,
             valueType,
@@ -2079,56 +2143,6 @@ function assertSourceHasNoRetiredPerSymbolPosture(source) {
   }
 }
 
-/**
- * Reads what one author-owned named-reexport publication spec publishes. The
- * generated entrypoint barrel is never an input, so this spec — not prior
- * generated bytes or the inventory — decides which symbols an entrypoint
- * carries.
- */
-function collectPublicationSpecPublications(publicationSpec) {
-  const sourceFile = ts.createSourceFile(
-    publicationSpec.sourceModule,
-    publicationSpec.contents,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const publications = [];
-  for (const statement of sourceFile.statements) {
-    if (
-      !ts.isExportDeclaration(statement)
-      || !statement.moduleSpecifier
-      || !ts.isStringLiteralLike(statement.moduleSpecifier)
-      || !statement.exportClause
-      || !ts.isNamedExports(statement.exportClause)
-    ) {
-      throw new Error(
-        `API surface publication spec ${publicationSpec.sourceModule} must contain only named re-export declarations`,
-      );
-    }
-    const moduleSpecifier = statement.moduleSpecifier.text;
-    if (!moduleSpecifier.startsWith('./') && !moduleSpecifier.startsWith('../')) {
-      throw new Error(
-        `API surface publication spec ${publicationSpec.sourceModule} must re-export package-local modules, not ${moduleSpecifier}`,
-      );
-    }
-    const deprecation = publicationSpecDeprecation(statement, publicationSpec.sourceModule);
-    for (const element of statement.exportClause.elements) {
-      publications.push(Object.freeze({
-        ...deprecation,
-        exportName: element.name.text,
-        sourceExport: (element.propertyName ?? element.name).text,
-        kind: statement.isTypeOnly || element.isTypeOnly ? 'type' : 'value',
-        moduleSpecifier,
-      }));
-    }
-  }
-  if (publications.length === 0) {
-    throw new Error(`API surface publication spec ${publicationSpec.sourceModule} publishes no symbols`);
-  }
-  return publications;
-}
-
 async function resolvePublicationSpecSourceModule(
   packageRoot,
   physicalPackageRoot,
@@ -2268,21 +2282,29 @@ async function discoverPublicationSpecs({ packageRoot, physicalPackageRoot }) {
 async function readPublishedApiSurfaceSource({ packageRoot, physicalPackageRoot }) {
   const entrypoints = [];
   const sourceModules = new Set();
+  const sourceReads = new Map();
+  const resolveSource = async (publicationSpec, moduleSpecifier) => {
+    const sourceModule = await resolvePublicationSpecSourceModule(
+      packageRoot, physicalPackageRoot, publicationSpec, moduleSpecifier,
+    );
+    if (!sourceReads.has(sourceModule)) {
+      sourceReads.set(sourceModule, preflightSourceModule(packageRoot, physicalPackageRoot, sourceModule));
+    }
+    const source = await sourceReads.get(sourceModule);
+    assertSourceHasNoRetiredPerSymbolPosture(source);
+    return source;
+  };
   for (const { specifier, publicationSpec } of await discoverPublicationSpecs({
     packageRoot,
     physicalPackageRoot,
   })) {
-    const symbols = await Promise.all(
-      collectPublicationSpecPublications(publicationSpec).map(async (publication) => {
-        const sourceModule = await resolvePublicationSpecSourceModule(
-          packageRoot,
-          physicalPackageRoot,
-          publicationSpec,
-          publication.moduleSpecifier,
-        );
-        return Object.freeze({ ...publication, sourceModule });
-      }),
-    );
+    const symbols = await readPublicationSpecExports(publicationSpec, {
+      resolveSource,
+      readDeprecation: publicationSpecDeprecation,
+    });
+    if (symbols.length === 0) {
+      throw new Error(`API surface publication spec ${publicationSpec.sourceModule} publishes no symbols`);
+    }
     for (const symbol of symbols) sourceModules.add(symbol.sourceModule);
     const browserSourceModule = apiSurfaceEntrypointBrowserSourceModule(specifier);
     const browserSource = await optionalLstat(resolve(packageRoot, browserSourceModule));
@@ -2303,7 +2325,7 @@ async function readPublishedApiSurfaceSource({ packageRoot, physicalPackageRoot 
   }
   return Object.freeze({
     entrypoints: Object.freeze(entrypoints),
-    sourceModules: Object.freeze([...sourceModules].sort()),
+    sources: Object.freeze(await Promise.all([...sourceModules].sort().map(sourceModule => sourceReads.get(sourceModule)))),
   });
 }
 
@@ -2323,14 +2345,18 @@ async function prepareApiSurfaceMaterialization(
   const physicalPackageRoot = await realpath(packageRoot);
 
   // Every production materializer phase answers type questions through whatever
-  // `@happier-dev/*` copy this package resolves. Prove that copy is the current
-  // workspace build before reading a single type, or the whole run reports on
-  // a previous one. The source-only test harness below intentionally omits
+  // `@happier-dev/*` copy this package resolves. Checks require the current
+  // workspace build; prepared writers may retain their exact captured copy
+  // when the producer advances. The source-only test harness below omits
   // this publisher-output freshness gate; it cannot write and is not reachable
   // from the production CLI.
   if (requireVendoredWorkspaceDeclarations) {
     reportProgress(options, 'vendored-declarations');
-    await assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot });
+    await assertVendoredWorkspaceDeclarationsAreCurrent({
+      packageRoot,
+      env: options.env ?? process.env,
+      allowCapturedPublication: options.write === true && options.check !== true,
+    });
   }
 
   const inventoryPath = join(packageRoot, 'api-surface.json');
@@ -2341,14 +2367,7 @@ async function prepareApiSurfaceMaterialization(
     packageRoot,
     physicalPackageRoot,
   });
-  const preflightedSourceModules = await Promise.all(
-    published.sourceModules.map((sourceModule) => (
-      preflightSourceModule(packageRoot, physicalPackageRoot, sourceModule)
-    )),
-  );
-  for (const sourceModule of preflightedSourceModules) {
-    assertSourceHasNoRetiredPerSymbolPosture(sourceModule);
-  }
+  const preflightedSourceModules = published.sources;
   reportProgress(options, 'inventory');
   const canonicalSourceExports = projectCanonicalSourceExports(preflightedSourceModules);
   const sourceInventory = projectApiSurfaceInventory({
@@ -2556,9 +2575,42 @@ async function finalizeApiSurfaceMaterialization(
  * the caller compiles after this phase, then runs the full publisher below.
  */
 export async function runApiSurfaceMaterializer(options) {
-  const prepared = await prepareApiSurfaceMaterialization(options);
-  return finalizeApiSurfaceMaterialization(prepared, options, {
-    materializedPlanOutputs: API_SURFACE_MATERIALIZED_PLAN_OUTPUTS,
+  return withPreparedApiSurfaceWorkspace(options, async (preparedOptions) => {
+    const prepared = await prepareApiSurfaceMaterialization(preparedOptions);
+    return finalizeApiSurfaceMaterialization(prepared, preparedOptions, {
+      materializedPlanOutputs: API_SURFACE_MATERIALIZED_PLAN_OUTPUTS,
+    });
+  });
+}
+
+async function withPreparedApiSurfaceWorkspace(options, operation) {
+  const repoRoot = findRepoRoot(options.packageRoot);
+  const env = options.env ?? process.env;
+  const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot: repoRoot ?? options.packageRoot, env });
+  // A prepared writer already owns an exact admitted copy for this publication.
+  // Preserve it if another package publishes newer workspace output meanwhile.
+  const capturedWriter = options.write === true && options.check !== true
+    && callerHoldsWorkspaceBundleLock(lockPath, env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD)
+    && env[VENDORED_WORKSPACE_DECLARATION_IDENTITY_ENV_VAR]
+      === await captureVendoredWorkspaceDeclarationIdentity({ packageRoot: options.packageRoot });
+  if (repoRoot && !capturedWriter) {
+    let report;
+    await preparePluginSdkWorkspaceDeclarations({
+      repoRoot,
+      pluginSdkDir: resolve(options.packageRoot),
+      env,
+      lockPath,
+      consumePreparedWorkspace: async ({ preparedWorkspaceEnv }) => {
+        report = await operation({ ...options, env: preparedWorkspaceEnv });
+      },
+    });
+    return report;
+  }
+  if (!options.write) return operation(options);
+  return withWorkspaceBundleLock(() => operation(options), {
+    lockPath,
+    env,
+    errorLabel: 'Plugin SDK API publication',
   });
 }
 
@@ -2596,41 +2648,43 @@ export async function runApiSurfaceSourceHarnessForTests({ packageRoot, onProgre
  * source graph.
  */
 export async function runApiSurfaceCli(options) {
-  const prepared = await prepareApiSurfaceMaterialization(options);
-  const { createCapabilityMatrixOutput } = await import('./capabilityMatrixCli.mjs');
-  const capabilityMatrixOutput = await createCapabilityMatrixOutput({
-    packageRoot: prepared.packageRoot,
-    apiInventory: prepared.inventory,
-  });
-  reportProgress(options, 'declaration-report');
-  const emittedDeclarationSurface = projectPreparedDeclarationSurface({
-    packageRoot: prepared.packageRoot,
-    packageJson: prepared.packageJson,
-    title: PUBLIC_DECLARATION_REPORT_TITLE,
-    bundledDependencies: prepared.packageJson.bundledDependencies ?? [],
-  });
-  assertInventoryMatchesPreparedDeclarationSurface({
-    inventory: prepared.inventory,
-    entrypoints: emittedDeclarationSurface.entrypoints,
-    rows: emittedDeclarationSurface.rows,
-  });
-  return finalizeApiSurfaceMaterialization(prepared, options, {
-    additionalOutputs: [
-      Object.freeze({
-        owner: capabilityMatrixOutput.owner,
-        absolutePath: join(prepared.packageRoot, capabilityMatrixOutput.relativePath),
-        relativePath: capabilityMatrixOutput.relativePath,
-        contents: capabilityMatrixOutput.contents,
-      }),
-      Object.freeze({
-        owner: 'publicDeclarationReport',
-        absolutePath: join(prepared.packageRoot, PUBLIC_DECLARATION_REPORT_PATH),
-        relativePath: PUBLIC_DECLARATION_REPORT_PATH,
-        contents: emittedDeclarationSurface.declarationReport,
-        generated: true,
-      }),
-    ],
-    materializedPlanOutputs: MATERIALIZED_PLAN_OUTPUTS,
+  return withPreparedApiSurfaceWorkspace(options, async (preparedOptions) => {
+    const prepared = await prepareApiSurfaceMaterialization(preparedOptions);
+    const { createCapabilityMatrixOutput } = await import('./capabilityMatrixCli.mjs');
+    const capabilityMatrixOutput = await createCapabilityMatrixOutput({
+      packageRoot: prepared.packageRoot,
+      apiInventory: prepared.inventory,
+    });
+    reportProgress(options, 'declaration-report');
+    const emittedDeclarationSurface = projectPreparedDeclarationSurface({
+      packageRoot: prepared.packageRoot,
+      packageJson: prepared.packageJson,
+      title: PUBLIC_DECLARATION_REPORT_TITLE,
+      bundledDependencies: prepared.packageJson.bundledDependencies ?? [],
+    });
+    assertInventoryMatchesPreparedDeclarationSurface({
+      inventory: prepared.inventory,
+      entrypoints: emittedDeclarationSurface.entrypoints,
+      rows: emittedDeclarationSurface.rows,
+    });
+    return finalizeApiSurfaceMaterialization(prepared, preparedOptions, {
+      additionalOutputs: [
+        Object.freeze({
+          owner: capabilityMatrixOutput.owner,
+          absolutePath: join(prepared.packageRoot, capabilityMatrixOutput.relativePath),
+          relativePath: capabilityMatrixOutput.relativePath,
+          contents: capabilityMatrixOutput.contents,
+        }),
+        Object.freeze({
+          owner: 'publicDeclarationReport',
+          absolutePath: join(prepared.packageRoot, PUBLIC_DECLARATION_REPORT_PATH),
+          relativePath: PUBLIC_DECLARATION_REPORT_PATH,
+          contents: emittedDeclarationSurface.declarationReport,
+          generated: true,
+        }),
+      ],
+      materializedPlanOutputs: MATERIALIZED_PLAN_OUTPUTS,
+    });
   });
 }
 

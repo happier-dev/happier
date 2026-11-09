@@ -454,7 +454,7 @@ test('public toolchain generation mutates only changed outputs and repairs missi
   run('--check');
 });
 
-test('Plugin UI local typecheck derives a stale toolchain packet before compiling', async t => {
+test('the toolchain writer refreshes its packet while Plugin UI typechecks consume it unchanged', async t => {
   const root = await createFixtureRoot();
   t.after(() => rm(root, { recursive: true, force: true }));
   const sdkPath = join(root, 'packages/plugin-sdk/package.json');
@@ -483,6 +483,10 @@ test('Plugin UI local typecheck derives a stale toolchain packet before compilin
     "import { writeFileSync } from 'node:fs'; writeFileSync('compiled', 'prepared');\n");
   const output = join(root, 'packages/plugin-sdk/src/ui/build/publicToolchainCompatibility.generated.ts');
   await writeSource(output, '// stale output\n');
+  const written = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--write'], { encoding: 'utf8' });
+  assert.equal(written.status, 0, written.stderr);
+  const timestamp = new Date('2000-01-01T00:00:00Z');
+  await utimes(output, timestamp, timestamp);
   const invocation = resolvePnpmCommandInvocation(['--silent', 'run', 'typecheck:local']);
   const result = spawnSync(invocation.command, invocation.args, {
     cwd: join(root, 'packages/plugin-ui'), encoding: 'utf8',
@@ -491,6 +495,7 @@ test('Plugin UI local typecheck derives a stale toolchain packet before compilin
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(await readFile(join(root, 'packages/plugin-ui/compiled'), 'utf8'), 'prepared');
+  assert.equal((await stat(output)).mtimeMs, timestamp.getTime(), 'a consumer typecheck must not republish the packet');
   assert.equal(await readFile(output, 'utf8'), renderPublicToolchainCompatibilityModule(
     await derivePublicToolchainCompatibilityV1({ repoRoot: root })));
   const checked = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], { encoding: 'utf8' });

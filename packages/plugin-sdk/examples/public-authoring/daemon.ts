@@ -1,7 +1,12 @@
 import type {
     ComposerReferenceRuntime,
+    DeploymentSourceMaterializationV1,
+    DeploymentSourceMaterializationPortV1,
+    DeploymentSourceMaterializationRequestV1,
     PluginApi,
 } from '@happier-dev/plugin-sdk';
+import type { ExecService, DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
+import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import {
     defineProtocolObject,
     defineProtocolString,
@@ -21,6 +26,93 @@ import type {
 } from '@happier-dev/plugin-sdk/resources';
 import type { SessionSystemRecordAddress } from '@happier-dev/plugin-sdk/sessions';
 import { definePluginDeclarativeDocumentV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+
+export { createBoundedNativeServiceLogs, withNativeLogMetadata } from './nativeServiceLogs.js';
+export { createTeamDocument, updateTeamDocument } from './teamArtifacts.js';
+
+/** Resolve the authored ref once; exact export must retain that immutable selection. */
+export async function exportSelectedDeploymentCommit(input: Readonly<{
+    workspace: Required<Pick<WorkspaceIntegrationHandlers, 'resolveCommitRef' | 'exportCommit'>>;
+    context: Parameters<NonNullable<WorkspaceIntegrationHandlers['resolveCommitRef']>>[0]['context'];
+    ref: string; artifactDirectory: string; signal: AbortSignal;
+}>) {
+    const commitSha = await input.workspace.resolveCommitRef({ context: input.context, ref: input.ref, signal: input.signal });
+    return input.workspace.exportCommit({ context: input.context, commitSha,
+        artifactDirectory: input.artifactDirectory, signal: input.signal });
+}
+
+/** Read addressed routing, verified Home and enrolled installation facts from
+ * the current mount, never from a route or the plugin's execution origin.
+ * Home/installation may be absent on a host that has not established them. */
+export async function readMachinePageTarget(host: Pick<PluginUiHostApi, 'context'>, signal?: AbortSignal) {
+    const { target } = await host.context({ signal });
+    if (target.kind !== 'machine') {
+        throw Object.assign(new Error('Machine page context required'), { code: 'machine_page_required' });
+    }
+    return target;
+}
+
+/** A Machine page opens the host's existing draft; the host supplies its controller. */
+export async function openMachineConfiguration(
+    host: Pick<PluginUiHostApi, 'openManagedMachineConfiguration'>,
+    provisioner: Parameters<PluginUiHostApi['openManagedMachineConfiguration']>[0]['provisioner'],
+    signal?: AbortSignal,
+) {
+    await host.openManagedMachineConfiguration({ provisioner }, { signal });
+}
+
+export const machinePageAuthoring = Object.freeze({ readMachinePageTarget, openMachineConfiguration });
+
+/** Review observes an immutable manifest, then aborts its uncommitted staging. */
+export async function reviewExactDeploymentSource(input: Readonly<{
+    sourcePort: DeploymentSourceMaterializationPortV1;
+    selection: DeploymentSourceMaterializationRequestV1;
+    signal: AbortSignal;
+}>) {
+    const source = await input.sourcePort.materialize(input.selection, { signal: input.signal });
+    try {
+        await source.assertCurrent();
+        return { manifestFingerprint: source.manifestFingerprint };
+    } finally {
+        await source.abort();
+    }
+}
+
+/** Called from a Machine target's admitted invocation, with its host-vended ports. */
+export async function runDeploymentRuntimeProbe(input: Readonly<{
+    source: DeploymentSourceMaterializationV1;
+    execEnv: DeploymentExecEnvPortV1;
+    exec: ExecService;
+    executable: ManagedExecutableRef;
+    args: readonly string[];
+    signal: AbortSignal;
+}>) {
+    const deploymentEnv = await input.execEnv.prepare({ source: input.source, phase: 'runtime' }, { signal: input.signal });
+    try {
+        return await input.exec.run({ executable: input.executable, args: input.args,
+            cwd: input.source.rootPath, deploymentEnv }, { signal: input.signal });
+    } finally {
+        await deploymentEnv.dispose();
+    }
+}
+
+/** The host's current destination supplies roles; the adapter never reads their values. */
+export async function runBackupDestinationProbe(input: Readonly<{
+    execEnv: DeploymentExecEnvPortV1;
+    exec: ExecService;
+    executable: ManagedExecutableRef;
+    args: readonly string[];
+    signal: AbortSignal;
+}>) {
+    const deploymentEnv = await input.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal: input.signal });
+    try {
+        return await input.exec.run({ executable: input.executable, args: input.args, deploymentEnv }, { signal: input.signal });
+    } finally {
+        await deploymentEnv.dispose();
+    }
+}
 
 type ActionRegistrationHandler = Parameters<PluginApi['actions']['register']>[1];
 type HookRegistrationHandler = Parameters<PluginApi['hooks']['register']>[1];
@@ -298,7 +390,7 @@ export const observeSessionSpawned: HookRegistrationHandler = async (
     void context.signal;
 };
 
-const AGENT_CONTEXT_COMPANION_TOOL_ID = 'review-summary-tool';
+const AGENT_CONTEXT_COMPANION_TOOL_ID = 'review-summary';
 const AGENT_CONTEXT_COMPANION_PROMPT_ASSET_ID = 'agent-context-companion-prompt';
 const AGENT_CONTEXT_COMPANION_RECORD_ADDRESS = Object.freeze({
     owner: 'plugin' as const,

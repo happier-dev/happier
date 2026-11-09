@@ -2,6 +2,8 @@
 export type PluginEphemeralSharedValueLease<T> = Readonly<{
     value: T;
     release(): void;
+    /** Withdraw this exact value for every borrower. A stale lease cannot retire its replacement. */
+    retire?(): void;
 }>;
 
 /**
@@ -26,4 +28,12 @@ export type PluginEphemeralSharedScope = Readonly<{
             onExecutionOriginChange?(): void;
         }>,
     ): PluginEphemeralSharedValueLease<T> | null;
+    /**
+     * Share only with borrowers on this mount's exact admitted execution origin.
+     * The host qualifies the existing value namespace without exposing executor
+     * custody. No admitted origin, or a retired scope, returns null. Older hosts
+     * omit this operation; an execution-bound consumer must then stay unavailable.
+     * Credential selection remains the invoking domain's admission contract.
+     */
+    acquireExecutionBound?: PluginEphemeralSharedScope['acquire'];
 }>;

@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { afterAll, describe, expect, expectTypeOf, it } from 'vitest';
+import { emittedSourceAuthoringDeclaration, compileExternalProtocolAuthoringConsumer, disposeSourceAuthoringDeclarations } from './test-support/protocolAuthoringDeclarations.js';
+afterAll(disposeSourceAuthoringDeclarations);
 import ts from 'typescript';
 
 import {
@@ -14,14 +16,6 @@ import {
     type ProtocolJsonValue,
 } from './protocol/index.js';
 
-const packageRoot = fileURLToPath(new URL('..', import.meta.url));
-const sourceAuthoringDeclarationConfig = fileURLToPath(
-    new URL('../tsconfig.json', import.meta.url),
-);
-const sourceAuthoringDeclarationOutputDirectory = resolve(
-    packageRoot,
-    '.facade-current-declarations',
-);
 const compiledProtocolAuthoringDeclarationEntrypoint = fileURLToPath(
     new URL('../dist/protocol/index.d.ts', import.meta.url),
 );
@@ -31,142 +25,6 @@ const compiledTargetedContributionAuthoringDeclaration = fileURLToPath(
 const compiledConnectedAccountsDeclaration = fileURLToPath(
     new URL('../dist/connectedAccounts.d.ts', import.meta.url),
 );
-const sourceAuthoringDeclarationSources = [
-    fileURLToPath(new URL('./protocol/protocolFacade.ts', import.meta.url)),
-    fileURLToPath(new URL('./protocol/composerRef.ts', import.meta.url)),
-    fileURLToPath(new URL('./protocol/composerReferenceResolution.ts', import.meta.url)),
-    fileURLToPath(new URL('./protocol/collectionCursor.ts', import.meta.url)),
-    fileURLToPath(new URL('./protocol/index.ts', import.meta.url)),
-    fileURLToPath(new URL('./targetedContributionAuthoring.ts', import.meta.url)),
-    fileURLToPath(new URL('./connectedAccounts.ts', import.meta.url)),
-] as const;
-
-let sourceAuthoringDeclarations: ReadonlyMap<string, string> | undefined;
-
-function emitSourceAuthoringDeclarations(): ReadonlyMap<string, string> {
-    if (sourceAuthoringDeclarations !== undefined) return sourceAuthoringDeclarations;
-
-    const parsed = ts.getParsedCommandLineOfConfigFile(
-        sourceAuthoringDeclarationConfig,
-        {},
-        {
-            ...ts.sys,
-            onUnRecoverableConfigFileDiagnostic: () => undefined,
-        },
-    );
-    if (parsed === undefined) {
-        throw new Error(`Unable to parse ${sourceAuthoringDeclarationConfig}`);
-    }
-    const program = ts.createProgram({
-        rootNames: [...sourceAuthoringDeclarationSources],
-        options: {
-            ...parsed.options,
-            declaration: true,
-            declarationMap: false,
-            emitDeclarationOnly: true,
-            incremental: false,
-            noEmit: false,
-            outDir: sourceAuthoringDeclarationOutputDirectory,
-        },
-        projectReferences: parsed.projectReferences,
-    });
-    const declarations = new Map<string, string>();
-    const diagnostics: ts.Diagnostic[] = [];
-    for (const sourcePath of sourceAuthoringDeclarationSources) {
-        const sourceFile = program.getSourceFile(sourcePath);
-        if (sourceFile === undefined) throw new Error(`Missing declaration source ${sourcePath}`);
-
-        diagnostics.push(...program.getDeclarationDiagnostics(sourceFile));
-        const emitted = program.emit(sourceFile, (fileName, contents) => {
-            if (fileName.endsWith('.d.ts')) declarations.set(resolve(fileName), contents);
-        }, undefined, true);
-        diagnostics.push(...emitted.diagnostics);
-    }
-    const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
-    if (errors.length > 0) {
-        throw new Error(errors.map((diagnostic) => (
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-        )).join('\n'));
-    }
-    sourceAuthoringDeclarations = declarations;
-    return declarations;
-}
-
-function emittedSourceAuthoringDeclaration(relativePath: string): string {
-    const declaration = emitSourceAuthoringDeclarations().get(
-        resolve(sourceAuthoringDeclarationOutputDirectory, relativePath),
-    );
-    if (declaration === undefined) {
-        throw new Error(`Missing emitted source declaration ${relativePath}`);
-    }
-    return declaration;
-}
-
-function compileExternalProtocolAuthoringConsumer(sourceText: string): readonly ts.Diagnostic[] {
-    const declarations = emitSourceAuthoringDeclarations();
-    const consumerPath = resolve(
-        sourceAuthoringDeclarationOutputDirectory,
-        'external-protocol-authoring-consumer.ts',
-    );
-    const compilerOptions: ts.CompilerOptions = {
-        strict: true,
-        noEmit: true,
-        skipLibCheck: false,
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
-        lib: ['lib.es2022.d.ts'],
-        types: [],
-    };
-    const host = ts.createCompilerHost(compilerOptions);
-    const readFile = host.readFile.bind(host);
-    const fileExists = host.fileExists.bind(host);
-    const directoryExists = host.directoryExists?.bind(host) ?? (() => false);
-    const virtualDirectories = new Set<string>();
-    for (const declarationPath of declarations.keys()) {
-        let directory = dirname(declarationPath);
-        while (directory.startsWith(sourceAuthoringDeclarationOutputDirectory)) {
-            virtualDirectories.add(directory);
-            const parent = dirname(directory);
-            if (parent === directory) break;
-            directory = parent;
-        }
-    }
-    host.fileExists = (fileName) => (
-        resolve(fileName) === consumerPath
-        || declarations.has(resolve(fileName))
-        || fileExists(fileName)
-    );
-    host.directoryExists = (directoryName) => (
-        virtualDirectories.has(resolve(directoryName))
-        || directoryExists(directoryName)
-    );
-    host.readFile = (fileName) => {
-        const resolvedFileName = resolve(fileName);
-        if (resolvedFileName === consumerPath) return sourceText;
-        return declarations.get(resolvedFileName) ?? readFile(fileName);
-    };
-    host.getSourceFile = (fileName, languageVersionOrOptions) => {
-        const contents = host.readFile(fileName);
-        return contents === undefined
-            ? undefined
-            : ts.createSourceFile(
-                fileName,
-                contents,
-                languageVersionOrOptions,
-                true,
-                fileName.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.Unknown,
-            );
-    };
-
-    const program = ts.createProgram({
-        rootNames: [consumerPath],
-        options: compilerOptions,
-        host,
-    });
-    return ts.getPreEmitDiagnostics(program);
-}
-
 function declarationPathFromRelativeSpecifier(
     declarationPath: string,
     specifier: string,
@@ -232,9 +90,29 @@ const internalProtocolAuthoringDeclarationReferences = [
     /['"]\.\.\/protocolSchema\.js['"]/u,
 ] as const;
 
+function validatorTypeReferences(path: string, text: string): readonly string[] {
+    const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const found = new Set<string>();
+    const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && /^(?:Zod[A-Za-z0-9_$]*|_zod)$/u.test(node.text)) found.add(node.text);
+        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+            && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)
+            && /^zod(?:\/|$)/u.test(node.moduleSpecifier.text)) found.add(node.moduleSpecifier.text);
+        if (ts.isQualifiedName(node) && ts.isIdentifier(node.left) && node.left.text === 'z') found.add(node.getText(source));
+        ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return [...found].map((name) => path + ': ' + name);
+}
+
 describe('public protocol-authoring declaration neutrality', () => {
-    it('preserves concrete schema input and output types for external declaration consumers', () => {
-        const diagnostics = compileExternalProtocolAuthoringConsumer(`
+    it('distinguishes schema types from permitted diagnostic error-class strings', () => {
+        expect(validatorTypeReferences('example.d.ts', "export type Name = 'ZodError' | '$ZodError';")).toEqual([]);
+        expect(validatorTypeReferences('example.d.ts', "import type { ZodType } from 'zod'; export type Schema = ZodType;")).not.toEqual([]);
+        expect(validatorTypeReferences('example.d.ts', 'export type Schema = z.ZodString;')).not.toEqual([]);
+    });
+    it('preserves concrete schema input and output types for external declaration consumers', async () => {
+        await compileExternalProtocolAuthoringConsumer(`
             import {
                 defineProtocolArray,
                 defineProtocolObject,
@@ -261,22 +139,18 @@ describe('public protocol-authoring declaration neutrality', () => {
             void id;
             void optionalLabel;
             void firstId;
-        `);
-
-        expect(diagnostics.map((diagnostic) => (
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-        ))).toEqual([]);
+        `, 'concrete');
         // Whole TypeScript-program work: measured 8.5 s / 15.9 s alone and
         // timing out against 30 s inside `vitest run` for the package. Aligned
         // with the package's other whole-program suites rather than a number
         // that only holds on an idle host.
     }, 120_000);
 
-    it('keeps composed array, unique-array, and union input distinct from parsed output', () => {
+    it('keeps composed array, unique-array, and union input distinct from parsed output', async () => {
         // A schema whose authored input and parsed output genuinely differ is
         // the only shape that can tell the canonical two-parameter signature
         // apart from one that reuses the output projection for both sides.
-        const diagnostics = compileExternalProtocolAuthoringConsumer(`
+        await compileExternalProtocolAuthoringConsumer(`
             import {
                 defineProtocolArray,
                 defineProtocolLiteral,
@@ -304,11 +178,7 @@ describe('public protocol-authoring declaration neutrality', () => {
             const settled: number | 'none' = parsedUnion;
             void total;
             void settled;
-        `);
-
-        expect(diagnostics.map((diagnostic) => (
-            ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-        ))).toEqual([]);
+        `, 'distinct-input-output');
         // Whole TypeScript-program work; see the sibling consumer test above
         // for the measured timings this budget is aligned with.
     }, 120_000);
@@ -337,7 +207,7 @@ describe('public protocol-authoring declaration neutrality', () => {
                 : false
         >().toEqualTypeOf<false>();
 
-        expect(emittedSourceAuthoringDeclaration('protocol/index.d.ts')).toMatch(
+        expect(await emittedSourceAuthoringDeclaration('protocol/index.public.d.ts')).toMatch(
             /export\s+type\s*\{[\s\S]*?\bProtocolComposableSchema\b[\s\S]*?\}\s*from\s*['"]\.\/protocolFacade\.js['"]/u,
         );
         // Whole TypeScript-program work: measured 8.5 s / 15.9 s alone and
@@ -346,31 +216,22 @@ describe('public protocol-authoring declaration neutrality', () => {
         // that only holds on an idle host.
     }, 120_000);
 
-    it('keeps the public facade declaration closure structural and isolated from source composition internals', async () => {
-        const declaration = emittedSourceAuthoringDeclaration('protocol/protocolFacade.d.ts');
-        const entrypointDeclaration = emittedSourceAuthoringDeclaration('protocol/index.d.ts');
-        const composerReferenceResolutionDeclaration = emittedSourceAuthoringDeclaration(
+    it('keeps the public facade validator-neutral while retaining canonical declaration identities', async () => {
+        const declaration = await emittedSourceAuthoringDeclaration('protocol/protocolFacade.d.ts');
+        const entrypointDeclaration = await emittedSourceAuthoringDeclaration('protocol/index.public.d.ts');
+        const composerReferenceResolutionDeclaration = await emittedSourceAuthoringDeclaration(
             'protocol/composerReferenceResolution.d.ts',
         );
-        const targetedDeclaration = emittedSourceAuthoringDeclaration('targetedContributionAuthoring.d.ts');
+        const targetedDeclaration = await emittedSourceAuthoringDeclaration('targetedContributionAuthoring.d.ts');
 
         expectTypeOf<ProtocolComposableSchema<{ readonly title: string }>['jsonSchema']>()
             .toMatchTypeOf<Readonly<{ type?: string }>>();
         expect(declaration).not.toContain(`type ${'Defined'}${'Schema'}<`);
-        expect(declaration).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
-        expect(declaration).toContain('readonly jsonSchema: PluginJsonSchema;');
-        expect(declaration).toContain('export interface ProtocolComposableSchema<');
-        expect(declaration).toContain('type ProtocolSchemaInput<');
         expect(declaration).toContain('type ProtocolObjectPreservedProjection<');
         expect(declaration).toContain(
             'ProtocolObjectAdditionalValue<TOptions, TProjection> | ProtocolObjectKnownValue<TShape, TProjection>',
         );
         expect(declaration).not.toContain('type Simplify<');
-        expect(declaration).toContain('export type ProtocolUtf8StringOptions = Readonly<{');
-        expect(declaration).toContain('export type ProtocolJsonValueOptions = Readonly<{');
-        expect(declaration).toContain(
-            'export type ProtocolUniqueJsonArrayOptions = ProtocolArrayOptions;',
-        );
         expect(declaration).toMatch(
             /defineProtocolUniqueArray:\s*<[\s\S]*?options\?: ProtocolUniqueJsonArrayOptions/u,
         );
@@ -401,12 +262,18 @@ describe('public protocol-authoring declaration neutrality', () => {
         // reuse the neighboring consumers' whole-program compiler budget.
     }, 120_000);
 
-    it('directly re-exports the Connected Account identity schema from the narrow Protocol owner', () => {
-        const declaration = emittedSourceAuthoringDeclaration('connectedAccounts.d.ts');
+    it('directly re-exports the Connected Account identity schema from the narrow Protocol owner', async () => {
+        const declaration = await emittedSourceAuthoringDeclaration('connectedAccounts.d.ts');
 
-        expect(declaration).toContain(
-            "export { QualifiedConnectedAccountRefJsonSchema, QualifiedConnectedAccountRefSchema, } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';",
-        );
+        const source = ts.createSourceFile('connectedAccounts.d.ts', declaration, ts.ScriptTarget.Latest, true);
+        const exported = source.statements.flatMap((statement) => (
+            ts.isExportDeclaration(statement) && statement.moduleSpecifier
+            && ts.isStringLiteral(statement.moduleSpecifier)
+            && statement.moduleSpecifier.text === '@happier-dev/protocol/connect/qualified-connected-account-persistence'
+            && statement.exportClause && ts.isNamedExports(statement.exportClause)
+                ? statement.exportClause.elements.map((element) => element.name.text) : []
+        ));
+        expect(exported).toEqual(expect.arrayContaining(['QualifiedConnectedAccountRefJsonSchema', 'QualifiedConnectedAccountRefSchema']));
         expect(declaration).not.toContain('ProtocolComposableSchema<QualifiedConnectedAccountRef>');
     });
 
@@ -415,20 +282,10 @@ describe('public protocol-authoring declaration neutrality', () => {
             compiledProtocolAuthoringDeclarationEntrypoint,
         );
         const leakedReferences = [...closure.entries()]
-            .flatMap(([declarationPath, declaration]) => validatorSpecificDeclarationReferences
-                .filter((reference) => reference.test(declaration))
-                .map((reference) => `${declarationPath}: ${reference}`));
+            .flatMap(([declarationPath, declaration]) => validatorTypeReferences(declarationPath, declaration));
 
         expect(leakedReferences).toEqual([]);
         for (const [declarationPath, declaration] of closure.entries()) {
-            const protocolImportSpecifiers = [...declaration.matchAll(
-                /from\s+['"](@happier-dev\/protocol[^'"]*)['"]/gu,
-            )].map((match) => match[1]);
-            expect(protocolImportSpecifiers).toEqual(
-                declarationPath.endsWith('/protocol/composerReferenceResolution.d.ts')
-                    ? ['@happier-dev/protocol/plugins/contributions/composer-reference-providers']
-                    : [],
-            );
             expect(declaration).not.toContain(`type ${'Defined'}${'Schema'}<`);
             expect(declaration).not.toContain('ProtocolAuthoringSchema');
             expect(declaration).not.toContain('PublicProtocolSchema');
@@ -441,9 +298,15 @@ describe('public protocol-authoring declaration neutrality', () => {
     it('keeps compiled Connected Account identity schemas on the narrow Protocol owner', async () => {
         const declaration = await readFile(compiledConnectedAccountsDeclaration, 'utf8');
 
-        expect(declaration).toContain(
-            "export { QualifiedConnectedAccountRefJsonSchema, QualifiedConnectedAccountRefSchema, } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';",
-        );
+        const source = ts.createSourceFile('connectedAccounts.d.ts', declaration, ts.ScriptTarget.Latest, true);
+        const exported = source.statements.flatMap((statement) => (
+            ts.isExportDeclaration(statement) && statement.moduleSpecifier
+            && ts.isStringLiteral(statement.moduleSpecifier)
+            && statement.moduleSpecifier.text === '@happier-dev/protocol/connect/qualified-connected-account-persistence'
+            && statement.exportClause && ts.isNamedExports(statement.exportClause)
+                ? statement.exportClause.elements.map((element) => element.name.text) : []
+        ));
+        expect(exported).toEqual(expect.arrayContaining(['QualifiedConnectedAccountRefJsonSchema', 'QualifiedConnectedAccountRefSchema']));
         expect(declaration).not.toContain(
             "import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';",
         );

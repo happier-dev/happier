@@ -342,15 +342,7 @@ test('hosted-static examples pack their authored manifest and static inputs', as
   }
 });
 
-test('SDK package selection declares and packs the public authoring inventory as exact positive paths', async () => {
-  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
-  const declaredFiles = packageJson.files;
-  assert.ok(Array.isArray(declaredFiles));
-  assert.ok(
-    declaredFiles.every(isExactPositivePackageFileEntry),
-    `SDK package files must remain exact positive paths: ${JSON.stringify(declaredFiles)}`,
-  );
-
+async function expectedPublishedExampleFiles(declaredFiles) {
   // The published package selection, every on-disk example manifest, and the
   // release owner's published dependency rewrite map must agree. A selected
   // example whose internal placeholder dependency this publication path cannot
@@ -369,12 +361,23 @@ test('SDK package selection declares and packs the public authoring inventory as
   );
 
   const publishableExamples = new Set(publishable);
-  const expectedExampleFiles = (await collectPublicExampleFiles(join(packageRoot, 'examples')))
+  return (await collectPublicExampleFiles(join(packageRoot, 'examples')))
     .filter((entry) => {
       const segments = entry.split('/');
       return segments.length <= 2 || publishableExamples.has(segments[1]);
     })
     .sort((left, right) => left.localeCompare(right));
+}
+
+test('SDK package selection declares the public authoring inventory as exact positive paths', async () => {
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  const declaredFiles = packageJson.files;
+  assert.ok(Array.isArray(declaredFiles));
+  assert.ok(
+    declaredFiles.every(isExactPositivePackageFileEntry),
+    `SDK package files must remain exact positive paths: ${JSON.stringify(declaredFiles)}`,
+  );
+  const expectedExampleFiles = await expectedPublishedExampleFiles(declaredFiles);
   assert.deepEqual(
     declaredFiles.filter((entry) => entry.startsWith('examples/')).sort((left, right) => left.localeCompare(right)),
     expectedExampleFiles,
@@ -386,6 +389,11 @@ test('SDK package selection declares and packs the public authoring inventory as
     );
   }
 
+});
+
+test('SDK package packs the public authoring inventory selected by its publication owner', async () => {
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  const expectedExampleFiles = await expectedPublishedExampleFiles(packageJson.files);
   const packedFiles = packInventory(packageRoot);
   const packedExampleFiles = packedFiles
     .filter((entry) => entry.startsWith('examples/'))

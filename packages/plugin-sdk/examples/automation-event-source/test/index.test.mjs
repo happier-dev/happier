@@ -72,7 +72,53 @@ test('emits a manifest accepted by canonical external-plugin ingestion', async (
   assert.equal(parsePluginManifest(drifted).ok, false);
 });
 
-test('runs the complete public list, admit and status lifecycle for one observation', async () => {
+test('keeps an empty catalog idle until cancellation', async () => {
+  const { runRepositoryPushObserver } = await import('../src/index.ts');
+  const controller = new AbortController();
+  let admitted = 0;
+  let reads = 0;
+  let disposed = false;
+  const own = { pluginId: 'examples.automation-event-source', machineId: 'this-machine', materializationId: 'this-installation' };
+  const context = {
+    plugin: { id: own.pluginId, version: '0.1.0' },
+    contribution: { id: 'repository-push-observer', qualifiedId: `${own.pluginId}/backgroundServices/repository-push-observer` },
+    surface: 'background', materialization: own, signal: controller.signal,
+    services: {
+      events: { host: { subscribe() { return { dispose() { disposed = true; } }; } } },
+      logger: { info() {} },
+      actions: { async execute(id, input) {
+        if (id === 'automation.event.sources.list') {
+          reads += 1;
+          return input.knownRevision === '1' ? { kind: 'unchanged', revision: '1' }
+            : { kind: 'page', revision: '1', nextCursor: null, definitions: [] };
+        }
+        if (id === 'automation.event.admit') {
+          admitted += 1;
+          return { results: [{ kind: 'admitted', runId: 'run-example', checkpointSafe: true }] };
+        }
+        return { kind: 'reported' };
+      } },
+    },
+  };
+  const running = runRepositoryPushObserver(context);
+  try {
+    await new Promise(setImmediate);
+    assert.equal(admitted, 0);
+    const settledReads = reads;
+    await new Promise(setImmediate);
+    assert.equal(reads, settledReads);
+  } finally {
+    controller.abort();
+    await running;
+  }
+  assert.equal(disposed, true);
+});
+
+for (const result of [
+  { kind: 'admitted', runId: 'run-example', checkpointSafe: true },
+  { kind: 'rejoined', runId: 'run-example', checkpointSafe: true },
+  { kind: 'skipped', reason: 'filtered', checkpointSafe: true },
+]) test(`preserves the public ${result.kind} admission outcome through source settlement`, async () => {
   const { runRepositoryPushObserver } = await import('../src/index.ts');
   const controller = new AbortController();
   const calls = [];
@@ -93,7 +139,7 @@ test('runs the complete public list, admit and status lifecycle for one observat
     sourceSelectorId: '3f5b6d0e-1c4a-4d2b-9f77-2a0c4e6b8d91',
     sourceInstanceId: 'example/repository',
     sourceContractVersion: 1,
-    sourceConfig: {},
+    sourceConfig: { repository: 'example/repository' },
     observationTransport: {
       kind: 'checkpointedPull',
       watcherMaterializationRef: {
@@ -112,13 +158,16 @@ test('runs the complete public list, admit and status lifecycle for one observat
       qualifiedId: 'examples.automation-event-source/repository-push-observer',
     },
     surface: 'background',
+    materialization: definition.observationTransport.watcherMaterializationRef,
     invokedAtMs: 1_725_000_000_001,
     signal: controller.signal,
     services: {
+      events: { host: { subscribe() { return { dispose() {} }; } } },
       actions: {
         async execute(actionId, input) {
           calls.push({ actionId, input });
           if (actionId === 'automation.event.sources.list') {
+            if (input.knownRevision === '1') return { kind: 'unchanged', revision: '1' };
             return {
               kind: 'page',
               revision: '1',
@@ -128,7 +177,7 @@ test('runs the complete public list, admit and status lifecycle for one observat
           }
           if (actionId === 'automation.event.admit') {
             return {
-              results: [{ kind: 'admitted', runId: 'run-example', checkpointSafe: true }],
+              results: [result],
             };
           }
           if (actionId === 'automation.event.source.status.report') return {};
@@ -146,24 +195,30 @@ test('runs the complete public list, admit and status lifecycle for one observat
   };
 
   const running = runRepositoryPushObserver(context);
-  assert.deepEqual(await observationSettled, {
-    message: 'automation_event_source.observation_settled',
-    facts: {
-      occurrenceId: 'example/repository:refs/heads/main:7f6d9d4',
-      disposition: { kind: 'checkpointSafe' },
-    },
-  });
-  controller.abort();
-  await running;
+  try {
+    assert.deepEqual(await observationSettled, {
+      message: 'automation_event_source.observation_settled',
+      facts: {
+        occurrenceId: 'example/repository:refs/heads/main:7f6d9d4',
+        disposition: { kind: 'checkpointSafe', admissions: [{
+          observation: { eventRef: definition.eventRef, sourceInstanceId: definition.sourceInstanceId,
+            sourceContractVersion: definition.sourceContractVersion, occurrenceId: 'example/repository:refs/heads/main:7f6d9d4' },
+          scope: { kind: 'checkpointedPull' },
+          definition: { automationId: definition.automationId, triggerId: definition.triggerId,
+            triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId },
+          result,
+        }] },
+      },
+    });
+  } finally {
+    controller.abort();
+    await running;
+  }
 
-  assert.deepEqual(calls.map(({ actionId }) => actionId), [
-    'automation.event.sources.list',
-    'automation.event.source.status.report',
-    'automation.event.admit',
-    'automation.event.source.status.report',
-  ]);
+  const admissions = calls.filter(({ actionId }) => actionId === 'automation.event.admit');
+  assert.equal(admissions.length, 1);
   assert.deepEqual(calls[0].input, { transport: { kind: 'checkpointedPull' } });
-  assert.deepEqual(calls[1].input, {
+  assert.deepEqual(calls.find(({ input }) => input.kind === 'catalogReconciliation' && input.state === 'current')?.input, {
     kind: 'catalogReconciliation',
     scope: { kind: 'checkpointedPull' },
     observedRevision: '1',
@@ -172,7 +227,7 @@ test('runs the complete public list, admit and status lifecycle for one observat
     scanStartedAt: null,
     nextRetryAt: null,
   });
-  assert.deepEqual(calls[2].input, {
+  assert.deepEqual(admissions[0].input, {
     eventRef: definition.eventRef,
     occurrenceId: 'example/repository:refs/heads/main:7f6d9d4',
     occurredAt: 1_725_000_000_000,
@@ -185,7 +240,8 @@ test('runs the complete public list, admit and status lifecycle for one observat
       sourceSelectorId: definition.sourceSelectorId,
     }],
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[3].input)), {
+  const sourceStatus = calls.find(({ input }) => input.kind === 'source' && input.observedDelta === 1)?.input;
+  assert.deepEqual(JSON.parse(JSON.stringify(sourceStatus)), {
     kind: 'source',
     automationId: definition.automationId,
     triggerId: definition.triggerId,
@@ -198,7 +254,7 @@ test('runs the complete public list, admit and status lifecycle for one observat
     lastDispositionAt: 1_725_000_000_001,
     nextRetryAt: null,
     observedDelta: 1,
-    admittedDelta: 1,
-    skippedDelta: 0,
+    admittedDelta: result.kind === 'admitted' ? 1 : 0,
+    skippedDelta: result.kind === 'skipped' ? 1 : 0,
   });
 });

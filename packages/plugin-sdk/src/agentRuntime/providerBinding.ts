@@ -88,6 +88,7 @@ export type AgentProviderBindingCredential =
         kind: 'apiKey';
         transport: AgentProviderCredentialTransport;
         value: string;
+        additionalCredentials?: readonly Readonly<{ slotId: string; value: string }>[];
     }>;
 
 export type AgentProviderBindingResolvedFacts = Readonly<{

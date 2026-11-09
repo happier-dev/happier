@@ -23,8 +23,7 @@ describe('first-party channel manifest admission', () => {
     it.each([
         CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete,
         CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete,
-        CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon,
-        CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept,
+        CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss,
     ])('%s respects shared Action waivers, Ask and decline', async (actionId) => {
         const parsed = parsePluginManifest(channelsManifest);
         if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
@@ -107,11 +106,13 @@ describe('first-party channel manifest admission', () => {
 
         for (const surface of ['cli', 'agent', 'mcp']) {
             expect(await admit('list', undefined, surface)).toMatchObject({ status: 'admitted' });
-            expect(await admit('attach', undefined, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+            expect(await admit('attach', undefined, surface)).toMatchObject(source === 'channels' && surface === 'cli'
+                ? { status: 'admitted' }
+                : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
             expect(await admit('removeTrigger', undefined, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
         }
         expect(await admit('list', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
-        expect(await admit('attach')).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+        expect(await admit('attach', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
         expect(await admit('removeTrigger')).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
         expect(await admit('attach', false)).toMatchObject({ status: 'admitted' });
     });

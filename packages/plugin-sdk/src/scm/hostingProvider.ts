@@ -11,38 +11,24 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { ConnectedAccountRef } from '../connectedAccounts.js';
-import type { PluginLocalizedStringV2 } from '../manifest.js';
 
-export type ScmHostingProviderKind =
-    | 'github'
-    | 'gitlab'
-    | 'bitbucket'
-    | 'azure-devops'
-    | 'custom'
-    | 'unknown';
-
-export type ScmHostingProviderRef = {
-    [key: string]: unknown;
-    id: string;
-    kind: ScmHostingProviderKind;
-    displayName: string;
-    baseUrl: string;
-    nameWithOwner?: string;
-    repositoryWebUrl?: string;
-    remoteName?: string;
-    urlSafety: {
-        [key: string]: unknown;
-        allowedSchemes: string[];
-    };
-};
+export type { ScmHostingProviderKind, ScmHostingProviderRef } from '../protocol/hostingRepositoryIdentity.js';
+import type { ScmHostingProviderKind, ScmHostingProviderRef } from '../protocol/hostingRepositoryIdentity.js';
 
 export type HostingProviderContribution = {
     id: string;
-    title: PluginLocalizedStringV2;
-    description?: PluginLocalizedStringV2;
+    title: string | { key: string; fallback: string };
+    description?: string | { key: string; fallback: string };
     kind: string;
     capabilities: ('detect' | 'clone' | 'fetch' | 'status' | 'diff' | 'commit' | 'push' | 'pullRequest')[];
     authService?: string | Readonly<{ pluginId: string; localId: string }>;
+    /**
+     * Safe, read-only Account Action accepting `{ repository, ref }`. It returns
+     * `{ kind: 'value', value: { repository, branch, headSha } }` for that exact
+     * ref, or `{ kind: 'unavailable', failure: { code, ... } }`. The host uses
+     * the requester's Account executor and verifies repository/ref provenance.
+     */
+    resolveRefAction?: string;
     metadata?: Record<string, PluginJsonValueV2>;
 };
 

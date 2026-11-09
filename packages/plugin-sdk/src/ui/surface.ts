@@ -1,6 +1,8 @@
 import type { PluginManifest } from '../manifest.js';
+import { resolvePluginUiDestinationBindingSlotV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import type { UiRenderer, UiView } from '../ui.js';
 import type { PluginUiSettingsPageV1 } from './publicContract.js';
+import type { PluginCollectionListExtensionV1 } from './contributions.js';
 
 type DistributiveOmit<T, TKey extends PropertyKey> = T extends unknown
     ? Omit<T, TKey>
@@ -37,14 +39,14 @@ export type UiSurfaceAppPageDefinitionFor<
 > = TView extends Readonly<{
     id: infer TId;
     container: 'appPage';
+    target: infer TTarget;
 }>
     ? Readonly<
         DistributiveOmit<TView, 'id' | 'renderer' | 'container' | 'target' | 'placement' | 'fallbackRenderers'> & {
             id: TId;
             placement: 'appPage';
-            target?: never;
             renderer: TRenderer;
-        }
+        } & (TTarget extends Readonly<{ kind: 'app' }> ? { target?: TTarget } : { target: TTarget })
     >
     : never;
 export type UiSurfaceAppPageDefinition<TRenderer extends UiSurfaceRendererDefinition> =
@@ -129,7 +131,8 @@ export type UiSurfaceDefinition =
     | UiSurfaceRendererOnlyDefinition<UiSurfaceHostedHtmlRendererDefinition>;
 
 /** The `definePlugin({ ui })` input, including the high-level surface shorthand. */
-export type UiAuthoringInput = PluginUiContributionInput & Readonly<{
+export type UiAuthoringInput = Omit<NonNullable<NonNullable<PluginManifest['contributes']>['ui']>, 'listExtensions'> & Readonly<{
+    listExtensions?: readonly PluginCollectionListExtensionV1[] | Readonly<Record<string, Omit<PluginCollectionListExtensionV1, 'id'>>>;
     surfaces?: readonly UiSurface[];
 }>;
 
@@ -206,9 +209,12 @@ function projectUiSurfaceRenderer(
 export function projectUiSurfaceDefinitions(
     value: UiAuthoringInput,
 ): PluginUiContributionInput {
-    const ui = value as Readonly<Record<string, unknown>>;
+    const listExtensions = value.listExtensions;
+    const ui = (isUiSurfaceRecord(listExtensions)
+        ? { ...value, listExtensions: Object.entries(listExtensions).map(([id, definition]) => ({ ...definition, id })) }
+        : value) as Readonly<Record<string, unknown>>;
     const surfaces = ui.surfaces;
-    if (surfaces === undefined) return value;
+    if (surfaces === undefined) return ui as PluginUiContributionInput;
     if (!Array.isArray(surfaces)) {
         throw new TypeError('ui.surfaces must be an array');
     }
@@ -264,21 +270,23 @@ export function projectUiSurfaceDefinitions(
         }
 
         if (surface.placement === 'appPage') {
-            if (Object.hasOwn(surface, 'target')) {
-                throw new TypeError(`ui.surfaces ${surface.id} appPage implies the app target`);
+            const target = surface.target === undefined ? { kind: 'app' as const } : surface.target;
+            if (!isUiSurfaceRecord(target) || resolvePluginUiDestinationBindingSlotV1('appPage', target.kind) === null) {
+                throw new TypeError(`ui.surfaces ${surface.id} appPage requires an admitted page target`);
             }
             const {
                 id: _id,
                 placement: _placement,
                 renderer: _renderer,
                 build: _build,
+                target: _target,
                 ...view
             } = surface;
             views.push(Object.freeze({
                 ...view,
                 id: surface.id,
                 container: 'appPage',
-                target: Object.freeze({ kind: 'app' }),
+                target: Object.freeze({ ...target }),
                 renderer: rendererId,
             }));
             continue;

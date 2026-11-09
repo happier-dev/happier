@@ -10137,7 +10137,7 @@ export type UsageActionResultById = {
                             reason: 'manual_strategy' | 'no_eligible_members' | 'selected';
                             excluded: {
                                 profileId: string;
-                                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked';
+                                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
                                 retryAtMs?: null | number | undefined;
                             }[];
                             decisionTrace: {
@@ -10163,7 +10163,7 @@ export type UsageActionResultById = {
                                         capturedAtMs?: number | undefined;
                                         exhausted?: boolean | undefined;
                                     };
-                                    exclusionReason?: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked' | undefined;
+                                    exclusionReason?: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked' | undefined;
                                     retryAtMs?: null | number | undefined;
                                 }[];
                             };
@@ -14683,15 +14683,15 @@ export type UsageActionResultById = {
                         } | {
                             kind: 'prepared_session';
                             input: {
-                                executionTarget: {
-                                    serverId: string;
-                                    machineId: string;
-                                };
                                 directory: {
                                     kind: 'managed';
                                 } | {
                                     kind: 'path';
                                     path: string;
+                                };
+                                executionTarget: {
+                                    serverId: string;
+                                    machineId: string;
                                 };
                                 agentTarget: {
                                     kind: 'agent';
@@ -14788,15 +14788,15 @@ export type UsageActionResultById = {
                                 } | {
                                     kind: 'prepared_session';
                                     input: {
-                                        executionTarget: {
-                                            serverId: string;
-                                            machineId: string;
-                                        };
                                         directory: {
                                             kind: 'managed';
                                         } | {
                                             kind: 'path';
                                             path: string;
+                                        };
+                                        executionTarget: {
+                                            serverId: string;
+                                            machineId: string;
                                         };
                                         agentTarget: {
                                             kind: 'agent';
@@ -15010,15 +15010,15 @@ export type UsageActionResultById = {
                     } | {
                         kind: 'prepared_session';
                         input: {
-                            executionTarget: {
-                                serverId: string;
-                                machineId: string;
-                            };
                             directory: {
                                 kind: 'managed';
                             } | {
                                 kind: 'path';
                                 path: string;
+                            };
+                            executionTarget: {
+                                serverId: string;
+                                machineId: string;
                             };
                             agentTarget: {
                                 kind: 'agent';
@@ -15115,15 +15115,15 @@ export type UsageActionResultById = {
                             } | {
                                 kind: 'prepared_session';
                                 input: {
-                                    executionTarget: {
-                                        serverId: string;
-                                        machineId: string;
-                                    };
                                     directory: {
                                         kind: 'managed';
                                     } | {
                                         kind: 'path';
                                         path: string;
+                                    };
+                                    executionTarget: {
+                                        serverId: string;
+                                        machineId: string;
                                     };
                                     agentTarget: {
                                         kind: 'agent';
@@ -15700,15 +15700,15 @@ export type UsageActionResultById = {
         } | {
             kind: 'prepared_session';
             input: {
-                executionTarget: {
-                    serverId: string;
-                    machineId: string;
-                };
                 directory: {
                     kind: 'managed';
                 } | {
                     kind: 'path';
                     path: string;
+                };
+                executionTarget: {
+                    serverId: string;
+                    machineId: string;
                 };
                 agentTarget: {
                     kind: 'agent';

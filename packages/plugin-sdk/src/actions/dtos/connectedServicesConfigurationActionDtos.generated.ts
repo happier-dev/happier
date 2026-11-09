@@ -430,6 +430,7 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
     };
     readonly "connectedServices.pools.patch": {
+        groupId: string;
         service: {
             pluginId: 'happier';
             localId: 'mcp-sign-in';
@@ -437,7 +438,6 @@ export type ConnectedServicesConfigurationActionInputById = {
             pluginId: string;
             localId: string;
         };
-        groupId: string;
         expectedGeneration: number;
         policy?: undefined | {
             v?: 1 | undefined;
@@ -5655,7 +5655,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             reason: 'manual_strategy' | 'no_eligible_members' | 'selected';
             excluded: {
                 profileId: string;
-                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked';
+                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
                 retryAtMs?: null | number | undefined;
             }[];
             decisionTrace: {
@@ -5681,7 +5681,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         capturedAtMs?: number | undefined;
                         exhausted?: boolean | undefined;
                     };
-                    exclusionReason?: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked' | undefined;
+                    exclusionReason?: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked' | undefined;
                     retryAtMs?: null | number | undefined;
                 }[];
             };

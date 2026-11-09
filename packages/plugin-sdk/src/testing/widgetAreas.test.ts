@@ -1,8 +1,10 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutorBoundaryFixture } from '../../../tests/src/testkit/actionExecutorBoundary.js';
 import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
 import { createWorkBoardArtifactBoundary } from '../../../protocol/src/boards/workBoardArtifactV1.testkit.js';
@@ -10,7 +12,7 @@ import { widgetAreasPlugin, runWidgetAreaExample } from '../../examples/widget-a
 import { createPluginTestkit } from './host.js';
 import { createPluginUiTestkit } from './uiHost.js';
 import { createSurfaceContextFixture } from '../ui/surfaceContext.fixture.js';
-import { createPluginRegistrationScope } from '../host/registration/scope.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { projectWidgetSnapshotPreviewV1 } from '@happier-dev/protocol/widgets';
 import { definePluginDeclarativeDocumentV1 } from '../ui/declarativeDocument.js';
@@ -31,7 +33,7 @@ it('publishes a widget input type and reads its declared options through the rea
     try {
         const resource = plugin.registration('resources', resourceId);
         if (!resource) throw new Error('Declared count-kind options Resource is not registered');
-        const bytes = await resource.read({ context: { kind: 'global' }, signal: new AbortController().signal });
+        const bytes = await resource.read(createTestResourceInvocationContext({ context: { kind: 'global' }, signal: new AbortController().signal }));
         expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes))).toEqual([
             { value: 'files', label: 'Files' }, { value: 'folders', label: 'Folders' },
         ]);
@@ -59,8 +61,8 @@ it('offers typed entity sources and targets and a Resource-backed declarative wi
         await writeFile(join(directory, 'note.txt'), 'one');
         const resource = plugin.registration('resources', 'count-document');
         if (!resource) throw new Error('Snapshot document Resource is not registered');
-        const bytes = await resource.read({ context: { kind: 'surface', mountInstanceKey: 'snapshot-counter',
-            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal });
+        const bytes = await resource.read(createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: 'snapshot-counter',
+            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal }));
         const document = definePluginDeclarativeDocumentV1(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)));
         expect(document).toMatchObject({ version: 1, root: { kind: 'metric', label: 'Files',
             data: { kind: 'value', value: 1 }, value: { path: [], type: 'number' } } });
@@ -68,8 +70,8 @@ it('offers typed entity sources and targets and a Resource-backed declarative wi
             asOf: '2026-10-17T00:00:00.000Z', provenance: [{ label: 'Directory count' }] });
         expect(preview?.document).toEqual(document);
         await writeFile(join(directory, 'second.txt'), 'two');
-        const updated = await resource.read({ context: { kind: 'surface', mountInstanceKey: 'snapshot-counter',
-            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal });
+        const updated = await resource.read(createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: 'snapshot-counter',
+            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal }));
         expect(JSON.parse(typeof updated === 'string' ? updated : new TextDecoder().decode(updated)))
             .toMatchObject({ root: { data: { kind: 'value', value: 2 } } });
         expect(preview?.document.root).toMatchObject({ data: { kind: 'value', value: 1 } });
@@ -135,17 +137,17 @@ it('activates a real declared plugin and runs area inputs/layout/refresh through
     if (!page || page.container !== 'appPage' || !page.widgetAreas || !widget || widget.container !== 'widget') throw new Error('Registered declarations missing');
     if (!inputType) throw new Error('Registered input type missing');
     const area = createWidgetAreaActionPortV1(surface => createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true }));
-    const deps = { widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area },
-        widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => widget,
+    const deps = createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area },
+        widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ ...widget, target: widget.target.kind }),
             readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
             readInputType: async field => field.inputType && 'pluginId' in field.inputType
                 && field.inputType.pluginId === widgetAreasPlugin.manifest.id && field.inputType.localId === inputType.id
                 ? { identity: { pluginId: widgetAreasPlugin.manifest.id, localId: inputType.id },
                     occurrenceId: 'area-test', definition: inputType } : null,
             validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
-    } satisfies Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetSurfaceActions' | 'widgetInputs'>;
+    });
     // This Artifact-boundary fixture supplies only the external ports reached by widget-area Actions.
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const executor = createActionExecutor(deps);
     const port = createPluginWidgetAreaHostPortV1({ scope, pluginId: widgetAreasPlugin.manifest.id, pageId: page.id,
         declarations: page.widgetAreas, isCurrent: () => true, execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
     const fixture = await createPluginUiTestkit({ authorPlugin: { id: widgetAreasPlugin.manifest.id, version: '1.0.0' },
@@ -157,23 +159,23 @@ it('activates a real declared plugin and runs area inputs/layout/refresh through
         const resource = plugin.registration('resources', 'count');
         if (!resource) throw new Error('Resource registration missing');
         const read = async (filter: string) => {
-            const bytes = await resource.read({ context: { kind: 'surface', mountInstanceKey: 'area-test',
-                launchInput: { directory, filter } }, signal: new AbortController().signal });
+            const bytes = await resource.read(createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: 'area-test',
+                launchInput: { directory, filter } }, signal: new AbortController().signal }));
             return JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
         };
         expect(await read('files')).toEqual({ directory, filter: 'files', count: 2 });
         expect(await read('folders')).toEqual({ directory, filter: 'folders', count: 1 });
         let invalidate: () => void = () => {};
         const invalidated = new Promise<void>(resolve => { invalidate = resolve; });
-        const observer = resource.observe(invalidate, { context: { kind: 'surface', mountInstanceKey: 'area-test',
-            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal });
+        const observer = await resource.observe(invalidate, createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: 'area-test',
+            launchInput: { directory, filter: 'files' } }, signal: new AbortController().signal }));
         try {
             await writeFile(join(directory, 'third.txt'), 'third');
             await invalidated;
         } finally { observer.dispose(); }
         expect(await read('files')).toEqual({ directory, filter: 'files', count: 3 });
-        await expect(resource.read({ context: { kind: 'surface', mountInstanceKey: 'area-test',
-            launchInput: { directory: join(directory, 'missing'), filter: 'files' } }, signal: new AbortController().signal }))
+        await expect(resource.read(createTestResourceInvocationContext({ context: { kind: 'surface', mountInstanceKey: 'area-test',
+            launchInput: { directory: join(directory, 'missing'), filter: 'files' } }, signal: new AbortController().signal })))
             .rejects.toMatchObject({ code: 'ENOENT' });
         const instance = { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: { pluginId: widgetAreasPlugin.manifest.id, localId: widget.id } },
             bindings: { directory: { kind: 'context' as const, slot: 'directory' }, filter: { kind: 'context' as const, slot: 'filter' } } };

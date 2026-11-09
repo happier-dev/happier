@@ -59,6 +59,7 @@ export type MachinePresetsActionInputById = {
                 };
             }[];
         };
+        setup?: unknown;
         controller?: undefined | {
             machineId: string;
             installationId: string;
@@ -70,7 +71,6 @@ export type MachinePresetsActionInputById = {
         } | {
             kind: 'until-delete';
         };
-        setup?: unknown;
         wakeOnAcceptedMessage?: boolean | undefined;
         controllerPoolId?: string | undefined;
         controllerDisplayName?: string | undefined;

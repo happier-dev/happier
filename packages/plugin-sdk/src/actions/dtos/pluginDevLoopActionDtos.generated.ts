@@ -1361,8 +1361,8 @@ export type PluginDevLoopActionResultById = {
             projectRoot?: string | undefined;
             resources?: undefined | {
                 path: string;
-                id: string;
                 kind: 'asset' | 'config' | 'prompt' | 'skill' | 'template';
+                id: string;
                 contentType: string;
             }[];
             github?: undefined | {

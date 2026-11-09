@@ -1,4 +1,3 @@
-export type { PluginDynamicResourceProducer } from '../services/resources.js';
 export {
     MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
     MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
@@ -16,6 +15,7 @@ export type {
 export type { PluginDynamicResourceContributionV2 } from '../services/resources.js';
 export type { PluginDynamicResourceInvocationOptionsV1 } from '../services/resources.js';
 export type { PluginDynamicResourceRuntime } from '../services/resources.js';
+export type { PluginDynamicResourceProducer } from '../services/resources.js';
 export type { PluginPackagedResourceContributionV2 } from '../services/resources.js';
 export type { PluginPromptAssetDefinition } from '../definePlugin.js';
 export type { PluginResourceContextV1 } from '../services/resources.js';
@@ -26,3 +26,5 @@ export type { ResourceContribution } from '../resources.js';
 export type { ResourceDescriptor } from '../resources.js';
 export type { ResourcesRegistrationApi } from '../activation.js';
 export type { ResourcesService } from '../resources.js';
+export { PluginSessionInboxResourceBindingV1Schema, PluginSessionInboxRowV1Schema, PluginSessionInboxRowPageV1Schema } from './sessionInbox.js';
+export type { PluginSessionInboxResourceBindingV1, PluginSessionInboxRowV1, PluginSessionInboxRowPageV1 } from './sessionInbox.js';

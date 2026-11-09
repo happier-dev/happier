@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "types": ["node"],
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "target/src",
+    "outDir": "../../../../.project/tmp/M-P21/external-access-author"
+  },
+  "include": ["target/src/accessProvider.ts"]
+}

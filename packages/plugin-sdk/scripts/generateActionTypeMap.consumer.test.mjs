@@ -30,6 +30,16 @@ function writeCanonicalSdkTypeFixtures(root) {
       | { kind: 'commit'; commit: string; parent?: string }
       | { kind: 'pullRequest'; locator: { providerId: string; repository: string; number: number; baseOid?: string; headOid?: string; sourceAction?: { action: { pluginId: string; localId: string }; input?: JsonValue } } };
   `);
+  // This isolated compiler boundary proves generated import identity and
+  // neutral syntax, not the real Machine item/StoredApp domain shape. Public
+  // API materialization and author builds check the actual canonical types.
+  put('packages/plugin-sdk/src/machineSetup.ts', `
+    import type { JsonValue } from './identity.js';
+    export type MachinePresetItemV1 = Readonly<{
+      kind: 'softwareRecipe';
+      selection: { ref: { pluginId: string; recipeId: string; revision: string }; inputs: JsonValue };
+    }>;
+  `);
 }
 
 test('Action DTO declaration consumers retain literal keys and result fields without a validator dependency', (t) => {

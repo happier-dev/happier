@@ -24,9 +24,9 @@ export type { SessionAuthoringCheckoutCreationDraftV1 } from '../services/sessio
 export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../services/sessions.js';
 export type { SessionSpawnNewInputV2 } from '../services/sessions.js';
 export { SessionSpawnNewInputV2Schema } from '../services/sessions.js';
-export { projectSessionSpawnNewActionInputV2 } from '../services/sessions.js';
 export type { SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 export { SessionServerStartSpawnDraftV1Schema } from '../services/sessions.js';
+export { projectSessionSpawnNewActionInputV2 } from '../services/sessions.js';
 export type { SessionSchema } from '../services/sessions.js';
 export type { SessionAuthService } from '../services/sessions.js';
 export type { SessionEvent } from '../services/sessions.js';
@@ -39,8 +39,8 @@ export type { SessionMcpElicitDecision } from '../services/sessions.js';
 export type { SessionMcpElicitRequest } from '../services/sessions.js';
 export type { SessionMcpElicitResult } from '../services/sessions.js';
 export type { SessionMcpService } from '../services/sessions.js';
-export type { SessionMediaPublishGeneratedRequest } from '../services/sessions.js';
 export type { SessionMediaPublishToolResultRequest } from '../services/sessions.js';
+export type { SessionMediaPublishGeneratedRequest } from '../services/sessions.js';
 export type { SessionMediaService } from '../services/sessions.js';
 export type { SessionMediaSourceRoot } from '../services/sessions.js';
 export type { SessionMessagePart } from '../services/sessions.js';
@@ -112,6 +112,7 @@ export { readSlashCommandNames } from '../services/sessions.js';
 export { readStructuredInputMentionSourcesV1 } from '../services/sessions.js';
 export { resolveSessionMutationRetryDelayMs } from './sessionMutationBackoff.js';
 export { resolveTranscriptBodySessionMessageRole } from '../services/sessions.js';
+export { readTranscriptPeerSenderV1 } from '../services/sessions.js';
 export { sanitizeHappierStructuredInputV1 } from '../services/sessions.js';
 
 export type { AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '../services/sessions.js';

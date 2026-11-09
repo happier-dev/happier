@@ -192,10 +192,10 @@ describe('SDK Protocol schema projection browser graph', () => {
     it('publishes the exact canonical Protocol leaves needed by browser-facing SDK projections', () => {
         const protocolPackage = readProtocolPackageJson();
 
-        for (const { specifier, packageEntry } of protocolLeaves) {
+        for (const { specifier, source, packageEntry } of protocolLeaves) {
             expect(protocolPackage.exports).toHaveProperty(
                 specifier.replace('@happier-dev/protocol/', './'),
-                packageEntry,
+                { 'happier-source': source.replace('../../protocol/', './'), ...packageEntry },
             );
         }
     });

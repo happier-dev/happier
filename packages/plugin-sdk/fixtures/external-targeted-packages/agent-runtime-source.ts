@@ -3,12 +3,14 @@ import {
   AgentSessionRuntimeEventSchema,
   type AgentSessionCompactRequest,
   type AgentSessionOpenRequest,
+  type AgentSessionHappierToolsService,
   type AgentSessionProviderBinding,
   type AgentSessionProviderCheckpoint,
   type AgentSessionRuntimeContext,
   type AgentSessionRuntimeEvent,
   type AgentSessionSendRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 
 export const externalRuntimeEvent: AgentSessionRuntimeEvent = {
   kind: 'input-accepted',
@@ -37,7 +39,7 @@ export const externalProviderCheckpoint: AgentSessionProviderCheckpoint = {
   providerRevision: 1,
 };
 
-export const externalOpenRequest: AgentSessionOpenRequest = {
+export const externalOpenRequest = {
   kind: 'create',
   sessionId: 'session-external',
   cwd: '/external',
@@ -47,7 +49,7 @@ export const externalOpenRequest: AgentSessionOpenRequest = {
     revision: 1,
     instructions: 'Use the external author contract.',
   },
-};
+} satisfies AgentSessionOpenRequest;
 
 export const externalSendRequest: AgentSessionSendRequest = {
   inputIds: ['input-external'],
@@ -76,3 +78,26 @@ export const externalRuntimeSchemaValues = [
   AgentSessionProviderBindingV1Schema,
   AgentSessionRuntimeEventSchema,
 ] as const;
+
+/** An external Agent declares delivery; the host still owns its Session authentication. */
+export const externalShellBridgeAgentDeclaration = {
+  title: 'External shell bridge Agent',
+  runtime: { kind: 'custom' },
+  primary: 'sessions',
+  capabilities: {
+    sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+    tools: { delivery: 'shell_bridge' },
+  },
+} satisfies PluginCustomAgentDeclaration;
+
+/** Forward the resulting launch unchanged to the bridge child, including its opaque env. */
+export async function resolveExternalHappierToolsBridge(
+  request: AgentSessionOpenRequest,
+  context: Pick<AgentSessionRuntimeContext, 'session' | 'signal'>,
+): ReturnType<AgentSessionHappierToolsService['resolveNativeBridge']> {
+  const service = context.session.services.happierTools;
+  if (!service) throw new Error('Happier tools are unavailable for this Session');
+  return await service.resolveNativeBridge({
+    systemPrompt: request.kind === 'fork' ? undefined : request.startupInstructions?.instructions,
+  }, { signal: context.signal });
+}

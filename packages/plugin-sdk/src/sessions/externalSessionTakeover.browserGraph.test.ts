@@ -26,6 +26,7 @@ describe('External Session takeover browser graph', () => {
         expect(protocolPackage.exports).toHaveProperty(
             './sessions/metadata/runtime-descriptor',
             {
+                'happier-source': './src/sessions/metadata/runtimeDescriptorV1.ts',
                 types: './dist/sessions/metadata/runtimeDescriptorV1.d.ts',
                 default: './dist/sessions/metadata/runtimeDescriptorV1.js',
             },
@@ -33,6 +34,7 @@ describe('External Session takeover browser graph', () => {
         expect(protocolPackage.exports).toHaveProperty(
             './strings/opaqueIdentifier',
             {
+                'happier-source': './src/strings/opaqueIdentifier.ts',
                 types: './dist/strings/opaqueIdentifier.d.ts',
                 default: './dist/strings/opaqueIdentifier.js',
             },

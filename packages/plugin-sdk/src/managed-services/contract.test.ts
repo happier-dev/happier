@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 
 import {
     ManagedServiceLocalIdSchema as ProtocolManagedServiceLocalIdSchema,
@@ -22,6 +24,11 @@ import {
     type ManagedServiceEndpointUrlFacts,
     type ManagedServiceEndpointUrlRejection,
     type ManagedServiceEndpointUrlResult,
+    type ManagedServiceNativeLogReadV1,
+    type ManagedServiceNativeLogWatchV1,
+    type ManagedServiceNativeLogResultV1,
+    type ManagedServiceNativeInstanceV1,
+    type ManagedServiceNativeLifecycleV1,
 } from './index.js';
 import type {
     ManagedServiceAttachClientAccess,
@@ -61,6 +68,134 @@ const attachRequestAuth = undefined as never; /* @sdk-negative-type-case-end */
 }
 
 describe('managed-services author contract', () => {
+    it('authors both required log overloads in the public example without reading for unsupported follow', async () => {
+        // Keep the copyable author's public declarations out of the SDK's source TS program.
+        const example = await import(new URL('../../examples/public-authoring/daemon.ts', import.meta.url).href) as Partial<{
+            createBoundedNativeServiceLogs(read: (instance: ManagedServiceNativeInstanceV1, signal?: AbortSignal) =>
+                Promise<Readonly<{ sourceRevision: string; redactedText: string }>>): NonNullable<ManagedServiceNativeLifecycleV1['logs']>;
+        }>;
+        expect(example.createBoundedNativeServiceLogs).toBeTypeOf('function');
+        if (!example.createBoundedNativeServiceLogs) throw new Error('public_native_logs_example_unavailable');
+        const instance = { adapter: { pluginId: 'acme.native-service', localId: 'service' }, nativeResourceId: 'service-1' };
+        let reads = 0;
+        // Native log IO is the external boundary; the maintained author implementation is real.
+        const logs = example.createBoundedNativeServiceLogs(async () => {
+            reads++;
+            return { sourceRevision: 'native-source', redactedText: 'ééé' };
+        });
+        const events: ManagedServiceNativeLogResultV1[] = [];
+        const follow = await logs(instance, { kind: 'watch', maxBytes: 5, emit: result => events.push(result) });
+        expect(events).toEqual([{ kind: 'unavailable', reason: 'unsupported' }]);
+        expect(reads).toBe(0);
+        await follow.dispose();
+        expect(await logs(instance, { kind: 'read', maxBytes: 5 })).toEqual({ kind: 'page', page: {
+            sourceRevision: 'native-source', text: 'éé', nextCursor: null, truncated: true,
+        } });
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(logs(instance, { kind: 'read', maxBytes: 5, signal: cancelled.signal }))
+            .rejects.toMatchObject({ name: 'AbortError' });
+        expect(reads).toBe(1);
+    });
+
+    it('retains optional native adapter discovery, controls and accounting through public registration', async () => {
+        const instance = { adapter: { pluginId: 'acme.native-service', localId: 'service' }, nativeResourceId: 'service-1' };
+        const machine = { serverId: 'server-1', machineId: 'machine-1' };
+        const controller = new AbortController();
+        const reads: string[] = [];
+        let followDisposed = 0;
+        function logs(candidate: typeof instance, request: ManagedServiceNativeLogReadV1): Promise<ManagedServiceNativeLogResultV1>;
+        function logs(candidate: typeof instance, request: ManagedServiceNativeLogWatchV1): Promise<import('../lifecycle.js').Disposable>;
+        async function logs(candidate: typeof instance, request: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
+            expect(candidate).toBe(instance);
+            expect(request.signal).toBe(controller.signal);
+            reads.push(request.kind);
+            const result: ManagedServiceNativeLogResultV1 = { kind: 'page', page: { sourceRevision: 'source-one',
+                text: 'native output', nextCursor: { sourceRevision: 'source-one', token: 'next' }, truncated: false } };
+            if (request.kind === 'read') return result;
+            expect(request.cursor).toEqual(result.page.nextCursor);
+            request.emit(result);
+            return { dispose() { followDisposed++; } };
+        }
+        let phase: 'running' | 'stopped' = 'stopped';
+        const observation = () => ({ phase, readiness: 'not_reported' as const, endpoint: null });
+        const runtime = {
+            logs,
+            async inspect() { return observation(); },
+            async stop() { phase = 'stopped'; return { status: 'stopped' as const }; },
+            async discover(request: typeof machine, options?: PluginCancellationOptions) {
+                reads.push('discovery');
+                expect(request).toBe(machine);
+                expect(options?.signal).toBe(controller.signal);
+                return { kind: 'partial' as const, candidates: [{ instance, name: 'Native service', observation: observation() }],
+                    failures: [{ kind: 'unavailable' as const, code: 'native_permission_required' }] };
+            },
+            async start(candidate: typeof instance) {
+                expect(candidate).toBe(instance);
+                phase = 'running';
+                return observation();
+            },
+            async restart(candidate: typeof instance) {
+                expect(candidate).toBe(instance);
+                return { kind: 'unavailable' as const, code: 'native_restart_unavailable' };
+            },
+            async accounting(instances: readonly (typeof instance)[], options?: PluginCancellationOptions) {
+                reads.push('accounting');
+                expect(instances).toEqual([instance]);
+                expect(options?.signal).toBe(controller.signal);
+                return { kind: 'sample' as const, samples: [{ instance, cpuPercent: null, memoryBytes: 512 }] };
+            },
+        };
+        const testkit = await createPluginTestkit({
+            manifest: { schemaVersion: 2, id: instance.adapter.pluginId, version: '1.0.0', displayName: 'Native service',
+                runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
+                contributes: { projectNativeAdapters: [{ id: instance.adapter.localId, files: ['service.json'], roles: ['nativeServiceLifecycle'] }] } },
+            module: { activate(api) { api.projectNativeAdapters.register(instance.adapter.localId, { nativeServiceLifecycle: runtime }); } },
+        });
+        try {
+            // Declaring/capturing a capability must not discover or sample native resources.
+            expect(reads).toEqual([]);
+            const lifecycle = testkit.registration('projectNativeAdapters', instance.adapter.localId)?.nativeServiceLifecycle;
+            expect(lifecycle).toMatchObject({ discover: expect.any(Function), start: expect.any(Function), restart: expect.any(Function), accounting: expect.any(Function) });
+            expect(await lifecycle?.discover?.(machine, { signal: controller.signal })).toMatchObject({ kind: 'partial', candidates: [{ instance }], failures: [{ code: 'native_permission_required' }] });
+            expect(await lifecycle?.start?.(instance)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null });
+            expect(await lifecycle?.inspect(instance)).toEqual({ phase: 'running', readiness: 'not_reported', endpoint: null });
+            expect(await lifecycle?.restart?.(instance)).toEqual({ kind: 'unavailable', code: 'native_restart_unavailable' });
+            expect(await lifecycle?.accounting?.([instance], { signal: controller.signal })).toEqual({ kind: 'sample', samples: [{ instance, cpuPercent: null, memoryBytes: 512 }] });
+            expect(reads).toEqual(['discovery', 'accounting']);
+            const page = await lifecycle?.logs?.(instance, { kind: 'read', maxBytes: 8_192, signal: controller.signal });
+            if (page?.kind !== 'page' || !page.page.nextCursor) throw new Error('Expected bounded cursor page');
+            const followed: ManagedServiceNativeLogResultV1[] = [];
+            const follow = await lifecycle?.logs?.(instance, { kind: 'watch', maxBytes: 8_192, cursor: page.page.nextCursor,
+                signal: controller.signal, emit: value => followed.push(value) });
+            expect(followed).toEqual([page]);
+            await follow?.dispose();
+            expect(followDisposed).toBe(1);
+            expect(reads).toEqual(['discovery', 'accounting', 'read', 'watch']);
+            expect(await lifecycle?.stop(instance)).toEqual({ status: 'stopped' });
+            expect(await lifecycle?.inspect(instance)).toEqual({ phase: 'stopped', readiness: 'not_reported', endpoint: null });
+        } finally { await testkit.dispose(); }
+    });
+
+    it('keeps omitted native service capabilities absent after public registration', async () => {
+        const testkit = await createPluginTestkit({
+            manifest: { schemaVersion: 2, id: 'acme.inspect-service', version: '1.0.0', displayName: 'Inspect service',
+                runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
+                contributes: { projectNativeAdapters: [{ id: 'service', files: ['service.json'], roles: ['nativeServiceLifecycle'] }] } },
+            module: { activate(api) { api.projectNativeAdapters.register('service', { nativeServiceLifecycle: {
+                async inspect() { return { phase: 'unknown', readiness: 'not_reported', endpoint: null }; },
+                async stop() { return { status: 'unsupported' }; },
+            } }); } },
+        });
+        try {
+            const lifecycle = testkit.registration('projectNativeAdapters', 'service')?.nativeServiceLifecycle;
+            expect(lifecycle).toBeDefined();
+            for (const method of ['discover', 'start', 'restart', 'accounting', 'logs'] as const) {
+                expect(lifecycle?.[method]).toBeUndefined();
+            }
+        } finally { await testkit.dispose(); }
+    });
+
     it('projects credential bindings through the public Connected Accounts declaration owner', async () => {
         const sourcePath = fileURLToPath(new URL('./contract.ts', import.meta.url));
         const source = await readFile(sourcePath, 'utf8');
@@ -144,16 +279,12 @@ describe('managed-services author contract', () => {
             method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
             headers?: Readonly<Record<string, string>>;
             body?: Uint8Array;
+            interactive?: true;
             timeoutMs?: number;
             signal?: AbortSignal;
         }>>();
-        expectTypeOf<ManagedServiceResponse>().toEqualTypeOf<Readonly<{
-            ok: boolean;
-            status: number;
-            statusText: string;
-            headers: Readonly<Record<string, string>>;
-            body: ReadableStream<Uint8Array> | null;
-        }>>();
+        expectTypeOf<ReadableStream<Uint8Array>>()
+            .toExtend<NonNullable<ManagedServiceResponse['body']>>();
         expectTypeOf<ManagedServiceSnapshot['state']>().toEqualTypeOf<
             'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed'
         >();

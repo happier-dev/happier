@@ -622,8 +622,8 @@ export type AccountProfileActionInputById = {
                             url?: string | undefined;
                             note?: string | undefined;
                         };
-                        title: string;
                         kind: 'painting' | 'photo';
+                        title: string;
                         hour: number;
                         horizon: {
                             src?: number | undefined;
@@ -1267,8 +1267,8 @@ export type AccountProfileActionInputById = {
                             url?: string | undefined;
                             note?: string | undefined;
                         };
-                        title: string;
                         kind: 'painting' | 'photo';
+                        title: string;
                         hour: number;
                         horizon: {
                             src?: number | undefined;
@@ -1912,8 +1912,8 @@ export type AccountProfileActionInputById = {
                             url?: string | undefined;
                             note?: string | undefined;
                         };
-                        title: string;
                         kind: 'painting' | 'photo';
+                        title: string;
                         hour: number;
                         horizon: {
                             src?: number | undefined;
@@ -2509,8 +2509,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -2623,8 +2623,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -2670,7 +2670,6 @@ export type AccountProfileActionResultById = {
                     reason: 'account_image_unavailable';
                 };
             };
-            state: 'published';
             metadata: {
                 bio?: string | undefined;
                 links?: undefined | {
@@ -2685,6 +2684,7 @@ export type AccountProfileActionResultById = {
                     kind: 'account' | 'planet';
                 };
             };
+            state: 'published';
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -3537,8 +3537,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -4062,8 +4062,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -4587,8 +4587,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -5112,8 +5112,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -5637,8 +5637,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;
@@ -6162,8 +6162,8 @@ export type AccountProfileActionResultById = {
                                 url?: string | undefined;
                                 note?: string | undefined;
                             };
-                            title: string;
                             kind: 'painting' | 'photo';
+                            title: string;
                             hour: number;
                             horizon: {
                                 src?: number | undefined;

@@ -257,64 +257,7 @@ describe('plugin UI public surface', () => {
     });
 
     it('re-exports the Protocol-owned semantic icon vocabulary', () => {
-        expect(pluginUi.PLUGIN_UI_ICON_TOKENS_V1).toEqual([
-            'action',
-            'browser',
-            'copy',
-            'file',
-            'globe',
-            'info',
-            'preview',
-            'refresh',
-            'settings',
-            'terminal',
-            'warning',
-            'add',
-            'back',
-            'check',
-            'close',
-            'error',
-            'external',
-            'forward',
-            'more',
-            'search',
-            'change-open',
-            'change-complete',
-            'issue',
-            'bug',
-            'pin',
-            'conversations',
-            'waveform',
-            'desktop',
-            'pause',
-            'failure',
-            'unavailable',
-            'denied',
-            'review',
-            'attention',
-            'escalating',
-            'merge-ready',
-            'mention',
-            'assigned',
-            'new',
-            'waiting',
-            'list',
-            'board',
-            'filter',
-            'watch',
-            'link',
-            'tag',
-            'asset',
-            'branch',
-            'commit',
-            'download',
-            'locked',
-            'run',
-            'stop',
-            'send',
-            'generate',
-            'workflow',
-        ]);
+        expect(pluginUi.PLUGIN_UI_ICON_TOKENS_V1).toBe(protocol.PLUGIN_UI_ICON_TOKENS_V1);
     });
 
     it('publishes only the canonical UI entrypoints', () => {
@@ -349,10 +292,10 @@ describe('plugin UI public surface', () => {
 
     it('keeps the settings contract on the canonical settings entrypoint', () => {
         const settingsSubpathSource = readFileSync(
-            new URL('./settings/index.ts', import.meta.url),
+            new URL('./settings/index.public.ts', import.meta.url),
             'utf8',
         );
-        const uiSubpathSource = readFileSync(new URL('./ui/index.ts', import.meta.url), 'utf8');
+        const uiSubpathSource = readFileSync(new URL('./ui/index.public.ts', import.meta.url), 'utf8');
 
         expect(readFileSync(new URL('./ui.ts', import.meta.url), 'utf8'))
             .not.toContain('PluginSettingsContribution');
@@ -364,7 +307,7 @@ describe('plugin UI public surface', () => {
 
     it('projects UI input and output types through the SDK author contract', () => {
         const uiSource = readFileSync(new URL('./ui.ts', import.meta.url), 'utf8');
-        const uiSubpathSource = readFileSync(new URL('./ui/index.ts', import.meta.url), 'utf8');
+        const uiSubpathSource = readFileSync(new URL('./ui/index.public.ts', import.meta.url), 'utf8');
         const uiAuthorSource = readFileSync(new URL('./ui/index.public.ts', import.meta.url), 'utf8');
 
         expect(uiSource).toContain("from './ui/publicContract.js';");

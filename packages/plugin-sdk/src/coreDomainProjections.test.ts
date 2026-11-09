@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from './test-support/sourceProgram.js';
 
 import type { PluginActivationModule, PluginApi, PluginCleanup } from './activation.js';
 import type { PluginOperationAvailability } from './availability.js';
@@ -29,11 +30,9 @@ import type {
     ActionHandler,
     ActionSpec,
     ActionsService,
-    CommandContribution,
     PluginActionInputById,
     PluginActionResultById,
     PluginInvocableActionId,
-    ToolContribution,
 } from './actions/index.js';
 import type {
     BackgroundServiceContext,
@@ -301,8 +300,8 @@ type ProjectionTypes = [
     PluginInvocationContext, LoggerService, PluginOperationAvailability, PluginPath,
     PluginReference, PluginServiceId, PluginServices,
     ActionContribution, ActionExecuteResult, ActionHandler, ActionSpec, ActionsService,
-    CommandContribution, PluginActionInputById, PluginActionResultById, PluginInvocableActionId,
-    ToolContribution, BackgroundServiceContext, BackgroundServiceContribution,
+    PluginActionInputById, PluginActionResultById, PluginInvocableActionId,
+    BackgroundServiceContext, BackgroundServiceContribution,
     BackgroundServiceDefinition, BackgroundServiceRunner, BackgroundServicesRegistrationApi,
     BrowserActionContribution, BrowserActionContributionInput, BrowserTargetContribution,
     BrowserTargetContributionInput, EventContribution, EventSubscriptionTarget, EventsService,
@@ -376,19 +375,7 @@ function moduleExportNames(program: ts.Program, relativePath: string): readonly 
 }
 
 function createSdkProgram(): ts.Program {
-    const configPath = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    return ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    return createSdkSourceProgram();
 }
 
 describe('final core-domain package-local projections', () => {

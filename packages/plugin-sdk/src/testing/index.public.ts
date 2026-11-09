@@ -1,5 +1,13 @@
 export { createTestResourceInvocationContext } from './resourceInvocation.js';
 export { createPluginHttpFixture } from './http.js';
+export { createPluginActionHandlerUnavailableFixture } from './actionFailure.js';
+export { createPluginClientTestkit } from './client.js';
+export type {
+    PluginClientTestkit,
+    PluginClientTestkitOptions,
+    PluginClientTestkitRegistration,
+    PluginClientTestkitRegistrationByFamily,
+} from './client.js';
 export type { AgentSessionRuntimeEventKind } from './runtimeEvents.js';
 export type { ObservedAgentLaunch, AgentLaunchObserverBoundaries } from './observeAgentLaunch.js';
 export { createAgentLaunchObserver } from './observeAgentLaunch.js';

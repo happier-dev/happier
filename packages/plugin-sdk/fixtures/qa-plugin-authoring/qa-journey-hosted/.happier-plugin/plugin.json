@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "id": "qa.journey-hosted",
+  "version": "0.1.0",
+  "displayName": "QA Journey Hosted",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": { "daemon": "./index.mjs", "development": "./index.mjs" },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "ui": {
+      "views": [
+        {
+          "id": "journey",
+          "container": "appPage",
+          "target": {
+            "kind": "app"
+          },
+          "renderer": "journey-web",
+          "title": "QA Journey Hosted"
+        }
+      ],
+      "renderers": [
+        {
+          "id": "journey-web",
+          "kind": "hostedWeb",
+          "source": {
+            "kind": "artifact",
+            "artifact": "journey"
+          },
+          "requiredHostMethods": [
+            "context",
+            "watchContext",
+            "setPageNavigation"
+          ]
+        }
+      ],
+      "translations": []
+    }
+  }
+}

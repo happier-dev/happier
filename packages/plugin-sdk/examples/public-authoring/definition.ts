@@ -93,6 +93,17 @@ const reviewProjectHostedHtmlSurface = defineUiSurfaceDefinition({
     },
 });
 
+const reviewMachinePageSurface = defineUiSurfaceDefinition({
+    id: 'review-machine-page',
+    placement: 'appPage',
+    target: { kind: 'machine' },
+    title: 'Machine review',
+    renderer: {
+        kind: 'declarative',
+        root: { kind: 'text', text: 'Machine page authoring reference' },
+    },
+});
+
 export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     id: 'examples.public-sdk-review-assistant',
     version: '0.1.0',
@@ -168,7 +179,18 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             title: 'Summarize review transcript',
             description: 'Produces a compact summary from the current review transcript.',
             scopes: ['global'],
-            surfaces: ['cli', 'agent', 'ui'],
+            surfaces: ['cli', 'agent', 'mcp', 'ui'],
+            tool: {
+                name: 'review_summary',
+                title: 'Summarize review transcript',
+                promptSnippet: 'Use review_summary when a bounded review summary will help the current turn.',
+                promptGuidelines: [
+                    'Keep the summary tied to the user-requested review scope.',
+                    'Do not treat tool output as persistent Session state.',
+                ],
+            },
+            cli: { path: ['review', 'summarize'] },
+            toolExposure: { agent: 'direct', mcp: 'direct' },
             execution: { target: 'daemon' },
             placementBindings: ['commandPalette'],
             dangerLevel: 'safe',
@@ -247,6 +269,9 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     },
     resources: {
         ...repositoryResources,
+        'i18n-en': {
+            kind: 'asset', path: 'resources/i18n/en.json', contentType: 'application/json',
+        },
         'review-guide': {
             source: 'packaged',
             kind: 'template',
@@ -356,34 +381,12 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     accountCollections: {
         'review-session-statuses': reviewSessionStatusCollection,
     },
-    // Deferred — not supported or advertised for ordinary author use. Do not rely on it.
-    tools: {
-        'review-summary-tool': {
-            name: 'review_summary',
-            title: 'Summarize review transcript',
-            surfaces: ['agent', 'mcp'],
-            action: 'review-summary',
-            promptSnippet: 'Use review_summary when a bounded review summary will help the current turn.',
-            promptGuidelines: [
-                'Keep the summary tied to the user-requested review scope.',
-                'Do not treat tool output as persistent Session state.',
-            ],
-        },
-    },
     promptAssets: {
         'agent-context-companion-prompt': {
             kind: 'context',
             resource: 'agent-context-companion-guide',
             target: { kind: 'agent', agent: 'review-agent' },
             priority: 50,
-        },
-    },
-    // Deferred — source-wired but not supported or advertised for ordinary author use.
-    commands: {
-        'review-summary-command': {
-            title: 'Summarize review transcript',
-            path: ['review', 'summarize'],
-            action: 'review-summary',
         },
     },
     // Available in Developer Preview source. The capability matrix separately
@@ -408,10 +411,6 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         'session-spawned': {
             declaration: {
                 on: 'session.spawned',
-                hookApiVersion: 1,
-                category: 'lifecycle',
-                scope: 'session',
-                executionKind: 'observe',
                 priority: 50,
             },
             handler: observeSessionSpawned,
@@ -419,10 +418,6 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         'agent-context-companion': {
             declaration: {
                 on: 'agent.composition.resolve',
-                hookApiVersion: 1,
-                category: 'augmentation',
-                scope: 'agent',
-                executionKind: 'augment',
                 priority: 50,
             },
             handler: resolveAgentContextCompanionComposition,
@@ -492,8 +487,18 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         surfaces: [
             reviewServicesHostedHtmlSurface,
             reviewProjectHostedHtmlSurface,
+            reviewMachinePageSurface,
         ],
         views: [
+            {
+                id: 'review-project-page',
+                container: 'appPage',
+                target: { kind: 'project' },
+                renderer: 'review-project-page-native',
+                title: 'Project review',
+                description: 'Review the accepted Project and open its details.',
+                instancePolicy: 'singleton',
+            },
             {
                 id: 'review-panel',
                 container: 'appPage',
@@ -515,6 +520,14 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 renderer: 'review-native',
                 fallbackRenderers: ['review-web'],
                 title: 'Review status',
+                instancePolicy: 'singleton',
+            },
+            {
+                id: 'session-skill-reference',
+                container: 'rightSidebarTab',
+                target: { kind: 'session' },
+                renderer: 'review-native',
+                title: 'Skill reference',
                 instancePolicy: 'singleton',
             },
             {
@@ -679,6 +692,12 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 ],
             },
             {
+                id: 'review-project-page-native',
+                kind: 'reactNative',
+                artifact: 'review-native',
+                requiredHostMethods: ['context', 'replacePageLocation'],
+            },
+            {
                 id: 'review-web',
                 kind: 'hostedWeb',
                 source: { kind: 'artifact', artifact: 'review-web' },
@@ -714,10 +733,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         ],
         translations: [{
             locale: 'en',
-            messages: {
-                'review.subagents.launch.title': 'Launch review teammate',
-                'review.subagents.launch.subtitle': 'Start a focused teammate in this review Session.',
-            },
+            resourceId: 'i18n-en',
         }],
     },
     voiceModelPacks: {

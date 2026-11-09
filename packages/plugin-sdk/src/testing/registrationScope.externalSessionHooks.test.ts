@@ -4,7 +4,7 @@ import type { AgentExternalSessionsContribution } from '../activation.js';
 import type {
     AgentExternalSessionHooksContribution,
 } from '../sessions/external/index.js';
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 const externalSessions: AgentExternalSessionsContribution = {
     resolveSource: async ({ source }) => ({ ok: true, value: { source } }),

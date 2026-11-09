@@ -7,7 +7,7 @@ import type {
     AgentExternalSessionTakeoverContribution,
     AgentExternalSessionTakeoverResolveLaunchRequest,
 } from '../sessions/externalSessionTakeover.js';
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 const factory = (async () => ({
     sessions: {

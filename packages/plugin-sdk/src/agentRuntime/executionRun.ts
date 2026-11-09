@@ -172,7 +172,9 @@ export type AgentExecutionRunConversationEventV1 = AgentSessionRuntimeEvent exte
  * Scope-neutral provider conversation used by shared protocol composers. It
  * deliberately carries no Happier Session identity or Session-only services.
  */
-export interface AgentExecutionRunConversationRuntimeV1 extends Disposable {
+export interface AgentExecutionRunConversationRuntimeV1<
+  Event extends AgentExecutionRunConversationEventV1 = AgentExecutionRunConversationEventV1,
+> extends Disposable {
   send(
     request: AgentSessionSendRequest,
     options?: AgentExecutionRunConversationSendOptionsV1,
@@ -188,7 +190,7 @@ export interface AgentExecutionRunConversationRuntimeV1 extends Disposable {
     turnId?: string;
     diagnostic?: PluginDiagnosticData;
   }>>;
-  watch(listener: (event: AgentExecutionRunConversationEventV1) => void): Disposable;
+  watch(listener: (event: Event) => void): Disposable;
 }
 
 export type AgentExecutionRunConversationSendOptionsV1 = Readonly<{
@@ -203,12 +205,16 @@ export type AgentExecutionRunConversationSendOptionsV1 = Readonly<{
   causalPermissionAuthority?: AgentSessionSendRequest['causalPermissionAuthority'];
 }>;
 
-export type AgentExecutionRunConversationAdapterOptionsV1 = Readonly<{
+export type AgentExecutionRunConversationAdapterOptionsV1<
+  Event extends AgentExecutionRunConversationEventV1 = AgentExecutionRunConversationEventV1,
+> = Readonly<{
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' | 'resume' }>;
   openConversation():
-    | AgentExecutionRunConversationRuntimeV1
-    | Promise<AgentExecutionRunConversationRuntimeV1>;
-  readCheckpointId?: (event: AgentExecutionRunConversationEventV1) => string | null;
+    | AgentExecutionRunConversationRuntimeV1<Event>
+    | Promise<AgentExecutionRunConversationRuntimeV1<Event>>;
+  readCheckpointId?: (event: Event) => string | null;
+  /** Observes only the active turn's usage, preserving the provider's exact event. */
+  observeUsage?: (event: Extract<Event, { kind: 'usage-observed' | 'skill-usage' }>) => void;
 }>;
 
 type AgentExecutionRunEventInput = AgentExecutionRunEvent extends infer Event
@@ -411,22 +417,9 @@ export function createFiniteExecutionRunHostRuntime(
   return lifecycle.runtime;
 }
 
-type ExecutionRunConversationRuntimeOptions<Event extends AgentExecutionRunConversationEventV1> = Readonly<{
-  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' | 'resume' }>;
-  readCheckpointId?: (event: Event) => string | null;
-  observeEvent?: (event: Event) => void;
-}>;
-
-type ExecutionRunConversationRuntime<Event extends AgentExecutionRunConversationEventV1> = Readonly<{
-  send: AgentExecutionRunConversationRuntimeV1['send'];
-  cancel?: AgentExecutionRunConversationRuntimeV1['cancel'];
-  watch(listener: (event: Event) => void): Disposable;
-  dispose(): void | Promise<void>;
-}>;
-
 function createExecutionRunRuntimeFromConversation<Event extends AgentExecutionRunConversationEventV1>(
-  options: ExecutionRunConversationRuntimeOptions<Event>,
-  session: ExecutionRunConversationRuntime<Event>,
+  options: Omit<AgentExecutionRunConversationAdapterOptionsV1<Event>, 'openConversation'>,
+  session: AgentExecutionRunConversationRuntimeV1<Event>,
 ): AgentExecutionRunRuntime {
   let turnOrdinal = 0;
   let activeTurnId: string | null = null;
@@ -507,7 +500,8 @@ function createExecutionRunRuntimeFromConversation<Event extends AgentExecutionR
         return;
       }
       try {
-        options.observeEvent?.(event);
+        // The kind check narrows the generic event to its usage members.
+        options.observeUsage?.(event as Extract<Event, { kind: 'usage-observed' | 'skill-usage' }>);
       } catch {
         // Usage publication is observational and cannot change Run lifecycle.
       }
@@ -626,46 +620,15 @@ function createSessionOpenRequestFromExecutionRun(
 export async function createExecutionRunHostBackendFromSessionRuntime(
   options: AgentExecutionRunSessionAdapterOptions,
 ): Promise<AgentExecutionRunRuntime> {
-  let session: AgentSessionRuntime | null = null;
-  let runtime: AgentExecutionRunRuntime | null = null;
-  try {
-    session = await options.openSession(createSessionOpenRequestFromExecutionRun(
+  return await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
+    request: options.request,
+    openConversation: async () => await options.openSession(createSessionOpenRequestFromExecutionRun(
       options.request,
       options.sessionId,
-    ));
-    runtime = createExecutionRunRuntimeFromConversation({
-      request: options.request,
-      ...(options.readCheckpointId ? { readCheckpointId: options.readCheckpointId } : {}),
-      ...(options.observeSessionUsage
-        ? {
-            observeEvent(event: AgentSessionRuntimeEvent) {
-              if (event.kind === 'usage-observed' || event.kind === 'skill-usage') options.observeSessionUsage!(event);
-            },
-          }
-        : {}),
-    }, {
-      send: (request, sendOptions) => session!.send(request, sendOptions),
-      ...(session.cancel
-        ? { cancel: (request, cancelOptions) => session!.cancel!(request, cancelOptions) }
-        : {}),
-      watch(listener: (event: AgentSessionRuntimeEvent) => void) {
-        return session!.watch(listener);
-      },
-      dispose: () => session!.dispose(),
-    });
-    if (options.request.kind === 'create') {
-      const result = await runtime.send(options.request.input);
-      if (result.status !== 'admitted') await runtime.dispose();
-    }
-    return runtime;
-  } catch (error) {
-    try {
-      await (runtime?.dispose() ?? session?.dispose());
-    } catch {
-      // Preserve the opening or send failure; cleanup has already been attempted.
-    }
-    throw error;
-  }
+    )),
+    ...(options.readCheckpointId ? { readCheckpointId: options.readCheckpointId } : {}),
+    ...(options.observeSessionUsage ? { observeUsage: options.observeSessionUsage } : {}),
+  });
 }
 
 /**
@@ -673,10 +636,12 @@ export async function createExecutionRunHostBackendFromSessionRuntime(
  * canonical Execution Run lifecycle. This is the truthful path used by
  * versioned protocol composers such as ACP execution-run V1.
  */
-export async function createExecutionRunHostBackendFromConversationRuntime(
-  options: AgentExecutionRunConversationAdapterOptionsV1,
+export async function createExecutionRunHostBackendFromConversationRuntime<
+  Event extends AgentExecutionRunConversationEventV1 = AgentExecutionRunConversationEventV1,
+>(
+  options: AgentExecutionRunConversationAdapterOptionsV1<Event>,
 ): Promise<AgentExecutionRunRuntime> {
-  let conversation: AgentExecutionRunConversationRuntimeV1 | null = null;
+  let conversation: AgentExecutionRunConversationRuntimeV1<Event> | null = null;
   let runtime: AgentExecutionRunRuntime | null = null;
   try {
     conversation = await options.openConversation();

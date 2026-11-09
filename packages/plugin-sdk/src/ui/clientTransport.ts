@@ -127,7 +127,7 @@ export class PluginUiHostApiClientError extends PluginError {
         code: string,
         message?: string,
         retryable = false,
-        data: Pick<PluginErrorData, 'details' | 'remediation' | 'diagnostics'> = {},
+        data: Pick<PluginErrorData, 'details' | 'remediation' | 'diagnostics' | 'actionHandlerInvocation'> = {},
     ) {
         super({
             code,
@@ -137,6 +137,10 @@ export class PluginUiHostApiClientError extends PluginError {
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
         });
+        if (data.actionHandlerInvocation === 'notStarted') {
+            Object.defineProperty(this, 'actionHandlerInvocation', { value: 'notStarted', enumerable: true });
+            Object.defineProperty(this, 'data', { value: Object.freeze({ ...this.data, actionHandlerInvocation: 'notStarted' }), enumerable: true });
+        }
     }
 }
 
@@ -568,6 +572,7 @@ export async function createPluginUiHostApiClientFromTransport(
                 message.error.retryable,
                 {
                     ...(message.error.details === undefined ? {} : { details: message.error.details }),
+                    ...(message.error.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: message.error.actionHandlerInvocation }),
                     ...(message.error.remediation === undefined ? {} : { remediation: message.error.remediation }),
                     ...(message.error.diagnostics === undefined ? {} : { diagnostics: message.error.diagnostics }),
                 },

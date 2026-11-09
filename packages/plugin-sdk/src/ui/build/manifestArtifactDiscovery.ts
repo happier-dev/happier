@@ -57,7 +57,7 @@ function discoverReferences(manifest: UnknownRecord) {
     if (renderer.kind === 'reactNative')
       addReference(references, renderer.artifact, 'renderSurface');
   }
-  for (const action of asRecords(contributes?.actions)) {
+  for (const action of [...asRecords(contributes?.actions), ...asRecords(contributes?.resources)]) {
     const execution = asRecord(action.execution);
     const client = asRecord(execution?.client);
     if (execution?.target === 'client')
@@ -65,6 +65,10 @@ function discoverReferences(manifest: UnknownRecord) {
     const account = asRecord(execution?.account);
     if (execution?.target === 'account')
       addReference(references, account?.artifactId, account?.exportName);
+  }
+  for (const descriptor of asRecords(contributes?.connectedAccountDescriptors)) {
+    const account = asRecord(asRecord(descriptor.authentication)?.account);
+    addReference(references, account?.artifactId, account?.exportName);
   }
   for (const provider of asRecords(contributes?.voiceProviders)) {
     if (provider.kind !== 'conversation') continue;

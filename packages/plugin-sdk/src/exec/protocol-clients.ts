@@ -1,5 +1,7 @@
 /** @moduleRealm daemon */
 /** @realm any */
+export { createJsonRpcApplicationError, readJsonRpcApplicationRejection, classifyJsonRpcSubmissionFailure } from './jsonRpcOutcome.js';
+export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from './jsonRpcOutcome.js';
 export type { ProtocolClientsService } from '../services/io.js';
 export type {
     PluginFramedBytesClient,
@@ -18,6 +20,3 @@ export type {
     PluginProtocolClientSpec,
     PluginProtocolClientSpecByKind,
 } from '../services/io.js';
-
-export { createJsonRpcApplicationError, readJsonRpcApplicationRejection, classifyJsonRpcSubmissionFailure } from './jsonRpcOutcome.js';
-export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from './jsonRpcOutcome.js';

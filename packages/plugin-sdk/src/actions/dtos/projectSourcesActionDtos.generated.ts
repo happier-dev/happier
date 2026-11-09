@@ -137,10 +137,6 @@ export type ProjectSourcesActionInputById = {
                 level: 'view';
             }[];
             attachment?: undefined | {
-                enabled: boolean;
-                kind: 'set_enabled';
-                attachmentId: string;
-            } | {
                 kind: 'attach';
                 attachment: {
                     purpose: 'context';
@@ -184,6 +180,10 @@ export type ProjectSourcesActionInputById = {
                 kind: 'reorder';
                 attachmentId: string;
                 beforeId: null | string;
+            } | {
+                kind: 'set_enabled';
+                enabled: boolean;
+                attachmentId: string;
             };
         };
     };

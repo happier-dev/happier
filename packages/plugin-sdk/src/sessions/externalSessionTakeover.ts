@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import { validateAgentExternalSessionTakeoverContribution as captureHostExternalSessionTakeover } from '@happier-dev/cli-common/plugins/registration/scope';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -216,21 +217,8 @@ function snapshotEnvironmentVariables(
     return Object.freeze(snapshot);
 }
 
-export function validateAgentExternalSessionTakeoverContribution(
-    value: unknown,
-): AgentExternalSessionTakeoverContribution {
-    const receiver = requireStaticRegistrationObject(
-        value,
-        'External Session takeover contribution',
-    );
-    return Object.freeze({
-        resolveLaunch: captureStaticRegistrationMethod<AgentExternalSessionTakeoverResolveLaunchCallback>(
-            receiver,
-            'resolveLaunch',
-            'External Session takeover contribution.resolveLaunch',
-            true,
-        )!,
-    });
+export function validateAgentExternalSessionTakeoverContribution(value: unknown): AgentExternalSessionTakeoverContribution {
+    return captureHostExternalSessionTakeover(value) as unknown as AgentExternalSessionTakeoverContribution;
 }
 
 export function validateAgentExternalSessionTakeoverResolveLaunchRequest(

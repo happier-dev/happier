@@ -17,17 +17,20 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import ts from 'typescript';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   collectCanonicalSourceGraph,
   createApiSurfaceProgressReporter,
+  readCurrentApiSurfaceInventory,
   renderCliSummary,
   runApiSurfaceCli,
   runApiSurfaceMaterializer,
   runApiSurfaceSourceHarnessForTests,
 } from './apiSurfaceCli.mjs';
 import * as apiSurfaceCli from './apiSurfaceCli.mjs';
+import { preparePluginSdkWorkspaceDeclarations } from './bundleWorkspaceDeps.mjs';
 
 const CLI_PATH = fileURLToPath(new URL('./apiSurfaceCli.mjs', import.meta.url));
 
@@ -96,6 +99,55 @@ function readCurrentPackageSourceReport() {
   });
   return currentPackageSourceReportPromise;
 }
+
+test('SDK signature governance keeps portable internal support types private', async () => {
+  const root = await createPackageFixture();
+  try {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    await writeFixtureFile(root, 'package.json', JSON.stringify({ ...packageJson,
+      bundledDependencies: ['@happier-dev/protocol'],
+    }));
+    await writeFixtureFile(root, 'node_modules/@happier-dev/protocol/package.json', JSON.stringify({
+      name: '@happier-dev/protocol', private: true, type: 'module',
+      exports: { './contributions': { types: './contributions.d.ts', default: './contributions.js' } },
+    }));
+    await writeFixtureFile(root, 'node_modules/@happier-dev/protocol/contributions.d.ts',
+      'export type DeploymentTargetContributionV1 = Readonly<{ id: string; target: { region: string } }>;\ntype PrivateReviewAuthority = { scope: string };\nexport declare function produceTarget(input: PrivateReviewAuthority): DeploymentTargetContributionV1;\n');
+    await writeFixtureFile(root, 'node_modules/@happier-dev/protocol/contributions.js',
+      "export const produceTarget = input => ({ id: input.scope, target: { region: 'fixture' } });\n");
+    await writeFixtureFile(root, 'src/actions/support.ts',
+      'export type MachineSetupSourceFactsMapV1 = Readonly<Record<string, { state: string }>>;\n');
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/contributions';",
+      "import { produceTarget as canonicalProduceTarget } from '@happier-dev/protocol/contributions';",
+      "import type { MachineSetupSourceFactsMapV1 } from './support.js';",
+      'export interface ActionsService {}',
+      'export type ManagedMachinesActionResultById = { setup: { sourceFacts?: MachineSetupSourceFactsMapV1 } };',
+      'type ReadonlyAuthorDeclaration<T> = { readonly [K in keyof T]: T[K] };',
+      'export type DeploymentTargetContributionV1 = ReadonlyAuthorDeclaration<CanonicalDeploymentTargetContributionV1>;',
+      'export const produceTarget: typeof canonicalProduceTarget = canonicalProduceTarget;',
+    ].join('\n'));
+    await publishFixtureSymbols(root, ['ManagedMachinesActionResultById', 'DeploymentTargetContributionV1']
+      .map((name) => ({ specifier: './actions', exportName: name, kind: 'type',
+        sourceModule: 'src/actions/service.ts', sourceExport: name, realm: 'any' })));
+    await publishFixtureSymbols(root, [{ specifier: './actions', exportName: 'produceTarget', kind: 'value',
+      sourceModule: 'src/actions/service.ts', sourceExport: 'produceTarget', realm: 'any' }]);
+    const { inventory } = await runApiSurfaceSourceHarnessForTests({ packageRoot: root });
+    for (const name of ['MachineSetupSourceFactsMapV1', 'CanonicalDeploymentTargetContributionV1', 'PrivateReviewAuthority']) {
+      assert.equal(inventory.symbols.some(({ exportName }) => exportName === name), false,
+        `${name} is a declaration dependency, not an authored public export`);
+    }
+    await writeFixtureFile(root, 'src/host/private.ts', 'export interface HostInternal { secret: string }\n');
+    await writeFixtureFile(root, 'src/actions/support.ts', [
+      "import type { HostInternal } from '../host/private.js';",
+      'export type MachineSetupSourceFactsMapV1 = { nested: HostInternal };',
+    ].join('\n'));
+    await assert.rejects(runApiSurfaceSourceHarnessForTests({ packageRoot: root }),
+      /public signature references author type HostInternal/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 // These are the three author-owned publication specs. Keep the census exact:
 // generated convenience barrels are outputs, while these files are the source
@@ -224,177 +276,16 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceSpeechTranscribeResult',
   ]),
 });
-
-const HOST_REGISTRATION_TARGETED_SYMBOLS = Object.freeze([
-  ['createAdmittedTargetedOperationExecutionHandle', 'value', 'admittedTargetedOperation'],
-  ['readAdmittedTargetedOperationExecutionBinding', 'value', 'admittedTargetedOperation'],
-  ['requireAdmittedTargetedOperationExecutionBinding', 'value', 'admittedTargetedOperation'],
-  ['AdmittedTargetedOperationExecutionBinding', 'type', 'admittedTargetedOperation'],
-  ['AdmittedTargetedOperationSelectedActionInput', 'type', 'admittedTargetedOperation'],
-  ['resolveAdmittedTargetedContributions', 'value', 'targetedContributionAdmission'],
-  ['dropTargetedContributionAdmissionDiagnostics', 'value', 'targetedContributionAdmission'],
-  ['projectTargetedContributionActionDefinition', 'value', 'targetedContributionAdmission'],
-  ['resolveManifestTargetedContributions', 'value', 'targetedContributionAdmission'],
-  ['mergeTargetedContributionManifestDeclarations', 'value', 'targetedContributionAdmission'],
-  ['TargetedContributionAdmissionResult', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionPointDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionActionDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionRendererDeclaration', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionCompatibilityDiagnostic', 'type', 'targetedContributionAdmission'],
-  ['TargetedContributionManifestDeclaration', 'type', 'targetedContributionAdmission'],
-  ['createTargetedContributionsService', 'value', 'targetedContributions'],
-  ['createManifestTargetedContributionsService', 'value', 'targetedContributions'],
-  ['projectAdmittedTargetedContributionSnapshot', 'value', 'targetedContributions'],
-  ['TargetedContributionsAdmissionSource', 'type', 'targetedContributions'],
-  ['StableTargetedContributionsOwner', 'type', 'targetedContributions'],
-  ['buildPluginUiRendererContributionKey', 'value', 'targetedContributionRendererChain'],
-  ['resolvePluginUiRendererChain', 'value', 'targetedContributionRendererChain'],
-  ['PluginUiRendererChainResolution', 'type', 'targetedContributionRendererChain'],
-  ['AdmittedTargetedContributionSnapshot', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContribution', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContributionOperation', 'type', 'targetedContributionTypes'],
-  ['AdmittedTargetedContributionSurface', 'type', 'targetedContributionTypes'],
-  ['validateTargetedOperationInput', 'value', 'targetedOperationValidation'],
-  ['validateTargetedOperationResult', 'value', 'targetedOperationValidation'],
-  ['TargetedOperationValidationFailure', 'type', 'targetedOperationValidation'],
-  ['resolveAdmittedTargetedOperationInput', 'value', 'targetedOperationInput'],
-].map(([exportName, kind, moduleName]) => Object.freeze({
-  specifier: './host/registration',
-  exportName,
-  kind,
-  sourceModule: `src/host/registration/${moduleName}.ts`,
-  sourceExport: exportName,
-  realm: 'any',
-})));
-
 const INVENTORY = Object.freeze({
   schemaVersion: 1,
-  entrypoints: Object.freeze([
-    Object.freeze({
-      specifier: './actions',
-      sourceModule: 'src/actions/index.ts',
-      visibility: 'author',
-      realm: 'any',
-      conditions: Object.freeze({
-        types: './dist/actions/index.d.ts',
-        default: './dist/actions/index.js',
-      }),
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      sourceModule: 'src/host/registration/index.ts',
-      visibility: 'host',
-      realm: 'any',
-      conditions: Object.freeze({
-        types: './dist/host/registration/index.d.ts',
-        browser: './dist/host/registration/index.js',
-        'react-native': './dist/host/registration/index.js',
-        default: './dist/host/registration/index.js',
-      }),
-    }),
-    Object.freeze({
-      specifier: './host/fs/json-owner-file-lock',
-      sourceModule: 'src/host/fs/json-owner-file-lock/index.ts',
-      visibility: 'host',
-      realm: 'daemon',
-      conditions: Object.freeze({
-        types: './dist/host/fs/json-owner-file-lock/index.d.ts',
-        default: './dist/host/fs/json-owner-file-lock/index.js',
-      }),
-    }),
-  ]),
-  symbols: Object.freeze([
-    ...HOST_REGISTRATION_TARGETED_SYMBOLS,
-    Object.freeze({
-      specifier: './actions',
-      exportName: 'ActionsService',
-      kind: 'type',
-      sourceModule: 'src/actions/service.ts',
-      sourceExport: 'ActionsService',
-      realm: 'any',
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      exportName: 'createExecutionRunHostBackendFromSessionRuntime',
-      kind: 'value',
-      sourceModule: 'src/agentRuntime/executionRun.ts',
-      sourceExport: 'createExecutionRunHostBackendFromSessionRuntime',
-      realm: 'any',
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      exportName: 'createPluginActionHandlerNotStartedError',
-      kind: 'value',
-      sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
-      sourceExport: 'createPluginActionHandlerNotStartedError',
-      realm: 'any',
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      exportName: 'readPluginActionInputParser',
-      kind: 'value',
-      sourceModule: 'src/host/registration/actionInputParser.ts',
-      sourceExport: 'readPluginActionInputParser',
-      realm: 'any',
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      exportName: 'readPluginActionResultParser',
-      kind: 'value',
-      sourceModule: 'src/host/registration/actionInputParser.ts',
-      sourceExport: 'readPluginActionResultParser',
-      realm: 'any',
-    }),
-    Object.freeze({
-      specifier: './host/registration',
-      exportName: 'createPluginRegistrationScope',
-      kind: 'value',
-      sourceModule: 'src/host/registration/scope.ts',
-      sourceExport: 'createPluginRegistrationScope',
-      realm: 'any',
-    }),
-    ...[
-      'normalizePluginAccountCollectionMigrationRuntimeProjection',
-      'normalizePluginDaemonDatabaseRuntimeProjection',
-      'projectPluginAccountCollectionDeclaration',
-    ].map((exportName) => Object.freeze({
-      specifier: './host/registration',
-      exportName,
-      kind: 'value',
-      sourceModule: 'src/definePlugin.ts',
-      sourceExport: exportName,
-      realm: 'any',
-    })),
-    ...[
-      'PluginRegistrationRight',
-      'PluginAgentRuntimeRegistration',
-      'PluginRuntimeRegistration',
-    ].map((exportName) => Object.freeze({
-      specifier: './host/registration',
-      exportName,
-      kind: 'type',
-      sourceModule: 'src/host/registration/scope.ts',
-      sourceExport: exportName,
-      realm: 'any',
-    })),
-    Object.freeze({
-      specifier: './host/fs/json-owner-file-lock',
-      exportName: 'reclaimJsonOwnerFileLockSnapshot',
-      kind: 'value',
-      sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
-      sourceExport: 'reclaimJsonOwnerFileLockSnapshot',
-      realm: 'daemon',
-    }),
-    Object.freeze({
-      specifier: './host/fs/json-owner-file-lock',
-      exportName: 'withJsonOwnerFileLock',
-      kind: 'value',
-      sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
-      sourceExport: 'withJsonOwnerFileLock',
-      realm: 'daemon',
-    }),
-  ]),
+  entrypoints: [{
+    specifier: './actions', sourceModule: 'src/actions/index.ts', visibility: 'author', realm: 'any',
+    conditions: { types: './dist/actions/index.d.ts', default: './dist/actions/index.js' },
+  }],
+  symbols: [{
+    specifier: './actions', exportName: 'ActionsService', kind: 'type',
+    sourceModule: 'src/actions/service.ts', sourceExport: 'ActionsService', realm: 'any',
+  }],
 });
 
 async function createWorkspaceRootFixture(root, packages) {
@@ -438,14 +329,6 @@ async function createPackageFixture(root = undefined) {
         types: './dist/actions/index.d.ts',
         default: './dist/actions/index.js',
       },
-      './host/registration': {
-        types: './dist/host/registration/index.d.ts',
-        default: './dist/host/registration/index.js',
-      },
-      './host/fs/json-owner-file-lock': {
-        types: './dist/host/fs/json-owner-file-lock/index.d.ts',
-        default: './dist/host/fs/json-owner-file-lock/index.js',
-      },
     },
   };
   await writeFixtureFile(root, 'package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
@@ -455,77 +338,6 @@ async function createPackageFixture(root = undefined) {
     '',
   ].join('\n'));
   await writeFixtureFile(root, 'src/actions/service.ts', 'export interface ActionsService {}\n');
-  await writeFixtureFile(root, 'src/definePlugin.ts', [
-    'export function normalizePluginAccountCollectionMigrationRuntimeProjection() {}',
-    'export function normalizePluginDaemonDatabaseRuntimeProjection() {}',
-    'export function projectPluginAccountCollectionDeclaration() {}',
-    '',
-  ].join('\n'));
-  await writeFixtureFile(root, 'src/host/registration/index.ts', [
-    ...HOST_REGISTRATION_TARGETED_SYMBOLS.map(({ exportName, kind, sourceModule }) => (
-      `export ${kind === 'type' ? 'type ' : ''}{ ${exportName} } from './${sourceModule.split('/').at(-1).replace(/\.ts$/u, '.js')}';`
-    )),
-    "export type { PluginAgentRuntimeRegistration } from './scope.js';",
-    "export type { PluginRegistrationRight } from './scope.js';",
-    "export type { PluginRuntimeRegistration } from './scope.js';",
-    "export { createExecutionRunHostBackendFromSessionRuntime } from '../../agentRuntime/executionRun.js';",
-    "export { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';",
-    "export { createPluginRegistrationScope } from './scope.js';",
-    "export { normalizePluginAccountCollectionMigrationRuntimeProjection } from '../../definePlugin.js';",
-    "export { normalizePluginDaemonDatabaseRuntimeProjection } from '../../definePlugin.js';",
-    "export { projectPluginAccountCollectionDeclaration } from '../../definePlugin.js';",
-    "export { readPluginActionInputParser, readPluginActionResultParser } from './actionInputParser.js';",
-    '',
-  ].join('\n'));
-  for (const sourceModule of new Set(HOST_REGISTRATION_TARGETED_SYMBOLS.map((symbol) => symbol.sourceModule))) {
-    await writeFixtureFile(root, sourceModule, HOST_REGISTRATION_TARGETED_SYMBOLS
-      .filter((symbol) => symbol.sourceModule === sourceModule)
-      .map(({ exportName, kind }) => kind === 'type'
-        ? `export type ${exportName} = Readonly<{ fixture: true }>;\n`
-        : `export function ${exportName}() {}\n`)
-      .join(''));
-  }
-  await writeFixtureFile(
-    root,
-    'src/host/registration/actionHandlerInvocation.ts',
-    'export function createPluginActionHandlerNotStartedError() { return new Error(); }\n',
-  );
-  await writeFixtureFile(
-    root,
-    'src/host/registration/actionInputParser.ts',
-    'export function readPluginActionInputParser() {}\nexport function readPluginActionResultParser() {}\n',
-  );
-  await writeFixtureFile(
-    root,
-    'src/agentRuntime/executionRun.ts',
-    'export function createExecutionRunHostBackendFromSessionRuntime() {}\n',
-  );
-  await writeFixtureFile(
-    root,
-    'src/host/registration/scope.ts',
-    [
-      'export type PluginRegistrationRight = Readonly<{ family: string }>;',
-      'export type PluginAgentRuntimeRegistration = Readonly<{ localId: string }>;',
-      'export type PluginRuntimeRegistration = Readonly<{ family: string }>;',
-      'export function createPluginRegistrationScope() {}',
-      '',
-    ].join('\n'),
-  );
-  await writeFixtureFile(root, 'src/host/fs/json-owner-file-lock/index.ts', [
-    "export { reclaimJsonOwnerFileLockSnapshot } from '../jsonOwnerFileLock.js';",
-    "export { withJsonOwnerFileLock } from '../jsonOwnerFileLock.js';",
-    '',
-  ].join('\n'));
-  await writeFixtureFile(
-    root,
-    'src/host/fs/jsonOwnerFileLock.ts',
-    [
-      '/** @moduleRealm daemon */',
-      'export function reclaimJsonOwnerFileLockSnapshot() {}',
-      'export function withJsonOwnerFileLock() {}',
-      '',
-      ].join('\n'),
-  );
   await seedFixturePublicationSpecs(root);
   return root;
 }
@@ -568,6 +380,35 @@ async function createVendoredDeclarationStalenessFixture() {
     'export type RetiredProtocolDeclaration = string;\n',
   );
   await createPackageFixture(root);
+  // This regression isolates vendoring, so keep its unrelated host surface
+  // valid through the current source inventory rather than a stale name list.
+  const inventory = await readCurrentApiSurfaceInventory({
+    packageRoot: resolve(import.meta.dirname, '..'),
+  });
+  for (const entrypoint of inventory.entrypoints.filter(({ visibility }) => visibility === 'host')) {
+    const symbols = inventory.symbols.filter(({ specifier }) => specifier === entrypoint.specifier);
+    const directory = `src/${entrypoint.specifier.slice(2)}`;
+    await writeFixtureFile(root, `${directory}/contract.ts`, [
+      `/** @moduleRealm ${entrypoint.realm} */`,
+      ...symbols.map(({ exportName, kind }) => kind === 'type'
+        ? `export type ${exportName} = unknown;`
+        : `export const ${exportName} = null;`),
+      '',
+    ].join('\n'));
+    await writeFixtureFile(root, `${directory}/index.public.ts`, symbols.map(({ exportName, kind }) => (
+      `export${kind === 'type' ? ' type' : ''} { ${exportName} } from './contract.js';\n`
+    )).join(''));
+  }
+  const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  await writeFixtureFile(root, 'package.json', JSON.stringify({ ...packageJson,
+    bundledDependencies: ['@happier-dev/protocol'],
+  }));
+  // Already-emitted producer output is the filesystem boundary. Preparation,
+  // bundle resolution, copying, pruning and declaration checks remain real.
+  await writeFixtureFile(repoRoot, 'packages/cli-common/package.json',
+    JSON.stringify({ name: '@happier-dev/cli-common', type: 'module' }));
+  await writeFixtureFile(repoRoot, 'packages/cli-common/dist/workspaces/index.js',
+    `export * from ${JSON.stringify(new URL('../../cli-common/src/workspaces/index.ts', import.meta.url).href)};\n`);
   return { repoRoot, root };
 }
 
@@ -749,10 +590,7 @@ test('source materialization updates generated barrels before declaration prepar
     const result = runProductionCli(root, ['--materialize-source', '--write']);
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(
-      await readFile(join(root, 'src/actions/index.ts'), 'utf8'),
-      /export type \{ NewlyPublishedActionOptions \} from '\.\/newlyPublished\.js';/u,
-    );
+    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), "export * from './index.public.js';\n");
     assert.doesNotMatch(result.stdout, /publicDeclarationReport/u);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -793,9 +631,9 @@ test('real CLI default output is a concise summary with bounded real-phase progr
     assert.equal(
       result.stdout,
       [
-        'api-surface dry-run: drift (planned=6 changed=3 written=0)',
+        'api-surface dry-run: drift (planned=7 changed=6 written=0)',
         '  drift packageExports package.json',
-        '  drift sourceBarrels src/host/registration/index.ts',
+        '  drift sourceBarrels src/actions/index.ts',
         '  drift authorApiMarkdown API.md',
         '',
       ].join('\n'),
@@ -816,12 +654,12 @@ test('real CLI default output is a concise summary with bounded real-phase progr
     // One header line plus one line per committed file that drifted: the
     // default output stays scannable while naming the whole delta. The
     // generated inventory is not committed, so it never reports drift.
-    assert.equal(result.stdout.trimEnd().split('\n').length, 4);
+    assert.equal(result.stdout.trimEnd().split('\n').length, 7);
     assert.equal(machineReadable.status, result.status, machineReadable.stderr);
     const report = JSON.parse(machineReadable.stdout);
     assert.deepEqual(report.summary, {
-      plannedFiles: 6,
-      changedFiles: 3,
+      plannedFiles: 7,
+      changedFiles: 6,
       writtenFiles: 0,
     });
     assert.ok(machineReadable.stdout.length > result.stdout.length);
@@ -834,11 +672,6 @@ test('real CLI default output is a concise summary with bounded real-phase progr
 test('source-only harness validates author specs while the publisher-owned vendored declarations are stale', async () => {
   const { repoRoot, root } = await createVendoredDeclarationStalenessFixture();
   try {
-    await assert.rejects(
-      runApiSurfaceMaterializer({ packageRoot: root, write: false, check: false }),
-      /Vendored @happier-dev\/protocol declarations .* stale against the workspace build/u,
-    );
-
     assert.equal(typeof apiSurfaceCli.runApiSurfaceSourceHarnessForTests, 'function');
     const report = await apiSurfaceCli.runApiSurfaceSourceHarnessForTests({ packageRoot: root });
 
@@ -857,9 +690,64 @@ test('source-only harness validates author specs while the publisher-owned vendo
   }
 });
 
-test('source harness projects direct Protocol schemas through the approved public structural types only', async () => {
+test('API-surface prerequisite repairs stale worker declarations through the canonical producer', async () => {
+  const { repoRoot, root } = await createVendoredDeclarationStalenessFixture();
+  const env = { ...process.env, HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1' };
+  try {
+    const vendor = join(root, 'node_modules/@happier-dev/protocol/dist');
+    const current = join(repoRoot, 'packages/protocol/dist/current.d.ts');
+    await runApiSurfaceMaterializer({ packageRoot: root, write: true, env });
+    await writeFixtureFile(root, 'node_modules/@happier-dev/protocol/dist/current.d.ts',
+      'export type CurrentProtocolDeclaration = never;\n');
+    await writeFixtureFile(root, 'node_modules/@happier-dev/protocol/dist/retired.d.ts',
+      'export type RetiredProtocolDeclaration = string;\n');
+    const report = await runApiSurfaceMaterializer({ packageRoot: root, check: true, env });
+    assert.equal(report.status, 'current');
+    assert.equal(await readFile(join(vendor, 'current.d.ts'), 'utf8'), await readFile(current, 'utf8'));
+    await assert.rejects(stat(join(vendor, 'retired.d.ts')), { code: 'ENOENT' });
+    const published = await stat(join(vendor, 'current.d.ts'), { bigint: true });
+    assert.equal((await runApiSurfaceMaterializer({ packageRoot: root, check: true, env })).status, 'current');
+    assert.equal((await stat(join(vendor, 'current.d.ts'), { bigint: true })).mtimeNs, published.mtimeNs);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('API-surface writer retains its admitted copy and the next check refreshes it', async () => {
+  const { repoRoot, root } = await createVendoredDeclarationStalenessFixture();
+  const env = {
+    ...process.env,
+    HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1',
+    HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: join(repoRoot, 'producer'),
+  };
+  const current = join(repoRoot, 'packages/protocol/dist/current.d.ts');
+  const vendored = join(root, 'node_modules/@happier-dev/protocol/dist/current.d.ts');
+  try {
+    await preparePluginSdkWorkspaceDeclarations({
+      repoRoot,
+      pluginSdkDir: root,
+      env,
+      consumePreparedWorkspace: async ({ preparedWorkspaceEnv }) => {
+        const admitted = await readFile(vendored, 'utf8');
+        await writeFile(current, 'export type CurrentProtocolDeclaration = number;\n');
+        await runApiSurfaceMaterializer({ packageRoot: root, write: true, env: preparedWorkspaceEnv });
+        assert.equal(await readFile(vendored, 'utf8'), admitted);
+      },
+    });
+    assert.equal((await runApiSurfaceMaterializer({ packageRoot: root, check: true, env })).status, 'current');
+    assert.equal(await readFile(vendored, 'utf8'), await readFile(current, 'utf8'));
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('source harness projects direct bundled Protocol schemas through the approved public structural types only', async () => {
   const root = await createPackageFixture();
   try {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    await writeFixtureFile(root, 'package.json', JSON.stringify({ ...packageJson,
+      bundledDependencies: ['@happier-dev/protocol'],
+    }));
     await writeFixtureFile(
       root,
       'node_modules/@happier-dev/protocol/package.json',
@@ -892,6 +780,7 @@ test('source harness projects direct Protocol schemas through the approved publi
         'export type ProtocolZodComposableSchema<TOutput> = ProtocolComposableSchema<TOutput, TOutput> & Readonly<{ _privateValidatorView: true; }>;',
         'export declare const CanonicalSchema: ProtocolZodComposableSchema<Readonly<{ id: string }>>;',
         'export declare const CanonicalJsonSchema: PluginJsonSchemaV2;',
+        'export type CanonicalContribution = Readonly<{ schema: ProtocolComposableSchema<string> }>;',
         'export interface PrivateProtocolParser<TOutput> {',
         '  parse(value: unknown): TOutput;',
         '  safeParse(value: unknown): Readonly<{ success: true; data: TOutput }> | Readonly<{ success: false; error: ProtocolValidationError }>;',
@@ -921,12 +810,21 @@ test('source harness projects direct Protocol schemas through the approved publi
         '  nullable(): ProtocolComposableSchema<TInput | null, TOutput | null>;',
         '}',
         'export interface ActionsService {}',
+        "export type { CanonicalContribution } from '@happier-dev/protocol/connect/canonical-schema';",
         "export { CanonicalInputV1Schema, CanonicalJsonSchema, CanonicalSchema } from '@happier-dev/protocol/connect/canonical-schema';",
         "export type { CanonicalInputV1 } from '@happier-dev/protocol/connect/canonical-schema';",
         '',
       ].join('\n'),
     );
     await publishFixtureSymbols(root, [
+      {
+        specifier: './actions',
+        exportName: 'CanonicalContribution',
+        kind: 'type',
+        sourceModule: 'src/actions/service.ts',
+        sourceExport: 'CanonicalContribution',
+        realm: 'any',
+      },
       {
         specifier: './actions',
         exportName: 'PluginJsonSchema',
@@ -1007,6 +905,7 @@ test('source harness projects direct Protocol schemas through the approved publi
       'src/actions/service.ts',
       [
         "import { CanonicalSchema } from '@happier-dev/protocol/connect/canonical-schema';",
+        "export type { CanonicalContribution } from '@happier-dev/protocol/connect/canonical-schema';",
         'export type PluginJsonSchema = { type?: \'null\' | \'boolean\' | \'number\' | \'integer\' | \'string\' | \'array\' | \'object\'; };',
         'export interface ProtocolComposableSchema<TInput, TOutput = TInput> {',
         '  readonly jsonSchema: PluginJsonSchema;',
@@ -1033,14 +932,14 @@ test('source harness projects direct Protocol schemas through the approved publi
 
     await assert.rejects(
       runApiSurfaceSourceHarnessForTests({ packageRoot: root }),
-      /wrappedSchema public signature references author type PluginJsonSchemaV2/u,
+      /wrappedSchema public signature references author type /u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('source harness keeps local export declarations out of direct Protocol schema projection', async () => {
+test('source harness permits portable local schema declarations without public aliases', async () => {
   const root = await createPackageFixture();
   try {
     await writeFixtureFile(
@@ -1096,10 +995,8 @@ test('source harness keeps local export declarations out of direct Protocol sche
       },
     ]);
 
-    await assert.rejects(
-      runApiSurfaceSourceHarnessForTests({ packageRoot: root }),
-      /LocalSchema public signature references author type PrivateProtocolSchema/u,
-    );
+    const report = await runApiSurfaceSourceHarnessForTests({ packageRoot: root });
+    assert.equal(report.inventory.symbols.some(({ exportName }) => exportName === 'PrivateProtocolSchema'), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1121,6 +1018,9 @@ test('SDK Voice runtime public signature closes through the author inventory', a
 test('SDK Action and request-auth signatures publish their named author dependencies', async () => {
   const report = await readCurrentPackageSourceReport();
   const dependenciesBySpecifier = {
+    '.': [
+      'PluginActionAuthorConfirmation',
+    ],
     './actions': [
       'BuiltinWidgetIdV1',
       'CapabilityRulesActionInputById',
@@ -1143,6 +1043,16 @@ test('SDK Action and request-auth signatures publish their named author dependen
       'QualifiedConnectedAccountPurposeV1',
       'RequestAuthFailureOutcomeV1',
     ],
+    './protocol': [
+      'TranscriptAnnotationV1',
+    ],
+    './ui': [
+      'PluginUiActionControlEventV1',
+      'PluginUiActionControlRequestV1',
+      'PluginUiActionControlExecutionV1',
+      'PluginUiActionControlPreparationV1',
+      'PluginUiActionControlPresentationV1',
+    ],
   };
 
   for (const [specifier, exportNames] of Object.entries(dependenciesBySpecifier)) {
@@ -1153,6 +1063,47 @@ test('SDK Action and request-auth signatures publish their named author dependen
         && symbol.kind === 'type'
       )), true, `${specifier} must publish the ${exportName} public signature dependency`);
     }
+  }
+
+  // Declaration emit must be able to name the DTO itself, not only a facade
+  // alias whose public signature happens to reach the same structural shape.
+  for (const exportName of [
+    'ActionApprovalRequestCreatedResult',
+    'ActionExecuteResult',
+    'PluginActionWorkflowAuthoredResultReferenceV1',
+    'SessionTranscriptGetExternalShareableInputV1',
+    'SessionTranscriptGetExternalShareableResultV1',
+    'SessionUsageLimitCheckNowRequestV1Input',
+    'SessionUsageLimitConsumeResetCreditRequestV1Input',
+  ]) {
+    const symbol = report.inventory.symbols.find((entry) => (
+      entry.specifier === './actions' && entry.exportName === exportName
+    ));
+    assert.equal(symbol?.sourceModule, 'src/actions/dtos/pluginActionDtoSupport.generated.ts',
+      `${exportName} must expose its canonical DTO identity to external declaration emit`);
+    assert.equal(symbol?.sourceExport, exportName);
+  }
+});
+
+test('SDK Automation occurrence Action maps are available in the authored inventory', async () => {
+  const inventory = await apiSurfaceCli.readCurrentApiSurfaceInventory({
+    packageRoot: fileURLToPath(new URL('../', import.meta.url)),
+  });
+  for (const exportName of ['AutomationOccurrencesActionInputById', 'AutomationOccurrencesActionResultById']) {
+    assert.equal(inventory.symbols.some(symbol => symbol.specifier === './actions'
+      && symbol.exportName === exportName && symbol.kind === 'type'), true, exportName);
+  }
+});
+
+test('SDK Machine reboot Action maps are available in the authored inventory', async () => {
+  const inventory = await apiSurfaceCli.readCurrentApiSurfaceInventory({
+    packageRoot: fileURLToPath(new URL('../', import.meta.url)),
+  });
+  for (const exportName of ['MachineRebootActionInputById', 'MachineRebootActionResultById']) {
+    const symbol = inventory.symbols.find(symbol => symbol.specifier === './actions'
+      && symbol.exportName === exportName && symbol.kind === 'type');
+    assert.equal(symbol?.sourceModule, 'src/actions/dtos/machineRebootActionDtos.generated.ts', exportName);
+    assert.equal(symbol?.sourceExport, exportName);
   }
 });
 
@@ -1201,6 +1152,52 @@ test('SDK source inventory assigns Voice exports to the three author publication
     false,
     'the retired generic VoiceProviderRuntime alias must not be published by any Voice spec',
   );
+});
+
+test('generic provider limit evidence is published from connected accounts', async () => {
+  const inventory = await apiSurfaceCli.readCurrentApiSurfaceInventory();
+  const names = [
+    'PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1',
+    'classifyProviderLimitEvidence',
+    'ProviderLimitCategory',
+    'ProviderLimitEvidenceClassification',
+    'ProviderLimitEvidenceConfidence',
+    'ProviderLimitEvidenceContext',
+    'ProviderLimitEvidenceProvenance',
+  ];
+  for (const name of names) {
+    const symbol = inventory.symbols.find((row) => (
+      row.specifier === './connected-accounts' && row.exportName === name
+    ));
+    assert.equal(symbol?.sourceModule, 'src/cloud/providerLimitEvidence.ts', name);
+    const previous = inventory.symbols.find((row) => (
+      row.specifier === './first-party/connected-accounts' && row.exportName === name
+    ));
+    const identity = (row) => row && ({
+      sourceModule: row.sourceModule,
+      sourceExport: row.sourceExport,
+      kind: row.kind,
+      realm: row.realm,
+    });
+    assert.deepEqual(identity(previous), identity(symbol), `${name} retains the same migration identity`);
+  }
+  assert.equal(inventory.symbols.find((row) => (
+    row.specifier === './collections' && row.exportName === 'projectPluginAccountCollectionDeclaration'
+  ))?.sourceModule, 'src/definePlugin.ts');
+});
+
+test('client activation testkit is reachable through the public testing entrypoint', async () => {
+  const path = new URL('../src/testing/index.public.ts', import.meta.url);
+  const source = ts.createSourceFile(path.pathname, await readFile(path, 'utf8'), ts.ScriptTarget.Latest);
+  const exports = source.statements.flatMap((statement) => (
+    ts.isExportDeclaration(statement) && statement.moduleSpecifier && statement.exportClause
+      && ts.isStringLiteral(statement.moduleSpecifier) && ts.isNamedExports(statement.exportClause)
+      ? statement.exportClause.elements.map((entry) => ({ name: entry.name.text, source: statement.moduleSpecifier.text }))
+      : []
+  ));
+  assert.deepEqual(exports.filter(({ name }) => name === 'createPluginClientTestkit'), [
+    { name: 'createPluginClientTestkit', source: './client.js' },
+  ]);
 });
 
 test('SDK source inventory keeps the raw mutable manifest input private', async () => {
@@ -1295,14 +1292,6 @@ test('real CLI --json is read-only by default and reports the complete source-to
   try {
     const packageJsonBefore = await readFile(join(root, 'package.json'), 'utf8');
     const barrelBefore = await readFile(join(root, 'src/actions/index.ts'), 'utf8');
-    const registrationBarrelBefore = await readFile(
-      join(root, 'src/host/registration/index.ts'),
-      'utf8',
-    );
-    const lockBarrelBefore = await readFile(
-      join(root, 'src/host/fs/json-owner-file-lock/index.ts'),
-      'utf8',
-    );
     const pathsBefore = (await readdir(root, { recursive: true })).sort();
 
     const result = runJsonCli(root);
@@ -1347,9 +1336,8 @@ test('real CLI --json is read-only by default and reports the complete source-to
     assert.deepEqual(report.generationPlan.testkitAssertions, {
       './actions': ['ActionsService'],
     });
-    // The fixture's author barrel carries a legacy marker, so the Preview
-    // projection updates the stale generated barrels along with the committed
-    // derived artifacts. The inventory is generated on demand, never drift.
+    // Each fixture barrel still copies its export list. Materialization replaces
+    // those lists with forwarders; the inventory is generated on demand.
     assert.deepEqual(
       report.files.filter((file) => file.changed).map((file) => file.owner).sort(),
       [
@@ -1368,14 +1356,6 @@ test('real CLI --json is read-only by default and reports the complete source-to
 
     assert.equal(await readFile(join(root, 'package.json'), 'utf8'), packageJsonBefore);
     assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), barrelBefore);
-    assert.equal(
-      await readFile(join(root, 'src/host/registration/index.ts'), 'utf8'),
-      registrationBarrelBefore,
-    );
-    assert.equal(
-      await readFile(join(root, 'src/host/fs/json-owner-file-lock/index.ts'), 'utf8'),
-      lockBarrelBefore,
-    );
     assert.deepEqual((await readdir(root, { recursive: true })).sort(), pathsBefore);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1401,14 +1381,6 @@ test('explicit write preflights and materializes exports, barrels, and author AP
     assert.equal(
       await readFile(join(root, 'src/actions/index.ts'), 'utf8'),
       report.generationPlan.sourceBarrels['src/actions/index.ts'],
-    );
-    assert.equal(
-      await readFile(join(root, 'src/host/registration/index.ts'), 'utf8'),
-      report.generationPlan.sourceBarrels['src/host/registration/index.ts'],
-    );
-    assert.equal(
-      await readFile(join(root, 'src/host/fs/json-owner-file-lock/index.ts'), 'utf8'),
-      report.generationPlan.sourceBarrels['src/host/fs/json-owner-file-lock/index.ts'],
     );
     assert.equal(
       await readFile(join(root, 'API.md'), 'utf8'),
@@ -1518,10 +1490,7 @@ test('publication mode stamps and retains @since from the immediately prior inve
         { exportName: 'ReplacementActionsService', since: '1.1.0' },
       ],
     );
-    assert.match(
-      await readFile(join(root, 'src/actions/index.ts'), 'utf8'),
-      /\/\*\* @since 1\.2\.0 \*\/\nexport type \{ ActionsService \}/u,
-    );
+    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), "export * from './index.public.js';\n");
     assert.match(
       await readFile(join(root, 'API.md'), 'utf8'),
       /\| `\.\/actions` \| `ReplacementActionsService` \| type \| any \| 1\.1\.0 \|/u,
@@ -1962,10 +1931,9 @@ test('API documentation staging failure leaves every owned output unchanged', as
     // Staging names a temporary file per CHANGED output, so the index the API
     // documentation stages under is derived from the run's own report rather
     // than restated here.
-    // A write also stages the generated inventory, which this fixture changes.
     const plannedReport = JSON.parse(runJsonCli(root).stdout);
     const stagingIndex = plannedReport.files
-      .filter((file) => file.changed || file.generated)
+      .filter((file) => file.changed)
       .findIndex((file) => file.owner === 'authorApiMarkdown');
     assert.ok(stagingIndex >= 0);
     const blockingTemporaryPath = join(
@@ -1994,7 +1962,6 @@ test('later promotion failure restores existing and absent outputs and cleans st
     const existingDestinations = [
       'package.json',
       'src/actions/index.ts',
-      'src/host/registration/index.ts',
     ];
     const originalContents = new Map(await Promise.all(existingDestinations.map(async (path) => [
       path,
@@ -2046,19 +2013,18 @@ test('an entrypoint publication-spec directory linked outside the physical packa
   const externalRoot = await mkdtemp(join(tmpdir(), 'plugin-sdk-api-surface-external-parent-'));
   try {
     const publicationSpecContents = await readFile(
-      join(root, 'src/host/fs/json-owner-file-lock/index.public.ts'),
+      join(root, 'src/actions/index.public.ts'),
       'utf8',
     );
-    await rm(join(root, 'src/host/fs'), { recursive: true, force: true });
-    await mkdir(join(externalRoot, 'json-owner-file-lock'), { recursive: true });
+    await rm(join(root, 'src/actions'), { recursive: true, force: true });
     await writeFile(
-      join(externalRoot, 'json-owner-file-lock/index.public.ts'),
+      join(externalRoot, 'index.public.ts'),
       publicationSpecContents,
       'utf8',
     );
     await symlink(
       externalRoot,
-      join(root, 'src/host/fs'),
+      join(root, 'src/actions'),
       process.platform === 'win32' ? 'junction' : 'dir',
     );
 
@@ -2067,13 +2033,13 @@ test('an entrypoint publication-spec directory linked outside the physical packa
       assert.equal(result.status, 1, result.stdout);
       assert.match(
         result.stderr,
-        /API surface publication-spec directory resolves outside package root: src\/host\/fs/u,
+        /API surface publication-spec directory resolves outside package root: src\/actions/u,
       );
     }
 
-    assert.deepEqual((await readdir(externalRoot)).sort(), ['json-owner-file-lock']);
+    assert.deepEqual((await readdir(externalRoot)).sort(), ['index.public.ts']);
     assert.equal(
-      await readFile(join(externalRoot, 'json-owner-file-lock/index.public.ts'), 'utf8'),
+      await readFile(join(externalRoot, 'index.public.ts'), 'utf8'),
       publicationSpecContents,
     );
   } finally {
@@ -2171,12 +2137,14 @@ test('a browser value source does not follow its explicit type-only Node import'
 test('browser value closures reject a relative edge through a daemon entrypoint', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/daemon/index.public.ts', "export { DaemonValue } from './value.js';\n");
+    await writeFixtureFile(root, 'src/daemon/value.ts', '/** @moduleRealm daemon */\nexport const DaemonValue = 1;\n');
     await addPortableValueFixture(
       root,
       'browser',
       [
-        "import { withJsonOwnerFileLock } from '../host/fs/json-owner-file-lock/index.js';",
-        'export const PortableValue = withJsonOwnerFileLock;',
+        "import { DaemonValue } from '../daemon/index.js';",
+        'export const PortableValue = DaemonValue;',
         '',
       ].join('\n'),
     );
@@ -2186,7 +2154,7 @@ test('browser value closures reject a relative edge through a daemon entrypoint'
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /API surface browser value closure .* reaches incompatible daemon entrypoint .*host\/fs\/json-owner-file-lock/u,
+      /API surface browser value closure .* reaches incompatible daemon entrypoint .*daemon/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -3025,22 +2993,6 @@ test('CLI rejects output parents redirected outside the package by an intermedia
     await rm(join(root, 'src'), { recursive: true, force: true });
     await writeFixtureFile(externalRoot, 'actions/index.ts', '// external actions barrel\n');
     await writeFixtureFile(externalRoot, 'actions/service.ts', 'export interface ActionsService {}\n');
-    await writeFixtureFile(externalRoot, 'host/registration/index.ts', '// external registration barrel\n');
-    await writeFixtureFile(
-      externalRoot,
-      'host/registration/scope.ts',
-      'export function createPluginRegistrationScope() {}\n',
-    );
-    await writeFixtureFile(
-      externalRoot,
-      'host/fs/json-owner-file-lock/index.ts',
-      '// external lock barrel\n',
-    );
-    await writeFixtureFile(
-      externalRoot,
-      'host/fs/jsonOwnerFileLock.ts',
-      'export function withJsonOwnerFileLock() {}\n',
-    );
     await symlink(externalRoot, join(root, 'src'), process.platform === 'win32' ? 'junction' : 'dir');
 
     const result = runJsonCli(root, ['--write']);
@@ -3142,9 +3094,10 @@ test('CLI rejects missing and wrong-kind canonical source projections before wri
   }
 });
 
-test('CLI rejects an author value whose public signature names an inventory-absent author type', async () => {
+test('CLI rejects a host type in an author value signature', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type UnlistedAuthorType = Readonly<{ id: string; secret?: string }>;\n');
     const packageJsonBefore = await readFile(join(root, 'package.json'), 'utf8');
     await publishFixtureSymbols(root, [
 {
@@ -3162,7 +3115,7 @@ test('CLI rejects an author value whose public signature names an inventory-abse
     await writeFile(
       join(root, 'src/actions/service.ts'),
       [
-        'type UnlistedAuthorType = Readonly<{ id: string }>;',
+        "import type { UnlistedAuthorType } from '../host/private.js';",
         'export interface ActionsService {}',
         'export declare function createActionsService(input: UnlistedAuthorType): ActionsService;',
         '',
@@ -3207,9 +3160,10 @@ test('CLI rejects an author value whose public signature names an inventory-abse
   }
 });
 
-test('CLI rejects an author type whose public members name an inventory-absent author type', async () => {
+test('CLI rejects host types in public type members', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     const packageJsonBefore = await readFile(join(root, 'package.json'), 'utf8');
     await publishFixtureSymbols(root, [
 {
@@ -3227,7 +3181,7 @@ test('CLI rejects an author type whose public members name an inventory-absent a
     await writeFile(
       join(root, 'src/actions/service.ts'),
       [
-        'type HiddenMember = Readonly<{ id: string }>;',
+        "import type { HiddenMember } from '../host/private.js';",
         'export interface ActionsService {}',
         'export type PublicOptions = Readonly<{ hidden: HiddenMember }>;',
         '',
@@ -3304,9 +3258,10 @@ test('CLI treats an inventoried direct type alias as covering its exact target i
   }
 });
 
-test('CLI does not make nested private members reachable through an inventoried direct alias', async () => {
+test('CLI does not admit nested host members through an inventoried direct alias', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     await publishFixtureSymbols(root, [
 {
       specifier: './actions',
@@ -3320,7 +3275,7 @@ test('CLI does not make nested private members reachable through an inventoried 
     await writeFile(
       join(root, 'src/actions/service.ts'),
       [
-        'type HiddenMember = Readonly<{ id: string }>;',
+        "import type { HiddenMember } from '../host/private.js';",
         'type HiddenTarget = Readonly<{ member: HiddenMember }>;',
         'export type PublicAlias = HiddenTarget;',
         'export interface ActionsService { read(): HiddenMember; }',
@@ -3341,9 +3296,10 @@ test('CLI does not make nested private members reachable through an inventoried 
   }
 });
 
-test('CLI rejects an import type whose named target is absent from the author inventory', async () => {
+test('CLI rejects an import type that reaches a host declaration', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenType = Readonly<{ id: string; secret?: string }>;\n');
     const packageJsonBefore = await readFile(join(root, 'package.json'), 'utf8');
     await publishFixtureSymbols(root, [
 {
@@ -3361,7 +3317,8 @@ test('CLI rejects an import type whose named target is absent from the author in
     await writeFile(
       join(root, 'src/actions/hidden.ts'),
       [
-        'export type HiddenType = Readonly<{ id: string }>;',
+        "export type { HiddenType } from '../host/private.js';",
+        "import type { HiddenType } from '../host/private.js';",
         'export declare const hiddenValue: HiddenType;',
         '',
       ].join('\n'),
@@ -3397,10 +3354,13 @@ test('CLI rejects an import type whose named target is absent from the author in
       'utf8',
     );
 
-    const valueQueryAccepted = runJsonCli(root);
+    const valueQueryRefused = runJsonCli(root);
 
-    assert.equal(valueQueryAccepted.status, 0, valueQueryAccepted.stderr);
+    assert.equal(valueQueryRefused.status, 1, 'a type query must not conceal a host type');
+    assert.match(valueQueryRefused.stderr, /public signature references author type HiddenType/u);
 
+    await writeFixtureFile(root, 'src/actions/hidden.ts',
+      'export type HiddenType = Readonly<{ id: string }>;\nexport declare const hiddenValue: HiddenType;\n');
     await publishFixtureSymbols(root, [{
       specifier: './actions',
       exportName: 'HiddenType',
@@ -3427,9 +3387,10 @@ test('CLI rejects an import type whose named target is absent from the author in
   }
 });
 
-test('CLI rejects package-local types named by public class and inferred object members', async () => {
+test('CLI rejects host types named by public class and inferred object members', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     const packageJsonBefore = await readFile(join(root, 'package.json'), 'utf8');
     await publishFixtureSymbols(root, [
       {
@@ -3453,7 +3414,7 @@ test('CLI rejects package-local types named by public class and inferred object 
     await writeFile(
       join(root, 'src/actions/service.ts'),
       [
-        'type HiddenMember = Readonly<{ id: string }>;',
+        "import type { HiddenMember } from '../host/private.js';",
         'export interface ActionsService {}',
         'export declare class PublicError { readonly hidden: HiddenMember; }',
         'export const publicObject = {',
@@ -3502,9 +3463,88 @@ test('CLI rejects package-local types named by public class and inferred object 
   }
 });
 
-test('CLI terminates on explicitly annotated recursive values beside star reexports without hiding named annotation types', async () => {
+test('CLI closes selected indexed members without treating unrelated host members as public', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts',
+      'export interface HiddenMember { readonly id: string }\n');
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "import type { HiddenMember } from '../host/private.js';",
+      'type Context = { selected: { visible: string }; unrelated: HiddenMember };',
+      "export type ActionsService = NonNullable<Context['selected']>;",
+      '',
+    ].join('\n'));
+
+    const accepted = runJsonCli(root);
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "import type { HiddenMember } from '../host/private.js';",
+      'type Context<T> = { selected: T; unrelated: { visible: string } };',
+      "export type ActionsService = NonNullable<Context<HiddenMember>['selected']>;",
+      '',
+    ].join('\n'));
+
+    const rejected = runJsonCli(root);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /public signature references author type HiddenMember/u);
+
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "export type ActionsService = import('../host/private.js').HiddenMember['id'];",
+      '',
+    ].join('\n'));
+    const hostOwner = runJsonCli(root);
+    assert.equal(hostOwner.status, 1, 'a member projection must not admit a host-owned type');
+    assert.match(hostOwner.stderr, /public signature references author type HiddenMember/u);
+
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "import type { HiddenMember } from '../host/private.js';",
+      'type LocalAlias = HiddenMember;',
+      "export type ActionsService = LocalAlias['id'];",
+      '',
+    ].join('\n'));
+    const aliasedHostOwner = runJsonCli(root);
+    assert.equal(aliasedHostOwner.status, 1, 'a local alias must preserve host ownership');
+    assert.match(aliasedHostOwner.stderr, /public signature references author type HiddenMember/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI closes annotated recursive type queries without instantiating growing generic signatures', async () => {
+  const root = await createPackageFixture();
+  try {
+    await writeFixtureFile(root, 'src/host/private.ts',
+      'export interface HiddenMember { readonly id: string }\n');
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      'declare function recursive<T>(): { next: typeof recursive<readonly T[]> };',
+      'export type ActionsService = ReturnType<typeof recursive>;',
+      '',
+    ].join('\n'));
+
+    const accepted = runJsonCli(root);
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      "import type { HiddenMember } from '../host/private.js';",
+      'declare function recursive<T>(): { next: typeof recursive<readonly T[]> };',
+      'declare function recursive<T>(input: HiddenMember): { next: typeof recursive<readonly T[]> };',
+      'export type ActionsService = ReturnType<typeof recursive>;',
+      '',
+    ].join('\n'));
+
+    const rejected = runJsonCli(root);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /public signature references author type HiddenMember/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI terminates on recursive values without hiding host annotation types', async () => {
+  const root = await createPackageFixture();
+  try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     await publishFixtureSymbols(root, [
       {
         specifier: './actions',
@@ -3528,7 +3568,7 @@ test('CLI terminates on explicitly annotated recursive values beside star reexpo
       join(root, 'src/actions/service.ts'),
       [
         "export * from './extra.js';",
-        'type HiddenMember = Readonly<{ id: string }>;',
+        "import type { HiddenMember } from '../host/private.js';",
         'export interface ActionsService {}',
         'export interface RecursiveSchema<TValue> {',
         '  parse(value: unknown): TValue;',
@@ -3582,9 +3622,10 @@ test('CLI terminates on explicitly annotated recursive values beside star reexpo
   }
 });
 
-test('CLI terminates on functions with explicitly annotated recursive return types without hiding nested author types', async () => {
+test('CLI terminates on recursive return types without hiding nested host types', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     await publishFixtureSymbols(root, [
       {
         specifier: './actions',
@@ -3598,7 +3639,7 @@ test('CLI terminates on functions with explicitly annotated recursive return typ
     await writeFile(
       join(root, 'src/actions/service.ts'),
       [
-        'type HiddenMember = Readonly<{ id: string }>;',
+        "import type { HiddenMember } from '../host/private.js';",
         'export interface ActionsService {}',
         'export type RecursiveSchema<TValue> = Readonly<{',
         '  parse(value: unknown): TValue;',
@@ -3618,10 +3659,6 @@ test('CLI terminates on functions with explicitly annotated recursive return typ
     const result = runJsonCli(root);
 
     assert.equal(result.status, 1);
-    assert.match(
-      result.stderr,
-      /recursiveFunction public signature references author type RecursiveSchema, which is absent from the author inventory/u,
-    );
     assert.match(
       result.stderr,
       /recursiveFunction public signature references author type HiddenMember, which is absent from the author inventory/u,
@@ -4150,9 +4187,10 @@ test('CLI permits one Preview callable to reach another Preview author contract'
   }
 });
 
-test('CLI closes a published type through its existing declaration alias chain', async () => {
+test('CLI closes a declaration alias chain without hiding nested host types', async () => {
   const root = await createPackageFixture();
   try {
+    await writeFixtureFile(root, 'src/host/private.ts', 'export type HiddenMember = Readonly<{ id: string; secret?: string }>;\n');
     await publishFixtureSymbols(root, [
       { specifier: './actions', exportName: 'PublicOptions', kind: 'type',
         sourceModule: 'src/actions/service.ts', sourceExport: 'PublicOptions', realm: 'any' },
@@ -4171,7 +4209,7 @@ test('CLI closes a published type through its existing declaration alias chain',
     assert.equal(result.status, 0, result.stderr);
     await writeFile(join(root, 'src/actions/service.ts'), [
       'export interface ActionsService {}',
-      'interface HiddenMember { readonly secret: string }',
+      "import type { HiddenMember } from '../host/private.js';",
       'interface CanonicalOptions { readonly hidden: HiddenMember }',
       'type ProjectedOptions = CanonicalOptions;',
       'export type PublicOptions = ProjectedOptions;',
@@ -4424,8 +4462,8 @@ test('current Actions canonical source does not reach its generated entrypoint b
     });
     // This fixture examines the real Actions source graph but not every
     // currently authored entrypoint. Publication specs are now the topology
-    // owner, so remove the copied specs before declaring the fixture's four
-    // deliberate entrypoints below.
+    // owner, so remove the copied specs before declaring the fixture's one
+    // deliberate entrypoint below.
     await Promise.all((await readdir(join(root, 'src'), { recursive: true }))
       .filter((path) => path.endsWith('index.public.ts'))
       .map((path) => rm(join(root, 'src', path))));
@@ -4438,51 +4476,6 @@ test('current Actions canonical source does not reach its generated entrypoint b
     );
     await writeFixtureFile(root, 'src/actions/index.public.ts', [
       "export type { ReachabilityProbe } from './service.js';",
-      '',
-    ].join('\n'));
-    await writeFixtureFile(root, 'src/apiSurfaceReachabilityProbe.ts', [
-      ...HOST_REGISTRATION_TARGETED_SYMBOLS.map(({ exportName, kind }) => kind === 'type'
-        ? `export type ${exportName} = Readonly<{ fixture: true }>;`
-        : `export function ${exportName}() {}`),
-      'export type PluginRegistrationRight = Readonly<{ family: string }>;',
-      'export type PluginAgentRuntimeRegistration = Readonly<{ localId: string }>;',
-      'export type PluginRuntimeRegistration = Readonly<{ family: string }>;',
-      'export function createPluginActionHandlerNotStartedError() { return new Error(\'not started\'); }',
-      'export function createExecutionRunHostBackendFromSessionRuntime() {}',
-      'export function readPluginActionInputParser() {}',
-      'export function readPluginActionResultParser() {}',
-      'export function createPluginRegistrationScope() {}',
-      'export function normalizePluginAccountCollectionMigrationRuntimeProjection() {}',
-      'export function normalizePluginDaemonDatabaseRuntimeProjection() {}',
-      'export function projectPluginAccountCollectionDeclaration() {}',
-      '',
-    ].join('\n'));
-    await writeFixtureFile(root, 'src/apiSurfaceLockProbe.ts', [
-      '/** @moduleRealm daemon */',
-      'export function reclaimJsonOwnerFileLockSnapshot() {}',
-      'export function withJsonOwnerFileLock() {}',
-      '',
-    ].join('\n'));
-    await writeFixtureFile(root, 'src/host/registration/index.public.ts', [
-      ...HOST_REGISTRATION_TARGETED_SYMBOLS.map(({ exportName, kind }) => (
-        `export ${kind === 'type' ? 'type ' : ''}{ ${exportName} } from '../../apiSurfaceReachabilityProbe.js';`
-      )),
-      "export { createExecutionRunHostBackendFromSessionRuntime } from '../../apiSurfaceReachabilityProbe.js';",
-      "export type { PluginAgentRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
-      "export type { PluginRegistrationRight } from '../../apiSurfaceReachabilityProbe.js';",
-      "export type { PluginRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { createPluginActionHandlerNotStartedError } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { readPluginActionInputParser } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { readPluginActionResultParser } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { createPluginRegistrationScope } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { normalizePluginAccountCollectionMigrationRuntimeProjection } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { normalizePluginDaemonDatabaseRuntimeProjection } from '../../apiSurfaceReachabilityProbe.js';",
-      "export { projectPluginAccountCollectionDeclaration } from '../../apiSurfaceReachabilityProbe.js';",
-      '',
-    ].join('\n'));
-    await writeFixtureFile(root, 'src/host/fs/json-owner-file-lock/index.public.ts', [
-      "export { reclaimJsonOwnerFileLockSnapshot } from '../../../apiSurfaceLockProbe.js';",
-      "export { withJsonOwnerFileLock } from '../../../apiSurfaceLockProbe.js';",
       '',
     ].join('\n'));
     const result = runJsonCli(root, ['--write']);
@@ -4533,7 +4526,7 @@ test('projects added and removed author publication-spec exports into generated 
       )),
       `api-surface.json dropped the published symbol: ${JSON.stringify(inventory.symbols)}`,
     );
-    assert.match(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), /ActionOutcome/u);
+    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), "export * from './index.public.js';\n");
 
     await writeFile(
       join(root, 'src/actions/index.public.ts'),
@@ -4552,7 +4545,7 @@ test('projects added and removed author publication-spec exports into generated 
       )),
       false,
     );
-    assert.doesNotMatch(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), /ActionsService/u);
+    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), "export * from './index.public.js';\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -4599,10 +4592,7 @@ test('derives added and removed entrypoint topology solely from author-owned pub
       )),
       false,
     );
-    assert.match(
-      await readFile(join(root, 'src/webhooks/index.ts'), 'utf8'),
-      /PluginWebhookEndpointIdV1JsonSchema/u,
-    );
+    assert.equal(await readFile(join(root, 'src/webhooks/index.ts'), 'utf8'), "export * from './index.public.js';\n");
     assert.equal(
       await readFile(join(root, 'src/webhooks/index.public.ts'), 'utf8'),
       publicationSpecBefore,
@@ -4691,9 +4681,7 @@ test('derives a generated subpath barrel from its author-owned publication spec 
       ],
     );
     const barrel = await readFile(join(root, 'src/webhooks/index.ts'), 'utf8');
-    assert.equal(barrel.includes('PluginWebhookEndpointId }'), false);
-    assert.match(barrel, /PluginWebhookEndpointIdV1/u);
-    assert.doesNotMatch(barrel, /PluginWebhookEndpointPrivateState/u);
+    assert.equal(barrel, "export * from './index.public.js';\n");
     assert.equal(
       await readFile(join(root, 'src/webhooks/index.public.ts'), 'utf8'),
       publicationSpecBefore,
@@ -4769,10 +4757,8 @@ test('projects package-level Developer Preview source without per-symbol posture
     );
     const generatedBarrel = await readFile(join(root, 'src/actions/index.ts'), 'utf8');
     assert.doesNotMatch(generatedBarrel, /@preview|@experimental|@stable/u);
-    assert.match(
-      generatedBarrel,
-      /@deprecated Use CurrentAuthorOptions; remove when the public replacement is adopted/u,
-    );
+    assert.equal(generatedBarrel, "export * from './index.public.js';\n");
+    assert.match(await readFile(join(root, 'src/actions/index.public.ts'), 'utf8'), /@deprecated Use CurrentAuthorOptions/u);
     const authorApi = await readFile(join(root, 'API.md'), 'utf8');
     assert.match(authorApi, /> This package is Developer Preview\./u);
     assert.doesNotMatch(authorApi, /\| Stability \||\| preview \||\| deprecated \|/u);

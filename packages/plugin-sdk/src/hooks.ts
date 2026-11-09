@@ -140,19 +140,13 @@ export type PluginHookDefinition = PluginHookDefinitionV1;
 /** Per-hook payload declarations are intentionally opaque beyond their hook key. */
 export type PluginHookPayloadMap = Readonly<Record<PluginHookIdV1, unknown>>;
 
-/** Manifest declaration shape consumed by the existing activation owner. */
+/** Author declaration; manifest ingestion supplies the canonical catalog facts. */
 export type HookContribution = Readonly<{
     id: string;
     on: PluginHookIdV1;
-    hookApiVersion: 1;
-    category: HookCategoryV1;
-    scope: PluginHookScopeV1;
-    executionKind: HookExecutionKindV1;
     filters?: unknown;
     priority?: number;
     hostAccess?: readonly string[];
-    compatibility?: Readonly<Record<string, JsonValue>>;
-    metadata?: Readonly<Record<string, JsonValue>>;
 }>;
 
 /** @realm any */

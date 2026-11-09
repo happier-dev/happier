@@ -21,6 +21,14 @@ export type { ReviewCommentPublicationTargetExpectationV1 } from './comments.js'
 export type { ReviewCommentPublicationVerdictV1 } from './comments.js';
 export type { ReviewCommentPublicationVerdictResultV1 } from './comments.js';
 export type { ReviewFinding } from './projections.js';
+export {
+    REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1,
+    REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1,
+    renderReviewFindingsForVerifyV1,
+    ReviewFindingsApplyInputV1Schema,
+} from './projections.js';
+export type { ReviewFindingForVerifyV1, ReviewFindingsApplyInputV1 } from './projections.js';
+export type { WorkspaceAnchorV1, WorkspaceAnchorSnapshotV1, WorkspaceAnchorResolutionV1 } from './projections.js';
 export type { ReviewFindingId } from './projections.js';
 export { ReviewFindingSchema } from './projections.js';
 export type { ReviewFindingsV2 } from './projections.js';

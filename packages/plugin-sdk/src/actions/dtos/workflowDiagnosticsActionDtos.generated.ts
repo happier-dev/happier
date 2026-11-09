@@ -384,21 +384,6 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
             }>;
             triggerSeed?: undefined | {
-                enabled: boolean;
-                kind: 'sessionLifecycle';
-                policy: {
-                    kind: 'currentTurn';
-                    sourceTurnId: string;
-                } | {
-                    kind: 'everyMatch';
-                } | {
-                    kind: 'firstMatch';
-                } | {
-                    kind: 'nextMatches';
-                    count: number;
-                };
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-            } | {
                 kind: 'schedule';
                 schedule: {
                     kind: 'cron';
@@ -412,6 +397,21 @@ export type WorkflowDiagnosticsActionResultById = {
                     timezone: null | string;
                 };
                 enabled: boolean;
+            } | {
+                kind: 'sessionLifecycle';
+                enabled: boolean;
+                policy: {
+                    kind: 'currentTurn';
+                    sourceTurnId: string;
+                } | {
+                    kind: 'everyMatch';
+                } | {
+                    kind: 'firstMatch';
+                } | {
+                    kind: 'nextMatches';
+                    count: number;
+                };
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             };
         }[];
     };
@@ -747,21 +747,6 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
             }>;
             triggerSeed?: undefined | {
-                enabled: boolean;
-                kind: 'sessionLifecycle';
-                policy: {
-                    kind: 'currentTurn';
-                    sourceTurnId: string;
-                } | {
-                    kind: 'everyMatch';
-                } | {
-                    kind: 'firstMatch';
-                } | {
-                    kind: 'nextMatches';
-                    count: number;
-                };
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-            } | {
                 kind: 'schedule';
                 schedule: {
                     kind: 'cron';
@@ -775,6 +760,21 @@ export type WorkflowDiagnosticsActionResultById = {
                     timezone: null | string;
                 };
                 enabled: boolean;
+            } | {
+                kind: 'sessionLifecycle';
+                enabled: boolean;
+                policy: {
+                    kind: 'currentTurn';
+                    sourceTurnId: string;
+                } | {
+                    kind: 'everyMatch';
+                } | {
+                    kind: 'firstMatch';
+                } | {
+                    kind: 'nextMatches';
+                    count: number;
+                };
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             };
             trigger?: undefined | {
                 kind: 'ciFailed' | 'prComment';

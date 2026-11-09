@@ -1,6 +1,6 @@
-import type { PluginSecretSourceRuntimeV1 } from '../secretSources.js';
 import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
+import type { PluginSecretSourceRuntimeV1 } from '../secretSources.js';
 import type { PluginProjectNativeAdapterRuntimeV1 } from '../projectNativeAdapters.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../entityDragDrop.js';
 import type { PluginWorkItemsRuntime } from '../workItems.js';
@@ -20,6 +20,7 @@ import type {
 } from '../activation.js';
 import type {
     AgentCliAuthContributionV1,
+    AgentAccountSettingsContributionV1,
     AgentCliSessionCommandDeclarationV1,
     AgentConnectedAccountLaunchContributionV1,
     AgentExperimentalVendorResumeSupportContributionV1,
@@ -43,6 +44,7 @@ import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
     ProviderUsageParser,
+    ProviderRequestCostParser,
 } from '../managed-services/contract.js';
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 
@@ -59,12 +61,11 @@ type CapturedActionHandler = (input: never, context: never) => ReturnType<Action
  * owner; adding a second hand-maintained family map is a correctness bug.
  */
 export interface PluginRegistrationValueByFamily {
-    secretSources: PluginSecretSourceRuntimeV1;
-
     workItems: PluginWorkItemsRuntime;
     dragSources: PluginDragSourceRuntime;
     dropTargets: PluginDropTargetRuntime;
     captureSources: PluginCaptureSourceRuntime;
+    secretSources: PluginSecretSourceRuntimeV1;
     projectNativeAdapters: PluginProjectNativeAdapterRuntimeV1;
     actions: CapturedActionHandler;
     agents: Readonly<{
@@ -76,6 +77,7 @@ export interface PluginRegistrationValueByFamily {
         cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
         cliAuth?: AgentCliAuthContributionV1;
         connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        accountSettings?: AgentAccountSettingsContributionV1;
         preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
         terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
         terminal?: AgentTerminalSurface;
@@ -98,6 +100,7 @@ export interface PluginRegistrationValueByFamily {
         managedRuntime?: ManagedProviderRuntime;
         catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
         usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
+        requestCostParser?: ProviderRequestCostParser;
     }>;
     scmHostingProviders: HostingProviderRuntime;
     scmBackends: BackendRuntime;

@@ -730,8 +730,8 @@ export type DeploymentsActionInputById = {
     } | {
         purpose: 'preview' | 'standard';
         serverId: string;
-        requestKey: string;
         protection: 'nonProduction' | 'production';
+        requestKey: string;
         deployerMode: 'chosen' | 'managers' | 'members';
         name: string;
         projectSourceId?: string | undefined;
@@ -1703,6 +1703,46 @@ export type DeploymentsActionInputById = {
         serverId: string;
     };
     readonly "deployments.teardown": {
+        expectedRevision: number;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        requestKey: string;
+        dataCreation: {
+            runId: string;
+            invocationId: string;
+        };
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        machines?: string[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        expectedRevision: number;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        requestKey: string;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        machines?: string[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
         contentHeaderVersion: number;
@@ -1735,46 +1775,6 @@ export type DeploymentsActionInputById = {
         serverId: string;
         volumes?: [
         ] | undefined;
-    } | {
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        environmentId: string;
-        expectedRevision: number;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        requestKey: string;
-        dataCreation: {
-            runId: string;
-            invocationId: string;
-        };
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        serverId: string;
-        environmentId: string;
-        expectedRevision: number;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        requestKey: string;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
     } | {
         serverId: string;
         environmentId: string;
@@ -4655,8 +4655,8 @@ export type DeploymentsActionResultById = {
         } | {
             purpose: 'preview' | 'standard';
             serverId: string;
-            requestKey: string;
             protection: 'nonProduction' | 'production';
+            requestKey: string;
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;

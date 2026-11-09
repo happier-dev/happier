@@ -1,4 +1,6 @@
 export type { AgentProviderRequirementsV1 } from './projections.js';
+export type { DaemonProviderUsageRefreshRequestV1, ProviderUsageParseResultV1 } from './projections.js';
+export type { ProviderReasoningEffortLevelV1 } from './projections.js';
 export {
     PROVIDER_REASONING_EFFORT_LEVELS_V1,
     PROVIDER_REASONING_EFFORT_OPTION_ID,
@@ -22,8 +24,8 @@ export type { ProviderCatalogParsedModel } from './projections.js';
 export type { ProviderCatalogParsedModelLoadState } from './projections.js';
 export type { ProviderCatalogParseResult } from './projections.js';
 export type { ProviderCatalogParser } from './projections.js';
-export type { DaemonProviderUsageRefreshRequestV1, ProviderUsageParseResultV1 } from './projections.js';
 export type { ProviderUsageParser, ProviderUsageParseResult, ProviderUsageSourceV1 } from './projections.js';
+export type { ProviderRequestCostParser } from './projections.js';
 export type { ProviderCatalogParserId } from './projections.js';
 export type { ProviderCatalogProbeV1 } from './projections.js';
 export type { ProviderCatalogService } from './projections.js';

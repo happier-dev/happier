@@ -9,8 +9,13 @@ export const PLUGIN_SDK_AUTHORED_TEST_INCLUDE = ['src/**/*.test.ts'] as const;
 export default defineConfig({
     plugins: [createWorkspacePackageSourcesPlugin([
         { packageName: '@happier-dev/protocol', packageSourceRoot: sourceRoot('protocol') },
+        { packageName: '@happier-dev/deployment-protocol', packageSourceRoot: sourceRoot('deployment-protocol') },
         { packageName: '@happier-dev/agents', packageSourceRoot: sourceRoot('agents') },
         { packageName: '@happier-dev/cli-common', packageSourceRoot: sourceRoot('cli-common') },
+        { packageName: '@happier-dev/release-runtime', packageSourceRoot: sourceRoot('release-runtime') },
+        { packageName: '@happier-dev/email-transports-protocol', packageSourceRoot: sourceRoot('email-transports-protocol') },
+        { packageName: '@happier-dev/forge-ci', packageSourceRoot: sourceRoot('forge-ci') },
+        { packageName: '@happier-dev/plugin-ui', packageSourceRoot: sourceRoot('plugin-ui') },
         { packageName: '@happier-dev/channels-protocol', packageSourceRoot: sourceRoot('channels-protocol') },
         { packageName: '@happier-dev/triage-protocol', packageSourceRoot: sourceRoot('triage-protocol') },
         { packageName: '@happier-dev/triage-sources', packageSourceRoot: sourceRoot('triage-sources') },

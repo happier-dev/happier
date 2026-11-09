@@ -459,6 +459,9 @@ export type ProjectExecutionActionResultById = {
                     status?: number | undefined;
                     code?: string | undefined;
                 } | {
+                    kind: 'managedGuestHome';
+                    homeOrigin: string;
+                } | {
                     kind: 'managedNative';
                     nativeCause: {
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -1860,6 +1863,9 @@ export type ProjectExecutionActionResultById = {
                     status?: number | undefined;
                     code?: string | undefined;
                 } | {
+                    kind: 'managedGuestHome';
+                    homeOrigin: string;
+                } | {
                     kind: 'managedNative';
                     nativeCause: {
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -3260,6 +3266,9 @@ export type ProjectExecutionActionResultById = {
                     category: 'currentness' | 'schema' | 'status' | 'transport';
                     status?: number | undefined;
                     code?: string | undefined;
+                } | {
+                    kind: 'managedGuestHome';
+                    homeOrigin: string;
                 } | {
                     kind: 'managedNative';
                     nativeCause: {

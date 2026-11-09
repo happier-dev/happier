@@ -519,7 +519,7 @@ async function scanSparseJsonlBackwardPage(
   params: Parameters<typeof readJsonlFileBackwardPage>[0] & { fileSystem: JsonlScannerFileSystemV1 },
   initialEnd: number,
 ): ReturnType<typeof readJsonlFileBackwardPage> {
-  const offsets = [...new Set(params.candidateByteOffsets)].filter(offset => offset < initialEnd).sort((a, b) => b - a);
+  const offsets = params.candidateByteOffsets!;
   const maxBytes = normalizePositiveInteger(params.maxBytes, DEFAULT_TAIL_BYTES);
   const maxItems = normalizePositiveInteger(params.maxItems, 100);
   let bytesRead = 0;
@@ -542,8 +542,9 @@ async function scanSparseJsonlBackwardPage(
   let malformedCount = 0;
   const malformedPositions: number[] = [];
   const damagedRow = new Error('Admitted row has invalid UTF-8');
-  let offsetIndex = 0;
-  for (; offsetIndex < offsets.length && itemCount < maxItems && bytesRead < maxBytes; offsetIndex++) {
+  let offsetIndex = offsets.length - 1;
+  while (offsetIndex >= 0 && offsets[offsetIndex]! >= initialEnd) offsetIndex--;
+  for (; offsetIndex >= 0 && itemCount < maxItems && bytesRead < maxBytes; offsetIndex--) {
     const offset = offsets[offsetIndex]!;
     let selected: JsonlForwardLineV1 | undefined;
     try {
@@ -578,7 +579,7 @@ async function scanSparseJsonlBackwardPage(
     // Also commits diagnosed/empty rows without inventing a decoded item.
     params.onSkippedRange?.(offset, offset, tailOffsetBytes);
   }
-  if (offsetIndex === offsets.length) {
+  if (offsetIndex < 0) {
     if (nextEndOffsetBytes > 0) params.onSkippedRange?.(0, nextEndOffsetBytes, tailOffsetBytes);
     nextEndOffsetBytes = 0;
   }

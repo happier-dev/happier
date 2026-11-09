@@ -37,8 +37,8 @@ async function readDirectTypeProjection(
 describe('invocation provenance public projections', () => {
     it('publishes caller provenance from the root invocation boundary without an Agent-runtime alias', async () => {
         const [root, agentRuntime] = await Promise.all([
-            readDirectTypeProjection(new URL('./index.ts', import.meta.url), './invocation.js'),
-            readDirectTypeProjection(new URL('./agents/runtime/index.ts', import.meta.url), '../../invocation.js'),
+            readDirectTypeProjection(new URL('./index.public.ts', import.meta.url), './invocation.js'),
+            readDirectTypeProjection(new URL('./agents/runtime/index.public.ts', import.meta.url), '../../invocation.js'),
         ]);
 
         expect(root).toEqual(expect.arrayContaining([

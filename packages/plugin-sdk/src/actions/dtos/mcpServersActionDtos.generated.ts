@@ -1136,18 +1136,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1185,18 +1185,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1254,18 +1254,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1303,18 +1303,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1384,18 +1384,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1433,18 +1433,18 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {

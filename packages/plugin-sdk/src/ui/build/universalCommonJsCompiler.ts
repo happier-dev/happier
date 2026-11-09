@@ -1,11 +1,13 @@
+/// <reference path="./babelPluginTransformBlockScoping.d.ts" />
 import { readFile, readdir } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+import { transformAsync } from '@babel/core';
+import transformBlockScoping from '@babel/plugin-transform-block-scoping';
 import { build, version as esbuildVersion, type Metafile, type Plugin } from 'esbuild';
 
-import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui';
-import { createZodMiniEnglishLocaleCompilerPlugin } from './zodMiniLocaleCompilerPolicy.js';
+import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui/hostRuntimeExternals';
 
 export class PluginUiUniversalCompilerError extends Error {
     readonly code: string;
@@ -165,6 +167,27 @@ function compilerPolicyPlugin(artifactId: string, resolveSourceImport?: (specifi
     };
 }
 
+/**
+ * The native app evaluates artifacts with Hermes, whose `new Function` compiles `let`/`const` to one
+ * function-scoped binding: every closure created in a loop shares it. esbuild keeps those loops at any target,
+ * including its own namespace helper, so a plugin's `React.useMemo` would read React's last export. Lower them
+ * here, once, for the one universal artifact.
+ */
+async function lowerBlockScopedClosures(artifactId: string, source: string): Promise<Uint8Array> {
+    const lowered = await transformAsync(source, {
+        configFile: false, babelrc: false, sourceType: 'script', minified: true,
+        shouldPrintComment: comment => /@license|@preserve|^!/u.test(comment),
+        plugins: [transformBlockScoping],
+    }).catch((cause: unknown) => {
+        throw new PluginUiUniversalCompilerError('compile_failed', artifactId,
+            `Executable Plugin UI artifact "${artifactId}" failed to compile: ${cause instanceof Error ? cause.message : String(cause)}`);
+    });
+    if (typeof lowered?.code !== 'string') {
+        throw new PluginUiUniversalCompilerError('compile_failed', artifactId, `Executable Plugin UI artifact "${artifactId}" produced no output`);
+    }
+    return new TextEncoder().encode(lowered.code);
+}
+
 async function reportBundledHostModules(projectRoot: string, artifactId: string, metafile: Metafile): Promise<void> {
     const packages = new Map<string, Readonly<{ name: string; root: string }> | null>();
     async function packageAt(directory: string): Promise<Readonly<{ name: string; root: string }> | null> {
@@ -259,7 +282,6 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
             metafile: true,
             write: false,
             plugins: [
-                createZodMiniEnglishLocaleCompilerPlugin(),
                 compilerPolicyPlugin(input.artifactId, input.resolveSourceImport),
             ],
             logLevel: 'silent',
@@ -290,6 +312,7 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
     }
     await assertPortablePluginOwnedInputs(projectRoot, input.artifactId, result.metafile.inputs);
     const output = result.outputFiles[0]!;
+    const bytes = await lowerBlockScopedClosures(input.artifactId, output.text);
     const externalSpecifiers = [...new Set(
         Object.values(result.metafile.outputs).flatMap((metafileOutput) => (
             metafileOutput.imports
@@ -335,14 +358,14 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
     return Object.freeze({
         artifactId: input.artifactId,
         relativePath,
-        bytes: new Uint8Array(output.contents),
+        bytes,
         exports: Object.freeze(requestedExports),
         externalSpecifiers: Object.freeze(externalSpecifiers),
         esbuildVersion,
         metafile: result.metafile,
         outputFiles: Object.freeze([Object.freeze({
             path: output.path,
-            bytes: new Uint8Array(output.contents),
+            bytes: bytes.slice(),
         })]),
     });
 }

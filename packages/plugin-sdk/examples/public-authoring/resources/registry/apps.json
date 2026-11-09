@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "apps": [{
+    "itemId": "postgres",
+    "app": {
+      "schemaVersion": 1,
+      "title": "Postgres",
+      "compose": { "document": "services:\n  database:\n    image: postgres:17\n", "profiles": [], "services": [] },
+      "variables": [],
+      "generatedSecrets": [],
+      "domains": [],
+      "volumes": []
+    }
+  }]
+}

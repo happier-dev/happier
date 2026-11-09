@@ -33,18 +33,18 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                field: {
+                vault: {
                     id: string;
-                    title: string;
-                    kind: string;
+                    name: string;
                 };
                 item: {
                     id: string;
                     title: string;
                 };
-                vault: {
+                field: {
                     id: string;
-                    name: string;
+                    title: string;
+                    kind: string;
                 };
             };
         } | {
@@ -84,18 +84,18 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                field: {
+                vault: {
                     id: string;
-                    title: string;
-                    kind: string;
+                    name: string;
                 };
                 item: {
                     id: string;
                     title: string;
                 };
-                vault: {
+                field: {
                     id: string;
-                    name: string;
+                    title: string;
+                    kind: string;
                 };
             };
         };
@@ -150,18 +150,18 @@ export type PersonalSavedSecretsActionResultById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             };
@@ -199,10 +199,10 @@ export type PersonalSavedSecretsActionResultById = {
             name: string;
         }[];
         usedBy?: null | undefined | {
-            owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+            owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'deploymentEnvironment' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
             path: string;
             referrer?: undefined | {
-                kind: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+                kind: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'deploymentEnvironment' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
                 id: string;
                 displayName?: string | undefined;
             };
@@ -210,10 +210,10 @@ export type PersonalSavedSecretsActionResultById = {
     };
     readonly "secrets.usedBy": {
         references: null | {
-            owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+            owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'deploymentEnvironment' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
             path: string;
             referrer?: undefined | {
-                kind: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+                kind: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'deploymentEnvironment' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
                 id: string;
                 displayName?: string | undefined;
             };

@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     PluginContributionPointProtocolV1Schema,
     rehydratePluginContributionPointSemanticsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/targeted';
 import type { DefinedPlugin } from '@happier-dev/plugin-sdk';
 
 import { parsePluginManifest, type PluginManifest } from '../manifest.js';

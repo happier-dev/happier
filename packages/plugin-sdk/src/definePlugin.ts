@@ -41,6 +41,7 @@ import type {
 
 import type {
     AgentCliAuthContributionV1,
+    AgentAccountSettingsContributionV1,
     AgentCliSessionCommandDeclarationV1,
     AgentConnectedAccountLaunchContributionV1,
     AgentExperimentalVendorResumeSupportContributionV1,
@@ -380,7 +381,7 @@ type ValidatedPluginActionDefinitions<
 }>;
 export type PluginCustomAgentDeclaration = DistributiveOmit<
     Extract<AgentContribution, { runtime: { kind: 'custom' } }>,
-    'id'
+    'id' | 'accountSettings'
 >;
 export type PluginHostOwnedAgentDeclaration = DistributiveOmit<
     Exclude<AgentContribution, { runtime: { kind: 'custom' } }>,
@@ -404,6 +405,7 @@ export type PluginAgentDefinition = Readonly<{
         cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
         cliAuth?: AgentCliAuthContributionV1;
         connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        accountSettings?: AgentAccountSettingsContributionV1;
         preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
         terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
         sessionStartup?: AgentSessionStartupContributionV1;
@@ -419,6 +421,7 @@ export type PluginAgentDefinition = Readonly<{
         cliSessionCommand?: never;
         cliAuth?: AgentCliAuthContributionV1;
         connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        accountSettings?: never;
         preflightSessionControls?: never;
         terminalPromptSubmitVerification?: never;
         sessionStartup?: never;
@@ -1387,6 +1390,9 @@ function projectActionContracts(
 function projectAgent(localId: string, definition: PluginAgentDefinition) {
     const sharing = definition.connectedAccountLaunch?.stateSharingDescriptor;
     return Object.freeze({ ...definition.declaration, id: localId,
+        ...(definition.accountSettings ? { accountSettings: {
+            settingLocalIds: [...definition.accountSettings.settingLocalIds],
+        } } : {}),
         capabilities: {
             ...definition.declaration.capabilities,
             // The executable descriptor is the owner. Publish only its public
@@ -1710,7 +1716,7 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'agents',
     runtimeReceiverPaths: [
         'providerBinding', 'sessionRunnerFactory', 'daemonSpawnHooks', 'providerCliAttach',
-        'cliSessionCommand', 'cliAuth', 'connectedAccountLaunch', 'preflightSessionControls',
+        'cliSessionCommand', 'cliAuth', 'connectedAccountLaunch', 'accountSettings', 'preflightSessionControls',
         'terminalPromptSubmitVerification', 'sessionStartup', 'vendorResumeSupport',
         'terminal',
         'externalSessions', 'externalSessionHooks', 'externalSessionObservation', 'externalSessionTakeover',
@@ -1737,6 +1743,7 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
                         && definition.cliSessionCommand === undefined
                         && definition.cliAuth === undefined
                         && definition.connectedAccountLaunch === undefined
+                        && definition.accountSettings === undefined
                         && definition.preflightSessionControls === undefined
                         && definition.terminalPromptSubmitVerification === undefined
                         && definition.sessionStartup === undefined
@@ -1764,6 +1771,9 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
                             ...(definition.connectedAccountLaunch === undefined
                                 ? {}
                                 : { connectedAccountLaunch: definition.connectedAccountLaunch }),
+                            ...(definition.accountSettings === undefined
+                                ? {}
+                                : { accountSettings: definition.accountSettings }),
                             ...(definition.preflightSessionControls === undefined
                                 ? {}
                                 : { preflightSessionControls: definition.preflightSessionControls }),

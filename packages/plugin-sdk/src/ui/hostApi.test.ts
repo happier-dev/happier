@@ -72,7 +72,7 @@ describe('PluginUiHostApi initial public contract', () => {
     it('projects one semantic API and mount owner through SDK-local author declarations', () => {
         const hostApiSource = readFileSync(new URL('./hostApi.ts', import.meta.url), 'utf8');
         const publicContractSource = readFileSync(new URL('./publicContract.ts', import.meta.url), 'utf8');
-        const uiIndexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+        const uiIndexSource = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
 
         expect(hostApiSource).toContain("from './publicContract.js';");
         expect(hostApiSource).toContain('PluginUiHostMethodV1,');

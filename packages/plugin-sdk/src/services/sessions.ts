@@ -33,6 +33,7 @@ import { isSlashCommandSupported as protocolIsSlashCommandSupported, normalizeSl
 import { hasSessionInputContentV1 as protocolHasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
 import { readPendingLocalId as protocolReadPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { readTranscriptPeerSenderV1 as protocolReadTranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
 import { SessionIdSchema as protocolSessionIdSchema, SessionIndexedIdentifierMaxLengthV1 as protocolSessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 import { SessionMessageProvenanceV1Schema as protocolSessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionRuntimeIssueV1Schema as protocolSessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -50,11 +51,6 @@ import { readSessionModesMetadata as protocolReadSessionModesMetadata } from '@h
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE as protocolNativeToolApprovalRequestSource, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE as protocolNativeToolApprovalOnceRequestSource } from '@happier-dev/protocol/sessions/permissions/v1';
 import { buildAgentRequestSemanticSummary as protocolBuildAgentRequestSemanticSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { StructuredQuestionAnswersV1Schema as protocolStructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
-
-/** Converts native Session creation drafts through the canonical Protocol boundary. */
-export const projectSessionSpawnNewActionInputV2: (
-    input: SessionSpawnNewInputV2,
-) => PluginActionInputById['session.spawn_new'] = /* @__PURE__ */ projectProtocolValue(canonicalProjectSessionSpawnNewActionInputV2);
 
 /** Accepted native mode facts; parsing and retained V1 normalization stay Protocol-owned. */
 export type SessionModeCatalog = Readonly<{
@@ -130,6 +126,11 @@ export const SessionAuthoringCheckoutCreationDraftV1Schema:
 
 /** Browser-safe server-start draft projected at the SDK author boundary. */
 export const SessionServerStartSpawnDraftV1Schema: SessionSchema<SessionServerStartSpawnDraftV1> = /* @__PURE__ */ projectProtocolValue(protocolSessionServerStartSpawnDraftV1Schema);
+
+/** Projects an admitted native draft into Action vocabulary; creation custody remains with the caller. */
+export const projectSessionSpawnNewActionInputV2: (
+    input: SessionServerStartSpawnDraftV1,
+) => PluginActionInputById['session.spawn_new'] = canonicalProjectSessionSpawnNewActionInputV2;
 
 /**
  * Declaration-neutral projection of the Protocol provenance union. The
@@ -340,6 +341,10 @@ export const readLeadingSlashCommandName: (value: unknown) => string | null = pr
 export const readSlashCommandNames: (value: unknown) => readonly string[] = protocolReadSlashCommandNames;
 /** @realm any */
 export const readPendingLocalId: (value: unknown) => string | null = protocolReadPendingLocalId;
+/** Protocol owns peer admission; Agent plugins share its transcript sender reader. @realm any */
+export const readTranscriptPeerSenderV1: (
+    value: unknown,
+) => Readonly<{ name: string | null; handback: boolean }> | null = protocolReadTranscriptPeerSenderV1;
 /**
  * Whether a Session input carries something to deliver.
  *

@@ -14,4 +14,8 @@ export type ScmComparisonSource =
     | { kind: 'pullRequest'; locator: {
         providerId: string; repository: string; number: number; baseOid?: string; headOid?: string;
         sourceAction?: { action: PluginContributionRef; input?: JsonValue };
+        fileViewedActions?: {
+            read: { action: PluginContributionRef; input?: JsonValue };
+            set: { action: PluginContributionRef; input?: JsonValue };
+        };
     } };

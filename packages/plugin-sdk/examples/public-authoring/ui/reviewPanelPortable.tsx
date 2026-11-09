@@ -7,12 +7,22 @@ import {
     Button,
     Card,
     CodeBlock,
+    Collection,
+    DetailsPaneOpenAsPageButton,
     defineHappierScene,
     defineHappierSceneProp,
     defineUiSurface,
     EmptyState,
     ErrorState,
+    HappierFindHighlightedText,
+    HappierPressable,
+    HappierPromptPickerPreview,
+    HappierPromptPickerRow,
+    HappierText,
+    Icon,
     LoadingState,
+    matchFindText,
+    Row,
     Screen,
     ScrollArea,
     SetupBlockGrid,
@@ -21,11 +31,18 @@ import {
     Stack,
     Status,
     StatusCell,
+    SurfaceState,
     Text,
     TextField,
     useLivePluginResource,
+    useHappierCollection,
+    usePluginTheme,
+    useSurfaceContext,
     VoiceMarkArt,
     WidgetSurface,
+    type HappierPromptPickerColors,
+    type HappierPromptPickerHost,
+    type HappierPromptPickerMetaPart,
 } from '@happier-dev/plugin-ui';
 
 import {
@@ -35,6 +52,7 @@ import {
     type ReviewOpenableContentResult,
 } from './reviewOpenableContent.js';
 import { PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT } from './reviewClientActions.js';
+import { SESSION_SKILL_REFERENCE_VIEW_ID, SessionSkillReference } from './sessionSkill.js';
 
 /**
  * This plugin's empty-state scene, composed from Happier's scene parts: the desk at golden hour, the
@@ -59,6 +77,65 @@ const REVIEW_PANEL_VIEW_ID = 'review-panel';
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
 const PROJECT_COMPANION_ACTIVITY_VIEW_ID = 'project-companion-activity-log';
 const PROJECT_COMPANION_PROJECT_ACTIVITY_VIEW_ID = 'project-companion-project-activity-log';
+const REVIEW_PROJECT_PAGE_VIEW_ID = 'review-project-page';
+const PROJECT_REVIEW_ENTRIES = [{ id: 'identity', title: 'Accepted Project identity' }] as const;
+const projectReviewEntryKey = (entry: (typeof PROJECT_REVIEW_ENTRIES)[number]) => entry.id;
+const PROJECT_REVIEW_ANATOMY = {
+    glyph: () => null,
+    title: (entry: (typeof PROJECT_REVIEW_ENTRIES)[number]) => entry.title,
+    accessibilityLabel: (entry: (typeof PROJECT_REVIEW_ENTRIES)[number]) => entry.title,
+    testID: () => 'review.project.identity',
+    columnTitles: { title: 'Review' },
+};
+
+/** One controlled page model survives its host pane, full page and return presentations. */
+function ReviewProjectPage({ context }: Readonly<{ context: RenderContext }>) {
+    const surface = useSurfaceContext();
+    const [subPath, setSubPath] = React.useState(context.subPath ?? '');
+    const [note, setNote] = React.useState('');
+    const navigate = React.useCallback(async (subPath: string, backLocation: string) => {
+        const settled = await context.hostApi.replacePageLocation(subPath, { backLocation });
+        setSubPath(settled.subPath);
+    }, [context.hostApi]);
+    React.useEffect(() => {
+        const subPath = context.subPath ?? '';
+        setSubPath(subPath);
+        // A direct/reloaded detail declares the same local Back participant as an in-page open.
+        if (subPath === 'identity' || subPath === 'identity/page') {
+            void navigate(subPath, subPath === 'identity/page' ? 'identity' : '');
+        }
+    }, [context.subPath, navigate]);
+    const open = React.useCallback((key: string | null) => {
+        void navigate(key === 'identity' ? 'identity' : '', '');
+    }, [navigate]);
+    const model = useHappierCollection({ items: PROJECT_REVIEW_ENTRIES, keyOf: projectReviewEntryKey,
+        openKey: subPath === 'identity' ? 'identity' : null, onOpenChange: open });
+    if (surface.target.kind !== 'project') {
+        return <ErrorState title="Review needs a Project" description="Open this page from an accepted Project." />;
+    }
+    const detail = <Stack gap="small">
+        <Text testID="review.project.key" value={surface.target.projectKey} selectable />
+        <Text testID="review.project.repository" value={surface.target.repository?.kind ?? 'Repository identity unavailable'} tone="secondary" />
+        <TextField testID="review.project.note" label="Review note" value={note} onChange={setNote} />
+    </Stack>;
+    if (subPath === 'identity/page') {
+        return <ReviewFrame accessibilityLabel="Project review">
+            {detail}
+            <Button testID="review.project.return" title="Return to list" variant="plain"
+                onPress={() => navigate('identity', '')} />
+        </ReviewFrame>;
+    }
+    if (subPath !== '' && subPath !== 'identity') {
+        return <ErrorState title="Review location is unavailable"
+            action={<Button title="Return to list" onPress={() => navigate('', '')} />} />;
+    }
+    return <Collection testID="review.project.collection" model={model} anatomy={PROJECT_REVIEW_ANATOMY}
+        title="Project review" accessibilityLabel="Project review" presentation="list" detail="auto"
+        minListWidth={320} minDetailWidth={480} preferredListRatio={0.4}
+        detailHeader={() => ({ title: 'Accepted Project identity', actions: <DetailsPaneOpenAsPageButton
+            testID="review.project.openAsPage" onPress={() => navigate('identity/page', 'identity')} /> })}
+        renderDetail={() => detail} />;
+}
 
 function readDestinationLocalId(context: RenderContext): string | null {
     const mount = context.surface.mount;
@@ -529,6 +606,12 @@ function ReviewPanel(context: RenderContext) {
     }
 
     const destinationLocalId = readDestinationLocalId(context);
+    if (destinationLocalId === SESSION_SKILL_REFERENCE_VIEW_ID) {
+        return <ReviewFrame accessibilityLabel="Skill reference"><SessionSkillReference context={context} /></ReviewFrame>;
+    }
+    if (destinationLocalId === REVIEW_PROJECT_PAGE_VIEW_ID) {
+        return <ReviewProjectPage context={context} />;
+    }
     if (destinationLocalId === REVIEW_SESSION_STATUS_VIEW_ID) {
         return context.surface.target.kind === 'session'
             ? <ReviewSessionStatusPanel context={context} />
@@ -582,5 +665,109 @@ function ReviewPanel(context: RenderContext) {
 
     return <ReviewOverview pinnedArea={destinationLocalId === REVIEW_PANEL_VIEW_ID} />;
 }
+
+/** One of this plugin's review snippets: what the picker lists and previews. */
+export type ReviewSnippet = Readonly<{ id: string; title: string; shortcut: string; editedLabel: string }>;
+
+/**
+ * A small controlled picker over this plugin's own review snippets, drawn with Happier's public prompt-picker
+ * row and preview. The plugin owns its data, its reads and what choosing a snippet does; the picker pieces own
+ * only the composition, and a failed read is the shared `SurfaceState` line. It registers nothing.
+ */
+export function ReviewSnippetPicker(props: Readonly<{
+    snippets: readonly ReviewSnippet[];
+    /** Reads one snippet's full text; the preview says when it fails. */
+    read: (snippet: ReviewSnippet) => Promise<string>;
+}>) {
+    const theme = usePluginTheme();
+    const [query, setQuery] = React.useState('');
+    const [selectedId, setSelectedId] = React.useState<string | null>(null);
+    const colors: HappierPromptPickerColors = {
+        text: theme.colors.text,
+        secondaryText: theme.colors.secondaryText,
+        tertiaryText: theme.colors.mutedText,
+        divider: theme.colors.divider,
+    };
+    const marks = {
+        all: { backgroundColor: theme.colors.control },
+        current: { backgroundColor: theme.colors.accent, color: theme.colors.onAccent },
+    };
+    const visible = props.snippets.filter((snippet) => !query || snippet.title.toLowerCase().includes(query.toLowerCase()));
+    const selected = visible.find((snippet) => snippet.id === selectedId) ?? visible[0] ?? null;
+    const meta = (snippet: ReviewSnippet): readonly HappierPromptPickerMetaPart[] => [
+        { text: 'Snippet' },
+        { text: `/${snippet.shortcut}`, token: true },
+    ];
+    return (
+        <Stack gap="small">
+            {/* The `/` belongs to the field: what is typed continues it, and the field keeps its own name. */}
+            <TextField label="Filter snippets" presentation="field" value={query} onChange={setQuery}
+                placeholder="Filter" leading={<HappierText>/</HappierText>} />
+            <Row gap="none">
+                <Stack gap="none" grow>
+                    {visible.map((snippet) => {
+                        const match = matchFindText(snippet.title, query, { matchCase: false, regex: false });
+                        return (
+                            <HappierPressable key={snippet.id} onPress={() => setSelectedId(snippet.id)}
+                                accessibilityRole="button" accessibilityLabel={snippet.title} selected={snippet.id === selected?.id}>
+                                <HappierPromptPickerRow host={SNIPPET_PICKER_HOST} colors={colors} meta={meta(snippet)}
+                                    glyph={<Icon name="forward" size="small" tone="muted" />}
+                                    title={<HappierFindHighlightedText text={snippet.title}
+                                        ranges={'ranges' in match ? match.ranges.map(([start, end]) => ({ start, end, current: false })) : []}
+                                        marks={marks} />}
+                                    testID={`review-snippet:${snippet.id}`} />
+                            </HappierPressable>
+                        );
+                    })}
+                </Stack>
+                {selected
+                    ? <ReviewSnippetPreview key={selected.id} snippet={selected} meta={meta(selected)} read={props.read} colors={colors} />
+                    : null}
+            </Row>
+        </Stack>
+    );
+}
+
+function ReviewSnippetPreview(props: Readonly<{
+    snippet: ReviewSnippet;
+    meta: readonly HappierPromptPickerMetaPart[];
+    read: (snippet: ReviewSnippet) => Promise<string>;
+    colors: HappierPromptPickerColors;
+}>) {
+    const [state, setState] = React.useState<Readonly<{ text?: string; failed?: true }> | null>(null);
+    const [attempt, setAttempt] = React.useState(0);
+    const { read, snippet } = props;
+    React.useEffect(() => {
+        let current = true;
+        setState(null);
+        read(snippet).then(
+            (text) => { if (current) setState({ text }); },
+            () => { if (current) setState({ failed: true }); },
+        );
+        return () => { current = false; };
+    }, [read, snippet, attempt]);
+    return (
+        <HappierPromptPickerPreview host={SNIPPET_PICKER_HOST} colors={props.colors} meta={props.meta}
+            action="Inserts" origin={snippet.editedLabel}>
+            {state?.failed
+                // The shared line on the preview's own edge, announced once, with its one recovery.
+                ? <SurfaceState size="line" kind="error" accessibilitySemantics="alert" title="Couldn’t read this snippet"
+                    action={{ label: 'Retry', onPress: () => setAttempt((value) => value + 1) }} />
+                : state?.text !== undefined
+                    ? <HappierText variant="body">{state.text}</HappierText>
+                    : <SurfaceState size="line" kind="loading" title="Reading the snippet" />}
+        </HappierPromptPickerPreview>
+    );
+}
+
+/** The picker's text binding: Happier's text in the role, colour and figures the picker asks for. */
+const SNIPPET_PICKER_HOST: HappierPromptPickerHost = {
+    Text: ({ children, variant, color, numberOfLines, mono, tabularNumbers, testID }) => (
+        <HappierText variant={mono ? 'code' : variant} numberOfLines={numberOfLines}
+            tabularNumbers={tabularNumbers} testID={testID} style={{ color }}>
+            {children}
+        </HappierText>
+    ),
+};
 
 export const renderSurface = defineUiSurface(ReviewPanel);

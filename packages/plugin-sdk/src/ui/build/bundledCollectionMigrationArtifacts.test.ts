@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runInNewContext } from 'node:vm';
+import { evaluatePortableCommonJs } from '../../test-support/evaluatePortableCommonJs.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
@@ -55,9 +55,12 @@ describe('bundled Collection migration artifacts', () => {
                         ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] })
                         : undefined,
                 });
-                expect(compiled.externalSpecifiers, locator.pluginId).toEqual([]);
+                const duplicatedSchemas = Object.values(compiled.metafile.outputs).flatMap(output => Object.entries(output.inputs))
+                    .filter(([path, input]) => input.bytesInOutput > 0
+                        && /(?:^|[/\\])(?:zod|protocol)(?:[/\\]|@)/u.test(path));
+                expect(duplicatedSchemas, locator.pluginId).toHaveLength(0);
                 const module = { exports: {} as Record<string, unknown> };
-                runInNewContext(new TextDecoder().decode(compiled.bytes), { module, exports: module.exports, TextEncoder, TextDecoder });
+                evaluatePortableCommonJs(new TextDecoder().decode(compiled.bytes), module);
                 const factory = module.exports.collectionMigrations;
                 if (typeof factory !== 'function') throw new Error('Missing migration artifact factory');
                 const payload = factory();

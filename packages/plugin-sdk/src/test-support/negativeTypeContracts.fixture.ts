@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import ts from 'typescript';
 
@@ -60,7 +60,7 @@ export type NegativeTypeContractsFixtureResult = Readonly<{
     unexpectedFiles: readonly Readonly<{ fileName: string; message: string }>[];
 }>;
 
-export function evaluateNegativeTypeContracts(sourceRoot: string): NegativeTypeContractsFixtureResult {
+export async function evaluateNegativeTypeContracts(sourceRoot: string): Promise<NegativeTypeContractsFixtureResult> {
     const reconstructedSources = new Map<string, string>();
     const cases: NegativeTypeCase[] = [];
 
@@ -72,68 +72,40 @@ export function evaluateNegativeTypeContracts(sourceRoot: string): NegativeTypeC
         cases.push(...reconstructed.cases);
     }
 
-    const configPath = resolve(sourceRoot, '../tsconfig.tests.json');
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-    if (configFile.error) {
-        throw new Error(ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n'));
-    }
-    const parsed = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        dirname(configPath),
-        undefined,
-        configPath,
-    );
-    const host = ts.createCompilerHost(parsed.options);
-    const readFile = host.readFile.bind(host);
-    host.readFile = (fileName) => reconstructedSources.get(resolve(fileName)) ?? readFile(fileName);
-    host.getSourceFile = (fileName, languageVersionOrOptions) => {
-        const sourceText = host.readFile(fileName);
-        return sourceText === undefined
-            ? undefined
-            : ts.createSourceFile(
-                fileName,
-                sourceText,
-                languageVersionOrOptions,
-                true,
-                fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-            );
+    const { compileNegativeCaseSources }: typeof import('./negativeTypeProject.js') = await import(new URL('./negativeTypeProject.ts', import.meta.url).href);
+    const diagnostics = await compileNegativeCaseSources(sourceRoot, reconstructedSources);
+    const position = (diagnostic: (typeof diagnostics)[number]): number | undefined => {
+        const source = reconstructedSources.get(diagnostic.fileName);
+        if (source === undefined) return undefined;
+        const parsed = ts.createSourceFile(diagnostic.fileName, source, ts.ScriptTarget.Latest);
+        return parsed.getPositionOfLineAndCharacter(diagnostic.line - 1, diagnostic.column - 1);
     };
-
-    const program = ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-        host,
-    });
-    const syntacticDiagnostics = program.getSyntacticDiagnostics();
-    const diagnostics = program.getSemanticDiagnostics();
+    const syntacticDiagnostics = diagnostics.filter(diagnostic => diagnostic.code >= 1000 && diagnostic.code < 2000);
     return {
         caseCount: cases.length,
         syntacticDiagnostics: syntacticDiagnostics.map((diagnostic) => ({
-            fileName: diagnostic.file?.fileName ?? '<global>',
-            message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+            fileName: diagnostic.fileName,
+            message: diagnostic.message,
         })),
         missing: cases
             .filter((negativeCase) => !diagnostics.some((diagnostic) => (
-                diagnostic.file?.fileName === negativeCase.fileName
-                && diagnostic.start !== undefined
-                && negativeCase.start <= diagnostic.start
-                && diagnostic.start <= negativeCase.end
+                diagnostic.fileName === negativeCase.fileName
+                && position(diagnostic) !== undefined
+                && negativeCase.start <= position(diagnostic)!
+                && position(diagnostic)! <= negativeCase.end
             )))
             .map(({ id, reason }) => ({ id, reason })),
         unexpectedFiles: diagnostics
             .filter((diagnostic) => (
-                diagnostic.file === undefined
-                || !reconstructedSources.has(diagnostic.file.fileName)
+                !reconstructedSources.has(diagnostic.fileName)
             ))
             .map((diagnostic) => ({
-                fileName: diagnostic.file?.fileName ?? '<global>',
-                message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+                fileName: diagnostic.fileName,
+                message: diagnostic.message,
             })),
     };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
-    process.stdout.write(`${JSON.stringify(evaluateNegativeTypeContracts(resolve(import.meta.dirname, '..')))}\n`);
+    process.stdout.write(`${JSON.stringify(await evaluateNegativeTypeContracts(resolve(import.meta.dirname, '..')))}\n`);
 }

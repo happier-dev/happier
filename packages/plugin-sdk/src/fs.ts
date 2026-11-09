@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { withJsonOwnerFileLock } from './host/fs/jsonOwnerFileLock.js';
+import { withJsonOwnerFileLock } from '@happier-dev/cli-common/fs/jsonOwnerFileLock';
 
 export type FsAtomicWriteTextInput = Readonly<{
     path: string;

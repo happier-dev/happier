@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 
 import type {
     CapabilitySupport,
@@ -132,12 +133,10 @@ import type {
 
 const PROVIDER_EXPORTS = [
     'DaemonProviderUsageRefreshRequestV1',
-    'PROVIDER_REASONING_EFFORT_LEVELS_V1',
-    'buildProviderReasoningModelOptions',
     'ProviderUsageParseResultV1',
-    'ProviderUsageParser',
-    'ProviderUsageParseResult',
-    'ProviderUsageSourceV1',
+    'PROVIDER_REASONING_EFFORT_LEVELS_V1',
+    'ProviderReasoningEffortLevelV1',
+    'buildProviderReasoningModelOptions',
     'PROVIDER_REASONING_EFFORT_OPTION_ID',
     'readProviderReasoningEffortOption',
     'AgentProviderRequirementsV1',
@@ -158,6 +157,10 @@ const PROVIDER_EXPORTS = [
     'ProviderCatalogParsedModel',
     'ProviderCatalogParsedModelLoadState',
     'ProviderCatalogParser',
+    'ProviderUsageParser',
+    'ProviderRequestCostParser',
+    'ProviderUsageParseResult',
+    'ProviderUsageSourceV1',
     'ProviderCatalogParserId',
     'ProviderCatalogProbeV1',
     'ProviderCatalogService',
@@ -266,19 +269,7 @@ type SemanticProviderConnectionMutationRequest =
     >>;
 
 function createSdkProgram(): ts.Program {
-    const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    return ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    return createSdkSourceProgram();
 }
 
 function moduleExportNames(program: ts.Program, relativePath: string): readonly string[] {
@@ -434,6 +425,8 @@ describe('final Provider source projection', () => {
             .toEqual([...PROVIDER_RUNTIME_EXPORTS].sort());
         const program = createSdkProgram();
         expect(moduleExportNames(program, 'src/providers/projections.ts'))
+            .toEqual([...PROVIDER_EXPORTS].sort());
+        expect(moduleExportNames(program, 'src/providers/index.public.ts'))
             .toEqual([...PROVIDER_EXPORTS].sort());
     }, 120_000);
 

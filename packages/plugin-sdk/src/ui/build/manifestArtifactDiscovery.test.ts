@@ -41,6 +41,29 @@ async function fixture(exportTarget: unknown): Promise<string> {
 }
 
 describe('discoverExecutablePluginUiArtifacts', () => {
+  it('discovers authentication-only Account activation without Actions, Resources or renderers', async () => {
+    const root = await fixture('./account.ts');
+    await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify({ contributes: {
+      connectedAccountDescriptors: [{ id: 'example', title: 'Example', authentication: {
+        account: { artifactId: 'panel', exportName: 'activate' }, defaultModeId: 'manual',
+        modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }],
+      } }],
+    } }), 'utf8');
+    await expect(discoverExecutablePluginUiArtifacts(root)).resolves.toEqual([{
+      artifactId: 'panel', entryPath: join(root, 'account.ts'), requestedExports: ['activate'],
+    }]);
+  });
+  it('discovers a portable Resource-only activation export without Actions or renderers', async () => {
+    const root = await fixture('./account.ts');
+    await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify({ contributes: { resources: [{
+      id: 'personal', source: 'dynamic', execution: {
+        target: 'account', account: { artifactId: 'panel', exportName: 'activateResources' },
+      },
+    }] } }), 'utf8');
+    await expect(discoverExecutablePluginUiArtifacts(root)).resolves.toEqual([{
+      artifactId: 'panel', entryPath: join(root, 'account.ts'), requestedExports: ['activateResources'],
+    }]);
+  });
   it('discovers portable Account activation without a UI declaration', async () => {
     const root = await fixture('./account.ts');
     await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify({

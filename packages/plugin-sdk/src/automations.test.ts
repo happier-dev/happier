@@ -85,6 +85,7 @@ describe('Automation result-delivery public projection', () => {
         ) as Readonly<{ exports: Readonly<Record<string, unknown>> }>;
 
         expect(packageJson.exports['./automations']).toEqual({
+            'happier-source': './src/automations/index.ts',
             types: './dist/automations/index.d.ts',
             default: './dist/automations/index.js',
         });
@@ -195,7 +196,7 @@ describe('Automation result-delivery public projection', () => {
 
         expect(emitted.diagnostics).toEqual([]);
         expect(emitted.outputText).toContain(
-            'export { AutomationIdV1Schema, } from \'@happier-dev/protocol/automations/result-delivery\';',
+            'export { AutomationIdV1Schema } from \'@happier-dev/protocol/automations/automationIdV1\';',
         );
         expect(emitted.outputText).not.toContain('AutomationIdV1Schema:');
         expect(emitted.outputText).not.toMatch(/\b(?:Zod|_zod)\b/u);

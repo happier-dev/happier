@@ -8,6 +8,12 @@ function hasExportedType(sourceFile: ts.SourceFile, name: string): boolean {
         (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement))
         && statement.name.text === name
         && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    ) || (
+        ts.isExportDeclaration(statement)
+        && statement.isTypeOnly
+        && statement.exportClause !== undefined
+        && ts.isNamedExports(statement.exportClause)
+        && statement.exportClause.elements.some((element) => element.name.text === name)
     ));
 }
 
@@ -19,10 +25,9 @@ describe('author signature closure source contract', () => {
             readFile(new URL('./connected-accounts/requestAuth.ts', import.meta.url), 'utf8'),
         ]);
 
-        for (const source of [connectedAccountsSource, connectedAccountsPublicSource]) {
-            expect(source).toContain("from './requestAuth.js';");
-            expect(source).not.toContain("from '@happier-dev/agents/request-auth';");
-        }
+        expect(connectedAccountsSource).toBe("export * from './index.public.js';\n");
+        expect(connectedAccountsPublicSource).toContain("from './requestAuth.js';");
+        expect(connectedAccountsPublicSource).not.toContain("from '@happier-dev/agents/request-auth';");
         expect(requestAuthSource).not.toContain("from '@happier-dev/agents/request-auth';");
         expect(requestAuthSource).not.toContain("from 'node:");
         expect(requestAuthSource).toContain(
@@ -280,11 +285,10 @@ describe('author signature closure source contract', () => {
         );
 
         expect(hasExportedType(collectionsFile, 'PluginAccountCollectionDeclaration')).toBe(true);
-        for (const source of [collectionsIndexSource, collectionsPublicSource]) {
-            expect(source).toContain(
-                "export type { PluginAccountCollectionDeclaration } from '../collections.js';",
-            );
-        }
+        expect(collectionsIndexSource).toBe("export * from './index.public.js';\n");
+        expect(collectionsPublicSource).toContain(
+            "export type { PluginAccountCollectionDeclaration } from '../collections.js';",
+        );
         expect(definePluginSource).toMatch(
             /import type \{[\s\S]*\bPluginAccountCollectionDeclaration\b[\s\S]*\} from '\.\/collections\.js';/u,
         );

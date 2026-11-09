@@ -6,6 +6,36 @@
 export type LocalServicesPreviewActionInputById = {
     readonly "localServices.preview.openOrCreate": {
         [x: string]: unknown;
+        serviceTarget?: undefined | {
+            kind: 'managed_service';
+            machineId: string;
+            cwd: string;
+            managedServiceId: string;
+            declaration: {
+                workspaceRefId: string;
+                selection: {
+                    kind: 'manifest';
+                    name: string;
+                } | {
+                    kind: 'native';
+                    source: {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                };
+            };
+            workspaceId?: string | undefined;
+        };
         machineId?: string | undefined;
         sessionId?: string | undefined;
         workspaceId?: string | undefined;
@@ -22,6 +52,36 @@ export type LocalServicesPreviewActionInputById = {
     };
     readonly "localServices.preview.revoke": {
         [x: string]: unknown;
+        serviceTarget?: undefined | {
+            kind: 'managed_service';
+            machineId: string;
+            cwd: string;
+            managedServiceId: string;
+            declaration: {
+                workspaceRefId: string;
+                selection: {
+                    kind: 'manifest';
+                    name: string;
+                } | {
+                    kind: 'native';
+                    source: {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                };
+            };
+            workspaceId?: string | undefined;
+        };
         machineId?: string | undefined;
         sessionId?: string | undefined;
         workspaceId?: string | undefined;

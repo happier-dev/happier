@@ -1,3 +1,10 @@
+/** @moduleRealm daemon */
+import type { PluginDiagnosticData } from '../diagnostics.js';
+import type { JsonValue, PluginContributionRef } from '../identity.js';
+import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import type { AgentNativeLaunchQualifier } from '../exec.js';
+
 export type {
     HttpMethod,
     PluginFetchCredentialBinding,
@@ -14,31 +21,6 @@ export type {
     PreparedHttpRead,
     HttpService,
 } from '@happier-dev/cli-common/plugins/http/contracts';
-
-/** @moduleRealm daemon */
-import type { PluginDiagnosticData } from '../diagnostics.js';
-import type { JsonValue, PluginContributionRef } from '../identity.js';
-import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
-import type { ManagedExecutableRef } from '@happier-dev/protocol';
-import type { AgentNativeLaunchQualifier } from '../exec.js';
-
-
-export const MAX_PLUGIN_FETCH_REDIRECTS = 10;
-
-
-
-/** A redaction-aware header supplied during a host-vended WebSocket handshake. */
-
-
-
-
-
-
-
-
-
-
-
 
 export type PluginPath =
     | Readonly<{ root: 'pluginData'; relativePath: string }>
@@ -59,6 +41,17 @@ export interface FileSystemService {
         size: number | null;
         read(): Promise<Readonly<{ identity: string; size: number }> | null>;
     }>>;
+    /**
+     * Publish acquired bytes from an admitted file-writing Action with operation metadata.
+     * The host returns an accepted receipt to the Action caller before destination delivery;
+     * this method remains pending until the incumbent receiver completes or fails, then
+     * returns the final result to the handler. Accepted is not proof that bytes were saved.
+     * The native transfer owns cancellation and effect-outcome reporting; the operation
+     * still waits for any later handler work, whose failure is not erased by delivery.
+     */
+    prepareDownload(input: Readonly<{ name: string; bytes: Uint8Array;
+        destination: import('../protocol/fileDownload.js').FileDownloadDestinationV1 }>,
+        options?: { signal?: AbortSignal }): Promise<import('../protocol/fileDownload.js').FileDownloadResultV1>;
     readFile(path: PluginPath, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<Uint8Array>;
     writeFile(path: PluginPath, data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void>;
     stat(path: PluginPath, options?: { signal?: AbortSignal }): Promise<{ kind: 'file' | 'directory'; size: number; modifiedAtMs: number }>;
@@ -70,6 +63,37 @@ export interface FileSystemService {
 }
 
 export type { ManagedExecutableRef } from '@happier-dev/protocol';
+declare const deploymentExecEnvAttachmentV1: unique symbol;
+
+/** Opaque host-only values. Phase/operational custody is single-use; backup
+ * custody lends to commands until the admitted job disposes it or is cancelled. */
+export interface DeploymentExecEnvAttachmentV1 extends Disposable {
+    readonly [deploymentExecEnvAttachmentV1]: true;
+}
+
+/** Selects admitted phase inputs, one operational binding or one backup config group without returning values. */
+export interface DeploymentExecEnvPortV1 {
+    prepare(input: Readonly<{
+        source: import('./deployments.js').DeploymentSourceMaterializationV1;
+        phase: 'build' | 'runtime';
+        bindingIdentity?: never;
+        backupDestination?: never;
+    }> | Readonly<{
+        /** Opaque identity from deployment-protocol's environmentSecretBindingIdentityV1. */
+        bindingIdentity: string;
+        source?: never;
+        phase?: never;
+        backupDestination?: never;
+    }> | Readonly<{
+        /** Roles come from the host-admitted current destination. Reuse this
+         * handle within one admitted backup/restore job; dispose it in its finally. */
+        backupDestination: Readonly<{ configKey: 'destination' }>;
+        bindingIdentity?: never;
+        source?: never;
+        phase?: never;
+    }>, options?: PluginCancellationOptions): Promise<DeploymentExecEnvAttachmentV1>;
+}
+
 export type PluginExecSpawnRequest = Readonly<{
     executable: ManagedExecutableRef;
     args?: readonly string[];
@@ -210,32 +234,4 @@ export interface PluginJsonRpcConnection extends Disposable {
 export interface ProtocolClientsService {
     connectJsonRpc(spec: PluginJsonRpcConnectionSpec, options?: { signal?: AbortSignal }): Promise<PluginJsonRpcConnection>;
     spawn<K extends PluginProtocolClientKind>(spec: PluginProtocolClientSpecByKind<K>, options?: { signal?: AbortSignal; nativeLaunch?: AgentNativeLaunchQualifier }): Promise<PluginProtocolClientHandle<K>>;
-}
-
-export interface DeploymentExecEnvAttachmentV1 extends Disposable {
-    readonly [deploymentExecEnvAttachmentV1]: true;
-}
-
-declare const deploymentExecEnvAttachmentV1: unique symbol;
-
-export interface DeploymentExecEnvPortV1 {
-    prepare(input: Readonly<{
-        source: import('./deployments.js').DeploymentSourceMaterializationV1;
-        phase: 'build' | 'runtime';
-        bindingIdentity?: never;
-        backupDestination?: never;
-    }> | Readonly<{
-        /** Opaque identity from deployment-protocol's environmentSecretBindingIdentityV1. */
-        bindingIdentity: string;
-        source?: never;
-        phase?: never;
-        backupDestination?: never;
-    }> | Readonly<{
-        /** Roles come from the host-admitted current destination. Reuse this
-         * handle within one admitted backup/restore job; dispose it in its finally. */
-        backupDestination: Readonly<{ configKey: 'destination' }>;
-        bindingIdentity?: never;
-        source?: never;
-        phase?: never;
-    }>, options?: PluginCancellationOptions): Promise<DeploymentExecEnvAttachmentV1>;
 }

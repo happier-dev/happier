@@ -6743,6 +6743,12 @@ export type ProvidersActionResultById = {
                             machineId: string;
                         };
                         directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
                     };
                     checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     codingPromptBehaviorOverrides?: undefined | {
@@ -6782,6 +6788,20 @@ export type ProvidersActionResultById = {
                     updatedAt: number;
                     version: string;
                     description?: string | undefined;
+                    placement?: 'ask' | 'automatic' | undefined | {
+                        fixed: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
+                    };
+                    checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
                     defaultBackendTargetKey?: string | undefined;

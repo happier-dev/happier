@@ -86,7 +86,7 @@ describe('Account Collection declarations', () => {
             }>[];
         }>;
         const sourceModule = 'src/collections/index.ts';
-        const sourceText = await readFile(new URL('./collections/index.ts', import.meta.url), 'utf8');
+        const sourceText = await readFile(new URL('./collections/index.public.ts', import.meta.url), 'utf8');
         const sourceFile = ts.createSourceFile(
             sourceModule,
             sourceText,

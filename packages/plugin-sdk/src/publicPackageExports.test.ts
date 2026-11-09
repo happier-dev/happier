@@ -10,9 +10,6 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
 
 import type {
-    PluginRuntimeRegistration as PackagePluginRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/host/registration';
-import type {
     PluginMachineExecutionOriginV1 as ProtocolPluginMachineExecutionOriginV1,
     PluginMachineMaterializationRefV1 as ProtocolPluginMachineMaterializationRefV1,
 } from '@happier-dev/protocol';
@@ -24,9 +21,6 @@ const readCurrentApiSurfaceInventory = (
     }>
 ).readCurrentApiSurfaceInventory; /* @sdk-negative-type-case-end */
 
-import type {
-    PluginRuntimeRegistration as SourcePluginRuntimeRegistration,
-} from './host/registration/index.js';
 import type {
     PluginMachineMaterializationRefV1 as RootPluginMachineMaterializationRefV1,
 } from './index.js';
@@ -99,6 +93,9 @@ const createApiSurfaceGenerationPlan = (
 const inventoryIt = process.env.HAPPIER_PLUGIN_SDK_SOURCE_ONLY === '1' ? it.skip : it;
 
 const protocolExports = [
+    'DiscussionMessageContentV1',
+    'DiscussionMessagePartV1',
+    'readDiscussionMessagePartsV1',
     'PluginJsonSchema',
     'ProtocolArrayOptions',
     'ProtocolCollectionOpaqueCursorV1',
@@ -301,6 +298,11 @@ describe('CORE-A curated package exports', () => {
         expect(packageJson.exports['./experimental/sessions']).toBeUndefined();
         expect(packageJson.exports['./ui/hostApiClient']).toBeUndefined();
         for (const accidental of [
+            './host/registration',
+            './host/fs/json-owner-file-lock',
+            './host/ui',
+            './first-party/claude',
+            './first-party/connected-accounts',
             './acp',
             './agent-runtime-v1',
             './distribution',
@@ -328,71 +330,6 @@ describe('CORE-A curated package exports', () => {
         ]) {
             expect(packageJson.exports[accidental], accidental).toBeUndefined();
         }
-    });
-
-    it('keeps workflow-record authority private while resolving the two supported host-internal bridges', async () => {
-        const packageJson = JSON.parse(
-            await readFile(new URL('../package.json', import.meta.url), 'utf8'),
-        ) as PluginSdkPackageJson;
-
-        expect(
-            packageJson.exports['./host/agent-runtime/workflow-run-record-port'],
-        ).toBeUndefined();
-        expect(() => createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/host/agent-runtime/workflow-run-record-port',
-        )).toThrow();
-        expect(createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock',
-        )).toBe(
-            fileURLToPath(new URL(
-                '../dist/host/fs/json-owner-file-lock/index.js',
-                import.meta.url,
-            )),
-        );
-        expect(() => createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock',
-        )).toThrow();
-        expect(createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/host/registration',
-        )).toBe(
-            fileURLToPath(new URL('../dist/host/registration/index.js', import.meta.url)),
-        );
-        expect(() => createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/host/interactions',
-        )).toThrow();
-        expect(() => createRequire(import.meta.url).resolve(
-            '@happier-dev/plugin-sdk/experimental/testing/registration-scope',
-        )).toThrow();
-
-        const registrationApi = await import('@happier-dev/plugin-sdk/host/registration');
-        expect(Object.keys(registrationApi).sort()).toEqual([
-            'buildPluginUiRendererContributionKey',
-            'createAdmittedTargetedOperationExecutionHandle',
-            'createExecutionRunHostBackendFromSessionRuntime',
-            'createManifestTargetedContributionsService',
-            'createPluginActionHandlerNotStartedError',
-            'createPluginRegistrationScope',
-            'createTargetedContributionsService',
-            'dropTargetedContributionAdmissionDiagnostics',
-            'mergeTargetedContributionManifestDeclarations',
-            'normalizePluginAccountCollectionMigrationRuntimeProjection',
-            'normalizePluginDaemonDatabaseRuntimeProjection',
-            'projectAdmittedTargetedContributionSnapshot',
-            'projectPluginAccountCollectionDeclaration',
-            'projectTargetedContributionActionDefinition',
-            'readAdmittedTargetedOperationExecutionBinding',
-            'readPluginActionInputParser',
-            'readPluginActionResultParser',
-            'requireAdmittedTargetedOperationExecutionBinding',
-            'resolveAdmittedTargetedContributions',
-            'resolveAdmittedTargetedOperationInput',
-            'resolveManifestTargetedContributions',
-            'resolvePluginUiRendererChain',
-            'validateTargetedOperationInput',
-            'validateTargetedOperationResult',
-        ]);
-        expectTypeOf<PackagePluginRuntimeRegistration>()
-            .toEqualTypeOf<SourcePluginRuntimeRegistration>();
     });
 
     it('does not export the retired host-private single-shot execution runtime helper', async () => {
@@ -848,11 +785,11 @@ describe('CORE-A curated package exports', () => {
     });
 
     it('gives each author contract one source-barrel owner before inventory generation', async () => {
-        const rootExports = await readNamedBarrelExports('src/index.ts');
-        const actionExports = await readNamedBarrelExports('src/actions/index.ts');
-        const protocolBarrelExports = await readNamedBarrelExports('src/protocol/index.ts');
-        const contributionsBarrelExports = await readNamedBarrelExports('src/contributions/index.ts');
-        const uiExports = await readNamedBarrelExports('src/ui/index.ts');
+        const rootExports = await readNamedBarrelExports('src/index.public.ts');
+        const actionExports = await readNamedBarrelExports('src/actions/index.public.ts');
+        const protocolBarrelExports = await readNamedBarrelExports('src/protocol/index.public.ts');
+        const contributionsBarrelExports = await readNamedBarrelExports('src/contributions/index.public.ts');
+        const uiExports = await readNamedBarrelExports('src/ui/index.public.ts');
 
         for (const duplicate of protocolExports) {
             expect(rootExports, duplicate).not.toContain(duplicate);
@@ -933,9 +870,13 @@ describe('CORE-A curated package exports', () => {
             'SURFACE_CONTEXT_THEME_FIXTURE',
             'createAgentLaunchObserver',
             'createAgentSessionRuntimeHarness',
+            'createPluginActionHandlerUnavailableFixture',
+            'createPluginClientTestkit',
+            'createPluginHttpFixture',
             'createPluginTestkit',
             'createPluginUiTestkit',
             'createSurfaceContextFixture',
+            'createTestResourceInvocationContext',
             'readPluginUiTestkitTargetedSurfaceAdmission',
             'runAgentMcpToolPolicyContract',
             'runAgentSkillDeliveryContract',

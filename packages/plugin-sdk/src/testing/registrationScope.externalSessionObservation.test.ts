@@ -10,7 +10,7 @@ import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
 import type {
     AgentExternalSessionObservationResourceDescriptorOutcomeV1,
 } from '../externalSessionObservation.js';
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 const factory = (async () => ({
     sessions: {

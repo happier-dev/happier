@@ -1,4 +1,3 @@
-import type { PluginProjectNativeFailureV1 } from '../projectNativeAdapters.js';
 /** @moduleRealm daemon */
 import { ManagedServiceLocalIdSchema as canonicalManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ManagedServiceLocalId, PluginContributionLocalId } from '@happier-dev/protocol/plugins/manifest';
@@ -20,6 +19,7 @@ import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { PluginExecSpawnRequest } from '../services/io.js';
 import type { HttpMethod } from '../services/io.js';
 import type { PluginInvocationContext } from '../invocation.js';
+import type { PluginProjectNativeFailureV1 } from '../projectNativeAdapters.js';
 import type { ProviderUsageParseResultV1 } from '@happier-dev/protocol/providers/contributions';
 
 export type ProviderLocalId = PluginContributionLocalId;
@@ -389,9 +389,7 @@ export interface ManagedServiceNativeLifecycleV1 {
             context?: PluginInvocationContext): Promise<Disposable>;
     };
     stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
-        status: 'accepted';
-    }> | Readonly<{
-        status: 'stopped' | 'unsupported' | 'termination_incomplete';
+        status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
     }>>;
 }
 
@@ -438,8 +436,37 @@ export interface ManagedServiceHandle extends Disposable {
     dispose(): Promise<void>;
 }
 
+/** Existing Machine Services projection, after host resource/Machine disclosure. */
+export type ManagedWorkloadObservationV1 = import('@happier-dev/protocol').MachineServiceRowV1;
+
+export type ManagedWorkloadControlResultV1 =
+    | Readonly<{ kind: 'observed'; state: ManagedServiceSnapshot['state'] }>
+    | Readonly<{ kind: 'accepted' }>
+    | Readonly<{ kind: 'unsupported'; reason: 'unsupported' }>
+    | Readonly<{ kind: 'outcome_unknown' }>;
+
+/** Host-created, exact native generation. Contains no source or teardown custody. */
+export interface ManagedWorkloadHandleV1 extends Disposable {
+    snapshot(): ManagedWorkloadObservationV1;
+    observe(listener: (observation: ManagedWorkloadObservationV1) => void): Disposable;
+    control(operation: 'start' | 'stop' | 'restart', options?: PluginCancellationOptions): Promise<ManagedWorkloadControlResultV1>;
+    readLogs(options?: Readonly<{
+        cursor?: import('@happier-dev/protocol').ManagedServiceNativeLogCursorV1;
+        signal?: AbortSignal;
+    }>): Promise<import('@happier-dev/protocol').ManagedServiceNativeLogResultV1>;
+    watchLogs(options: Omit<ManagedServiceNativeLogWatchV1, 'kind' | 'maxBytes'>): Promise<Disposable>;
+    /** Detaches this observation and log watches; never stops the native workload. */
+    dispose(): Promise<void>;
+}
+
+export type ManagedWorkloadResultV1 =
+    | Readonly<{ kind: 'ready'; workload: ManagedWorkloadHandleV1 }>
+    | Readonly<{ kind: 'unavailable'; reason: import('@happier-dev/protocol').ManagedServiceUnavailableReasonV1 }>;
+
 export interface ManagedServices {
     readonly dependencies: ManagedDependenciesService;
+    /** Attach only within the invocation's host-admitted retained resource. */
+    observeWorkload(input: Readonly<{ serviceId: string }>, options?: PluginCancellationOptions): Promise<ManagedWorkloadResultV1>;
     supervise(
         spec: ManagedServiceSpec,
         options?: PluginCancellationOptions,
@@ -522,8 +549,12 @@ export type ProviderCatalogParser = (body: unknown) => ProviderCatalogParseResul
 /** Maps decoded upstream usage onto Q1 facts; the host owns snapshot identity and clocks. */
 export type ProviderUsageParseResult = Readonly<ProviderUsageParseResultV1>;
 export type ProviderUsageParser = (body: unknown) => ProviderUsageParseResult;
+/** Decodes the terminal usage block's charged USD amount; null means unavailable.
+ * The host owns request correlation, completion, accounting and deduplication. */
+export type ProviderRequestCostParser = (usage: unknown) => number | null;
 
 export interface ProvidersRegistrationApi {
+    registerRequestCostParser(localId: ProviderLocalId, parse: ProviderRequestCostParser): void;
     registerUsageParser(localId: ProviderLocalId, parserId: string, parse: ProviderUsageParser): void;
     register(localId: ProviderLocalId, runtime: ManagedProviderRuntime): void;
     /**

@@ -69,7 +69,7 @@ describe('the /protocol Collection cursor projection', () => {
         expect(readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8'))
             .toContain('ProtocolCollectionOpaqueCursorV1Schema');
         expect(readFileSync(new URL('./index.ts', import.meta.url), 'utf8'))
-            .toContain('ProtocolCollectionOpaqueCursorV1Schema');
+            .toBe("export * from './index.public.js';\n");
         // Neither sibling authoring surface publishes a cursor name: one
         // author-visible owner per concept.
         expect(readFileSync(new URL('../ui/index.public.ts', import.meta.url), 'utf8'))

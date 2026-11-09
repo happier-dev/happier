@@ -1,7 +1,8 @@
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 
 /**
  * Composed EU-4b proof: the manifest contribution catalog is the only place the
@@ -49,7 +50,7 @@ describe('dynamic resource producer registration', () => {
         });
     });
 
-    it('captures dynamic Resource callbacks at commit, including prototype receivers', () => {
+    it('captures dynamic Resource callbacks at commit, including prototype receivers', async () => {
         class MutableRuntime {
             reads = 0;
             observations = 0;
@@ -89,13 +90,13 @@ describe('dynamic resource producer registration', () => {
         value.read = () => 'replacement';
         value.observe = () => ({ dispose() { throw new Error('replacement observe'); } });
 
-        const options = Object.freeze({
+        const options = createTestResourceInvocationContext({
             signal: new AbortController().signal,
-            context: Object.freeze({ kind: 'global' as const }),
+            context: { kind: 'global' },
         });
         expect(snapshot.read(options)).toBe('committed');
         let invalidations = 0;
-        snapshot.observe(() => { invalidations += 1; }, options).dispose();
+        await (await snapshot.observe(() => { invalidations += 1; }, options)).dispose();
 
         expect(committedRead).toHaveBeenCalledOnce();
         expect(committedObserve).toHaveBeenCalledOnce();

@@ -1,0 +1,54 @@
+import { describe, expect, expectTypeOf, it } from 'vitest';
+
+import {
+    createDeploymentReceiptDetailV1,
+    createDeploymentTargetLinkHeaderV1,
+} from '@happier-dev/deployment-protocol/testing/v1';
+import {
+    readDeploymentReceiptArtifactV1 as canonicalReadReceipt,
+    readDeploymentTargetLinkArtifactV1 as canonicalReadTargetLink,
+} from '@happier-dev/deployment-protocol/v1';
+
+import * as publicProtocol from './protocol/index.js';
+import * as browserProtocol from './protocol/index.browser.js';
+
+describe.each([
+    ['public', publicProtocol],
+    ['browser', browserProtocol],
+] as const)('deployment Artifact readers through the %s SDK protocol entry', (_entry, protocol) => {
+    it('opens exact receipts and refuses stale references and invalid content', () => {
+        expectTypeOf(protocol.readDeploymentReceiptArtifactV1).toEqualTypeOf<typeof canonicalReadReceipt>();
+        const receipt = createDeploymentReceiptDetailV1();
+        const artifact = {
+            artifactId: receipt.deployment.contentArtifactId,
+            revision: { headerVersion: 1, bodyVersion: 1 },
+            header: { kind: 'deployment-receipt.v1', title: 'Deployment' },
+            body: JSON.stringify(receipt.content),
+        };
+        expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, artifact))
+            .toEqual({ ok: true, title: 'Deployment', content: receipt.content });
+        expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, { ...artifact, artifactId: 'another-receipt' }))
+            .toEqual({ ok: false, error: 'deployment_conflict' });
+        expect(protocol.readDeploymentReceiptArtifactV1(receipt.deployment, { ...artifact, body: '{}' }))
+            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+    });
+
+    it('opens exact target links and preserves canonical content and revision refusals', () => {
+        expectTypeOf(protocol.readDeploymentTargetLinkArtifactV1).toEqualTypeOf<typeof canonicalReadTargetLink>();
+        const reference = createDeploymentTargetLinkHeaderV1();
+        const content = { providerIdentity: { providerAccountId: 'account', providerResourceId: 'worker', providerEnvironment: 'production' } };
+        const artifact = {
+            artifactId: reference.contentArtifactId,
+            revision: { headerVersion: 1, bodyVersion: 1 },
+            header: { kind: 'deployment-target-link.v1', title: 'Cloudflare' },
+            body: JSON.stringify(content),
+        };
+        expect(protocol.readDeploymentTargetLinkArtifactV1(reference, artifact))
+            .toEqual({ ok: true, title: 'Cloudflare', content });
+        expect(protocol.readDeploymentTargetLinkArtifactV1(reference, { ...artifact, revision: { headerVersion: 1, bodyVersion: 2 } }))
+            .toEqual({ ok: false, error: 'deployment_conflict' });
+        expect(protocol.readDeploymentTargetLinkArtifactV1(reference, { ...artifact,
+            body: JSON.stringify({ ...content, credentialId: 'private-credential' }) }))
+            .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+    });
+});

@@ -126,7 +126,7 @@ describe('decoded external conversation content search', () => {
     await expect(searchExternalSessionContent({ ...base, ripgrep: { run: async () => ({ exitCode: 2, stdout: '', stderr: 'IO failed' }) } })).rejects.toThrow();
   });
 
-  it('yields before the next measured decode unit will consume the host deadline', () => {
+  it('uses the actual host deadline even after an earlier decode step was expensive', () => {
     let nowMs = 100;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     const control = createExternalSessionContentSearchControl({ deadlineAtMs: 1000 });
@@ -134,9 +134,19 @@ describe('decoded external conversation content search', () => {
     nowMs = 500;
     control.checkWork();
     nowMs = 700;
+    expect(() => control.checkWork()).not.toThrow();
+    nowMs = 999;
+    expect(() => control.checkWork()).not.toThrow();
+    nowMs = 1000;
     expect(() => control.checkWork()).toThrow(ExternalSessionContentSearchYield);
     expect(() => control.assertNotYielded()).toThrow(ExternalSessionContentSearchYield);
-    expect(nowMs).toBeLessThan(1000);
+  });
+
+  it('normalizes repeated native path groups once before sparse scanner admission', async () => {
+    const path = 'native.jsonl';
+    const result = await prefilterExternalSessionContentPaths({ query: 'needle', paths: [path, path], lineOffsets: true,
+      ripgrep: { run: async () => ({ exitCode: 0, stdout: `${path}\x000:-\n20:-\n\n${path}\x000:-\n20:-\n`, stderr: '' }) } });
+    expect(result?.get(path)).toEqual([0, 20]);
   });
 
   it('keeps cancellation distinct from cooperative partial yield', async () => {

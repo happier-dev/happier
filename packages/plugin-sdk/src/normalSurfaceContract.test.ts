@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from './test-support/sourceProgram.js';
 
 /* @sdk-negative-type-case:src-normalSurfaceContract-test-ts-34:LS0gdGhlIGNhbm9uaWNhbCB2YWxpZGF0b3IgaXMgY2hlY2tlZCBKYXZhU2NyaXB0IHdpdGhvdXQgZW1pdHRlZCBkZWNsYXJhdGlvbnMu:aW1wb3J0IHsgcmVhZEN1cnJlbnRBcGlTdXJmYWNlSW52ZW50b3J5IH0gZnJvbSAnLi4vc2NyaXB0cy9hcGlTdXJmYWNlQ2xpLm1qcyc7 */
 const apiSurfaceSourceModulePath: string = '../scripts/apiSurfaceCli.mjs';
@@ -124,19 +125,7 @@ const HOST_PRIVATE_OR_RETIRED_EXPORTS = [
 ] as const;
 
 function createSdkProgram(): ts.Program {
-    const configPath = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    return ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    return createSdkSourceProgram();
 }
 
 // Construct the one package program while Vitest is collecting this owner
@@ -1203,8 +1192,8 @@ export type PublicUiChannel = UsedChannel;
         expect(providerBindingDeclaration).not.toMatch(
             /\b(?:AgentModelDescriptor|ProviderConnectionId|ProviderCredentialTransport)\b/u,
         );
-        expect(providerBindingDeclaration).toContain(
-            "import type { ProviderWireProtocol } from '@happier-dev/protocol';",
+        expect(providerBindingDeclaration).toMatch(
+            /import type \{[^}]*\bProviderWireProtocol\b[^}]*\} from '@happier-dev\/protocol';/u,
         );
     }, 45_000);
 

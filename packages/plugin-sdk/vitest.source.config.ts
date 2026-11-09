@@ -30,6 +30,22 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageSourceRoot: resolve(packageRoot, '../cli-common/src'),
     },
     {
+        packageName: '@happier-dev/release-runtime',
+        packageSourceRoot: resolve(packageRoot, '../release-runtime/src'),
+    },
+    {
+        packageName: '@happier-dev/email-transports-protocol',
+        packageSourceRoot: resolve(packageRoot, '../email-transports-protocol/src'),
+    },
+    {
+        packageName: '@happier-dev/forge-ci',
+        packageSourceRoot: resolve(packageRoot, '../forge-ci/src'),
+    },
+    {
+        packageName: '@happier-dev/plugin-ui',
+        packageSourceRoot: resolve(packageRoot, '../plugin-ui/src'),
+    },
+    {
         packageName: '@happier-dev/channels-protocol',
         packageSourceRoot: resolve(packageRoot, '../channels-protocol/src'),
     },

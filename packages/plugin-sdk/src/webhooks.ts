@@ -2,16 +2,19 @@
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PluginWebhookEndpointIdV1Schema as canonicalPluginWebhookEndpointIdV1Schema, PluginWebhookEndpointIdV1JsonSchema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
-import { PluginWebhookActionInputV1Schema as canonicalPluginWebhookActionInputV1Schema, PluginWebhookActionResultV1Schema as canonicalPluginWebhookActionResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import { PluginWebhookActionInputV1DeclarationSchema as canonicalPluginWebhookActionInputV1Schema, PluginWebhookActionResultV1DeclarationSchema as canonicalPluginWebhookActionResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 import type { PluginWebhookActionInputV1, PluginWebhookActionResultV1 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import type { PluginJsonSchema } from './protocol/protocolFacade.js';
 
 export const PluginWebhookActionInputSchema: Readonly<{
+  jsonSchema: PluginJsonSchema;
   parse(value: unknown): PluginWebhookActionInputV1;
   safeParse(value: unknown):
     | Readonly<{ success: true; data: PluginWebhookActionInputV1 }>
     | Readonly<{ success: false; error: unknown }>;
 }> = canonicalPluginWebhookActionInputV1Schema;
 export const PluginWebhookActionResultSchema: Readonly<{
+  jsonSchema: PluginJsonSchema;
   parse(value: unknown): PluginWebhookActionResultV1;
   safeParse(value: unknown):
     | Readonly<{ success: true; data: PluginWebhookActionResultV1 }>

@@ -23,13 +23,13 @@ export const PUBLIC_TOOLCHAIN_COMPATIBILITY_V1: PublicToolchainCompatibilityV1 =
   },
   "ui": {
     "artifactGrammarVersion": 2,
-    "hostApiVersion": "1.0.0"
+    "hostApiVersion": "1.1.0"
   },
   "authoringDependencies": {
     "nodeTypes": {
       "packageName": "@types/node",
-      "dependencySpec": "25.0.10",
-      "resolvedVersion": "25.0.10"
+      "dependencySpec": "22.20.5",
+      "resolvedVersion": "22.20.5"
     },
     "reactDom": {
       "packageName": "react-dom",
@@ -48,8 +48,8 @@ export const PUBLIC_TOOLCHAIN_COMPATIBILITY_V1: PublicToolchainCompatibilityV1 =
     },
     "typescriptNative": {
       "packageName": "@typescript/native",
-      "dependencySpec": "npm:typescript@7.0.2",
-      "resolvedVersion": "7.0.2"
+      "dependencySpec": "npm:typescript@7.1.0-beta",
+      "resolvedVersion": "7.1.0-beta"
     }
   }
 },

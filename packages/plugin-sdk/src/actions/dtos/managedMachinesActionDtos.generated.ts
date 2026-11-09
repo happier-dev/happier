@@ -153,8 +153,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -185,6 +183,8 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -1393,18 +1393,6 @@ export type ManagedMachinesActionInputById = {
             }[];
             initialTriggers?: undefined | {
                 trigger: {
-                    enabled: boolean;
-                    kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-                    policy: {
-                        kind: 'everyMatch';
-                    } | {
-                        kind: 'firstMatch';
-                    } | {
-                        kind: 'nextMatches';
-                        count: number;
-                    };
-                } | {
                     kind: 'ciFailed' | 'prComment';
                     enabled: boolean;
                     pullRequest?: undefined | {
@@ -1532,6 +1520,18 @@ export type ManagedMachinesActionInputById = {
                         timezone: null | string;
                     };
                     enabled: boolean;
+                } | {
+                    kind: 'sessionLifecycle';
+                    enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                    policy: {
+                        kind: 'everyMatch';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'nextMatches';
+                        count: number;
+                    };
                 } | {
                     source: {
                         kind: 'execution_run';
@@ -2320,8 +2320,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -2352,6 +2350,8 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -3560,18 +3560,6 @@ export type ManagedMachinesActionInputById = {
             }[];
             initialTriggers?: undefined | {
                 trigger: {
-                    enabled: boolean;
-                    kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-                    policy: {
-                        kind: 'everyMatch';
-                    } | {
-                        kind: 'firstMatch';
-                    } | {
-                        kind: 'nextMatches';
-                        count: number;
-                    };
-                } | {
                     kind: 'ciFailed' | 'prComment';
                     enabled: boolean;
                     pullRequest?: undefined | {
@@ -3699,6 +3687,18 @@ export type ManagedMachinesActionInputById = {
                         timezone: null | string;
                     };
                     enabled: boolean;
+                } | {
+                    kind: 'sessionLifecycle';
+                    enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                    policy: {
+                        kind: 'everyMatch';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'nextMatches';
+                        count: number;
+                    };
                 } | {
                     source: {
                         kind: 'execution_run';
@@ -4979,6 +4979,7 @@ export type ManagedMachinesActionInputById = {
                         teamId: string;
                     };
                 };
+                intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
                     groupGrants?: string[] | undefined;
@@ -5503,6 +5504,7 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
+                    intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
                         groupGrants?: string[] | undefined;
@@ -7795,6 +7797,7 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
+                    intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
                         groupGrants?: string[] | undefined;
@@ -16615,6 +16618,7 @@ export type ManagedMachinesActionResultById = {
                         teamId: string;
                     };
                 };
+                intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
                     groupGrants?: string[] | undefined;
@@ -20045,6 +20049,7 @@ export type ManagedMachinesActionResultById = {
                                 teamId: string;
                             };
                         };
+                        intent?: 'add' | undefined;
                         managedRetention?: 'keep' | 'until-delete' | undefined;
                         generatedSecretAudience?: undefined | {
                             groupGrants?: string[] | undefined;
@@ -21619,6 +21624,7 @@ export type ManagedMachinesActionResultById = {
                             teamId: string;
                         };
                     };
+                    intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
                         groupGrants?: string[] | undefined;

@@ -356,13 +356,10 @@ describe('Plugin SDK public authoring documentation', () => {
             'hdev plugins doctor',
             'hdev plugins reload',
             'hdev plugins change status',
-            'hdev plugins change approve',
-            'hdev plugins change reject',
+            'hdev actions invoke approval.request.decide',
         ]) {
             expect(guide).toContain(command);
         }
-        expect(guide).toContain('same pending ID');
-        expect(guide).toContain('same daemon lifetime');
         expect(guide).toContain('`--packed`');
         expect(guide).toContain('`--sdk-registry <origin>`');
     });

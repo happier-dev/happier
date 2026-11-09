@@ -17,6 +17,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionProviderCheckpoint,
   AgentSessionRuntime,
+  AgentSessionRuntimeEvent,
 } from './session.js';
 import type { AgentSessionConversationRollbackControl } from './controls.js';
 import type {
@@ -122,9 +123,11 @@ export type AgentAcpModelOption = Readonly<{
   id: string;
   name: string;
   description?: string;
+  category?: string;
   type: string;
   currentValue: string;
   options?: readonly Readonly<{ value: string; name: string; description?: string }>[];
+  groups?: readonly Readonly<{ id: string; name: string; options: readonly Readonly<{ value: string; name: string; description?: string }>[] }>[];
 }>;
 
 export type AgentAcpModel = Readonly<{
@@ -180,6 +183,9 @@ export type AgentAcpModelControls = Readonly<{
 
 export type AgentAcpInFlightSteerDefinition = Readonly<{
   method: string;
+  /** Optional native capability negotiation; false refuses delivery before a transport write. */
+  isSupported?(agentCapabilities: JsonValue): boolean;
+  /** Return null when the native steer cannot represent this input; the host retains custody. */
   buildParams(input: Readonly<{
     providerSessionId: string;
     inputIds: readonly [string, ...string[]];
@@ -188,6 +194,8 @@ export type AgentAcpInFlightSteerDefinition = Readonly<{
     content: readonly JsonValue[];
   }>): JsonValue;
   isAccepted(response: JsonValue): boolean;
+  /** A definite native refusal, safe for the host's existing retry/resend contract. */
+  isRejected?(response: JsonValue): boolean;
 }>;
 
 export type AgentAcpPromptUsageDefinition = Readonly<{
@@ -209,9 +217,12 @@ export type AgentAcpRuntimeDefinition = Readonly<{
   auth?: AgentAcpAuthenticationDefinition;
   parameterizedModelPicker?: boolean;
   modelConfigOptionId?: string;
+  /** Forward explicit unlisted choices for native acceptance/refusal; inherited choices still use the advertised catalog. */
+  allowExplicitUnlistedModels?: boolean;
+  /** Ordered candidates require an advertised Session mode; no match refuses configuration. */
   permissionModeMapping?: Readonly<Partial<Record<
     AgentPermissionIntent,
-    string | null
+    string | readonly string[] | null
   >>>;
   permissionModeArgv?: Readonly<{
     flag: string;
@@ -227,6 +238,20 @@ export type AgentAcpRuntimeDefinition = Readonly<{
   toolNameResolver?: AgentAcpToolNameResolver;
   sanitizeToolUpdateContent?: AgentAcpToolUpdateContentSanitizer;
   toolUpdates?: AgentAcpToolUpdatePolicy;
+  /** Native metadata codec only; the host retains tool accumulation and lifecycle ownership. */
+  sessionUpdates?: Readonly<{
+    /** Translate an Agent extension to ACP v1; null leaves an unknown reason unclassified. */
+    projectStopReason?(stopReason: string): 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled' | null;
+    project(update: JsonValue): Readonly<{
+      toolMetadata?: Readonly<{
+        internal?: boolean;
+        mcp?: Readonly<{ server: string; tool: string }>;
+      }>;
+      diagnostic?: PluginDiagnosticData;
+      /** Correlated response retry evidence; null denotes observed recovery or an explicit clear. */
+      retry?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-progress' }>['retry'] | null;
+    }> | null;
+  }>;
   generatedMedia?: Readonly<{
     projectTerminalOutput(input: Readonly<{
       rawOutput: unknown;

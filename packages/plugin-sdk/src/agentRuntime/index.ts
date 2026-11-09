@@ -225,6 +225,7 @@ export type {
   AgentExperimentalVendorResumeSupportInputV1,
   AgentCliSessionCommandBuildInputV1,
   AgentCliSessionCommandPluginSettingsV1,
+  AgentAccountSettingsContributionV1,
   AgentCliSessionCommandBuildOptionsResultV1,
   AgentCliSessionCommandDeclarationV1,
   AgentCliSessionCommandOptionsV1,

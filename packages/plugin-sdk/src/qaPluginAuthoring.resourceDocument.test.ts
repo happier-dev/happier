@@ -1,6 +1,6 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import * as module from '../fixtures/qa-plugin-authoring/qa-resource-document/src/index.js';
 
 let plugin: PluginTestkit | undefined;
@@ -12,7 +12,9 @@ async function openDocument() {
     const resource = plugin.registration('resources', 'document');
     if (!resource) throw new Error('Document Resource was not registered');
     const controller = new AbortController();
-    const options: PluginDynamicResourceInvocationOptionsV1 = { signal: controller.signal, context: { kind: 'global' } };
+    const options = createTestResourceInvocationContext({
+        signal: controller.signal, context: { kind: 'global' },
+    });
     return { plugin, resource, controller, options };
 }
 
@@ -31,17 +33,17 @@ describe('QA public Resource document author package', () => {
     it('invalidates each live reader, suppresses equal writes and disposes observations', async () => {
         const { plugin, resource, controller, options } = await openDocument();
         const seen: string[] = [];
-        const first = resource.observe(() => { seen.push('first'); }, options);
-        const second = resource.observe(() => { seen.push('second'); }, options);
+        const first = await resource.observe(() => { seen.push('first'); }, options);
+        const second = await resource.observe(() => { seen.push('second'); }, options);
         await plugin.invokeAction('document-write', { text: 'First draft' });
         expect(seen).toEqual(['first', 'second']);
         expect(await resource.read(options)).toBe('First draft');
         await plugin.invokeAction('document-write', { text: 'First draft' });
         expect(seen).toEqual(['first', 'second']);
-        first.dispose(); first.dispose();
+        await first.dispose(); await first.dispose();
         await plugin.invokeAction('document-write', { text: 'Second draft' });
         expect(seen).toEqual(['first', 'second', 'second']);
-        controller.abort(); second.dispose();
+        controller.abort(); await second.dispose();
         await plugin.invokeAction('document-write', { text: 'Final draft' });
         expect(seen).toEqual(['first', 'second', 'second']);
         expect(() => resource.read(options)).toThrow();

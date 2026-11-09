@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
+import { build } from 'esbuild';
 
 it('rejects a native config-root write through the public skill contract kit', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-skill-kit-native-write-'));
@@ -36,6 +37,15 @@ it('rejects a native config-root write through the public skill contract kit', a
           updateConfiguration: async () => ({ status: 'applied', changed: [] }), watch: () => ({ dispose() {} }), dispose: async () => {} };
       }, observeLaunch: observer.observeLaunch });
     `);
+    // Compile the real kit once instead of asking the nested Vite worker to
+    // transform the full SDK/Protocol source graph during this one assertion.
+    // Vitest itself remains the genuine external runner boundary.
+    const bundled = await build({
+      entryPoints: [fixturePath], bundle: true, platform: 'node', format: 'esm', write: false,
+      external: ['vitest', fileURLToPath(new URL('../../../../node_modules/vitest/dist/index.js', import.meta.url))],
+      alias: { vitest: fileURLToPath(new URL('../../../../node_modules/vitest/dist/index.js', import.meta.url)) },
+    });
+    await writeFile(fixturePath, bundled.outputFiles[0]!.text);
     const result = await new Promise<Readonly<{ exitCode: number | string; stdout: string; stderr: string }>>(resolve => {
       execFile(process.execPath, [fileURLToPath(new URL('../../../../node_modules/vitest/vitest.mjs', import.meta.url)),
         'run', '--root', directory, '--config', configPath, '--reporter=json'], (error, stdout, stderr) => {

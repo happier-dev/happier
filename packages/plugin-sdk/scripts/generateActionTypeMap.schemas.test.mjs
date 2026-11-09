@@ -359,7 +359,9 @@ test('multi-argument family factories derive imported canonical schema maps with
   writeFileSync(resolve(actions, 'skills.ts'), `import { INPUTS as inputs, OUTPUTS as outputs } from './schemas.js';
     function skillSpec(id: keyof typeof inputs, title: string, read = false) {
       throw new Error('Runtime spec metadata must never execute during derivation');
-      return { id, title, sideEffectClass: read ? 'read' : 'write', inputSchema: inputs[id], outputSchema: outputs[id] };
+      const spec = { id, title, sideEffectClass: read ? 'read' : 'write', inputSchema: inputs[id], outputSchema: outputs[id] };
+      if (read) return spec;
+      return { ...spec, approvalPresentation: { inputHints: { fields: [] } } };
     }
     function skillMetadata(id: keyof typeof inputs, title: string, read = false) {
       throw new Error('Runtime spec metadata must never execute during derivation');
@@ -494,6 +496,38 @@ test('family derivation uses captured inputs despite a subsequent schema edit', 
   assert.equal(fieldType(second, 'SecondActionInputById', 'second.read', 'second').kind, ts.SyntaxKind.NumberKeyword);
   assert.equal(fieldType(second, 'SecondActionResultById', 'second.read', 'secondResult').literal.text, 'second');
   assert.equal(fieldType(second, 'SecondActionResultById', 'second.read', 'firstResult'), undefined);
+});
+
+test('family derivation preserves concrete fields from a typed shared schema factory', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-action-factory-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { first: ['first.read'], second: ['second.read'] } as const;");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from 'zod';
+    function family<const K extends string, S extends z.ZodType>(id: K, schema: S) {
+      return Object.fromEntries([[id, schema]]) as { readonly [Id in K]: S };
+    }
+    const INPUTS = family('first.read', z.object({ target: z.string() }).strict());
+    const OUTPUTS = family('first.read', z.object({ count: z.number() }).strict());
+    const SECOND_INPUTS = { 'second.read': z.object({ other: z.boolean() }).strict() } as const;
+    const SECOND_OUTPUTS = { 'second.read': z.object({ result: z.literal('second') }).strict() } as const;
+    const SECOND_ID = 'second.read' as const;
+    function spec(id: typeof SECOND_ID) { return { id, inputSchema: SECOND_INPUTS[id], outputSchema: SECOND_OUTPUTS[id] }; }
+    export const ACTION_SPECS = [spec(SECOND_ID)];
+    type CanonicalActionSchemaDefinition<Id, Input, Output> = { id: Id; inputSchema: Input; outputSchema: Output };
+    type Definition = { [Id in keyof typeof INPUTS]: CanonicalActionSchemaDefinition<Id, (typeof INPUTS)[Id], (typeof OUTPUTS)[Id]> };`);
+  const derived = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'] });
+  const text = derived.outputs.get(resolve(actions, 'firstActionDtos.ts'));
+  assert.match(text, /target: string/u);
+  assert.match(text, /count: number/u);
+  assert.doesNotMatch(text, /unknown|Zod/u);
+  const second = derived.outputs.get(resolve(actions, 'secondActionDtos.ts'));
+  assert.match(second, /other: boolean/u);
+  assert.match(second, /result: 'second'/u);
 });
 
 test('external authors can type inline Workflow and Session triggers and cannot author invalid blocks', () => {

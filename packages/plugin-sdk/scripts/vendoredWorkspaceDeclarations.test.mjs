@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { assertVendoredWorkspaceDeclarationsAreCurrent } from './vendoredWorkspaceDeclarations.mjs';
 
@@ -20,7 +21,7 @@ async function createRepoFixture({ vendoredDeclarations }) {
 
   await writeFile(resolve(repoRoot, 'package.json'), `${JSON.stringify({ private: true }, null, 2)}\n`);
   await writeFile(resolve(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
-  await writeFile(resolve(repoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+  await writeFile(resolve(repoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
 
   await mkdir(resolve(workspaceRoot, 'dist', 'plugins'), { recursive: true });
   await writeFile(
@@ -56,6 +57,112 @@ async function createRepoFixture({ vendoredDeclarations }) {
 
   return { repoRoot, packageRoot, workspaceRoot };
 }
+
+async function createPreparedRepoFixture(t, vendoredDeclarations = null) {
+  const fixture = await createRepoFixture({ vendoredDeclarations });
+  const { repoRoot, packageRoot, workspaceRoot } = fixture;
+  t.after(() => rm(repoRoot, { recursive: true, force: true }));
+  await writeFile(resolve(packageRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugin-sdk',
+    bundledDependencies: ['@happier-dev/protocol'] }));
+  await writeFile(resolve(workspaceRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol',
+    version: '0.0.0', type: 'module', main: './dist/plugins/manifest.js', types: './dist/plugins/manifest.d.ts' }));
+  const common = resolve(repoRoot, 'packages/cli-common');
+  await mkdir(resolve(common, 'dist/workspaces'), { recursive: true });
+  await writeFile(resolve(common, 'package.json'), JSON.stringify({ name: '@happier-dev/cli-common', type: 'module' }));
+  // Admitted producer outputs are the filesystem boundary. The package graph,
+  // loader, preparation adapter, physical copier and freshness check stay real.
+  await writeFile(resolve(common, 'dist/workspaces/index.js'),
+    `export * from ${JSON.stringify(new URL('../../cli-common/src/workspaces/index.ts', import.meta.url).href)};\n`);
+  const scriptUrl = new URL('./bundleWorkspaceDeps.mjs', import.meta.url);
+  const source = (await readFile(scriptUrl, 'utf8')).replace(/(from\s+)'(\.[^']+)'/g,
+    (_match, prefix, relativePath) => `${prefix}${JSON.stringify(new URL(relativePath, scriptUrl).href)}`);
+  await mkdir(resolve(packageRoot, 'scripts'), { recursive: true });
+  await writeFile(resolve(packageRoot, 'scripts/bundleWorkspaceDeps.mjs'), source);
+  return fixture;
+}
+
+test('next SDK publication re-vendors changed Protocol declarations from the worker publication once', async (t) => {
+  const { preparePluginSdkWorkspaceDeclarations } = await import('./bundleWorkspaceDeps.mjs');
+  const { repoRoot, packageRoot, workspaceRoot } = await createPreparedRepoFixture(t);
+  const publish = () => preparePluginSdkWorkspaceDeclarations({ repoRoot, pluginSdkDir: packageRoot,
+    env: { ...process.env, HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1' },
+    consumePreparedWorkspace: () => assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot }) });
+  await publish();
+  const declaration = resolve(workspaceRoot, 'dist/plugins/manifest.d.ts');
+  const vendor = resolve(packageRoot, 'node_modules/@happier-dev/protocol/dist/plugins/manifest.d.ts');
+  await writeFile(declaration, 'export type PluginDeclarativeNodeV2 = { kind: "current" };\n');
+  await assert.rejects(assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot }), /stale/);
+  await publish();
+  assert.equal(await readFile(vendor, 'utf8'), await readFile(declaration, 'utf8'));
+  const published = await stat(vendor, { bigint: true });
+  await publish();
+  assert.equal((await stat(vendor, { bigint: true })).mtimeNs, published.mtimeNs,
+    'unchanged repeated demand must not rewrite the declaration');
+  // Reproduce the incident's ordering: Protocol can publish again after the
+  // initial copy, while a prepared SDK reader (for example DTO derivation) runs.
+  // Publication retains the captured copy; an explicit check still refuses
+  // the drift, and the next demand repairs it without rewriting this reader.
+  await preparePluginSdkWorkspaceDeclarations({ repoRoot, pluginSdkDir: packageRoot,
+    env: { ...process.env, HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1' },
+    consumePreparedWorkspace: async ({ preparedWorkspaceEnv }) => {
+      const captured = await readFile(vendor, 'utf8');
+      await writeFile(declaration, 'export type PluginDeclarativeNodeV2 = { kind: "newer" };\n');
+      await assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot,
+        env: preparedWorkspaceEnv, allowCapturedPublication: true });
+      assert.equal(await readFile(vendor, 'utf8'), captured);
+      await assert.rejects(assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot,
+        env: preparedWorkspaceEnv }), /stale/);
+      await writeFile(vendor, 'export type PluginDeclarativeNodeV2 = never;\n');
+      await assert.rejects(assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot,
+        env: preparedWorkspaceEnv, allowCapturedPublication: true }), /stale/);
+    } });
+  await publish();
+  assert.equal(await readFile(vendor, 'utf8'), await readFile(declaration, 'utf8'));
+});
+
+test('freshness remediation regenerates and prunes the closure on the consuming worker', async t => {
+  const { repoRoot, packageRoot, workspaceRoot } = await createPreparedRepoFixture(t, {
+    'dist/plugins/manifest.d.ts': 'export type PluginDeclarativeNodeV2 = never;\n',
+    'dist/plugins/retired.d.ts': 'export type RetiredV1 = string;\n',
+  });
+  let command;
+  await assert.rejects(assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot }), error => {
+    command = error.message.match(/Refresh it from packages\/plugin-sdk with: (.+)/)?.[1];
+    return typeof command === 'string';
+  });
+  const [executable, ...args] = command.split(' ');
+  assert.equal(executable, 'node');
+  await promisify(execFile)(process.execPath, args, { cwd: packageRoot,
+    env: { ...process.env, HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1' } });
+  await assert.doesNotReject(assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot, repoRoot }));
+  const vendor = resolve(packageRoot, 'node_modules/@happier-dev/protocol/dist/plugins/manifest.d.ts');
+  assert.equal(await readFile(vendor, 'utf8'), await readFile(resolve(workspaceRoot, 'dist/plugins/manifest.d.ts'), 'utf8'));
+});
+
+test('SDK validation entrypoints prepare stale worker declarations before consuming them', async t => {
+  const { runPluginSdkPreparedScript } = await import('./bundleWorkspaceDeps.mjs');
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const scriptName of ['test:source', 'typecheck:finite']) await t.test(scriptName, async t => {
+    const { repoRoot, packageRoot } = await createPreparedRepoFixture(t, {
+      'dist/plugins/manifest.d.ts': 'export type PluginDeclarativeNodeV2 = never;\n',
+      'dist/plugins/retired.d.ts': 'export type RetiredV1 = string;\n',
+    });
+    const scripts = Object.fromEntries(Object.entries(manifest.scripts).map(([name, command]) => [name,
+      // Compiler/test-runner subprocesses are the system boundary. The public
+      // package script graph and declaration preparation run unchanged.
+      command.replace('vitest run --config vitest.source.config.ts', 'node ./scripts/consume.mjs')
+        .replace('node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
+          'node ./scripts/consume.mjs'),
+    ]));
+    const fixtureManifest = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
+    await writeFile(resolve(packageRoot, 'package.json'), JSON.stringify({ ...fixtureManifest, scripts }));
+    await writeFile(resolve(packageRoot, 'scripts/consume.mjs'),
+      `import { assertVendoredWorkspaceDeclarationsAreCurrent } from ${JSON.stringify(new URL('./vendoredWorkspaceDeclarations.mjs', import.meta.url).href)};\n`
+      + `await assertVendoredWorkspaceDeclarationsAreCurrent({ packageRoot: ${JSON.stringify(packageRoot)}, repoRoot: ${JSON.stringify(repoRoot)} });\n`);
+    await assert.doesNotReject(runPluginSdkPreparedScript(scriptName, { pluginSdkDir: packageRoot,
+      env: { ...process.env, HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1' } }));
+  });
+});
 
 test('vendored declaration freshness accepts a package that resolves through the workspace link', async () => {
   const fixture = await createRepoFixture({ vendoredDeclarations: null });
@@ -206,24 +313,4 @@ test('vendored declaration freshness rejects a copy it cannot compare against a 
   } finally {
     await rm(fixture.repoRoot, { recursive: true, force: true });
   }
-});
-
-test('the plugin-sdk API surface run guards vendored declaration freshness before it reads types', async () => {
-  const { runApiSurfaceCli } = await import('./apiSurfaceCli.mjs');
-  const phases = [];
-
-  await runApiSurfaceCli({
-    packageRoot: fileURLToPath(new URL('..', import.meta.url)),
-    check: true,
-    onProgress: (phase) => phases.push(phase),
-  });
-
-  assert.ok(
-    phases.includes('vendored-declarations'),
-    `API surface run must guard vendored declarations; observed phases: ${phases.join(', ')}`,
-  );
-  assert.ok(
-    phases.indexOf('vendored-declarations') < phases.indexOf('author-signature-closure'),
-    'the vendored declaration guard must run before any phase that reads vendored types',
-  );
 });

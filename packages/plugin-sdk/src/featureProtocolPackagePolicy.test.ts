@@ -104,9 +104,22 @@ type FeatureProtocolProtocolAuthoringImportAudience =
  * documents its two public-but-not-feature-protocol symbols.
  */
 const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
+    // Current Channels/Triage wire facts use these canonical portable owners;
+    // no service, host admission, or operational validator is admitted here.
     ScmHostingRepositoryIdentityV1ProtocolSchema: 'feature-protocol',
     FileDownloadDestinationV1ProtocolSchema: 'feature-protocol',
     FileDownloadResultV1ProtocolSchema: 'feature-protocol',
+    TriageSourceInstanceIdV1Schema: 'feature-protocol',
+    TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1: 'feature-protocol',
+    TriageSourceInstanceIdV1: 'feature-protocol',
+    ProtocolWorkspaceAddressV1Schema: 'feature-protocol',
+    ProjectExecutionOperationRefV1ProtocolSchema: 'feature-protocol',
+    ProtocolServiceHealthNoticeSourceV1Schema: 'feature-protocol',
+    ProtocolServiceHealthNoticePageV1Schema: 'feature-protocol',
+    ProtocolServiceHealthNoticeMachineV1Schema: 'feature-protocol',
+    createProtocolStoredReadSchema: 'feature-protocol',
+    encodeBase64: 'feature-protocol',
+    decodeBase64: 'feature-protocol',
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1: 'feature-protocol',
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1: 'feature-protocol',
     TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1: 'feature-protocol',
@@ -141,6 +154,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     ProtocolValidationIssue: 'feature-protocol',
     ContributionActionDangerLevel: 'feature-protocol',
     ContributionActionSurface: 'feature-protocol',
+    ContributionAdmittedEntry: 'feature-protocol',
     ContributionAuthorDefinition: 'feature-protocol',
     ContributionAuthorTargets: 'feature-protocol',
     ContributionContributeInput: 'feature-protocol',
@@ -170,6 +184,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     RequiredSurfaceRoles: 'feature-protocol',
     SchemaInput: 'feature-protocol',
     SchemaOutput: 'feature-protocol',
+    TargetedContributionPointRef: 'feature-protocol',
     SurfaceFields: 'feature-protocol',
     defineContributionPoint: 'feature-protocol',
     defineContributionProtocol: 'feature-protocol',
@@ -198,6 +213,10 @@ const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set(
         .flatMap(([symbol, audience]) => (
             audience === 'feature-protocol'
             && (symbol === 'PluginJsonSchema'
+                || symbol === 'createProtocolStoredReadSchema'
+                || symbol === 'encodeBase64'
+                || symbol === 'decodeBase64'
+                || symbol.endsWith('ProtocolSchema')
                 || symbol.startsWith('Protocol')
                 || symbol.startsWith('defineProtocol')
                 || symbol.startsWith('Triage')
@@ -225,6 +244,11 @@ const FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST = new Set(
 const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
     [SDK_PROTOCOL_SUBPATH]: FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST,
     [SDK_CONTRIBUTIONS_SUBPATH]: FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST,
+    // Only the canonical portable numeric contract, never Action services.
+    [`${SDK_PACKAGE_NAME}/actions`]: new Set(['EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES']),
+    // Coordination17:13: portable feature failures use this exact public
+    // cross-copy error identity, never the root invocation/service context.
+    [`${SDK_PACKAGE_NAME}/errors`]: new Set(['PluginError', 'isPluginError']),
     [`${SDK_PACKAGE_NAME}/connected-accounts`]: new Set([
         'QualifiedConnectedAccountRef',
         'QualifiedConnectedAccountRefSchema',
@@ -235,15 +259,18 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'ScmComparisonSourceProtocolSchema',
         'ScmHostingProviderKindProtocolSchema',
         'ProtocolScmHostingProviderKind',
+        'ScmHostingRepositoryIdentityV1',
     ]),
-    // The Collection revision ceiling is a portable numeric schema fact, and
+    // Collection revision/query ceilings are portable numeric schema facts, and
     // SDK `/collections` is its public owner. A feature protocol that declares
     // a revision-bounded witness must bound it from this exact value rather
-    // than a nearby safe-integer literal; nothing else on this subpath —
+    // than a nearby safe-integer literal. Query pages use the same published
+    // row bound as the Collection owner; nothing else on this subpath —
     // `defineAccountCollection`, the query/mutation services, or the row
     // shapes — is reusable protocol vocabulary.
     [`${SDK_PACKAGE_NAME}/collections`]: new Set([
         'PLUGIN_COLLECTION_REVISION_MAX',
+        'PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1',
     ]),
     [`${SDK_PACKAGE_NAME}/manifest`]: new Set([
         // The current SDK entry intentionally exposes this V1 type under its
@@ -266,10 +293,16 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
     [`${SDK_PACKAGE_NAME}/sessions`]: new Set([
         'AgentPermissionIntentV1',
         'AgentPermissionIntentV1Schema',
+        'SessionInputForgeEvidenceV1',
+        'SessionInputForgeEvidenceV1Schema',
         'SessionAuthoringCheckoutCreationDraftV1',
         'SessionAuthoringCheckoutCreationDraftV1Schema',
         'SessionId',
         'SessionIdSchema',
+        'SessionTargetV1Schema',
+        'ActionSessionAddressV1Schema',
+        'SessionMessageSendResultV1ProtocolSchema',
+        'PluginSessionInputAttachmentsV1ProtocolSchema',
         'SessionSpawnNewInputV2',
         'SessionSpawnNewInputV2Schema',
     ]),
@@ -1383,6 +1416,18 @@ describe('feature-protocol package policy', () => {
         })).toThrow('host-private @happier-dev/protocol');
     });
 
+    it('admits the public portable SCM repository identity type without admitting SCM runtime services', () => {
+        const source = (name: string) => ({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/repository.ts': `import type { ${name}, ProtocolScmHostingProviderKind } from '@happier-dev/plugin-sdk/scm';\nexport type Repository = ${name}<ProtocolScmHostingProviderKind>;\n`,
+            },
+        });
+        expect(() => assertFeatureProtocolPackageBoundary(source('ScmHostingRepositoryIdentityV1'))).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary(source('PluginScmRegistrationApi'))).toThrow('PluginScmRegistrationApi');
+    });
+
     it('allows only named, allowlisted public SDK schema facts in feature protocol source', () => {
         expect(() => assertFeatureProtocolPackageBoundary({
             ...featureProtocolFixture,
@@ -1446,9 +1491,23 @@ describe('feature-protocol package policy', () => {
             ...featureProtocolFixture,
             sources: {
                 ...featureProtocolFixture.sources,
+                'src/v1/provider/failure.ts': "import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';\nvoid PluginError;\nvoid isPluginError;\n",
+            },
+        })).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/errorEscape.ts': "import { definePlugin } from '@happier-dev/plugin-sdk/errors';\nvoid definePlugin;\n",
+            },
+        })).toThrow('unapproved SDK symbol');
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
                 'src/v1/provider/otherSubpath.ts': "import { getActionSpec } from '@happier-dev/plugin-sdk/actions';\nvoid getActionSpec;\n",
             },
-        })).toThrow('unapproved SDK subpath');
+        })).toThrow('unapproved SDK symbol');
         expect(() => assertFeatureProtocolPackageBoundary({
             ...featureProtocolFixture,
             sources: {
@@ -1504,6 +1563,13 @@ describe('feature-protocol package policy', () => {
             sources: {
                 ...featureProtocolFixture.sources,
                 'src/v1/provider/collectionRevisionCeiling.ts': "import { PLUGIN_COLLECTION_REVISION_MAX } from '@happier-dev/plugin-sdk/collections';\nvoid PLUGIN_COLLECTION_REVISION_MAX;\n",
+            },
+        })).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/provider/actionEnvelopeCeiling.ts': "import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';\nvoid EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES;\n",
             },
         })).not.toThrow();
         // `/collections` is the one approved subpath that also publishes an

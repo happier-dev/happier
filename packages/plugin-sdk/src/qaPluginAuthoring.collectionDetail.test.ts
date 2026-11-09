@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 
 it('runs collection row Actions against its live Resource and retires observers', async () => {
     const { createCollectionDetailPlugin } = await import('../fixtures/qa-plugin-authoring/qa-collection-detail/index.js');
@@ -10,10 +11,10 @@ it('runs collection row Actions against its live Resource and retires observers'
     const resource = kit.registration('resources', 'rows');
     if (!resource) throw new Error('Rows Resource was not registered');
     const signal = new AbortController().signal;
-    const options = { context: { kind: 'global' as const }, signal };
+    const options = createTestResourceInvocationContext({ context: { kind: 'global' }, signal });
     const read = async () => JSON.parse(String(await resource.read(options)));
     let invalidations = 0;
-    const observer = resource.observe(() => { invalidations += 1; }, options);
+    const observer = await resource.observe(() => { invalidations += 1; }, options);
     try {
         expect((await read()).rows).toHaveLength(2);
         await expect(kit.invokeAction('set-complete', { rowId: '', completed: true })).rejects.toBeDefined();
@@ -25,7 +26,7 @@ it('runs collection row Actions against its live Resource and retires observers'
         expect(invalidations).toBe(1);
         await kit.invokeAction('set-complete', { rowId: 'release-guide', completed: true });
         expect(invalidations).toBe(1);
-        observer.dispose();
+        await observer.dispose();
         await kit.invokeAction('clear', {});
         expect(await read()).toEqual({ rows: [] });
         expect(invalidations).toBe(1);
@@ -35,5 +36,5 @@ it('runs collection row Actions against its live Resource and retires observers'
         await kit.dispose();
         await expect(kit.invokeAction('restore', {})).rejects.toMatchObject({ code: 'plugin_testkit_disposed' });
         expect(() => resource.read(options)).toThrow();
-    } finally { observer.dispose(); await kit.dispose(); }
+    } finally { await observer.dispose(); await kit.dispose(); }
 });

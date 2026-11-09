@@ -16,6 +16,7 @@ import { isPluginError } from '../errors.js';
 import type { PluginReference } from '../identity.js';
 import type { ComposerContentHandleV1, SurfaceContext } from './hostApi.js';
 import { createSurfaceContextFixture } from './surfaceContext.fixture.js';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 
 const surface: SurfaceContext = createSurfaceContextFixture();
 
@@ -49,6 +50,36 @@ describe('Host API negotiation admission', () => {
                     apiVersion: '1.1.0', methods: ['context', 'future-unknown-method'] });
             },
         } })).rejects.toMatchObject({ code: 'invalid_negotiation' });
+    });
+});
+
+describe('host Action refusal evidence', () => {
+    it.each([true, false])('preserves canonical pre-dispatch evidence without inferring from code (marked=%s)', async marked => {
+        let receive: ((message: unknown) => void) | undefined;
+        const failure = marked
+            ? createPluginActionHandlerNotStartedError({ code: 'permission_denied' })
+            : new Error('permission_denied');
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['executeAction'] });
+                if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'error', identity,
+                    requestId: message.requestId, method: message.method, error: { name: 'PluginError',
+                        code: 'permission_denied', ...(failure instanceof Error && 'actionHandlerInvocation' in failure
+                            ? { actionHandlerInvocation: failure.actionHandlerInvocation } : {}) } });
+            },
+        } });
+        const result = api.executeAction('discussion.read', { discussionId: 'discussion-1', throughSeq: 0 });
+        if (marked) await expect(result).rejects.toMatchObject({
+            code: 'permission_denied', data: { actionHandlerInvocation: 'notStarted' }, actionHandlerInvocation: 'notStarted',
+        });
+        else {
+            let thrown: unknown;
+            try { await result; } catch (error) { thrown = error; }
+            expect(thrown).toMatchObject({ code: 'permission_denied' });
+            expect(thrown).not.toHaveProperty('actionHandlerInvocation');
+        }
     });
 });
 

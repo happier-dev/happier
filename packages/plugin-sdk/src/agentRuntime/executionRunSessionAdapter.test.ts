@@ -2,11 +2,9 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   createExecutionRunHostBackendFromConversationRuntime,
-  createExecutionRunHostBackendFromSessionRuntime as createSessionRunAdapter,
   type AgentExecutionRunConversationRuntimeV1,
   type AgentExecutionRunEvent,
   type AgentExecutionRunOpenRequest,
-  type AgentExecutionRunSessionAdapterOptions,
 } from './executionRun.js';
 import type { AgentSessionRuntime, AgentSessionRuntimeEvent } from './session.js';
 
@@ -18,12 +16,6 @@ type ConversationSendOptions = NonNullable<Parameters<AgentExecutionRunConversat
 expectTypeOf<ConversationSendOptions>().toHaveProperty('localInputId').toEqualTypeOf<string | undefined>();
 expectTypeOf<ConversationSendOptions>().toHaveProperty('resultContract');
 expectTypeOf<ConversationSendOptions>().toHaveProperty('causalPermissionAuthority');
-
-function createExecutionRunHostBackendFromSessionRuntime(
-  options: Omit<AgentExecutionRunSessionAdapterOptions, 'sessionId'>,
-) {
-  return createSessionRunAdapter({ ...options, sessionId: 'session-1' });
-}
 
 function createRequest(runId = 'run-1'): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   return {
@@ -133,6 +125,41 @@ function createResumeRequest(runId = 'run-resume'): Extract<AgentExecutionRunOpe
   };
 }
 
+it.each(['usage-observed', 'skill-usage'] as const)('observes only active-turn %s through the public conversation adapter by native identity', async kind => {
+  const harness = createSessionHarness();
+  const observed: AgentSessionRuntimeEvent[] = [];
+  const checkpointInputs: AgentSessionRuntimeEvent[] = [];
+  const runtime = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
+    request: createResumeRequest('run-observer'),
+    openConversation: () => harness.session,
+    observeUsage(event) { observed.push(event); },
+    readCheckpointId(event) {
+      checkpointInputs.push(event);
+      return event.kind === 'provider-session-id' ? event.providerSessionId : null;
+    },
+  });
+  const usage = kind === 'usage-observed' ? {
+    sequence: 2, sessionId: 'session-1', emittedAtMs: 11, turnId: 'run-observer-turn-1',
+    kind: 'usage-observed', observationId: 'usage-1', source: 'provider', scope: 'turn_delta',
+    modelId: 'model-a',
+    tokens: { input: 8, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
+  } as const satisfies AgentSessionRuntimeEvent : {
+    sequence: 2, sessionId: 'session-1', emittedAtMs: 11, turnId: 'run-observer-turn-1',
+    kind: 'skill-usage', skills: [{ name: 'happier:contract-skill' }],
+  } as const satisfies AgentSessionRuntimeEvent;
+  harness.publish(usage);
+  await runtime.send({ text: 'Continue.' });
+  harness.publish({ ...usage, turnId: 'other-turn' });
+  harness.publish(usage);
+  harness.publish(completeEvent('run-observer-turn-1'));
+  harness.publish(usage);
+
+  expect(observed).toEqual([usage]);
+  expect(observed[0]).toBe(usage);
+  expect(checkpointInputs.some(event => event.kind === kind)).toBe(false);
+  await runtime.dispose();
+});
+
 function createSessionHarness(sessionId = 'session-1') {
   const listeners = new Set<Parameters<SessionWatch>[0]>();
   const sendCalls: Parameters<SessionSend>[] = [];
@@ -233,11 +260,11 @@ function failedEvent(turnId: string): AgentSessionRuntimeEvent {
   };
 }
 
-describe('createExecutionRunHostBackendFromSessionRuntime', () => {
+describe('createExecutionRunHostBackendFromConversationRuntime', () => {
   it('projects only proven foreground text into Run output', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
-      request: createRequest(), openSession: async () => harness.session,
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
+      request: createRequest(), openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -266,8 +293,8 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('retains committed assistant artifacts and their identities in the finite Run event stream', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
-      request: createRequest(), openSession: async () => harness.session,
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
+      request: createRequest(), openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -294,11 +321,11 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it.each(['usage-observed', 'skill-usage'] as const)('forwards %s without creating a competing Run event', async kind => {
     const harness = createSessionHarness();
-    const observeSessionUsage = vi.fn();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const observeUsage = vi.fn();
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest(),
-      openSession: async () => harness.session,
-      observeSessionUsage,
+      openConversation: async () => harness.session,
+      observeUsage,
     });
     const runEvents: AgentExecutionRunEvent[] = [];
     execution.watch((event) => runEvents.push(event));
@@ -321,17 +348,17 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     harness.publish(usage);
     harness.publish({ ...usage, turnId: 'other-turn' });
 
-    expect(observeSessionUsage).toHaveBeenCalledOnce();
-    expect(observeSessionUsage).toHaveBeenCalledWith(usage);
+    expect(observeUsage).toHaveBeenCalledOnce();
+    expect(observeUsage).toHaveBeenCalledWith(usage);
     expect(runEvents.map((event) => event.kind)).toEqual(['run-start']);
     await execution.dispose();
   });
 
   it('preserves the admitted causal permission authority on the derived Session turn', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: { ...createRequest(), causalPermissionAuthority },
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
 
     expect(harness.sendCalls[0]?.[0]).toMatchObject({ causalPermissionAuthority });
@@ -344,9 +371,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       kind: 'admittedSessionInputV1' as const,
       admittedPermissionCeiling: 'default' as const,
     });
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: { ...createResumeRequest(), causalPermissionAuthority },
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
 
     await execution.send(
@@ -368,9 +395,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       diagnostic: { code: 'initial_rejected', severity: 'error' },
     }));
 
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest(),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -405,9 +432,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
         await new Promise<never>(() => undefined);
       },
     };
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createResumeRequest('run-never-settling-cleanup'),
-      openSession: async () => session,
+      openConversation: async () => session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -436,12 +463,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       async dispose() {},
     };
 
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-synchronous-replay'),
-      openSession: async (request) => {
-        expect(request.sessionId).toBe('session-1');
-        return session;
-      },
+      openConversation: async () => session,
       readCheckpointId: (event) => event.kind === 'provider-session-id'
         ? event.providerSessionId
         : null,
@@ -451,32 +475,6 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
     expect(events.map((event) => event.kind)).toEqual(['run-start', 'checkpoint']);
     expect(events.map((event) => event.sequence)).toEqual([1, 2]);
-    await execution.dispose();
-  });
-
-  it.each([
-    ['create', createRequest('run-mcp-create')],
-    ['resume', createResumeRequest('run-mcp-resume')],
-  ] as const)('carries the exact per-open MCP binding into a %s Session-backed Run', async (_kind, request) => {
-    const harness = createSessionHarness();
-    const mcpServers = Object.freeze({
-      workspace: Object.freeze({
-        command: '/opt/happier/mcp-workspace',
-        args: Object.freeze(['--stdio']),
-        env: Object.freeze({ HAPPIER_MCP_PROFILE: 'run-bound' }),
-      }),
-    });
-    let openedRequest: Parameters<AgentExecutionRunSessionAdapterOptions['openSession']>[0] | null = null;
-
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
-      request: { ...request, mcpServers },
-      openSession: async (sessionRequest) => {
-        openedRequest = sessionRequest;
-        return harness.session;
-      },
-    });
-
-    expect(openedRequest).toMatchObject({ mcpServers });
     await execution.dispose();
   });
 
@@ -493,9 +491,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       return { status: 'admitted' };
     });
 
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request,
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
       readCheckpointId: (event) => event.kind === 'provider-session-id'
         ? event.providerSessionId
         : null,
@@ -528,13 +526,13 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       return { status: 'admitted' };
     });
 
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: {
         ...createRequest('run-exact-input'),
         localInputId: 'workflow-input-1',
         resultContract: { kind: 'text' },
       },
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
 
     expect(harness.sendCalls[0]?.[0].inputIds).toEqual(['workflow-input-1']);
@@ -555,9 +553,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       },
     };
 
-    await expect(createExecutionRunHostBackendFromSessionRuntime({
+    await expect(createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest(),
-      openSession: async () => session,
+      openConversation: async () => session,
     })).rejects.toThrow('watch setup failed');
     expect(disposeCalls).toBe(1);
   });
@@ -568,9 +566,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       throw new Error('initial send failed');
     });
 
-    await expect(createExecutionRunHostBackendFromSessionRuntime({
+    await expect(createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest(),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     })).rejects.toThrow('initial send failed');
     expect(harness.subscriptionDisposeCalls).toBe(1);
     expect(harness.sessionDisposeCalls).toBe(1);
@@ -581,9 +579,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     harness.setSend(async () => {
       throw new Error('resumed send failed');
     });
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createResumeRequest('run-resumed-send-failure'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -601,9 +599,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
       harness.publish(completeEvent(request.delivery.turnId));
       return { status: 'admitted' };
     });
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createResumeRequest('run-listener-isolation'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => {
@@ -621,9 +619,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('keeps one finite active turn and refuses a second send without losing terminal correlation', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-one-turn'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -639,9 +637,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('routes stop through Session cancellation and cleans the subscription and Session once', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-cancel'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -669,9 +667,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('does not terminalize an admitted Run until requested Session cancellation emits terminal truth', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-silent-cancel'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -703,9 +701,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     }],
   ] as const)('maps correlated asynchronous %s to one failed Run and releases the Session', async (kind, details) => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-input-failure'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -733,9 +731,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('maps a pre-terminal runtime-ended event to one failed Run and releases the Session', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-runtime-ended'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -759,9 +757,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
   it('terminalizes and disposes when Session cancellation reports the active turn is no longer running', async () => {
     const harness = createSessionHarness();
     harness.setCancel(async () => ({ status: 'notRunning' }));
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-already-stopped'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -777,9 +775,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('terminalizes an admitted Run before disposing a silent Session', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createRequest('run-silent-dispose'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
@@ -793,9 +791,9 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
   it('terminalizes a resumed Run disposed before its first send and keeps reentrant cleanup idempotent', async () => {
     const harness = createSessionHarness();
-    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+    const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createResumeRequest('run-resume-dispose'),
-      openSession: async () => harness.session,
+      openConversation: async () => harness.session,
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => {

@@ -78,12 +78,21 @@ describe('Protocol browser bundle initialization', () => {
             ACTION_SETTINGS_OPT_IN_PLACEMENTS: readonly string[];
             ActionSpecSchema: Readonly<{ safeParse(value: unknown): unknown }>;
             PluginPermissionCapabilityV1Schema: Readonly<{ options: readonly unknown[] }>;
-            PluginPermissionSubjectV1Schema: Readonly<{ options: readonly unknown[] }>;
+            PluginPermissionSubjectV1Schema: Readonly<{ safeParse(value: unknown): Readonly<{ success: boolean }> }>;
         }>;
 
         expect(exports.ACTION_SETTINGS_OPT_IN_PLACEMENTS).toEqual(['agent_input_chips']);
         expect(exports.ActionSpecSchema.safeParse).toBeTypeOf('function');
         expect(exports.PluginPermissionCapabilityV1Schema.options.length).toBeGreaterThan(0);
-        expect(exports.PluginPermissionSubjectV1Schema.options).toHaveLength(2);
+        expect(exports.PluginPermissionSubjectV1Schema.safeParse({ kind: 'general' }).success).toBe(true);
+        expect(exports.PluginPermissionSubjectV1Schema.safeParse({
+            kind: 'credential_access_disclosure',
+            contribution: { pluginId: 'acme.browser', localId: 'credential' },
+            credentialSlotId: 'credential', purpose: 'test',
+            accessDeclarationDigest: 'a'.repeat(64),
+            selectedAuthorityDigest: 'b'.repeat(64),
+            selectedRawAccessDigest: 'c'.repeat(64),
+        }).success).toBe(true);
+        expect(exports.PluginPermissionSubjectV1Schema.safeParse({ kind: 'unknown' }).success).toBe(false);
     }, 60_000);
 });

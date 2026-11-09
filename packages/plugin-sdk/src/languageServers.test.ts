@@ -7,7 +7,7 @@ import {
 
 import type { PluginLanguageServerContributionV1 } from './index.public.js';
 import { parsePluginManifest } from './manifest.js';
-import { createPluginRegistrationScope } from './host/registration/index.js';
+import { createPluginRegistrationScope } from './registration/scope.js';
 
 const server = {
     id: 'example',
@@ -17,6 +17,8 @@ const server = {
     rootMarkers: ['example.config.json'],
     executable: { kind: 'systemTool', id: 'example-tool' },
     args: ['--stdio'],
+    projectCheck: { executable: { kind: 'systemTool', id: 'example-tool' }, args: ['--check'],
+        projectFile: ' config.json ', output: { kind: 'typescript' } },
     initializationOptions: { indexing: { enabled: false } },
     settings: { example: { diagnostics: true } },
 } as const satisfies PluginLanguageServerContributionV1;

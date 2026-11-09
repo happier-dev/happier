@@ -6,6 +6,7 @@ export { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/j
 export { createPluginContributionIdentity, PluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 export { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 export { PluginIdJsonSchema, PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+export { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 export type {
   PluginContributionIdentity,
   PluginJsonSchemaValidator,

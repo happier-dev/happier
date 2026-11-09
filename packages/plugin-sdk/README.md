@@ -4,6 +4,74 @@ The public authoring contract for Happier plugins. It covers cold manifests,
 daemon activation, invocation services, native Agent runtimes, Plugin UI, UI
 builds, and the plugin testkit.
 
+The [public authoring example](examples/public-authoring/README.md) demonstrates
+0.3 development-source localized labels with scalar `params` and the public
+`/manifest` text resolver. The [manifest guide](../../apps/docs/content/docs/plugins/manifest/index.mdx#localized-labels-03-development-source)
+describes fallback behavior and older-host compatibility.
+
+## Packaged Bot templates (0.3 development source)
+
+Declare cold releases with `botTemplates: { researcher: { path: 'templates/researcher.json' } }`
+in `definePlugin`. Each path names packaged JSON containing the canonical BT2
+`BotTemplateReleaseV1`, unchanged. A plugin can declare several templates;
+each contribution has its own local id. Paths use portable `/` separators and
+stay inside the package. Include those files in the package's published files.
+
+The manifest projects these entries as `contributes.botTemplates: [{ id, path }]`.
+They require no registration callback or activation. The selected-package reader
+supplies registry provenance separately; the authored JSON contains neither a
+private draft id nor an attestation of its source. Generic `resources` with
+`kind: 'template'` remain a separate contract. This development descriptor requires
+a matching host; consult the generated capability matrix for product availability.
+See the [multiple-template public fixture](examples/public-authoring/botTemplates.ts).
+
+## List extensions (0.3 development source)
+
+Use `ui.listExtensions: { localId: { entity, filterFields?, rowMark? } }` in
+`definePlugin`. The manifest uses the same closed declaration as Protocol;
+`PluginCollectionListExtensionV1` is exported from `@happier-dev/plugin-sdk/ui`.
+Fields use the existing public scalar/set/time evaluator over held facts.
+`rowMark` names a declared same-entity field and chooses `context` or `mark`;
+its reference is qualified by the host projection. Ordinary Actions provide
+row operations through their existing placements and Session operands.
+Declaration admission and matching do not activate the plugin or read a
+Resource. Resource-backed host-row loading remains deferred. See the maintained
+[external author fixture](fixtures/external-targeted-packages/list-extension-source.ts)
+and [collection ownership](../../docs/collection-presentation.md).
+
+## ACP permission presets (0.3 development source)
+
+ACP permission presets in 0.3 development source accept ordered native-mode
+candidates, for example `permissionModeMapping: { 'safe-yolo': ['review-auto', 'review-code'],
+'read-only': ['review-ask'] }`. The host chooses the first candidate in the opened
+Session's advertised modes and refuses configuration when none match. A string
+keeps the existing fixed-mode behavior; `null` deliberately retains the native
+policy and does not establish enforcement for a retained Run input. Launch-time
+`permissionModeArgv.map` values remain strings or `null`, since launch precedes
+Session advertisement. See the maintained
+[public ACP author example](examples/public-authoring/agent/runtime.ts) and
+[SDK compatibility doctrine](../../docs/compatibility.md#sdk-protocol-evolution).
+This authority-bearing declaration requires the matching development host;
+older strict hosts reject unsupported shapes.
+
+## Pinned fresh clones (0.3 development source)
+
+Fresh-clone authors targeting matching 0.3 development hosts can request a
+reviewed `main` commit through `ScmRepositoryCloneInput.initialCheckout`.
+See the [typed clone example](../../apps/docs/content/docs/plugins/api/actions-tools-commands.mdx#pinned-fresh-clones-03-development-source)
+for publication and partial-outcome semantics. This is separate from changing
+the branch of an existing checkout.
+
+## Coalesced reads (0.3 development source)
+
+`createCoalescedScheduler` from `@happier-dev/plugin-sdk/async` owns one active
+drain. `trigger()` and `flush()` queue one follow-up when called during it.
+When another consumer needs the read already in progress, use
+`await scheduler.flush({ ifRunning: 'join' })`: it waits for that same cycle
+without requesting another drain. When idle, it starts a read normally.
+Explicit refresh or changed inputs can still use ordinary `flush()` or
+`trigger()` to request fresh work. The helper owns no timer or retry policy.
+
 ## Public SDK release posture
 
 The SDK has one package-level **Developer Preview** source contract. The
@@ -12,6 +80,10 @@ the publication gates are open. No public version or released-semver policy is
 established by the current source tree, and a workspace build must not be
 presented as a published SDK.
 
+The author API and `/testing` remain public. The retired `/host/*` and
+`/first-party/*` subpaths are not exported; host implementation stays private,
+and bundled Agent and Provider facts come from their canonical Protocol owners.
+
 Developer Preview is not a per-symbol stability tier. The publisher-generated
 API inventory is the public census and retains publication-derived `@since`
 metadata; structured deprecation remains separate. The generated
@@ -19,11 +91,16 @@ metadata; structured deprecation remains separate. The generated
 examples, host wiring, source tests, and loaded development-stack lifecycle QA
 establish feature readiness.
 
-Tool and Command declarations are available in the current source contract, as
-recorded by the canonical capability matrix. Source availability is separate
-from loaded development-stack validation and public registry release; this
-workspace README does not claim either boundary has passed. Preview status does
-not waive correctness, installability,
+In 0.3 development source, declare an operation once under `actions`. Its
+optional `tool` metadata gives it a named Agent/MCP presentation, and `cli`
+metadata gives it a friendly command path; select those invocation surfaces on
+the same Action. Separate `tools` and `commands` families are retired and
+strict authoring rejects them. See the
+[Action author guide](../../apps/docs/content/docs/plugins/api/actions-tools-commands.mdx).
+Loaded development-stack evidence may still be `not-recorded`; that is an
+evidence status, not source unavailability. Public registry release is a separate publication
+boundary, and this workspace README does not claim that release or loaded
+validation. Preview status does not waive correctness, installability,
 lifecycle cleanup, security disclosure, examples, or documentation.
 
 ## Discussion invalidation (0.3 development source)
@@ -52,6 +129,33 @@ are lossy refresh hints, not a replay log or an exactly-once delivery promise.
 This is an unpublished Developer Preview source contract; loaded-runtime
 verification is separate.
 
+## Fresh Artifact reads in feature handoffs (0.3 development source)
+
+An Artifact id carried by a handoff identifies what to read; it does not grant
+access or prove the stored source is current. Re-read through the ordinary host
+Action before acting on its content:
+
+```ts
+import { ProtocolArtifactGetOutputV1Schema } from '@happier-dev/plugin-sdk/protocol';
+
+const read = ProtocolArtifactGetOutputV1Schema.parse(
+  await host.executeAction('artifact.get', { artifactId }),
+);
+if (read.artifact === null) return;
+// The feature still admits the exact source, target, audience and revision.
+```
+
+This composable value projects the host Action's existing parser. It does not
+create a second Artifact reader, bypass Account admission, or authorize a
+Session or service mutation. This is an unpublished source API; loaded handoff
+validation is separate.
+
+The development `/protocol` entry also projects the deployment owner's exact
+Artifact id/revision/kind/JSON reader, protected preview provenance and receipt
+SourceIntent parsers. See the [deployment Artifact author example](../../apps/docs/content/docs/plugins/api/actions-tools-commands.mdx#exact-deployment-artifact-reads-03-development-source).
+These selected-field readers neither authorize an operation nor prove a preview
+URL or current Source association; the host domain owners still admit those facts.
+
 ## Voice presentation (0.3 development)
 
 In the 0.3 development Voice contract, `VoiceProviderSettings.privacyFacts`
@@ -76,14 +180,55 @@ and effect admission. Pending acquisitions declare a native-operation schema and
 safe reconciliation Action through the same ABI. Persistence-only readers use
 the same canonical tolerant projection; strict Action inputs and writes remain
 separate.
+Reconciliation only reads retained immutable submission facts or the returned
+native identity. It must never allocate or replay a submission, even with an
+idempotency key. If a read cannot recover the identity, return `unknown` with
+recovery information so the host retains the same uncertain row. The public
+author fixture demonstrates both retained-handle and correlation-only uncertainty;
+schemas validate results but cannot prove arbitrary plugin IO is read-only.
 Safe prerequisite checks may describe a qualified repair Action and its input;
 they do not run repairs or grant installation permission.
-Options can return labelled native size, image and location facts without
-changing their raw launch selectors. Declare finite-only retention explicitly;
-native expiry is a separate fact, and omitted measurements remain unknown.
+Options return a `base` launch and independent `dimensions` arrays for size,
+image, location, network and duration. Each option declares its selector
+`assignments` as launch paths and JSON values. Native adjacency constraints and
+price `when` selectors refer to returned dimension option ids, without expanding
+every combination. Use `projectMachineProvisionerSelectionV1({ options,
+selection, launchSchema })` from the same entrypoint to obtain the selected facts
+and applicable prices; only `kind: 'ready'` carries a closed-schema-validated
+launch. Missing base or selections remain incomplete, and unavailable or invalid
+selections cannot execute. A Devcontainer effect review remains bound to its
+unchanged reviewed base launch. Declare finite-only retention explicitly; native
+expiry is a separate fact, and omitted measurements remain unknown.
+Declare optional `enrollmentRole: 'server' | 'personal' | 'sandbox'` on the
+provisioner and `guestPlatform: 'linux' | 'darwin' | 'windows'` on an
+options base or dimension entry when the guest OS is known. An image option can
+carry that fact beside its image presentation; the shared selection projector
+retains the selected platform. An options base or dimension entry may also supply
+`enrollmentRole`, whose selected value overrides the descriptor role. Descriptor
+`platforms` names supported controller OSes, which may differ from the guest OS.
+A declared Linux server drafts the
+dedicated `happier` user-service with editable Preauthorized administrator access;
+personal uses the existing user and sandbox uses the guest process. Missing role,
+or a server without platform facts, keeps the personal-user default. A declared
+macOS/Windows server keeps that path with an unsupported dedicated-user
+explanation. Explicit reviewed identity is preserved, and bootstrap still checks
+actual host capabilities.
 See [declaration and activation ownership](../../docs/plugin-platform.md#declaration-activation-and-projection)
 and the [public author fixture](fixtures/authoring-inference/machineProvisioners.ts).
 This is not a registry-publication or loaded-runtime readiness claim.
+
+## Backup destinations (0.3 development source)
+
+The development `backupDestinations` descriptor seam uses recursively closed
+nonsecret configuration, canonical credential roles, restic transport/locality
+facts and qualified `test` / `open` Action refs. The maintained
+[`backupDestinationAuthoring` companion](examples/public-authoring/index.ts)
+uses public exports and ordinary Action activation; both example Actions return
+an explicit unavailable result and perform no native transport work. See its
+[authoring notes](examples/public-authoring/README.md) and the
+[contribution guide](../../apps/docs/content/docs/plugins/manifest/contributions.mdx#backup-destination-declarations-03-development-source).
+Native transport and backup configuration lifecycles are not supported yet;
+descriptor admission does not establish backup or restore support.
 
 ## Plugin execution targets (0.3 development)
 
@@ -91,9 +236,14 @@ Plugin UI is discovered across the Account's installed machines. Declare
 `executionTarget: { default: 'installation' }` in `definePlugin` or the manifest
 to prefer the supplying installation for machine-bound work. The host admits
 that hint against current installation and source facts. An explicit user choice
-takes precedence, followed by an admitted plugin default, a sole compatible
-installation, or a machine selector. Several supplying defaults leave the choice
-open; an unavailable saved choice is never silently replaced. Machine-free UI
+takes precedence and an unavailable saved choice is never silently replaced.
+Otherwise the host automatically picks an online admitted Machine after the
+Home's Machine list settles, preferring the rendered release's version, last
+use on this device, this device's own Machine when known, then recent activity.
+An unavailable automatic choice can be picked again. Declare
+`executionTarget: { autoPick: false }` when the work requires an explicit Machine
+choice: a sole eligible candidate still auto-selects, while several candidates
+ask. The installation hint can share that object. Machine-free UI
 requires no execution target. Invocation revalidates the exact selected
 materialization or source occurrence, while installation administration and
 Session-native work retain their own targets.
@@ -101,6 +251,28 @@ Session-native work retain their own targets.
 `SurfaceContext.targetedContributions` is optional: static, machine-free UI can
 render without a runtime occurrence. Absence does not admit private machine
 operations or manufacture a targeted contribution snapshot.
+
+### Hosted UI compatibility (0.3 development)
+
+The current SDK requests semantic Host API 1.1 within wire epoch 1. Declare an
+Artifact `hostUiApiRange` that includes the API your code needs; 1.1 introduces
+`actionControl` and `openManagedMachineConfiguration`. A 1.1 wire negotiation
+request reaching a 1.0-only Host API is refused with `incompatible_api_version`.
+An older host's injected single-range controller may refuse locally instead,
+surfacing `transport_unavailable`; its precise reason is not covered by that
+direct-wire guarantee. Current hosts continue serving
+installed 1.0 SDKs with their exact 1.0 reply and supported method set, including
+when the host's presentation client uses 1.1 in the same document. A successful
+negotiation still reports only methods the mounted host can actually serve.
+Its method list describes that client's semantic generation; it is not a
+permission grant. The shared document still admits only its installed,
+transport-supported, mount-allowed operations, independent of which sibling
+SDK negotiated last. The SDK itself uses its negotiated method list before
+issuing a call.
+The shared guest also projects context presentation for that negotiated
+generation: installed 1.0 readers omit the later optional theme `statusTint`;
+current clients retain it. Resource values and mount/Account authority are
+unchanged.
 
 ## Automation Event authoring (0.3 development source)
 
@@ -159,6 +331,27 @@ names with nonnegative integer or `null` values. Labels belong to the declaratio
 malformed records stay wholly unknown, and legacy scalar `countResourceId`
 cannot be combined with `counts`.
 
+Producer tests in unreleased 0.3 source can import
+`createTestResourceInvocationContext` from `@happier-dev/plugin-sdk/testing`:
+
+```ts
+const options = createTestResourceInvocationContext({
+  context: { kind: 'session', sessionId: 'session-1' },
+  signal: controller.signal,
+  accountStorage,
+});
+const observation = await resource.observe(invalidate, options);
+try { await resource.read(options); }
+finally { await observation.dispose(); }
+```
+
+Omitted context and signal use a global context and a fresh lifetime. Host
+services are unavailable unless supplied: `readAction` returns an Action failure
+envelope with `plugin_test_service_unavailable`; Resource I/O and `observeAction`
+throw or reject `PluginError` with that code. Pass `resources`, `readAction`, and
+`observeAction` overrides when the test exercises those host boundaries. This
+builder does not simulate host admission or install a successful empty watch.
+
 In unreleased 0.3 source, a daemon dynamic Resource can optionally provide
 `createProducer({signal, context, readAction, observeAction})` when its read and
 observe callbacks need one shared owner. Return `{read, observe, dispose}`; the
@@ -180,8 +373,13 @@ Use Account placement for portable Action code that must run in the invoking
 UI or CLI without a Machine. It is not implied by Account-scoped data or UI:
 
 ```ts
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+
+const inputSchema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
 const plugin = definePlugin({
   id: 'acme.personal', version: '1.0.0',
+  entrypoints: { daemon: './dist/index.js' },
   hostAccess: { required: [{
     id: 'account-storage', capability: 'storage.account',
     reason: 'Read personal values in this Account.', scope: { enabled: true },
@@ -217,18 +415,79 @@ contributions, not Machine services or UI navigation. When several artifact/expo
 pairs exist, wrap `activateAccount(api, { artifactId, exportName })` for each exact
 entry; the host grants only its manifest-declared registration rights.
 
+In the CLI realm, the same Account context also projects the existing admitted
+HTTP and declared-secret services. Both members are optional because portable
+UI execution omits them. Narrow their availability before use:
+
+```ts
+const { http, secrets } = context.services;
+if (!http || !secrets) {
+  throw new PluginError({ code: 'controller_services_unavailable', message: 'CLI Account services are required' });
+}
+const status = await secrets.status('declared-token');
+```
+
+An admitted controller invocation may supply optional
+`services.machineConnectorSecrets.write({ token, subject: { provider, connectorId } })`.
+Mint or retrieve the token inside the Account handler and pass its bytes directly
+to this sink. The host captures the controller, target Machine and installation,
+receiver public key and admitted operation; these are not plugin operands.
+Only the opaque `{ grantRef }` leaves the handler. Zero caller-owned bytes in
+`finally`. The sink is absent without that admitted controller invocation,
+including portable UI execution. Do not retain it, return the token, store the
+token as a Saved Secret, or retry an uncertain write. The maintained
+[controller connector fixture](fixtures/account-actions/src/index.ts) shows this
+development-source flow.
+
+Declare HTTP origins/methods and secret identifiers through the ordinary
+manifest owners. This projection supplies no filesystem, Exec, raw credential
+reader, or alternative execution Machine. HTTP JSON secret placeholders use
+the existing [secret custody contract](../../apps/docs/content/docs/plugins/services/secrets.mdx#use-a-shared-reference-in-an-http-body).
+An Environment operation retains its selected controller when that Machine
+is offline; its relay reports `machine_unavailable` with `role: 'controller'`.
+
 The current enabled Account release (or trusted host-bundled declaration) is
 the custody authority. Ordinary enablement, schema validation, policy, approval,
 cancellation and currentness checks still apply. Do not retain invocation-bound
 services for later work, retry an uncertain write, or treat a source descriptor
-as permission to execute on a Machine. Provider-backed operations remain daemon
-Actions and may report Machine-required independently of personal sources.
+as permission to execute on a Machine. Controller placement remains an explicit
+parent-operation decision, independently of portable personal sources.
 See the [public fixture](fixtures/account-actions/src/index.ts) and
 [platform owner](../../docs/plugin-platform.md#portable-account-actions-03-development-source).
 This API is 0.3 development source; verify generated API/toolchain compatibility
 before targeting a published host.
 
 ## Cross-plugin protocol authoring
+
+### ACP steering codecs (0.3 development source)
+
+An Agent factory can contribute `definition.delivery.steer` when opening the
+shared ACP composer. The codec selects a native method and builds its parameters;
+the host keeps admission, turn ownership, input custody, and transcript writes.
+`isSupported(agentCapabilities)` can require the Agent's advertised extension.
+Return `null` from `buildParams` for inputs the native method cannot represent.
+The host refuses these before writing. `isAccepted` proves consumption;
+`isRejected` proves a refusal safe for the existing retry/resend flow. A reply
+that proves neither leaves custody unknown. An explicit refusal never ends the
+containing turn.
+
+```ts
+import type { AgentAcpInFlightSteerDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
+
+const steer: AgentAcpInFlightSteerDefinition = {
+  method: 'example/steer',
+  isSupported: capabilities => capabilities !== null && typeof capabilities === 'object'
+    && !Array.isArray(capabilities) && capabilities.steering === true,
+  buildParams: ({ providerSessionId, inputIds, input }) => ({
+    sessionId: providerSessionId, inputId: inputIds[0], text: input.text,
+  }),
+  isAccepted: result => result === 'absorbed',
+  isRejected: result => result === 'dropped',
+};
+```
+
+These callbacks require the matching 0.3 development host under the direct-cut
+ruling below; older hosts cannot safely ignore capability or custody decisions.
 
 Use the [SDK protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution)
 whenever an SDK author surface, Host Event, or cross-plugin business protocol
@@ -406,9 +665,11 @@ restart, and cleanup QA.
 > and unpublished, so this documents the current source contract rather than an
 > approved public release.
 
-A simple development plugin is one `.ts` or `.mts` file. A directory plugin
-uses exactly `src/index.ts` or `index.ts`; having both is an error. Daemon entry
-modules do not use `.tsx`, CommonJS, or default-export activation.
+A development plugin can be a `.ts`, `.mts`, `.js`, or `.mjs` file. A directory
+plugin resolves `src/index.ts` or `index.ts`; having both is an error. If neither
+exists, the resolver uses an existing module with one of those extensions from
+`package.json`'s `main` field. Daemon entry modules do not use `.tsx`, CommonJS,
+or default-export activation.
 
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -441,6 +702,12 @@ authoring sugar, not a second runtime. Generated registrations run before the
 optional `setup(api)` callback, and `setup` may return the module's one cleanup
 function.
 
+Authors omit `runtime.apiVersion`; the current host ABI is supplied by default.
+`engines.happier` is optional: set a compatible host range only when your plugin
+requires one. For hooks, declare `on` and any `filters`, `priority`, or
+`hostAccess` options alongside the handler. The canonical host hook catalog
+supplies category, scope, and execution kind; no hook API version is authored.
+
 `defineProtocolString` and `defineProtocolUtf8String` are non-normalizing: an
 accepted string is returned byte-for-byte as authored. Patterns are ordinary
 ECMAScript regex sources and never acquire private semantics during cold schema
@@ -456,11 +723,9 @@ Keep the original schema for fresh inputs and canonical writes: the stored
 reader is not an Action input schema. See the
 [stored-reader policy](../../docs/compatibility.md#tolerant-stored-data-readers).
 
-Daemon activation has an internal 30-second deadline for asynchronous
-`activate(api)` settlement. This deadline is host policy, not plugin
-configuration. It cannot preempt synchronous CPU or blocking work in the shared
-daemon process, so activation code should register promptly and defer business
-work until invocation.
+Activation runs in the shared daemon process. Register promptly and defer
+business work until invocation; synchronous CPU or blocking work can stall
+other plugins and sessions.
 
 Development evaluates the selected module only after source-root trust. Pack
 evaluates the same resolved author module once and serializes its canonical
@@ -792,6 +1057,21 @@ so the host presents one model plus that canonical option and expands the
 selection back to the advertised id. Both stay data because the out-of-process
 Session runner rebuilds a declarative runtime from the attested manifest alone
 and never loads plugin code.
+Custom ACP composition in 0.3 development also accepts the optional
+`definition.sessionUpdates.project(update)` metadata codec. Return
+`{ toolMetadata: { mcp: { server, tool }, internal } }` for native tool
+provenance, `{ diagnostic: { code, severity, message, details } }` for a status
+observation, or `null` for an unrelated update. The host retains its single tool
+accumulator, transcript publisher and turn lifecycle; a recovery diagnostic
+never becomes permission to retry or a claim that the turn completed. Standard
+tool names and session titles need no Agent-specific codec. See the
+[ACP author example](../../apps/docs/content/docs/plugins/agent-runtimes/acp.mdx#native-update-metadata).
+This executable hook requires matching development host and plugin source; it
+is not part of a data-only declarative ACP manifest. Its optional
+`projectStopReason(raw)` translates only semantically equivalent native reasons
+to ACP v1 reasons; return `null` to retain an unknown outcome. The generic host
+keeps that raw value for diagnostics without claiming success or failure.
+
 The host owns authentication classification across ACP Agents;
 `stderrRules.authenticationErrorDetail` only customizes the resulting status
 message, while `suppress` and `statusErrors` cover other bounded stderr cases.
@@ -891,8 +1171,73 @@ export const renderSurface = defineUiSurface(function PluginSurface() {
 `RenderContext`; React Native renderers do not use the hosted-web bootstrap
 client or construct another provider.
 
+In 0.3 development, `RenderContext.launch` is `{ kind: 'explicit', input? }` for one staged explicit open per mount instance; it is absent on layout restore or reload, even when the route identifies an item.
+
 Build UI with public helpers from `@happier-dev/plugin-sdk/ui/build`; the host
 verifies the emitted artifact manifest and content before use.
+
+## Checkpointed Event observers (0.3 development)
+
+Declare the strict Event and source setup Action through the existing Event
+authoring contract. Run its finite provider adapter from the daemon-only
+`background-services` entrypoint:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { runCheckpointedPluginEventObserverV1 } from
+  '@happier-dev/plugin-sdk/background-services';
+import { issueSource } from './issueSource.js';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.issues',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  backgroundServices: [{
+    declaration: { id: 'observe-issues', title: 'Observe issues' },
+    runner: context => runCheckpointedPluginEventObserverV1({
+      context,
+      source: issueSource,
+    }),
+  }],
+  // Keep the plugin's Event and setup Action declarations here.
+});
+```
+
+`issueSource` implements `PluginCheckpointedEventSourceAdapterV1<Source,
+Checkpoint>` from that same daemon entrypoint. Its `decode` selects a current
+definition; `observe` uses the plugin's finite client, pagination and cursor
+reader to return `observations`, an optional opaque `checkpoint`, `complete`
+and `nextEligibleAt`. `save` preserves its existing cursor codec and CAS store.
+`retryAt` derives eligibility from provider retry instructions or the configured
+source period. A finite provider failure can also return the existing typed
+source `status` (`state` and `code`). Adapters own no observation loop or timer.
+
+The runner compares the assignment with **its own host-stamped
+`context.materialization`** before provider or checkpoint work. Missing or
+mismatched materialization refuses observation; `context.caller` is not a
+substitute. It shares one cycle across a native source's Event declarations and
+subscribers, admits occurrences through the existing Automation owner and saves
+only a complete, entirely checkpoint-safe candidate that is still current.
+Cancellation and source invalidation withdraw in-flight publication authority.
+A healthy empty catalog waits for invalidation without a timer or provider call.
+
+Checkpoint safety does not prove an Event admitted execution: filtered or stale
+observations can be safely skipped. The existing `save` input carries the final
+`disposition`; its optional `admissions` retains each observation identity,
+definition selector, transport scope and exact server result. An admitted-only
+effect must match its own observation and current definition and require an
+`admitted` or `rejoined` result. All skipped, missing metadata or an unsettled
+attempt never authorizes that effect. Safe skips may still save cursor or notice
+facts. The finite processor passes this same disposition to its commit callback.
+
+An adapter's multi-step save must keep honoring `context.signal` and recheck
+`isCurrent()` before each outward effect or CAS write. When an existing
+Account-bound target Action must retain credential, notice and checkpoint
+custody, call `processCheckpointedPluginEventAttemptV1` inside that finite Action
+with its current definitions, observations and commit closure. This is the same
+safety processor the runner uses. Finite reset Actions can reuse
+`readCheckpointedPluginEventSourcesV1` for the same strict catalog pager.
+These APIs describe unreleased development source, not a released host promise.
 
 ## Testkit reference
 
@@ -909,6 +1254,20 @@ The testkit validates the manifest, activates the module, enforces declared
 registration ids, invokes actions, and runs cleanup. It is not a substitute for
 packing and exercising install, trust, development, update, UI, and uninstall
 flows in a real host.
+
+In 0.3 development source, use `createPluginClientTestkit({ manifest, target,
+activate })` from `/testing` for a client artifact. The target is its exact
+`{ artifactId, exportName, platform }`; the existing contribution catalog owns
+the rights. Retrieve typed runtimes with `registration(family, id)`, inspect
+`registrations()`, and always `dispose()` the fixture. A handler receives the
+client invocation context supplied by your test, not a daemon service context.
+The public-authoring example includes this client activation pattern.
+
+The ordinary testkit's `observeAction` exercises a declared read observer without
+running its handler; supply an invalidation function with `retire()` and dispose
+the returned subscription. At a mocked host Action transport,
+`createPluginActionHandlerUnavailableFixture()` models a refusal before the
+handler starts, using the canonical missing-handler error and advisory.
 
 Canonical author docs live in `apps/docs/content/docs/plugins/`. Source examples
 under this package are compile fixtures; the CLI scaffold's code-defined module

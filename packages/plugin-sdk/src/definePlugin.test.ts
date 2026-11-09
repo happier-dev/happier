@@ -1,18 +1,16 @@
-import { createPluginRegistrationScope } from './registration/scope.js';
-import { readPluginActionInputParser, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
-import { normalizePluginAccountCollectionMigrationRuntimeProjection as normalizePluginAccountCollectionMigrationRuntimeProjectionFromAuthoringProjections } from '@happier-dev/cli-common/plugins/registration/authoringProjections';
-import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
-import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import {
     derivePluginDaemonContributionRegistrationRights,
     PLUGIN_CONTRIBUTION_CATALOG_V2,
-    PluginManifestV2Schema,
-    VoiceProviderContributionSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { PluginActionConnectedAccountPurposeBindingV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { prepareDefaultProviderStateSharingChangeV1, readProviderStateSharingRiskAgentIdsV1 } from '@happier-dev/protocol/actions/settings/providerStateSharingMutations';
 import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type {
     AgentCliAuthContributionV1,
@@ -36,7 +34,7 @@ import {
     normalizePluginAccountCollectionMigrationRuntimeProjection,
     projectPluginAccountCollectionDeclaration,
 } from './definePlugin.js';
-
+import { normalizePluginAccountCollectionMigrationRuntimeProjection as normalizePluginAccountCollectionMigrationRuntimeProjectionFromAuthoringProjections } from '@happier-dev/cli-common/plugins/registration/authoringProjections';
 import type {
     DefinePluginInput,
     ComposerControlAuthorInteraction,
@@ -108,8 +106,8 @@ import type {
 } from './storage/database.js';
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { ManagedProviderRuntime } from './providers/index.js';
-
-
+import { readPluginActionInputParser, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
+import { createPluginRegistrationScope } from './registration/scope.js';
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
 
@@ -258,9 +256,30 @@ void undefined; /* @sdk-negative-type-case-end */
 void undefined; /* @sdk-negative-type-case-end */
 
 describe('definePlugin', () => {
+    it('retains canonical native-service companion paths in authored Action purpose bindings', () => {
+        const binding = {
+            path: 'accountRef', purpose: 'forge-read', nativeServicePath: 'nativeServiceId',
+        } as const satisfies NonNullable<PluginActionDeclaration['connectedAccountPurposeBindings']>[number];
+        const plugin = definePlugin({ id: 'acme.native-purpose', version: '1.0.0',
+            actions: { read: { title: 'Read', connectedAccountPurposeBindings: [binding],
+                run: () => ({ read: true }) } },
+        });
+        const projected = plugin.manifest.contributes?.actions?.[0]?.connectedAccountPurposeBindings;
+        expect(projected).toEqual([binding]);
+        if (!Array.isArray(projected)) throw new Error('Expected projected purpose bindings');
+        expect(PluginActionConnectedAccountPurposeBindingV2Schema.parse(projected?.[0])).toEqual(binding);
+    });
+
     it('publishes authored confirmation facts through the canonical manifest parser', () => {
         const declaration = {
             title: 'Delete', confirmVerb: { key: 'actions.delete', fallback: 'Delete' }, irreversible: true,
+            inputSchema: { type: 'object', properties: {
+                entry: { type: 'object', properties: { id: { type: 'string' } } },
+            } },
+            confirmation: {
+                title: 'Delete this entry?',
+                inputFields: [{ path: 'entry.id', title: 'Entry' }],
+            },
         } as const satisfies PluginActionDeclaration;
         const plugin = definePlugin({ id: 'acme.confirmation', version: '1.0.0', displayName: 'Confirmation',
             actions: { remove: { ...declaration, run: () => ({ removed: true }) } },
@@ -538,7 +557,7 @@ describe('definePlugin', () => {
                     run: async () => null,
                 },
             },
-        } as never)).toThrow(/client action.*handler/i);
+        } as never).manifest).toThrow(/client action.*handler/i);
     });
 
     it('infers the daemon execution target from a root handler and projects SDK defaults', async () => {
@@ -568,7 +587,7 @@ describe('definePlugin', () => {
             id: 'acme.action-without-target',
             version: '1.0.0',
             actions: { inspect: { title: 'Inspect' } },
-        } as never)).toThrow(/root handler/i);
+        } as never).manifest).toThrow(/root handler/i);
     });
 
     it('shares admitted schema graphs across captured Action declarations', () => {
@@ -782,7 +801,7 @@ describe('definePlugin', () => {
                     interceptor: async (request) => ({ decision: 'continue', request }),
                 },
             },
-        })).not.toThrow();
+        }).manifest).not.toThrow();
     });
 
     it('closes every catalog family over an adapter or descriptor-only policy', () => {
@@ -1079,7 +1098,7 @@ describe('definePlugin', () => {
     });
 
     it('requires explicit detailed target facts for non-app high-level UI placements', () => {
-        const untypedDefinePlugin = definePlugin as (input: unknown) => unknown;
+        const untypedDefinePlugin = definePlugin as (input: unknown) => { readonly manifest: unknown };
 
         expect(() => untypedDefinePlugin({
             id: 'com.acme.missing-session-target',
@@ -1091,7 +1110,7 @@ describe('definePlugin', () => {
                     renderer: { kind: 'declarative', root: { kind: 'text', text: 'Details' } },
                 }],
             },
-        })).toThrow('ui.surfaces details requires an explicit target');
+        }).manifest).toThrow('ui.surfaces details requires an explicit target');
     });
 
     it('emits raw browser target and action facts through the canonical Action identity', () => {
@@ -1202,7 +1221,7 @@ describe('definePlugin', () => {
 
         expect(() => definePlugin(
             malformedInput as unknown as Parameters<typeof definePlugin>[0],
-        )).toThrow(/Account Collection.*projects.*tasks/iu);
+        ).manifest).toThrow(/Account Collection.*projects.*tasks/iu);
     });
 
     it('accepts a trusted accessor-backed Account Collection id while preserving key identity', () => {
@@ -2267,7 +2286,7 @@ describe('definePlugin', () => {
                     factory: executionOnlyFactory,
                 },
             },
-        })).toThrow(/distinct named runner leaf/i);
+        }).manifest).toThrow(/distinct named runner leaf/i);
     });
 
     it('requires and registers the exact External Sessions facet declared by an Agent', async () => {
@@ -2313,7 +2332,7 @@ describe('definePlugin', () => {
             agents: {
                 assistant: { declaration, factory: executionOnlyFactory },
             },
-        })).toThrow(/External Sessions.*required|requires.*External Sessions/iu);
+        }).manifest).toThrow(/External Sessions.*required|requires.*External Sessions/iu);
 
         const plugin = definePlugin({
             id: 'example.agent-external',
@@ -2360,7 +2379,7 @@ describe('definePlugin', () => {
             id: 'example.agent-terminal-missing',
             version: '0.1.0',
             agents: { assistant: { declaration } },
-        })).toThrow(/terminal.*requires|requires.*terminal/iu);
+        }).manifest).toThrow(/terminal.*requires|requires.*terminal/iu);
 
         const plugin = definePlugin({
             id: 'example.agent-terminal',
@@ -2406,7 +2425,7 @@ describe('definePlugin', () => {
                     terminal: { resolveLaunch: () => ({ argv: [] }) },
                 } as never,
             },
-        })).toThrow(/owns its terminal surface in the runtime it returns/iu);
+        }).manifest).toThrow(/owns its terminal surface in the runtime it returns/iu);
     });
 
     it('keeps Agent executable-binding construction local to definePlugin', () => {
@@ -2429,7 +2448,7 @@ describe('definePlugin', () => {
                     },
                 },
             },
-        } as unknown as Parameters<typeof definePlugin>[0])).toThrow(
+        } as unknown as Parameters<typeof definePlugin>[0]).manifest).toThrow(
             /requires a runtime factory/iu,
         );
     });
@@ -2638,6 +2657,7 @@ describe('definePlugin', () => {
         const vendorResumeSupport = Object.freeze({
             supportsVendorResume: () => true,
         }) satisfies AgentExperimentalVendorResumeSupportContributionV1;
+        const accountSettings = { settingLocalIds: ['retention'], apply: async () => ({ applied: true }) };
         const plugin = definePlugin({
             id: 'example.complete-agent-registration',
             version: '0.1.0',
@@ -2669,10 +2689,14 @@ describe('definePlugin', () => {
                     preflightSessionControls,
                     terminalPromptSubmitVerification,
                     connectedAccountLaunch,
+                    accountSettings,
                     sessionStartup,
                     vendorResumeSupport,
                 },
             },
+        });
+        expect(plugin.manifest.contributes.agents?.[0]).toMatchObject({
+            accountSettings: { settingLocalIds: ['retention'] },
         });
         const register = vi.fn();
 
@@ -2712,6 +2736,7 @@ describe('definePlugin', () => {
             preflightSessionControls,
             terminalPromptSubmitVerification,
             connectedAccountLaunch,
+            accountSettings,
             sessionStartup,
             vendorResumeSupport,
         });
@@ -2926,10 +2951,6 @@ describe('definePlugin', () => {
                 'augment-action': {
                     declaration: {
                         on: 'action.execute.before',
-                        hookApiVersion: 1,
-                        category: 'augmentation',
-                        scope: 'tool',
-                        executionKind: 'augment',
                     },
                     handler: beforeHook,
                 },
@@ -2951,10 +2972,12 @@ describe('definePlugin', () => {
             },
         });
 
-        expect(plugin.manifest.contributes.hooks).toContainEqual({
+        const parsedHooks = parsePluginManifest(plugin.manifest);
+        expect(parsedHooks.ok).toBe(true);
+        if (!parsedHooks.ok) throw new Error(JSON.stringify(parsedHooks.diagnostics));
+        expect(parsedHooks.manifest.contributes.hooks).toContainEqual({
             id: 'augment-action',
             on: 'action.execute.before',
-            hookApiVersion: 1,
             category: 'augmentation',
             scope: 'tool',
             executionKind: 'augment',
@@ -3313,7 +3336,7 @@ void 0; /* @sdk-negative-type-case-end */
                     },
                 },
             },
-        } as unknown as Parameters<typeof definePlugin>[0]);
+        } as unknown as Parameters<typeof definePlugin>[0]).manifest;
 
         expect(defineHostOwnedAgentWithLocator).toThrow(
                 /cannot declare a custom Session runner leaf/iu,
@@ -3357,7 +3380,7 @@ void 0; /* @sdk-negative-type-case-end */
                     },
                 },
             },
-        })).toThrow(/requires an External Sessions contribution/u);
+        }).manifest).toThrow(/requires an External Sessions contribution/u);
 
         const projectedTerminalSurfaces: ('terminal' | 'externalSessions')[] = ['terminal'];
         expect(() => definePlugin({
@@ -3372,7 +3395,7 @@ void 0; /* @sdk-negative-type-case-end */
                     externalSessions: {} as AgentExternalSessionsContribution,
                 },
             },
-        })).toThrow(/without declaring the External Sessions surface/u);
+        }).manifest).toThrow(/without declaring the External Sessions surface/u);
     });
 
     it('reserves declarative ACP resume-only sources for the host contribution', () => {
@@ -3409,7 +3432,7 @@ void 0; /* @sdk-negative-type-case-end */
             },
         };
 
-        expect(() => definePlugin(input)).not.toThrow();
+        expect(() => definePlugin(input).manifest).not.toThrow();
         expect(() => definePlugin({
             ...input,
             agents: {
@@ -3418,7 +3441,7 @@ void 0; /* @sdk-negative-type-case-end */
                     externalSessions: {} as AgentExternalSessionsContribution,
                 },
             },
-        } as unknown as Parameters<typeof definePlugin>[0])).toThrow(/host-owned ACP session-list contribution/);
+        } as unknown as Parameters<typeof definePlugin>[0]).manifest).toThrow(/host-owned ACP session-list contribution/);
     });
 
     it('activates an all-resume-only ACP Agent without a plugin External Sessions runtime', async () => {
@@ -3539,7 +3562,7 @@ void 0; /* @sdk-negative-type-case-end */
             systemTools: {
                 'assistant-cli': { title: 'Assistant CLI', executableNames: ['assistant'] },
             },
-        })).toThrow(
+        }).manifest).toThrow(
             /resume-only External Sessions source requires an ACP Session-primary Agent/u,
         );
     });
@@ -3688,7 +3711,7 @@ void 0; /* @sdk-negative-type-case-end */
         // Not the executable surface, so it is the declared JSON Schema arm.
         // Protocol's normalizer is the one owner that admits or rejects that
         // arm, and executable members are not strict JSON.
-        })).toThrow(/Invalid plugin JSON Schema/i);
+        }).manifest).toThrow(/Invalid plugin JSON Schema/i);
     });
 
     it('rejects malformed contribution protocol ids before authoring projects a manifest', () => {
@@ -4554,7 +4577,7 @@ describe('manifest project native adapter activation', () => {
         const plugin = definePlugin({ id: 'example.native', version: '0.1.0', projectNativeAdapters: {
             tasks: { declaration: { files: ['tasks.toml'], roles: ['detect'] },
                 runtime: { async detect(request) {
-                    return { entries: [{ source: { kind: 'pluginNative', adapter: request.adapter, file: 'tasks.toml', target: 'check' }, usage: 'script' }], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+                    return { entries: [{ source: { kind: 'pluginNative', adapter: request.adapter, file: 'tasks.toml', target: 'check' }, usage: 'script' }], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
                 } },
             },
         } });
@@ -4566,7 +4589,7 @@ describe('manifest project native adapter activation', () => {
         } finally { await testkit.dispose(); }
         const scope = createPluginRegistrationScope({ pluginId: 'example.native', target: { realm: 'daemon' }, rights: [{ family: 'projectNativeAdapters', localId: 'tasks', target: { realm: 'daemon' }, projectNativeAdapterRoles: ['detect'] }] });
         scope.api.projectNativeAdapters.register('tasks', {
-            async detect() { return { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }; },
+            async detect() { return { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }; },
             async resolveCommand() { return { kind: 'unsupported', code: 'not_admitted' }; },
         });
         expect(() => scope.commit()).toThrow(/runtime roles do not match/u);

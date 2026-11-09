@@ -897,14 +897,20 @@ function createContributionPointDefinition<TProtocols extends readonly unknown[]
     options: ContributionPointOptions,
 ): ContributionPointAuthorDefinition<TProtocols> {
     let projected: readonly ContributionProtocolManifest[] | undefined;
-    const point = Object.freeze({
-        ...(options.maxContributionsPerContributor === undefined
+    // The accessor is defined, not spread into a literal, so it stays lazy under
+    // any compiler that lowers spread literals to `Object.assign` (which reads
+    // the getter and would project every protocol document at plugin bundle
+    // evaluation). The app's web build keeps native spread (apps/ui/babel.config.js).
+    const point = Object.freeze(Object.defineProperty(
+        options.maxContributionsPerContributor === undefined
             ? {}
-            : { maxContributionsPerContributor: options.maxContributionsPerContributor }),
-        get protocols() {
-            return projected ??= Object.freeze(protocols.map(protocol => Object.freeze({ ...protocol.read() })));
+            : { maxContributionsPerContributor: options.maxContributionsPerContributor },
+        'protocols',
+        {
+            enumerable: true,
+            get: () => projected ??= Object.freeze(protocols.map(protocol => Object.freeze({ ...protocol.read() }))),
         },
-    }) as ContributionPointAuthorDefinition<TProtocols>;
+    )) as ContributionPointAuthorDefinition<TProtocols>;
     contributionPointProjections.set(point, Object.freeze([...protocols]));
     return point;
 }

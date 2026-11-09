@@ -173,12 +173,12 @@ export type ArtifactsActionResultById = {
     readonly "artifact.get": {
         artifact: null | {
             updatedAt: number;
+            createdAt: number;
+            ownerAccountId: string;
             header: Record<string, JsonValue>;
             access: 'admin' | 'edit' | 'owner' | 'view';
             artifactId: string;
-            createdAt: number;
             seq: number;
-            ownerAccountId: string;
             publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {
                 blobId: string;

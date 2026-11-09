@@ -42,6 +42,12 @@ export type LaunchProfilesActionInputById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -68,6 +74,20 @@ export type LaunchProfilesActionInputById = {
             id: string;
             name: string;
             description?: string | undefined;
+            placement?: 'ask' | 'automatic' | undefined | {
+                fixed: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
+            };
+            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             environmentVariables?: undefined | {
                 name: string;
                 value: string;
@@ -146,6 +166,12 @@ export type LaunchProfilesActionInputById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -205,10 +231,24 @@ export type LaunchProfilesActionInputById = {
     };
     readonly "launch_profiles.duplicate": {
         id: string;
-        expectedRevision: number;
+        expectedRevision: 'absent' | number;
         newProfileId: string;
         name: string;
         now: number;
+        placement?: 'ask' | 'automatic' | undefined | {
+            fixed: {
+                serverId: string;
+                machineId: string;
+            };
+            directory?: string | undefined;
+            directoryIntent?: undefined | {
+                kind: 'managed';
+            } | {
+                kind: 'path';
+                path: string;
+            };
+        };
+        checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
     };
     readonly "launch_profiles.enabled.set": {
         id: string;
@@ -685,6 +725,20 @@ export type LaunchProfilesActionResultById = {
             updatedAt: number;
             version: string;
             description?: string | undefined;
+            placement?: 'ask' | 'automatic' | undefined | {
+                fixed: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
+            };
+            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
             defaultBackendTargetKey?: string | undefined;
@@ -759,6 +813,12 @@ export type LaunchProfilesActionResultById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -845,6 +905,12 @@ export type LaunchProfilesActionResultById = {
                             machineId: string;
                         };
                         directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
                     };
                     checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     codingPromptBehaviorOverrides?: undefined | {
@@ -884,6 +950,20 @@ export type LaunchProfilesActionResultById = {
                     updatedAt: number;
                     version: string;
                     description?: string | undefined;
+                    placement?: 'ask' | 'automatic' | undefined | {
+                        fixed: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
+                    };
+                    checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
                     defaultBackendTargetKey?: string | undefined;
@@ -942,6 +1022,20 @@ export type LaunchProfilesActionResultById = {
             updatedAt: number;
             version: string;
             description?: string | undefined;
+            placement?: 'ask' | 'automatic' | undefined | {
+                fixed: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
+            };
+            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
             defaultBackendTargetKey?: string | undefined;
@@ -1016,6 +1110,12 @@ export type LaunchProfilesActionResultById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -1086,6 +1186,20 @@ export type LaunchProfilesActionResultById = {
             updatedAt: number;
             version: string;
             description?: string | undefined;
+            placement?: 'ask' | 'automatic' | undefined | {
+                fixed: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
+            };
+            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
             defaultBackendTargetKey?: string | undefined;
@@ -1160,6 +1274,12 @@ export type LaunchProfilesActionResultById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -1243,6 +1363,12 @@ export type LaunchProfilesActionResultById = {
                             machineId: string;
                         };
                         directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
                     };
                     checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     codingPromptBehaviorOverrides?: undefined | {
@@ -1282,6 +1408,20 @@ export type LaunchProfilesActionResultById = {
                     updatedAt: number;
                     version: string;
                     description?: string | undefined;
+                    placement?: 'ask' | 'automatic' | undefined | {
+                        fixed: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory?: string | undefined;
+                        directoryIntent?: undefined | {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
+                    };
+                    checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                     defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
                     defaultBackendTargetKey?: string | undefined;
@@ -1340,6 +1480,20 @@ export type LaunchProfilesActionResultById = {
             updatedAt: number;
             version: string;
             description?: string | undefined;
+            placement?: 'ask' | 'automatic' | undefined | {
+                fixed: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
+            };
+            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
             defaultBackendTargetKey?: string | undefined;
@@ -1414,6 +1568,12 @@ export type LaunchProfilesActionResultById = {
                     machineId: string;
                 };
                 directory?: string | undefined;
+                directoryIntent?: undefined | {
+                    kind: 'managed';
+                } | {
+                    kind: 'path';
+                    path: string;
+                };
             };
             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             codingPromptBehaviorOverrides?: undefined | {
@@ -1511,6 +1671,12 @@ export type LaunchProfilesActionResultById = {
                                 machineId: string;
                             };
                             directory?: string | undefined;
+                            directoryIntent?: undefined | {
+                                kind: 'managed';
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            };
                         };
                         checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                         codingPromptBehaviorOverrides?: undefined | {
@@ -1550,6 +1716,20 @@ export type LaunchProfilesActionResultById = {
                         updatedAt: number;
                         version: string;
                         description?: string | undefined;
+                        placement?: 'ask' | 'automatic' | undefined | {
+                            fixed: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory?: string | undefined;
+                            directoryIntent?: undefined | {
+                                kind: 'managed';
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            };
+                        };
+                        checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                         defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                         defaultModelMode?: string | undefined;
                         defaultBackendTargetKey?: string | undefined;
@@ -1601,6 +1781,12 @@ export type LaunchProfilesActionResultById = {
                         machineId: string;
                     };
                     directory?: string | undefined;
+                    directoryIntent?: undefined | {
+                        kind: 'managed';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    };
                 };
                 checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
             };

@@ -2971,6 +2971,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3001,20 +3013,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -3708,6 +3708,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3738,20 +3750,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -4829,6 +4829,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -4859,20 +4871,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -6301,6 +6301,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -6331,20 +6343,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -7041,6 +7041,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7071,20 +7083,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -7781,6 +7781,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7811,20 +7823,8 @@ export type DiscussionActionResultById = {
                 }>;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            ownerAccountId: string;
             archivedAt: null | number;
             creationLocalId: null | string;
-            encryptionMode: 'e2ee' | 'plain';
             messageSeq: number;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
@@ -9654,7 +9654,7 @@ export type DiscussionActionResultById = {
                 };
                 failureCause?: undefined | {
                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                     code?: string | undefined;
                     retryable?: boolean | undefined;
                     requestId?: string | undefined;
@@ -9753,7 +9753,7 @@ export type DiscussionActionResultById = {
                     serviceId: string;
                     excluded: {
                         profileId: string;
-                        reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked';
+                        reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
                         retryAtMs?: null | number | undefined;
                     }[];
                 };

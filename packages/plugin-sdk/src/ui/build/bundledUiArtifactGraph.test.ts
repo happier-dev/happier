@@ -1,10 +1,10 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { runInNewContext } from 'node:vm';
+import { evaluatePortableCommonJs } from '../../test-support/evaluatePortableCommonJs.js';
 import { pathToFileURL } from 'node:url';
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../cli-common/sourceRuntimeEntries.mjs';
@@ -12,7 +12,51 @@ import { buildUniversalPluginUiArtifacts } from './buildUniversalUiArtifacts.js'
 import { discoverExecutablePluginUiArtifacts } from './manifestArtifactDiscovery.js';
 import { compileUniversalPluginUiCommonJs } from './universalCommonJsCompiler.js';
 
-const pluginNames = ['channels', 'inspector', 'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-github', 'scm-gitlab', 'sentry', 'triage'];
+const pluginNames = ['channels', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon', 'deployment-supabase', 'inspector', 'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-github', 'scm-gitlab', 'sentry', 'triage'];
+
+describe('portable Connected Account authentication entry graphs', () => {
+    describe.each(['codex', 'claude', 'antigravity', 'deploy-cloudflare', 'gemini', 'machine-vercel'])('%s', (plugin) => {
+        const repositoryRoot = resolve(import.meta.dirname, '../../../../..');
+        const projectRoot = join(repositoryRoot, 'packages/plugins', plugin);
+        let manifest: { contributes: { connectedAccountDescriptors?: readonly {
+            authentication: { account?: { artifactId: string; exportName: string } };
+        }[] } };
+        beforeAll(async () => {
+            ({ PLUGIN_MANIFEST: manifest } = await import(pathToFileURL(join(projectRoot, 'src/manifest.ts')).href));
+        });
+        it('discovers, compiles and evaluates the declared Account authentication without a Node or native host', async () => {
+            const packages = await readWorkspacePackages(repositoryRoot);
+            const scratch = await mkdtemp(join(tmpdir(), 'happier-auth-artifact-graph-'));
+            try {
+                const manifestPath = join(scratch, 'manifest.json');
+                // Other executable families have independent publication gates. Keep
+                // the real auth declaration and package export under this gate.
+                await writeFile(manifestPath, JSON.stringify({ contributes: {
+                    connectedAccountDescriptors: manifest.contributes.connectedAccountDescriptors,
+                } }), 'utf8');
+                const declarations = await discoverExecutablePluginUiArtifacts(projectRoot, manifestPath, ['happier-source']);
+                const targets = manifest.contributes.connectedAccountDescriptors?.flatMap(descriptor =>
+                    descriptor.authentication.account ? [descriptor.authentication.account] : []) ?? [];
+                expect(targets.length, 'Auth must publish through the ordinary Account artifact declaration').toBeGreaterThan(0);
+                for (const target of targets) {
+                    const declaration = declarations.find(entry => entry.artifactId === target.artifactId);
+                    if (!declaration) throw new Error('Account authentication artifact is missing');
+                    expect(declaration.requestedExports).toContain(target.exportName);
+                    const compiled = await compileUniversalPluginUiCommonJs({
+                        ...declaration, projectRoot, exportConditions: ['happier-source'],
+                        resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
+                            ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+                    });
+                    const module = { exports: {} as Record<string, unknown> };
+                    evaluatePortableCommonJs(new TextDecoder().decode(compiled.bytes), module);
+                    expect(module.exports[target.exportName]).toBeTypeOf('function');
+                }
+            } finally {
+                await rm(scratch, { recursive: true, force: true });
+            }
+        });
+    });
+});
 
 describe('bundled Plugin UI artifact graph', () => {
     it.each(pluginNames)('publishes and evaluates every declared %s executable through the canonical source compiler', async (plugin) => {
@@ -68,8 +112,7 @@ describe('bundled Plugin UI artifact graph', () => {
                 console.log('PLUGIN_UI_GRAPH', JSON.stringify({ plugin, artifactId: artifact.artifactId,
                     bytes: bytes.byteLength, libraries, imports, protocolInputs, heavyEdges }));
                 const module = { exports: {} as Record<string, unknown> };
-                runInNewContext(bytes.toString('utf8'), { module, exports: module.exports, require: requireHost,
-                    TextEncoder, TextDecoder, URL, AbortController, console });
+                evaluatePortableCommonJs(bytes.toString('utf8'), module, requireHost);
                 for (const name of declaration.requestedExports) {
                     expect(module.exports[name], `${plugin}/${artifact.artifactId}:${name}`).toBeTypeOf('function');
                 }

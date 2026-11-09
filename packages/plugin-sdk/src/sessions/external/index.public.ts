@@ -62,8 +62,6 @@ export type { AgentExternalSessionsInvocationBounds } from '../../externalSessio
 export type { AgentExternalSessionsRipgrep } from '../../externalSessions.js';
 export type { AgentExternalSessionsListCandidatesRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsListCandidatesResult } from '../../externalSessions.js';
-export type { AgentExternalSessionsHydrateCandidatesRequest } from '../../externalSessions.js';
-export type { AgentExternalSessionsHydrateCandidatesResult } from '../../externalSessions.js';
 export type { AgentExternalSessionsManagedEndpointRead } from '../../externalSessions.js';
 export type { AgentExternalSessionsManagedEndpointReadRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsManagedEndpointReadResponse } from '../../externalSessions.js';
@@ -123,3 +121,7 @@ export {
     readSessionInputPromptUserTextV1,
     runWithSessionInputPromptUserTextReader,
 } from '../external.js';
+
+export type { AgentExternalSessionsMaterializeTranscriptMediaRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsHydrateCandidatesRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsHydrateCandidatesResult } from '../../externalSessions.js';

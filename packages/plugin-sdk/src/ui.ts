@@ -1,6 +1,7 @@
 export * from './ui/collectionFilters.js';
 export * from './ui/widgetSizes.js';
 export * from './ui/declarativeData.js';
+export type { ProtocolPluginSurfaceTargetV1 } from './ui/publicContract.js';
 import { PLUGIN_UI_ICON_TOKENS_V1 as canonicalPluginUiIconTokensV1 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 import { PluginRightSidebarCountV1Schema as canonicalPluginRightSidebarCountV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
@@ -25,6 +26,7 @@ export type {
     InboxItemAttentionTypeV1,
     PluginRightSidebarDefaultPlacement,
     PluginRightSidebarCountV1,
+    PluginUiCountsBindingV1,
     PluginDefaultPlacement,
     PluginUiWidgetAreaDeclarationV1,
     PluginUiAppPageColumnV1,
@@ -61,6 +63,10 @@ export type {
     PluginUiActionResultFor,
     PluginUiActionTransportResult,
     PluginUiHostApi,
+    OpenManagedMachineConfigurationRequest,
+    RevealSessionInputRequest,
+    ReadMachineDisplayNameRequest,
+    ReadMachineDisplayNameResult,
     PluginUiHostReadReference,
     PluginUiResourceReference,
     RenderContext,
@@ -99,5 +105,3 @@ export type {
     PluginDeclarativeDocumentContentTypeV1,
     PluginDeclarativeDocumentV1,
 } from './ui/declarativeDocument.js';
-
-export type { OpenAutomationEventRequest } from './ui/hostApi.js';

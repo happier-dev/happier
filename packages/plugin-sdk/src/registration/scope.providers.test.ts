@@ -22,20 +22,23 @@ describe('managed Provider registration', () => {
         const runtime = new Runtime();
         const catalog = () => ({ models: [{ id: 'acme/one' }] });
         const usage = () => ({ meters: [] });
+        const requestCost = () => 0;
         const registration = createPluginRegistrationScope({
             pluginId: 'acme.providers', target: { realm: 'daemon' }, rights: [{
                 family: 'providers', localId: 'gateway', target: { realm: 'daemon' },
-                providerArms: { managedRuntime: false, catalogParserIds: [] },
+                providerArms: { managedRuntime: false, catalogParserIds: [], usageParserIds: [], requestCostParser: false },
             }],
         });
         registration.api.providers.register('gateway', runtime);
         registration.api.providers.registerCatalogParser('gateway', 'catalog-v1', catalog);
         registration.api.providers.registerUsageParser('gateway', 'usage-v1', usage);
+        registration.api.providers.registerRequestCostParser('gateway', requestCost);
         const [published] = registration.commit();
         if (published?.family !== 'providers') throw new Error('Expected Provider registration');
         expect(published.value.managedRuntime).toBe(runtime);
         expect(published.value.catalogParsers?.['catalog-v1']).toBe(catalog);
         expect(published.value.usageParsers?.['usage-v1']).toBe(usage);
+        expect(published.value.requestCostParser).toBe(requestCost);
         runtime.marker = 'current';
         await expect(published.value.managedRuntime?.start({} as never, {} as never))
             .resolves.toEqual({ marker: 'current' });

@@ -1,11 +1,1 @@
-export type { NotificationBatchResult } from '../notifications.js';
-export type { NotificationCategoryContribution } from '../notifications.js';
-export type { NotificationCategorySummary } from '../notifications.js';
-export type { NotificationChannelContribution } from '../notifications.js';
-export type { NotificationChannelSummary } from '../notifications.js';
-export type { NotificationPreferences } from '../notifications.js';
-export type { NotificationSendRequest } from '../notifications.js';
-export type { NotificationSendResult } from '../notifications.js';
-export type { NotificationSender } from '../notifications.js';
-export type { NotificationsService } from '../notifications.js';
-export type { PluginNotificationRegistrationApi } from '../notifications.js';
+export * from './index.public.js';

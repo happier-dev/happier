@@ -55,11 +55,13 @@ export function describeReviewMount(context: Pick<RenderContext, 'launchInput' |
 export async function openReviewHistory(
     host: PluginUiHostApi,
     signal?: AbortSignal,
+    presentation?: 'window',
 ): Promise<void> {
     await host.openSurface(
         'review-dashboard',
         undefined,
-        signal === undefined ? { subPath: 'history' } : { subPath: 'history', signal },
+        { subPath: 'history', ...(signal === undefined ? {} : { signal }),
+            ...(presentation === undefined ? {} : { presentation }) },
     );
 }
 

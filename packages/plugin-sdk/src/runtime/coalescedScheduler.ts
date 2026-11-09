@@ -4,8 +4,8 @@
  */
 export type CoalescedScheduler = Readonly<{
     trigger(): void;
-    /** Trigger a drain and resolve only after the active single-flight cycle reaches idle. */
-    flush(): Promise<void>;
+    /** Trigger a drain; optionally join active work without queueing a follow-up. */
+    flush(options?: Readonly<{ ifRunning: 'join' }>): Promise<void>;
     dispose(): void;
 }>;
 
@@ -17,10 +17,10 @@ export function createCoalescedScheduler(params: Readonly<{
     let disposed = false;
     let activeRun: Promise<void> | null = null;
 
-    function run(): Promise<void> {
+    function run(queueWhileActive = true): Promise<void> {
         if (disposed) return Promise.resolve();
         if (activeRun) {
-            queued = true;
+            if (queueWhileActive) queued = true;
             return activeRun;
         }
 
@@ -52,8 +52,8 @@ export function createCoalescedScheduler(params: Readonly<{
             // Diagnostics reach onError; an explicit flush receives the rejection.
             void run().catch(() => {});
         },
-        flush() {
-            return run();
+        flush(options?: Readonly<{ ifRunning: 'join' }>) {
+            return run(options?.ifRunning !== 'join');
         },
         dispose() {
             disposed = true;

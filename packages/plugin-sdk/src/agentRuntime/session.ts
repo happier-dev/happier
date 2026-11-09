@@ -287,6 +287,12 @@ export type AgentSessionRuntimeEvent =
       turnId: string;
       agentTurnId?: string;
       kind: 'turn-progress';
+      /** Correlated nonterminal retry evidence; omission denotes real progress. */
+      retry?: Readonly<{
+        /** Positive count of retry notifications observed for this active turn. */
+        attempt: number;
+        reason: 'connection_failed' | 'rate_limited' | 'server_error' | 'unknown';
+      }>;
     }>
   | (Readonly<{
       sequence: number;
@@ -759,7 +765,10 @@ export type AgentSessionConfigurationSnapshot = Readonly<{
   allowedTools?: readonly string[];
   unlistedTools?: 'ask' | 'deny';
   mode: TimestampedAgentValue<string | null>;
-  model: TimestampedAgentValue<string | null>;
+  model: TimestampedAgentValue<string | null> & Readonly<{
+    /** Omission is unqualified inherited state, never evidence of an explicit choice. */
+    selectionSource?: 'explicit' | 'inherited';
+  }>;
   permissionIntent: TimestampedAgentValue<AgentPermissionIntent | null>;
   /** Host-resolved role restriction. An Agent that cannot enforce deny must refuse before effects. */
   workspaceWrites?: 'allow' | 'deny';

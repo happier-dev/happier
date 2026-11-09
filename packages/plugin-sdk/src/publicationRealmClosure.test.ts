@@ -12,13 +12,9 @@ const protocolAutomationEventSetupResult = resolve(
     import.meta.dirname,
     '../../protocol/src/automations/automationEventSetupResultV1.ts',
 );
-const protocolAutomationEvent = resolve(
+const protocolAutomationActionSpecs = resolve(
     import.meta.dirname,
-    '../../protocol/src/automations/automationEventV1.ts',
-);
-const protocolPluginReleaseRef = resolve(
-    import.meta.dirname,
-    '../../protocol/src/plugins/availability/releaseRefV1.ts',
+    '../../protocol/src/automations/automationActionSpecsV1.ts',
 );
 const protocolPluginCollections = resolve(
     import.meta.dirname,
@@ -38,7 +34,7 @@ const protocolAccountScopedCipher = resolve(
 );
 const protocolClaudeSubscriptionMaterialization = resolve(
     import.meta.dirname,
-    '../../protocol/src/connect/claudeSubscriptionMaterialization.ts',
+    '../../protocol/src/agents/claude/connectedAccountMaterialization.ts',
 );
 const protocolDeclarativeDocument = resolve(
     import.meta.dirname,
@@ -46,6 +42,18 @@ const protocolDeclarativeDocument = resolve(
 );
 
 const bundleCases = [
+    {
+        name: 'Machine setup declaration projection',
+        entry: resolve(import.meta.dirname, './machineSetup.ts'),
+        source: `export {
+          createCaddyContainerSetupDeclarations,
+          createTailscaleJoinSteps,
+          nativeCaddyProfile,
+          getMachineFirewallExposureInputSchemaV1,
+          machineConnectorCredentialDirectory,
+          tailscaleMembershipPrograms,
+        } from ENTRY;`,
+    },
     {
         name: 'Connected Accounts projection',
         entry: resolve(import.meta.dirname, './connectedAccounts.ts'),
@@ -236,8 +244,7 @@ describe('Plugin SDK publication realm closure', () => {
             }
             if (bundleCase.name === 'Events publication projection') {
                 expect(bundle.moduleIds).toContain(protocolAutomationEventSetupResult);
-                expect(bundle.moduleIds).toContain(protocolAutomationEvent);
-                expect(bundle.moduleIds).toContain(protocolPluginReleaseRef);
+                expect(bundle.moduleIds).toContain(protocolAutomationActionSpecs);
                 expect(bundle.moduleIds).not.toContain(protocolPluginCollections);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
             }

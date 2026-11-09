@@ -1,11 +1,10 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext, type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 import {
   defineProtocolObject,
   defineProtocolString,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-  admitCheckpointedPluginEventObservationV1,
   createPluginEventAutomationSetupResultV1JsonSchema,
 } from '@happier-dev/plugin-sdk/events';
 import { PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 } from '@happier-dev/plugin-sdk/browser';
@@ -16,7 +15,7 @@ const EVENT_ID = 'repository-pushed';
 /**
  * Deterministic upstream facts keep this copyable example executable without
  * credentials. A real source replaces this array with its provider poll and
- * persists its provider cursor only after the helper returns checkpoint-safe.
+ * keeps its existing provider cursor format at the adapter's save port.
  */
 const EXAMPLE_PUSHES = Object.freeze([
   Object.freeze({
@@ -27,43 +26,45 @@ const EXAMPLE_PUSHES = Object.freeze([
   }),
 ]);
 
-function waitForRetirement(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    signal.addEventListener('abort', () => resolve(), { once: true });
-  });
-}
-
 /**
- * Complete public source lifecycle: the SDK helper performs the current,
- * revision-stable source scan, canonical admission, catalog report and source
- * status report. The plugin remains only the upstream observation owner.
+ * The deterministic feed has no future deadline or durable cursor. The SDK
+ * owns assignment, admission, invalidation and retirement; only these finite
+ * provider operations belong to the example.
  */
 export async function runRepositoryPushObserver(context: BackgroundServiceContext): Promise<void> {
-  for (const push of EXAMPLE_PUSHES) {
-    context.signal.throwIfAborted();
-    const disposition = await admitCheckpointedPluginEventObservationV1({
-      eventRef: { pluginId: PLUGIN_ID, localId: EVENT_ID },
-      sourceInstanceId: push.repository,
-      sourceContractVersion: 1,
-      occurrenceId: push.occurrenceId,
-      occurredAt: push.occurredAt,
-      observationReceivedAt: push.occurredAt + 1,
-      observedDelta: 1,
-      payload: { repository: push.repository, ref: push.ref },
-    }, context);
-    context.services.logger.info('automation_event_source.observation_settled', {
-      occurrenceId: push.occurrenceId,
-      disposition,
-    });
-    if (disposition.kind !== 'checkpointSafe') {
-      throw new Error('The example repository push remains unsettled; its provider checkpoint was not advanced.');
-    }
-  }
-
-  // A background service that resolves is no longer available. Stay healthy
-  // and idle until this exact plugin generation is retired by the host.
-  await waitForRetirement(context.signal);
+  const source: PluginCheckpointedEventSourceAdapterV1<string, readonly string[]> = {
+    decode(definition) {
+      if (definition.eventRef.pluginId !== PLUGIN_ID || definition.eventRef.localId !== EVENT_ID
+        || definition.sourceContractVersion !== 1) return null;
+      try {
+        const { repository } = repositoryInputSchema.parse(definition.sourceConfig);
+        return definition.sourceInstanceId === repository ? repository : null;
+      } catch { return null; }
+    },
+    async observe({ source: repository }) {
+      const pushes = EXAMPLE_PUSHES.filter(push => push.repository === repository);
+      return {
+        observations: pushes.map(push => ({
+          eventRef: { pluginId: PLUGIN_ID, localId: EVENT_ID },
+          sourceInstanceId: repository, sourceContractVersion: 1,
+          occurrenceId: push.occurrenceId, occurredAt: push.occurredAt,
+          observationReceivedAt: push.occurredAt + 1, observedDelta: 1 as const,
+          payload: { repository: push.repository, ref: push.ref },
+        })),
+        ...(pushes.length === 0 ? {} : { checkpoint: pushes.map(push => push.occurrenceId) }),
+        complete: true, nextEligibleAt: null,
+      };
+    },
+    async save({ context: attemptContext, checkpoint, disposition }) {
+      // This fixture only records settlement. A real provider commits its own
+      // existing cursor/CAS here, never before all observations are safe.
+      for (const occurrenceId of checkpoint) attemptContext.services.logger.info('automation_event_source.observation_settled', {
+        occurrenceId, ...(disposition === undefined ? {} : { disposition }),
+      });
+    },
+    retryAt: () => null,
+  };
+  await runCheckpointedPluginEventObserverV1({ context, source });
 }
 
 const repositoryInputSchema = defineProtocolObject({

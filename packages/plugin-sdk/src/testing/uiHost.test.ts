@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { isPluginError, PluginError } from '../errors.js';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import { definePlugin } from '../definePlugin.js';
 import type { ComposerContentHandleV1, ComposerSnapshotV1, OpenConnectedAccountsResult } from '../ui/hostApi.js';
@@ -576,6 +577,24 @@ describe('readPluginUiTestkitTargetedSurfaceAdmission', () => {
 });
 
 describe('createPluginUiTestkit', () => {
+    it.each([true, false])('round-trips real Action refusal evidence through the host serializer (notStarted=%s)', async marked => {
+        const fixture = await createPluginUiTestkit({ identity,
+            authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+            handlers: { executeAction: () => { throw marked
+                ? createPluginActionHandlerNotStartedError({ code: 'permission_denied' })
+                : new PluginError({ code: 'permission_denied' }); } },
+        });
+        try {
+            let thrown: unknown;
+            try { await fixture.context.hostApi.executeAction('discussion.read', { discussionId: 'discussion-1', throughSeq: 0 }); }
+            catch (error) { thrown = error; }
+            expect(thrown).toMatchObject({ code: 'permission_denied' });
+            if (marked) expect(thrown).toMatchObject({ actionHandlerInvocation: 'notStarted', data: { actionHandlerInvocation: 'notStarted' } });
+            else expect(thrown).not.toHaveProperty('actionHandlerInvocation');
+        } finally { await fixture.dispose(); }
+    });
+
     it('serves typed unavailable Machine names until an exact fixture read is provided', async () => {
         const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
             surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,

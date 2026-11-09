@@ -181,15 +181,9 @@ type ExpectedPluginHookDefinition = Readonly<{
 type ExpectedHookContribution = Readonly<{
     id: string;
     on: ExpectedPluginHookId;
-    hookApiVersion: 1;
-    category: 'integration' | 'lifecycle' | 'augmentation' | 'decision';
-    scope: ExpectedPluginHookScope;
-    executionKind: 'integrate' | 'observe' | 'augment' | 'decide';
     filters?: unknown;
     priority?: number;
     hostAccess?: readonly string[];
-    compatibility?: Readonly<Record<string, JsonValue>>;
-    metadata?: Readonly<Record<string, JsonValue>>;
 }>;
 
 describe('hooks package-local projection', () => {

@@ -31,8 +31,8 @@ import type { ProvidersRegistrationApi } from './managed-services/contract.js';
 import type {
     PluginConnectedAccountRegistrationApi,
 } from './services/index.js';
-import type { HttpMethod } from './services/io.js';
 import type { ConnectedAccountPortableRuntime } from './connectedAccounts.js';
+import type { PluginInterceptedRequest, PluginInterceptorResult } from '@happier-dev/cli-common/plugins/http/contracts';
 import type { DetectedMcpServerV1 } from './mcp.js';
 import type {
     PluginMcpDiscoveredServer,
@@ -334,14 +334,7 @@ export interface PluginMcpRegistrationApi {
     ): void;
 }
 
-export type PluginInterceptedRequest = Readonly<{
-    url: string;
-    method: HttpMethod;
-    headers: Readonly<Record<string, string>>;
-}>;
-export type PluginInterceptorResult =
-    | Readonly<{ decision: 'continue'; request: PluginInterceptedRequest }>
-    | Readonly<{ decision: 'deny'; code: string }>;
+export type { PluginInterceptedRequest, PluginInterceptorResult } from '@happier-dev/cli-common/plugins/http/contracts';
 export type PluginRequestInterceptor = (request: PluginInterceptedRequest, context: PluginInvocationContext) =>
     PluginInterceptorResult | Promise<PluginInterceptorResult>;
 export interface PluginInterceptorRegistrationApi { register(id: string, interceptor: PluginRequestInterceptor): void }

@@ -6,6 +6,8 @@ const declaration = {
   languageIds: { example: 'example-language' },
   executable: { kind: 'systemTool', id: 'example-tool' },
   args: ['--stdio'],
+  projectCheck: { executable: { kind: 'systemTool', id: 'example-tool' }, args: ['--check'],
+    projectFile: 'example.config.json', output: { kind: 'typescript' } },
   initializationOptions: { indexing: { enabled: false } },
   settings: { example: { diagnostics: true } },
 } as const satisfies PluginLanguageServerContributionV1;

@@ -25,6 +25,7 @@ import {
 export {
   selectPhysicalCopyDetailSurface,
 } from './targetedSurfaceSelection.js';
+export { accessProviderAuthorFixture } from './accessProvider.js';
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends
   (<T>() => T extends TRight ? 1 : 2)

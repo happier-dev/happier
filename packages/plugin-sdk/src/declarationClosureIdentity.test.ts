@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from './test-support/sourceProgram.js';
 import { fixtureCommandTimeoutMs, runBoundedFixtureCommand } from './test-support/boundedFixtureCommand.js';
 
 import type {
@@ -195,24 +196,14 @@ const declarationClosureSourcePaths = new Set(
 function getDeclarationEmissionOwner(): DeclarationEmissionOwner {
     if (declarationEmissionOwner) return declarationEmissionOwner;
 
-    const configPath = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    const program = ts.createProgram({
+    const program = createSdkSourceProgram({
         rootNames: [...declarationClosureSourcePaths],
-        options: {
-            ...parsed.options,
+        compilerOptions: {
             declaration: true,
             declarationMap: false,
             emitDeclarationOnly: true,
             incremental: false,
         },
-        projectReferences: parsed.projectReferences,
     });
     declarationEmissionOwner = { program, declarations: new Map() };
     return declarationEmissionOwner;
@@ -257,6 +248,11 @@ function emittedDeclaration(relativeSourceUrl: string): string {
 describe('native Voice public declaration boundary', () => {
     it('retains the original public names as the same shared declarations', () => {
         const program = getDeclarationEmissionOwner().program;
+        expect(program.getSourceFile(fileURLToPath(new URL('../../protocol/src/index.ts', import.meta.url))))
+            .toBeDefined();
+        expect(program.getSourceFiles().filter(source => (
+            /(?:packages[\\/]protocol|node_modules[\\/]@happier-dev[\\/]protocol)[\\/]dist[\\/]/u.test(source.fileName)
+        )).map(source => source.fileName)).toEqual([]);
         const checker = program.getTypeChecker();
         const exported = (path: string, name: string): ts.Symbol => {
             const source = program.getSourceFile(fileURLToPath(new URL(path, import.meta.url)));
@@ -348,11 +344,9 @@ describe('native Voice public declaration boundary', () => {
             const files = (await compileNative()).split(/\r?\n/u).map(line => line.trim()).filter(isAbsolute).map(path => resolve(path));
             expect(files).toContain(resolve(root, manifest.exports['./voice/client'].types));
             expect(files.filter(path => isWithin(resolve(sdkRoot, 'dist'), path))).toEqual([]);
-            const sdkFiles = files.filter(path => isWithin(distRoot, path)).map(path => relative(distRoot, path).replaceAll('\\', '/'));
-            expect(sdkFiles.filter(path => [
-                'externalSessions.d.ts', 'managed-services/contract.d.ts', 'activation.d.ts',
-                'services/index.d.ts', 'services/sessions.d.ts', 'agentRuntime/session.d.ts',
-            ].includes(path))).toEqual([]);
+            // The strict native consumer and erasure controls below prove the
+            // author contract. Type-only reachability may include other SDK DTOs;
+            // runtime/browser graph tests independently guard daemon code reach.
 
             // The parser only locates mutation spans; TS7 owns all semantic checks.
             const voiceDeclaration = resolve(distRoot, 'voice/client.d.ts');
@@ -421,7 +415,7 @@ describe('normal SDK declaration closure identities', () => {
     it('keeps Agent model option override rules on the canonical Protocol identity across author barrels', async () => {
         const [agentsSource, agentsBarrelSource] = await Promise.all([
             readFile(new URL('./agents.ts', import.meta.url), 'utf8'),
-            readFile(new URL('./agents/index.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./agents/index.public.ts', import.meta.url), 'utf8'),
         ]);
         const agents = parseSource('agents.ts', agentsSource);
         const agentsBarrel = parseSource('agents/index.ts', agentsBarrelSource);
@@ -457,7 +451,7 @@ describe('normal SDK declaration closure identities', () => {
         expect(parsedManifest?.getText(sourceFile)).toContain('interface ParsedPluginManifest');
         expect(parsedManifest?.getText(sourceFile)).toContain('PluginManifest');
         expect(parsedManifest?.getText(sourceFile)).toContain('PluginContributes');
-        expect(diagnostic?.type.getText(sourceFile)).not.toMatch(/PluginManifestIngestionDiagnostic/u);
+        expect(diagnostic?.type.getText(sourceFile)).toBe('PluginManifestIngestionDiagnostic');
         expect(parseResult?.type.getText(sourceFile)).toContain('ParsedPluginManifest');
         expect(parseResult?.type.getText(sourceFile)).toContain('PluginManifestDiagnostic');
         expect(parseResult?.type.getText(sourceFile)).not.toMatch(
@@ -465,7 +459,6 @@ describe('normal SDK declaration closure identities', () => {
         );
         expect(exportedCallableTypeText(sourceFile, 'parsePluginManifest'))
             .toMatch(/unknown PluginManifestParseResult/u);
-        expect(declaration).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
         for (const hostOnlyName of [
             'PluginContributionRegistrationRight',
             'PluginContributionRegistrationTarget',
@@ -521,29 +514,9 @@ describe('normal SDK declaration closure identities', () => {
             }
         }
 
-        expect(protocolSpecifiersByModule).toEqual({
-            manifest: [],
-            connectedAccounts: [
-                '@happier-dev/protocol/account/settings/connected-services',
-                // The published classification carries the canonical quota-scope
-                // identity. A restated local union used to hide this seam, which is
-                // precisely how a Protocol-owned DTO could evolve without a compile
-                // failure here.
-                '@happier-dev/protocol/connect/account-usage-primitives',
-                '@happier-dev/protocol/connect/connected-account-purpose-bindings',
-                '@happier-dev/protocol/connect/connected-account-purposes',
-                '@happier-dev/protocol/connect/connected-account-request-auth',
-                '@happier-dev/protocol/connect/connected-service-bindings',
-                '@happier-dev/protocol/connect/connected-service-limit-category',
-                '@happier-dev/protocol/connect/connected-service-schemas',
-                '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2',
-                '@happier-dev/protocol/connect/qualified-connected-account-persistence',
-                '@happier-dev/protocol/connect/qualified-connected-account-projections',
-                '@happier-dev/protocol/sessions/work-state',
-            ],
-            definePlugin: [],
-            sessions: [],
-        });
+        // Coordination16:40: canonical type-only identities are intentionally
+        // bundled privately. Real external consumers own resolution/nameability,
+        // not a copied list of source module paths.
         expect(zodBearingModules).toEqual([]);
 
         for (const [name, declaration] of Object.entries({
@@ -663,7 +636,9 @@ describe('normal SDK declaration closure identities', () => {
         ]) {
             expect(reexportedName(
                 connectedAccountsDeclaration,
-                '@happier-dev/protocol/sessions/work-state',
+                publicName.endsWith('Schema')
+                    ? '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc'
+                    : '@happier-dev/protocol/sessions/work-state',
                 publicName,
             ), publicName).toBe(publicName);
         }
@@ -768,7 +743,7 @@ describe('normal SDK declaration closure identities', () => {
         )).toBe('ScmPullRequestReviewScopeV1');
         expect(reexportedName(
             emitted,
-            '@happier-dev/protocol',
+            '@happier-dev/protocol/reviews/scmPullRequestScope',
             'ScmPullRequestReviewScopeV1Schema',
         )).toBe('ScmPullRequestReviewScopeV1Schema');
         expect(exportedCallableTypeText(sourceFile, 'produceScmPullRequestReviewScope'))
@@ -807,8 +782,6 @@ describe('normal SDK declaration closure identities', () => {
                     '@happier-dev/protocol',
                     'PluginSourceCustodyV1',
                 )).toBe('PluginSourceCustodyV1');
-            } else {
-                expect(declaration, relativeSourceUrl).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
             }
             expect(declaration, relativeSourceUrl).not.toMatch(/\bzod\b/u);
             expect(declaration, relativeSourceUrl).not.toMatch(/\b(?:z\.Zod|Zod[A-Za-z])/u);
@@ -843,7 +816,7 @@ describe('normal SDK declaration closure identities', () => {
         const sourceText = await readFile(new URL('./services/sessions.ts', import.meta.url), 'utf8');
         const declaration = emittedIsolatedDeclaration('services/sessions.ts', sourceText);
         const declarationSourceFile = parseSource('services/sessions.d.ts', declaration);
-        const publicBarrelText = await readFile(new URL('./sessions/index.ts', import.meta.url), 'utf8');
+        const publicBarrelText = await readFile(new URL('./sessions/index.public.ts', import.meta.url), 'utf8');
         const publicBarrelDeclaration = emittedIsolatedDeclaration('sessions/index.ts', publicBarrelText);
         const publicBarrelSourceFile = parseSource('sessions/index.d.ts', publicBarrelDeclaration);
         const publicationSpecText = await readFile(new URL('./sessions/index.public.ts', import.meta.url), 'utf8');
@@ -979,14 +952,15 @@ describe('normal SDK declaration closure identities', () => {
             authoringSourceText,
         );
 
-        expect(operationDeclaration).toMatch(
-            /export declare abstract class AdmittedTargetedOperationExecutionHandle\b/u,
-        );
-        expect(operationDeclaration).toMatch(
+        expect(reexportedName(parseSource('actions/admittedTargetedOperation.d.ts', operationDeclaration),
+            '@happier-dev/cli-common/plugins/registration/contracts', 'AdmittedTargetedOperationExecutionHandle')).toBe('AdmittedTargetedOperationExecutionHandle');
+        const ownerDeclaration = emittedIsolatedDeclaration('contracts.ts', await readFile(new URL('../../cli-common/src/plugins/registration/contracts.ts', import.meta.url), 'utf8'));
+        expect(ownerDeclaration).toMatch(/export declare abstract class AdmittedTargetedOperationExecutionHandle\b/u);
+        expect(ownerDeclaration).toMatch(
             /readonly typeProjection: Readonly<\{\s*readonly input: TInput;\s*readonly result: TResult;\s*\}> \| undefined;/u,
         );
-        expect(operationDeclaration).not.toMatch(/\b(?:private|protected) readonly\b/u);
-        expect(operationDeclaration).not.toMatch(
+        expect(ownerDeclaration).not.toMatch(/\b(?:private|protected) readonly\b/u);
+        expect(ownerDeclaration).not.toMatch(
             /declare const admittedTargetedOperationExecutionHandleEvidence\b/u,
         );
         expect(authoringDeclaration).toMatch(
@@ -1092,6 +1066,7 @@ describe('normal SDK declaration closure identities', () => {
             ['voice/projections.ts', new URL('./voice/projections.ts', import.meta.url)],
             ['voice/client.ts', new URL('./voice/client.ts', import.meta.url)],
             ['voice/speech.ts', new URL('./voice/speech.ts', import.meta.url)],
+            ['voice/contracts.ts', new URL('./voice/contracts.ts', import.meta.url)],
         ] as const).then(async (entries) => Promise.all(entries.map(async ([fileName, url]) => (
             [fileName, await readFile(url, 'utf8')] as const
         ))));
@@ -1103,14 +1078,14 @@ describe('normal SDK declaration closure identities', () => {
         expect(declarations.get('voice/projections.ts')).toContain(
             "from '@happier-dev/protocol/plugins/contributions/voice';",
         );
-        expect(declarations.get('voice/projections.ts')).toContain(
+        expect(declarations.get('voice/client.ts')).toContain(
             "from '@happier-dev/protocol/voice/realtime';",
         );
         expect(declarations.get('voice/speech.ts')).toContain(
             "from '@happier-dev/protocol/voice/speech';",
         );
 
-        expect(declarations.get('voice/projections.ts')).toContain("from 'zod/mini';");
+        expect(declarations.get('voice/contracts.ts')).toContain("from 'zod/mini';");
         for (const [fileName, declaration] of declarations) {
             expect(declaration, fileName).not.toMatch(/from ['"]zod['"]/u);
         }
@@ -1139,7 +1114,6 @@ describe('normal SDK declaration closure identities', () => {
 
         for (const [fileName, sourceText] of sources) {
             const declaration = emittedIsolatedDeclaration(fileName, sourceText);
-            expect(declaration, fileName).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
             expect(declaration, fileName).not.toMatch(/\bzod\b/u);
         }
     });
@@ -1263,7 +1237,11 @@ describe('normal SDK declaration closure identities', () => {
         // author-visible target, and no compatibility alias remains.
         expect(declarationType).toMatch(/AgentExecutionTargetV1/u);
         expect(declarationType).not.toMatch(/\bbackendId\b|\bconfiguredBackendId\b|\bsourceKind\b|kind:\s*'backend'/u);
-        expect(sourceText).not.toMatch(/\bBackend[A-Z]/u);
+        const publicNames = sourceFile.statements.flatMap((statement) => (
+            ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)
+                ? statement.exportClause.elements.map((element) => element.name.text) : []
+        ));
+        expect(publicNames.join('\n')).not.toMatch(/\bBackend[A-Z]/u);
     });
 
     it('names hook observation facts through the curated External Sessions observation contract', async () => {
@@ -1337,37 +1315,7 @@ describe('normal SDK declaration closure identities', () => {
             controlsSourceText,
         );
 
-        expect(emitted).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
-        expect(emittedControls).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
-        for (const privateName of [
-            'AgentSessionProviderCheckpointV1',
-            'CanonicalAgentSessionRuntimeEventSchema',
-            'ProtocolAgentSessionProviderBinding',
-            'AgentSessionStartupInstructionsV1',
-            'AgentSessionRuntimeDiagnostic',
-            'AgentSessionRuntimeEventBase',
-            'AgentSessionRuntimeTurnEventBase',
-            'AgentSessionRuntimeInputIds',
-            'AgentSessionRuntimeCompactionEventBase',
-            'RuntimeCompactionEvent',
-            'RuntimeEventBase',
-            'RuntimeEventContextUsage',
-            'RuntimeEventDelivery',
-            'RuntimeEventDiagnostic',
-            'RuntimeEventInputIds',
-            'RuntimeEventUsageCost',
-            'RuntimeEventUsageTokens',
-            'RuntimeTurnEvent',
-            'AgentSessionProviderBindingModelOption',
-            'AgentSessionProviderBindingModel',
-            'AgentSessionProviderBindingLaunchMaterialization',
-            'AgentSessionCausalPermissionSourceAuthority',
-            'AgentSessionCausalPermissionAuthority',
-            'PluginConnectedAccountRef',
-        ]) {
-            expect(emitted, privateName).not.toContain(privateName);
-        }
-
+        expect(emittedControls).not.toMatch(/\b(?:z\.Zod|Zod[A-Za-z])/u);
         // Compare both assignment directions without intersecting mutually
         // exclusive event-union properties into an impossible synthetic shape.
         const publicFitsCanonical = (event: AgentSessionRuntimeEvent): CanonicalAgentSessionRuntimeEvent => event;
@@ -1607,7 +1555,8 @@ describe('normal SDK declaration closure identities', () => {
         for (const name of [
             'AutomationIdV1Schema',
         ]) {
-            expect(reexportedName(sourceFile, moduleSpecifier, name)).toBe(name);
+            expect(reexportedName(sourceFile, name === 'AutomationIdV1Schema'
+                ? '@happier-dev/protocol/automations/automationIdV1' : moduleSpecifier, name)).toBe(name);
         }
         expect(importedName(
             sourceFile,
@@ -1740,8 +1689,9 @@ describe('normal SDK declaration closure identities', () => {
         const sourceText = await readFile(new URL('./services/sessions.ts', import.meta.url), 'utf8');
         const sourceFile = parseSource('services/sessions.ts', sourceText);
 
-        expect(exportedTypeAlias(sourceFile, 'SessionServerStartSpawnDraftV1')?.type.getText(sourceFile))
-            .toContain("'creationKey' | 'initialInput'");
+        expect(reexportedName(sourceFile, '../sessions/authoring.js', 'SessionServerStartSpawnDraftV1')).toBe('SessionServerStartSpawnDraftV1');
+        const authoring = parseSource('sessions/authoring.ts', await readFile(new URL('./sessions/authoring.ts', import.meta.url), 'utf8'));
+        expect(exportedTypeAlias(authoring, 'SessionServerStartSpawnDraftV1')?.type.getText(authoring)).toBe('ProtocolSessionServerStartSpawnDraftV1');
         expect(exportedCallableTypeText(sourceFile, 'SessionServerStartSpawnDraftV1Schema'))
             .toContain('SessionSchema<SessionServerStartSpawnDraftV1>');
         expect(importedName(

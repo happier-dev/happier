@@ -2,9 +2,53 @@ import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/ar
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { definePlugin } from '../definePlugin.js';
-import { defineUiSurfaceDefinition, type UiSurfaceReactNativeDefinition } from './surface.js';
+import { parsePluginManifest } from '../manifest.js';
+import { defineUiSurfaceDefinition, type UiSurfaceReactNativeDefinition, type UiSurfaceHostedWebDefinition } from './surface.js';
 
 describe('defineUiSurfaceDefinition', () => {
+    it('admits public Machine page shorthand through the canonical manifest', () => {
+        const surface = defineUiSurfaceDefinition({ id: 'machine-tools', placement: 'appPage',
+            target: { kind: 'machine', serverIdPath: '/serverId', machineIdPath: '/machineId' },
+            renderer: { kind: 'declarative', root: { kind: 'text', text: 'Machine tools' } } });
+        const plugin = definePlugin({ id: 'com.acme.machine-tools', version: '1.0.0', ui: { surfaces: [surface] } });
+        expect(parsePluginManifest(plugin.manifest).ok).toBe(true);
+        expect(plugin.manifest.contributes.ui?.views?.[0]).toMatchObject({
+            container: 'appPage', target: surface.target,
+        });
+        type MachineNativePage = Extract<UiSurfaceReactNativeDefinition, { placement: 'appPage'; target: { kind: 'machine' } }>;
+        type MachineHostedPage = Extract<UiSurfaceHostedWebDefinition, { placement: 'appPage'; target: { kind: 'machine' } }>;
+        expectTypeOf<MachineNativePage['target']>().toMatchTypeOf<{ kind: 'machine' }>();
+        expectTypeOf<MachineHostedPage['target']>().toMatchTypeOf<{ kind: 'machine' }>();
+        expectTypeOf<NonNullable<MachineNativePage['column']>>().toEqualTypeOf<never>();
+    });
+
+    it('normalizes public Project and app page shorthand through the canonical manifest and portable projection', () => {
+        const renderer = { kind: 'declarative' as const, root: { kind: 'text' as const, text: 'Builds' } };
+        const project = defineUiSurfaceDefinition({ id: 'builds', placement: 'appPage', target: { kind: 'project' },
+            title: 'Builds', description: 'Follow the repository.',
+            counts: { resourceId: 'branch-counts', items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] },
+            availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } }, renderer });
+        const explicitApp = defineUiSurfaceDefinition({ id: 'app', placement: 'appPage', target: { kind: 'app' }, renderer });
+        const implicitApp = defineUiSurfaceDefinition({ id: 'default', placement: 'appPage', renderer });
+        const plugin = definePlugin({ id: 'com.acme.pages', version: '1.0.0',
+            resources: { 'branch-counts': { kind: 'config', source: 'dynamic', contentType: 'application/json', scope: 'surface',
+                runtime: { read: () => JSON.stringify({ running: 2, failed: 1 }), observe: () => ({ dispose() {} }) } } },
+            ui: { surfaces: [project, explicitApp, implicitApp] } });
+        expect(plugin.manifest.contributes.ui?.views).toMatchObject([
+            { id: 'builds', container: 'appPage', target: { kind: 'project' }, description: 'Follow the repository.',
+                counts: { resourceId: 'branch-counts', items: [{ field: 'running', label: 'Running' }, { field: 'failed', label: 'Failed' }] },
+                availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } } },
+            { id: 'app', target: { kind: 'app' } }, { id: 'default', target: { kind: 'app' } },
+        ]);
+        type ProjectNativePage = Extract<UiSurfaceReactNativeDefinition, { placement: 'appPage'; target: { kind: 'project' } }>;
+        type ProjectHostedPage = Extract<UiSurfaceHostedWebDefinition, { placement: 'appPage'; target: { kind: 'project' } }>;
+        expectTypeOf<ProjectNativePage['target']>().toMatchTypeOf<{ kind: 'project' }>();
+        expectTypeOf<ProjectHostedPage['target']>().toMatchTypeOf<{ kind: 'project' }>();
+        expectTypeOf<NonNullable<ProjectNativePage['column']>>().toEqualTypeOf<never>();
+        expectTypeOf<NonNullable<ProjectNativePage['widgetAreas']>>().toEqualTypeOf<never>();
+        type SettingsPage = Extract<UiSurfaceReactNativeDefinition, { placement: 'settingsPage' }>;
+        expectTypeOf<NonNullable<SettingsPage['target']>>().toEqualTypeOf<never>();
+    });
     it('publishes widget sizes from the public author definition into the canonical manifest', () => {
         const surface = defineUiSurfaceDefinition({ id: 'checks', placement: 'widget', target: { kind: 'app' },
             sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' },
@@ -12,6 +56,18 @@ describe('defineUiSurfaceDefinition', () => {
         const plugin = definePlugin({ id: 'com.acme.sizes', version: '1.0.0', ui: { surfaces: [surface] } });
         expect(plugin.manifest.contributes.ui?.views?.[0]).toMatchObject({ container: 'widget',
             sizeDeclaration: { sizes: ['medium', 'tall'], defaultSize: 'tall' } });
+    });
+    it('admits an external Project widget with its sizes and repository applicability through the public author definition', () => {
+        const surface = defineUiSurfaceDefinition({ id: 'project-status', placement: 'widget', target: { kind: 'project' },
+            sizeDeclaration: { sizes: ['medium', 'wide'], defaultSize: 'medium' },
+            availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } },
+            renderer: { kind: 'declarative', root: { kind: 'text', text: 'Project status' } } });
+        const plugin = definePlugin({ id: 'com.acme.project-widget', version: '1.0.0', ui: { surfaces: [surface] } });
+        const admitted = parsePluginManifest(plugin.manifest);
+        expect(admitted.ok, admitted.ok ? undefined : JSON.stringify(admitted)).toBe(true);
+        expect(plugin.manifest.contributes.ui?.views?.[0]).toMatchObject({ container: 'widget', target: { kind: 'project' },
+            sizeDeclaration: { sizes: ['medium', 'wide'], defaultSize: 'medium' },
+            availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } } });
     });
     it('projects executable surface identity without author-owned build metadata', () => {
         const surface = defineUiSurfaceDefinition({

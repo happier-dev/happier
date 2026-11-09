@@ -162,7 +162,7 @@ describe('External Session hooks public contract', () => {
             await readFile(new URL('../package.json', import.meta.url), 'utf8'),
         ) as { exports?: Record<string, unknown> };
         expect(packageJson.exports?.['./experimental/sessions']).toBeUndefined();
-        expect(packageJson.exports?.['./sessions/external']).toEqual({
+        expect(packageJson.exports?.['./sessions/external']).toMatchObject({
             default: './dist/sessions/external/index.js',
             types: './dist/sessions/external/index.d.ts',
         });

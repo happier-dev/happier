@@ -17,6 +17,7 @@ export type ExternalSessionContentSearchPageProgress = {
 
 export type ExternalSessionContentSearchControl = Readonly<{
   signal?: AbortSignal;
+  /** The optional legacy estimate reset is accepted but no longer needed. */
   checkWork(resetEstimate?: boolean): void;
   assertNotYielded(): void;
   /** Commit one native step before yielding; true completes the phase. */
@@ -24,18 +25,12 @@ export type ExternalSessionContentSearchControl = Readonly<{
   fileSystem: JsonlScannerFileSystemV1;
 }>;
 
-/** One invocation's observed work cost, governed only by its host deadline. */
+/** Cooperative scanning governed only by the invocation's host deadline. */
 export function createExternalSessionContentSearchControl(bounds: Readonly<{ signal?: AbortSignal; deadlineAtMs?: number }>): ExternalSessionContentSearchControl {
-  let previousWorkAtMs = Date.now();
-  let longestWorkMs = 0;
   let yielded = false;
-  const checkWork = (resetEstimate = false) => {
+  const checkWork = () => {
     bounds.signal?.throwIfAborted();
-    const nowMs = Date.now();
-    if (resetEstimate) longestWorkMs = 0;
-    else longestWorkMs = Math.max(longestWorkMs, nowMs - previousWorkAtMs);
-    previousWorkAtMs = nowMs;
-    if (yielded || (bounds.deadlineAtMs !== undefined && bounds.deadlineAtMs - nowMs <= longestWorkMs)) {
+    if (yielded || (bounds.deadlineAtMs !== undefined && Date.now() >= bounds.deadlineAtMs)) {
       yielded = true;
       throw new ExternalSessionContentSearchYield();
     }
@@ -50,10 +45,6 @@ export function createExternalSessionContentSearchControl(bounds: Readonly<{ sig
     assertNotYielded,
     async prepare(step) {
       assertNotYielded();
-      // Native phases measure their own steps, not earlier enumeration or rg
-      // process work. The containing deadline still bounds this invocation.
-      previousWorkAtMs = Date.now();
-      longestWorkMs = 0;
       while (true) {
         assertNotYielded();
         // Native state owns the result and resume position. The indivisible
@@ -186,13 +177,16 @@ export async function prefilterExternalSessionContentPaths(params: ContentPrefil
         if (!/^\d+:-\r?$/.test(position)) return unavailable('invalid_offset_output');
         const offset = Number(position.replace(/:-\r?$/, ''));
         if (!Number.isSafeInteger(offset)) return unavailable('invalid_offset_output');
-        if (entries.at(-1) !== offset) entries.push(offset);
+        entries.push(offset);
         matched = true;
       }
       if (!matched) return unavailable('invalid_offset_output');
       offsets.set(path, entries);
     }
     if (result.exitCode === 0 && offsets.size === 0) return unavailable('empty_success_output');
+    // Repeated native path operands can produce another heading group. Admit
+    // one ordered set here; every resumed scanner page consumes it directly.
+    for (const [path, entries] of offsets) offsets.set(path, [...new Set(entries)].sort((a, b) => a - b));
     report('line_offsets', { admittedFiles: offsets.size, stdoutBytes: Buffer.byteLength(result.stdout) });
     return offsets;
   }
@@ -228,7 +222,7 @@ export async function searchExternalSessionContent(params: Readonly<{
     const paths = await prefilterExternalSessionContentPaths({ query: params.query, paths: params.paths,
       ripgrep: params.ripgrep, signal: params.control.signal });
     if (nativeProgress) params.control.assertNotYielded();
-    else params.control.checkWork(true);
+    else params.control.checkWork();
     if (paths?.size === 0) return { partial: false };
   }
   const matchText = (text: string) => createExternalSessionContentMatchSnippet(text, params.query);

@@ -193,6 +193,9 @@ test('invokes every retained service through declared Actions and keeps the visi
         },
       },
       secrets: {
+        async saveShared() {
+          throw new Error('plugin_secret_save_not_admitted');
+        },
         async status(id) {
           assert.equal(id, 'document-review-webhook-token');
           return { state: secret === null ? 'missing' : 'configured', revision: secretRevision };
@@ -284,25 +287,25 @@ test('invokes every retained service through declared Actions and keeps the visi
   });
 
   assert.deepEqual(
-    module.manifest.contributes.commands
-      .filter((command) => command.action === 'inspect-document-review-services'
-        || command.action === 'rotate-document-review-webhook-token')
-      .map((command) => ({ id: command.id, action: command.action })),
+    module.manifest.contributes.actions
+      .filter((action) => action.id === 'inspect-document-review-services'
+        || action.id === 'rotate-document-review-webhook-token')
+      .map((action) => ({ id: action.id, path: action.cli.path })),
     [
-      { id: 'inspect-document-review-services-command', action: 'inspect-document-review-services' },
-      { id: 'rotate-document-review-webhook-token-command', action: 'rotate-document-review-webhook-token' },
+      { id: 'inspect-document-review-services', path: ['document-review', 'inspect-services'] },
+      { id: 'rotate-document-review-webhook-token', path: ['document-review', 'rotate-webhook-token'] },
     ],
   );
   assert.deepEqual(
-    module.manifest.contributes.tools
-      .filter((tool) => tool.action === 'inspect-document-review-services'
-        || tool.action === 'rotate-document-review-webhook-token'
-        || tool.action === 'forward-to-session-run')
-      .map((tool) => ({ id: tool.id, action: tool.action })),
+    module.manifest.contributes.actions
+      .filter((action) => action.id === 'inspect-document-review-services'
+        || action.id === 'rotate-document-review-webhook-token'
+        || action.id === 'forward-to-session-run')
+      .map((action) => ({ id: action.id, name: action.tool.name })),
     [
-      { id: 'inspect-document-review-services-tool', action: 'inspect-document-review-services' },
-      { id: 'rotate-document-review-webhook-token-tool', action: 'rotate-document-review-webhook-token' },
-      { id: 'forward-to-session-run-tool', action: 'forward-to-session-run' },
+      { id: 'inspect-document-review-services', name: 'document_review_inspect_services' },
+      { id: 'rotate-document-review-webhook-token', name: 'document_review_rotate_webhook_token' },
+      { id: 'forward-to-session-run', name: 'document_review_forward_to_run' },
     ],
   );
 });
@@ -675,15 +678,10 @@ test('forwards to a Session-owned run through the canonical Session handle with 
   });
   // Observable result through existing host wiring: canonical admission result.
   assert.deepEqual({ ...result }, { status: 'accepted', localId: 'plugin-input-v1:targeted' });
-  // Action/tools declaration parity through the public manifest ABI.
-  const command = module.manifest.contributes.commands.find((entry) => entry.action === 'forward-to-session-run');
+  // One Action owns the public tool name and CLI path for the same handler.
+  const action = module.manifest.contributes.actions.find((entry) => entry.id === 'forward-to-session-run');
   assert.deepEqual(
-    { id: command.id, action: command.action },
-    { id: 'forward-to-session-run-command', action: 'forward-to-session-run' },
-  );
-  const tool = module.manifest.contributes.tools.find((entry) => entry.action === 'forward-to-session-run');
-  assert.deepEqual(
-    { id: tool.id, action: tool.action },
-    { id: 'forward-to-session-run-tool', action: 'forward-to-session-run' },
+    { id: action.id, path: action.cli.path, name: action.tool.name, exposure: action.toolExposure },
+    { id: 'forward-to-session-run', path: ['document-review', 'forward-to-run'], name: 'document_review_forward_to_run', exposure: { agent: 'direct', mcp: 'direct' } },
   );
 });

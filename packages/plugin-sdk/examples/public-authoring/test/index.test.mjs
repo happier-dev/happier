@@ -1,6 +1,52 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+
+test('tests a declared client activation through the public author testkit', async () => {
+  const { definePlugin } = await import('@happier-dev/plugin-sdk');
+  const { createPluginClientTestkit } = await import('@happier-dev/plugin-sdk/testing');
+  const target = { artifactId: 'client-actions', exportName: 'activate', platform: 'web' };
+  const example = definePlugin({ id: 'com.example.client-tests', version: '1.0.0', actions: {
+    inspect: { title: 'Inspect', surfaces: ['ui'], execution: { target: 'client',
+      client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] } },
+  } });
+  const handler = () => ({ inspected: true });
+  const client = await createPluginClientTestkit({ manifest: example.manifest, target,
+    activate(api) { api.actions.register('inspect', handler); },
+  });
+  try {
+    assert.deepEqual(client.registrations(), [{ family: 'actions', localId: 'inspect' }]);
+    assert.equal(client.registration('actions', 'inspect'), handler);
+  } finally { await client.dispose(); }
+  assert.deepEqual(client.registrations(), []);
+});
+
+test('observes a declared read without executing it and models a transport refusal before start', async () => {
+  const { definePlugin } = await import('@happier-dev/plugin-sdk');
+  const { createPluginTestkit, createPluginActionHandlerUnavailableFixture } = await import('@happier-dev/plugin-sdk/testing');
+  let runs = 0;
+  let changes = 0;
+  let disposed = false;
+  const example = definePlugin({ id: 'com.example.read-tests', version: '1.0.0', actions: {
+    status: { title: 'Status', surfaces: ['plugin'], readOnly: true,
+      run() { runs++; return { ready: true }; },
+      observeRead(_input, invalidate) { invalidate(); return { dispose() { disposed = true; } }; },
+    },
+  } });
+  const plugin = await createPluginTestkit({ manifest: example.manifest, module: example });
+  try {
+    const invalidate = Object.assign(() => { changes++; }, { retire() {} });
+    const subscription = await plugin.observeAction('status', {}, invalidate);
+    assert.equal(changes, 1);
+    assert.equal(runs, 0);
+    await subscription.dispose();
+    assert.equal(disposed, true);
+    // Host Action transport is the system boundary represented by this fixture.
+    const unavailableTransport = async () => { throw createPluginActionHandlerUnavailableFixture(); };
+    await assert.rejects(unavailableTransport(), { code: 'plugin_action_handler_missing' });
+  } finally { await plugin.dispose(); }
+});
 
 test('authors both cold Machine setup families with an exact setup-only Preset reference', async () => {
   const { machineSetupAuthoring: example } = await import('../dist/daemon.js');
@@ -22,6 +68,116 @@ test('authors both cold Machine setup families with an exact setup-only Preset r
     machineRecipes: [{ ...recipe, revision: '2' }],
   } };
   assert.equal(parsePluginManifest(mismatched).ok, false);
+});
+
+test('reads private host-health evidence through canonical public parsers without accepting foreign or mismatched content', async () => {
+  const { healthNoticeAuthoring: example } = await import('../dist/daemon.js');
+  const service = { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+    environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' };
+  const source = { kind: 'host', topic: 'service_health', subject: service };
+  const page = { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine' }, service };
+  const content = { v: 1, source, page, type: 'update', healthPhase: 'open', resolved: false, body: 'Untrusted log evidence' };
+  const artifact = { artifactId: 'notice', ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+    header: { ...content, kind: 'account_notice.v1', title: 'db unavailable', status: 'open' }, body: JSON.stringify(content),
+    revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 };
+  // Public parsers return JSON records with null prototypes; compare their wire values.
+  assert.deepEqual(JSON.parse(JSON.stringify(example.readServiceHealthEvidence({ artifact }, 'owner'))), { source, page, body: content.body });
+  assert.equal(example.readServiceHealthEvidence({ artifact }, 'other'), null);
+  assert.equal(example.readServiceHealthEvidence({ artifact: { ...artifact, publicAudience: 'retained' } }, 'owner'), null);
+  assert.equal(example.readServiceHealthEvidence({ artifact: { ...artifact, body: JSON.stringify({ ...content, body: 'Changed' }) } }, 'owner'), null);
+});
+
+test('authors a Machine destination and reads its exact mounted identity through public exports', async () => {
+  const { manifest, machinePageAuthoring: example } = await import('../dist/daemon.js');
+  const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+  const { createPluginUiTestkit, createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const parsed = parsePluginManifest(manifest);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed));
+  const page = parsed.manifest.contributes.ui.views.find(view => view.id === 'review-machine-page');
+  assert.ok(page, 'the external example must contribute a real Machine page');
+  assert.equal(page.container, 'appPage');
+  assert.deepEqual(page.target, { kind: 'machine' });
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'machine-author', mountNonce: 'machine-author-mount' },
+    authorPlugin: { id: manifest.id, version: manifest.version },
+    surface: { kind: 'external-machine-author' },
+    surfaceContext: createSurfaceContextFixture({
+      mount: { kind: 'destination', destination: { pluginId: manifest.id, localId: page.id }, container: 'appPage' },
+      target: { kind: 'machine', serverId: 'home-machine-author', machineId: 'machine-author' },
+    }),
+    adapter: { async mount() { return { async snapshot() { return { revision: 1, nodes: [] }; },
+      async update() {}, async invoke() {}, async dispose() {} }; } },
+  });
+  try {
+    assert.deepEqual(await example.readMachinePageTarget(fixture.context.hostApi), {
+      kind: 'machine', serverId: 'home-machine-author', machineId: 'machine-author',
+    });
+    await fixture.retire('machine-authority-withdrawn');
+    await assert.rejects(example.readMachinePageTarget(fixture.context.hostApi), { code: 'ui_host_unavailable' });
+  } finally { await fixture.dispose(); }
+  const mismatched = { ...manifest, contributes: { ...manifest.contributes, ui: { ...manifest.contributes.ui,
+    views: manifest.contributes.ui.views.map(view => view.id === page.id ? { ...view, target: { kind: 'services' } } : view),
+  } } };
+  assert.equal(parsePluginManifest(mismatched).ok, false);
+});
+
+test('authors a portable Project page through the public View contract', async () => {
+  const { manifest } = await import('../dist/daemon.js');
+  const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+  const parsed = parsePluginManifest(manifest);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed));
+  const page = parsed.manifest.contributes.ui.views.find(view => view.id === 'review-project-page');
+  assert.ok(page, 'the external example must contribute a real Project page');
+  assert.equal(page.container, 'appPage');
+  assert.deepEqual(page.target, { kind: 'project' });
+  assert.equal(page.renderer, 'review-project-page-native');
+  assert.equal(page.column, undefined);
+  assert.equal(page.widgetAreas, undefined);
+});
+
+test('files a review Session through typed public section Actions without replaying deferred or unknown effects', async () => {
+  const { sessionSectionAuthoring: example } = await import('../dist/daemon.js');
+  assert.ok(example, 'the public author build must expose the Section Action consumer');
+  const sections = [];
+  const assignments = new Map();
+  const controller = new AbortController();
+  let disposition = 'acknowledged';
+  // The host Actions service is the genuine boundary. The example owns no transport or Account state.
+  const actions = { async execute(actionId, input, options) {
+    assert.equal(options.signal, controller.signal);
+    options.signal.throwIfAborted();
+    if (actionId === 'session.sections.list') return { sections: [...sections] };
+    if (actionId === 'session.sections.create') {
+      if (disposition === 'approval') return { kind: 'approval_request_created', artifactId: 'approval-a', actionId };
+      if (disposition === 'unknown') throw Object.assign(new Error('Outcome is unknown'), { code: 'action_outcome_unknown' });
+      const section = { sectionId: 'review-section', sortKey: 'a0', displayState: {
+        status: 'available', value: { name: input.name, icon: input.icon ?? null },
+      } };
+      sections.push(section);
+      return { section };
+    }
+    assert.equal(actionId, 'session.section.set');
+    const previousSectionId = assignments.get(input.sessionId) ?? null;
+    assignments.set(input.sessionId, input.sectionId);
+    return { ...input, previousSectionId };
+  } };
+  const result = await example.fileReviewSessionInNewSection(actions, 'session-a', {
+    name: 'Review', icon: 'checkmark-circle-outline',
+  }, { signal: controller.signal });
+  assert.deepEqual(result.sections, []);
+  assert.equal(result.section.sectionId, 'review-section');
+  assert.deepEqual(result.assignment, { sessionId: 'session-a', sectionId: 'review-section', previousSectionId: null });
+  assert.equal(assignments.get('session-a'), 'review-section');
+  disposition = 'approval';
+  assert.equal((await example.fileReviewSessionInNewSection(actions, 'session-b', { name: 'Deferred' },
+    { signal: controller.signal })).kind, 'approval_request_created');
+  assert.equal(assignments.has('session-b'), false);
+  assert.equal(sections.length, 1);
+  disposition = 'unknown';
+  await assert.rejects(example.fileReviewSessionInNewSection(actions, 'session-c', { name: 'Unknown' },
+    { signal: controller.signal }), { code: 'action_outcome_unknown' });
+  assert.equal(assignments.has('session-c'), false);
+  assert.equal(sections.length, 1);
 });
 
 test('authors independently bound UsageQuery fields and subscribes to their admitted host read', async () => {
@@ -115,11 +271,11 @@ test('invokes the public Coach Resource and Action and refuses denied or retired
     const resource = testkit.registration('resources', 'findings');
     assert.ok(resource);
     const controller = new AbortController();
-    assert.deepEqual(JSON.parse(await resource.read({ signal: controller.signal })), example.finding);
+    assert.deepEqual(JSON.parse(await resource.read(createTestResourceInvocationContext({ signal: controller.signal }))), example.finding);
     assert.deepEqual(JSON.parse(JSON.stringify(await testkit.invokeAction(example.inspectAction.localId, {}))), example.finding);
     await assert.rejects(deniedCaller.invokeAction('inspect', {}), { code: 'plugin_action_unavailable' });
     controller.abort();
-    assert.throws(() => resource.read({ signal: controller.signal }), { name: 'AbortError' });
+    assert.throws(() => resource.read(createTestResourceInvocationContext({ signal: controller.signal })), { name: 'AbortError' });
     await testkit.dispose();
     await assert.rejects(testkit.invokeAction(example.inspectAction.localId, {}), { code: 'plugin_testkit_disposed' });
   } finally { await deniedCaller.dispose(); await testkit.dispose(); }
@@ -157,6 +313,19 @@ test('retains the portable production reference package contract', async () => {
   assert.equal(typeof module.activate, 'function');
   assert.equal(manifest.id, 'examples.public-sdk-review-assistant');
   assert.deepEqual(manifest.contributes.resources, [
+    {
+      id: 'review-repositories',
+      source: 'dynamic',
+      kind: 'config',
+      scope: 'global',
+      contentType: 'application/json',
+    },
+    {
+      id: 'i18n-en',
+      kind: 'asset',
+      path: 'resources/i18n/en.json',
+      contentType: 'application/json',
+    },
     {
       id: 'review-guide',
       source: 'packaged',
@@ -266,7 +435,9 @@ test('retains the portable production reference package contract', async () => {
   // contribution: a stable qualified surface identity plus the declared
   // renderer chain, with no destination, instance policy or placement.
   assert.deepEqual(
-    manifest.contributes.ui.views.filter((view) => view.container === 'widget'),
+    manifest.contributes.ui.views.filter((view) => view.container === 'widget')
+      .map(({ id, container, target, renderer, fallbackRenderers, title }) =>
+        ({ id, container, target, renderer, fallbackRenderers, title })),
     [
       {
         id: 'review-status-widget',
@@ -278,6 +449,11 @@ test('retains the portable production reference package contract', async () => {
       },
     ],
   );
+  for (const widget of manifest.contributes.ui.views.filter((view) => view.container === 'widget')) {
+    for (const unsupported of ['destination', 'instancePolicy', 'placement']) {
+      assert.equal(Object.hasOwn(widget, unsupported), false);
+    }
+  }
   // The widget's renderer chain keeps the trusted installed Host API. Both
   // members require `openSurface` and `publishCurrentUiContext`, which the
   // closed caller-authored HTML ceiling (`context | watchContext |
@@ -314,15 +490,14 @@ test('retains the portable production reference package contract', async () => {
     {
       id: 'review-summary',
       danger: 'safe',
-      surfaces: ['cli', 'agent', 'ui'],
+      surfaces: ['cli', 'agent', 'mcp', 'ui'],
       target: 'daemon',
       scopes: ['global'],
     },
   );
-  const reviewSummaryTool = manifest.contributes.tools.find((tool) => tool.id === 'review-summary-tool');
   assert.deepEqual(
-    { surfaces: reviewSummaryTool.surfaces, action: reviewSummaryTool.action },
-    { surfaces: ['agent', 'mcp'], action: 'review-summary' },
+    { name: reviewSummary.tool.name, path: reviewSummary.cli.path, exposure: reviewSummary.toolExposure },
+    { name: 'review_summary', path: ['review', 'summarize'], exposure: { agent: 'direct', mcp: 'direct' } },
   );
   const nativeSurface = await readFile(new URL('../ui/reviewPanelPortable.tsx', import.meta.url), 'utf8');
   assert.match(nativeSurface, /readSessionWidgetMount/u);

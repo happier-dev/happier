@@ -1342,18 +1342,6 @@ export type BotTemplatesActionInputById = {
             };
             initialTriggers?: undefined | {
                 trigger: {
-                    enabled: boolean;
-                    kind: 'sessionLifecycle';
-                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-                    policy: {
-                        kind: 'everyMatch';
-                    } | {
-                        kind: 'firstMatch';
-                    } | {
-                        kind: 'nextMatches';
-                        count: number;
-                    };
-                } | {
                     kind: 'ciFailed' | 'prComment';
                     enabled: boolean;
                     pullRequest?: undefined | {
@@ -1481,6 +1469,18 @@ export type BotTemplatesActionInputById = {
                         timezone: null | string;
                     };
                     enabled: boolean;
+                } | {
+                    kind: 'sessionLifecycle';
+                    enabled: boolean;
+                    events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                    policy: {
+                        kind: 'everyMatch';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'nextMatches';
+                        count: number;
+                    };
                 } | {
                     source: {
                         kind: 'execution_run';
@@ -2875,7 +2875,7 @@ export type BotTemplatesActionResultById = {
             };
             failureCause?: undefined | {
                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                 code?: string | undefined;
                 retryable?: boolean | undefined;
                 requestId?: string | undefined;
@@ -2974,7 +2974,7 @@ export type BotTemplatesActionResultById = {
                 serviceId: string;
                 excluded: {
                     profileId: string;
-                    reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked';
+                    reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
                     retryAtMs?: null | number | undefined;
                 }[];
             };

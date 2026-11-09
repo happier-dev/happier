@@ -21,20 +21,34 @@ ingestion.
 Remove `setupSurface` to use the generic Action form without changing the source or runtime
 contract.
 
-`runRepositoryPushObserver` is the only provider-side observation owner. It passes each upstream
-fact to `admitCheckpointedPluginEventObservationV1`, which performs the complete current source
-scan, canonical admission, catalog reconciliation report, and per-source status report through
-public SDK Actions. A real provider persists or advances its own ordered cursor only after the
-helper returns `checkpointSafe`; an unsettled result must retain the same upstream occurrence for
-retry. While durable push is absent or only Preview, recover a pre-durable loss by observing the
+`runRepositoryPushObserver` supplies a finite adapter to the daemon-only public
+`runCheckpointedPluginEventObserverV1` runner. The SDK owns the current source catalog,
+host-stamped materialization assignment, admission, invalidation and cancellation. The adapter
+uses the definitions admitted for that finite cycle; edits are adopted on the next
+cycle, while the current invocation signal cancels local work. Server Event
+admission and provider cursor CAS remain authoritative.
+The adapter
+decodes the selected repository and returns its deterministic feed once; it supplies no timer
+or invented polling period. Its save port logs settlement only after all observations are safe;
+this example has no durable provider cursor. A real source keeps its existing cursor/CAS there
+and derives its next eligibility from provider headers or a deliberate source period. An
+unsettled admission must retain the same occurrence for retry.
+The settlement log preserves `disposition.admissions`: each observation's exact selector,
+transport scope and server result. `checkpointSafe` alone does not prove execution: a filtered
+or stale observation can safely settle without admitting a Run. Admission-only effects require
+an exact matching `admitted` or `rejoined` result; absent metadata fails closed. `rejoined`
+proves prior admission, not a new opening, so retain the effect owner's existing opening and
+idempotency checks.
+While durable push is absent or only Preview, recover a pre-durable loss by observing the
 same provider occurrence again through redelivery or the next checkpointed pull. For GitHub-style
 webhooks, normalize redeliveries to the same stable occurrence id and never use the webhook attempt
-as the Automation dedupe key. After the deterministic feed settles, the example stays idle until
-its exact plugin generation is retired so the host never mistakes normal return for a healthy
-observer.
+as the Automation dedupe key. After the deterministic feed settles, `nextEligibleAt: null` leaves
+the SDK waiting for authenticated invalidation or cancellation, with no idle timer. An absent
+or mismatched own materialization produces no occurrence, even if a caller claims another one.
 
-The adjacent behavior test invokes this source module directly and exercises that list → catalog
-status → admit → source status sequence without assuming a prebuilt `dist` tree. The deeper CLI
+The adjacent behavior test invokes this source module directly and checks assigned-source
+admission, empty-catalog idleness and cancellation through public SDK Actions. The SDK owner
+suite also checks the maintained example's wrong-host refusal. The deeper CLI
 host integration remains in
 `apps/cli/src/plugins/authoring/automationEventExternalSource.fixture.test.ts`; persisted-Run and
 loaded-product proof belongs to the composed Automation validation lane.

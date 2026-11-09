@@ -276,14 +276,6 @@ export type SettingsDeclarationsActionInputById = {
             kind: 'collection_space';
             entityKind: 'sessionWork';
             mutation: {
-                op: 'associateTag';
-                spaceId: string;
-                tag: {
-                    serverId: string;
-                    accountId: string;
-                    tagId: string;
-                };
-            } | {
                 op: 'create';
                 space: {
                     id: string;

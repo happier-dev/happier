@@ -49,18 +49,18 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
+                        vault: {
                             id: string;
-                            title: string;
-                            kind: string;
+                            name: string;
                         };
                         item: {
                             id: string;
                             title: string;
                         };
-                        vault: {
+                        field: {
                             id: string;
-                            name: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };
@@ -156,18 +156,18 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
+                        vault: {
                             id: string;
-                            title: string;
-                            kind: string;
+                            name: string;
                         };
                         item: {
                             id: string;
                             title: string;
                         };
-                        vault: {
+                        field: {
                             id: string;
-                            name: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };
@@ -314,6 +314,12 @@ export type SavedSecretSharingActionInputById = {
                                     machineId: string;
                                 };
                                 directory?: string | undefined;
+                                directoryIntent?: undefined | {
+                                    kind: 'managed';
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                };
                             };
                             checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                             codingPromptBehaviorOverrides?: undefined | {
@@ -337,6 +343,20 @@ export type SavedSecretSharingActionInputById = {
                             id: string;
                             name: string;
                             description?: string | undefined;
+                            placement?: 'ask' | 'automatic' | undefined | {
+                                fixed: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                                directory?: string | undefined;
+                                directoryIntent?: undefined | {
+                                    kind: 'managed';
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                };
+                            };
+                            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
                             environmentVariables?: undefined | {
                                 name: string;
                                 value: string;
@@ -1676,18 +1696,18 @@ export type SavedSecretSharingActionInputById = {
                         account: string;
                         reference: string;
                         metadata?: undefined | {
-                            field: {
+                            vault: {
                                 id: string;
-                                title: string;
-                                kind: string;
+                                name: string;
                             };
                             item: {
                                 id: string;
                                 title: string;
                             };
-                            vault: {
+                            field: {
                                 id: string;
-                                name: string;
+                                title: string;
+                                kind: string;
                             };
                         };
                     };
@@ -1832,6 +1852,7 @@ export type SavedSecretSharingActionInputById = {
                 v: unknown;
             };
             metadata: {
+                kind?: 'oauth' | 'token' | undefined;
                 providerIdentity?: undefined | {
                     accountId?: null | string | undefined;
                     email?: null | string | undefined;
@@ -1889,6 +1910,7 @@ export type SavedSecretSharingActionInputById = {
                 v: unknown;
             };
             metadata: {
+                kind?: 'oauth' | 'token' | undefined;
                 providerIdentity?: undefined | {
                     accountId?: null | string | undefined;
                     email?: null | string | undefined;
@@ -1973,18 +1995,18 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
+                        vault: {
                             id: string;
-                            title: string;
-                            kind: string;
+                            name: string;
                         };
                         item: {
                             id: string;
                             title: string;
                         };
-                        vault: {
+                        field: {
                             id: string;
-                            name: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };

@@ -196,6 +196,7 @@ export type { AgentExperimentalVendorResumeSupportContributionV1 } from '../../a
 export type { AgentExperimentalVendorResumeSupportInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandBuildInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandPluginSettingsV1 } from '../../agentRuntime/projections.js';
+export type { AgentAccountSettingsContributionV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandBuildOptionsResultV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandDeclarationV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandOptionsV1 } from '../../agentRuntime/projections.js';
@@ -459,7 +460,7 @@ export { createAcpToolNameInferencePreset } from '../../agentRuntime/projections
 export { createAgentSessionPreAdmissionBuffer } from '../../agentRuntime/projections.js';
 export { createFiniteExecutionRunHostRuntime } from '../../agentRuntime/projections.js';
 export { createExecutionRunHostBackendFromConversationRuntime } from '../../agentRuntime/projections.js';
-export { isRuntimeConfigUpdateOutcomeApplied } from '../../agentRuntime/projections.js';
+export { isRuntimeConfigUpdateOutcomeApplied, isRuntimeConfigUpdateOutcomeDeferred } from '../../agentRuntime/projections.js';
 export { normalizeAcpPermissionIntent } from '../../agentRuntime/projections.js';
 export { parsePermissionIntentAlias } from '../../agentRuntime/projections.js';
 export { resolveAcpToolPermissionPolicy } from '../../agentRuntime/projections.js';
@@ -469,8 +470,8 @@ export { resolveTerminalPromptWriteTimeoutMs } from '../../runtime/promptWriteTi
 export { isSessionPermissionShellToolName, matchSessionPermissionToolIdentifier, parseSessionPermissionToolIdentifier } from '../../agentRuntime/projections.js';
 
 export { TERMINAL_BRACKETED_PASTE_START, TERMINAL_BRACKETED_PASTE_END } from '../../agentRuntime/projections.js';
-
 export { resolvePromptCacheLastUseAtMs } from '../../agentRuntime/promptCacheClock.js';
 export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';
 
-export type { AgentSessionIdleCompactionPreferenceV1, UsagePromptCache } from '../../agentRuntime/projections.js';
+export type { AgentSessionIdleCompactionPreferenceV1 } from '../../agentRuntime/session.js';
+export type { UsagePromptCache } from '../../usage.js';

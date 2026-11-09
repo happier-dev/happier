@@ -4,6 +4,7 @@ import type { PluginSourceCustodyV1 as ProtocolPluginSourceCustodyV1 } from '@ha
 import type { PluginAutomationRunCause } from './automations.js';
 import type { PluginServices } from './services/index.js';
 import type { PresentationService } from './interactions.js';
+import type { ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import type {
     PluginIdentity,
     PluginInvocationContributionIdentity,
@@ -130,6 +131,8 @@ export interface PluginInvocationContext {
     readonly invocationId?: string;
     readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{ id: string }>;
+    /** Exact declared Session operands admitted by the host Action executor. */
+    readonly sessionTargetsV1?: ActionResolvedSessionTargetsV1;
     /**
      * A bounded, host-stamped snapshot resolved immediately before a
      * whole-message Action dispatch. It is never Action input and absent for

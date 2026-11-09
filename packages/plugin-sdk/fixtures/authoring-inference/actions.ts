@@ -5,6 +5,7 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { definePlugin } from '../../src/definePlugin.js';
+import { ProtocolValidationError } from '@happier-dev/plugin-sdk/protocol';
 import {
   defineProtocolLiteral,
   defineProtocolObject,
@@ -27,6 +28,11 @@ import type {
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { getPluginMachineExecutionRouting, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+// Plugin authors can reject invalid input with the canonical SDK constructor.
+export const authoredValidationError = new ProtocolValidationError([
+  { path: ['input'], code: 'invalid_value', message: 'Invalid action input' },
+]);
 
 type FixtureContributionRef = Readonly<{
   pluginId: string;
@@ -129,7 +135,6 @@ class ActionsBoundaryFixture implements ActionsService {
     throw new PluginError({ code: 'plugin_action_read_observation_unavailable',
       message: 'The external fixture has no connected read observer owner' });
   }
-
 
   execute<K extends PluginInvocableActionId>(
     actionId: K,

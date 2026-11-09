@@ -1,1 +1,1 @@
-export { createConnectedAccountRequestAuthClient } from '../requestAuthClient.js';
+export * from './index.public.js';

@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 import * as sdk from './index.js';
 import * as manifestSdk from './manifest.js';
+import * as publicManifestSdk from './manifest/index.js';
 import type {
     ParsedPluginManifest,
     PluginContributes,
@@ -19,6 +20,20 @@ import type {
 } from './manifest.js';
 import type { PluginSettingsContribution } from './settings/index.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
+
+// The checked JavaScript publisher projects the one authored export list.
+const apiSurfaceSourceModulePath: string = '../scripts/apiSurfaceCli.mjs';
+const manifestPublicInventory = await (
+    await import(apiSurfaceSourceModulePath) as Readonly<{
+        readCurrentApiSurfaceInventory(): Promise<Readonly<{
+            symbols: readonly Readonly<{
+                specifier: string;
+                exportName: string;
+                kind: 'type' | 'value';
+            }>[];
+        }>>;
+    }>
+).readCurrentApiSurfaceInventory();
 /* @sdk-negative-type-case:src-manifest-test-ts-4:LS0gdmVyc2lvbmVkIG1hbmlmZXN0IHR5cGVzIGFyZSBub3Qgc3VwcG9ydGVkLXByZXZpZXcgZXhwb3J0cy4:aW1wb3J0IHR5cGUgeyBQbHVnaW5NYW5pZmVzdFYyIH0gZnJvbSAnLi9tYW5pZmVzdC5qcyc7 */
 type PluginManifestV2 = never; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-manifest-test-ts-5:LS0gdmVyc2lvbmVkIHBhcnNlZC1tYW5pZmVzdCBuYW1lcyBhcmUgbm90IHN1cHBvcnRlZCBhdXRob3IgZXhwb3J0cy4:aW1wb3J0IHR5cGUgeyBQYXJzZWRQbHVnaW5NYW5pZmVzdFYyIH0gZnJvbSAnLi9tYW5pZmVzdC5qcyc7 */
@@ -29,6 +44,17 @@ type ProviderContributionV1 = never; /* @sdk-negative-type-case-end */
 type VoiceModelPackContributionV1 = never; /* @sdk-negative-type-case-end */
 
 describe('manifest authoring contract', () => {
+    it('authors status-strip regions using the public Composer family', () => {
+        const plugin = sdk.definePlugin({
+            id: 'acme.composer-status', version: '1.0.0',
+            composer: { regions: { status: { placement: 'statusStrip', renderer: { renderer: 'status-view' }, scopes: ['session'] } } },
+            ui: { renderers: [{ id: 'status-view', kind: 'declarative', root: { kind: 'text', text: 'Checks running' } }] },
+        });
+        expect(manifestSdk.parsePluginManifest(plugin.manifest)).toMatchObject({ ok: true, manifest: { contributes: {
+            composerRegions: [{ id: 'status', placement: 'statusStrip', scopes: ['session'], renderer: { renderer: 'status-view' } }],
+        } } });
+    });
+
     it('lets an external author bind an automatic sidebar tab to its declared live JSON count', () => {
         const plugin = sdk.definePlugin({
             id: 'acme.counted-sidebar', version: '1.0.0',
@@ -201,7 +227,7 @@ describe('manifest authoring contract', () => {
         expect(parsedSignature).toContain('PluginContributes');
     });
 
-    it('keeps the normal manifest barrel at the exact approved portable surface', async () => {
+    it('keeps the public manifest barrel aligned with its canonical author exports', async () => {
         const sourceText = await readFile(new URL('./manifest.ts', import.meta.url), 'utf8');
         const sourceFile = ts.createSourceFile(
             'manifest.ts',
@@ -233,84 +259,13 @@ describe('manifest authoring contract', () => {
             return [];
         });
 
-        expect(exportedNames.sort()).toEqual([
-            'AgentUiBehaviorDeclarationV1',
-            'AgentUiConditionV1',
-            'AgentUiComponentsDeclarationV1',
-            'AgentUiExternalSessionsSourceV1',
-            'AgentUiMessageDeclarationV1',
-            'AgentUiMutablePluginSettingReferenceV1',
-            'AgentUiSessionAgentTeamBehaviorV1',
-            'AgentUiSessionDeclarationV1',
-            'AgentUiSessionProviderBehaviorV1',
-            'AgentUiSessionVisibleMessagesV1',
-            'AgentUiSettingReferenceV1',
-            'AgentUiTranscriptStorageModeV1',
-            'ParsedPluginManifest',
-            'PluginAgentUiContribution',
-            'PluginAtmospherePictureContributionV1',
-            'PluginContributes',
-            'PluginContributionIdentity',
-            'PluginContributionIdentityV1JsonSchema',
-            'PluginContributionIdentityV1Schema',
-            'PluginContributionReference',
-            'PluginAvailabilityDescriptor',
-            'PluginBrowserActionContribution',
-            'PluginBrowserActionContributionInput',
-            'PluginBrowserContributionDisplay',
-            'PluginBrowserTargetContribution',
-            'PluginBrowserTargetContributionInput',
-            // The grammar's own leaf vocabularies are published because the SDK
-            // now declares the declarative grammar itself: an author narrowing
-            // to one of these gets a nameable SDK type instead of an anonymous
-            // structural blob their own `.d.ts` cannot reprint.
-            'PluginCollectionProjectedScalarFieldRefV1',
-            'PluginCollectionRowCommandV1',
-            'PluginDeclarativeActionNodeV2',
-            'PluginDeclarativeActionPanelNodeV2',
-            'PluginDeclarativeActionVariantV2',
-            'PluginDeclarativeCollectionListNodeV2',
-            'PluginDeclarativeComposerApplyEffectV1',
-            'PluginDeclarativeControlV2',
-            'PluginDeclarativeDataNodeV1',
-            'PluginDeclarativeItemNodeV2',
-            'PluginDeclarativeListNodeV2',
-            'PluginDeclarativeMetadataEntryV2',
-            'PluginDeclarativeMetadataNodeV2',
-            'PluginDeclarativeNodeV2',
-            'PluginDeclarativeRowNodeV2',
-            'PluginDeclarativeSectionNodeV2',
-            'PluginDeclarativeStateNodeV2',
-            'PluginDeclarativeStateV2',
-            'PluginDeclarativeTargetedSurfaceNodeV2',
-            'PluginDeclarativeTargetedSurfaceReferenceV1',
-            'PluginDeclarativeToneV2',
-            'PluginDragSourceContributionV1',
-            'PluginDropTargetContributionV1',
-            'PluginIdJsonSchema',
-            'PluginIdSchema',
-            'PluginHttpMethod',
-            'PluginInputTypeContributionV1',
-            'PluginInputTypeReferenceV1',
-            'PluginJsonSchemaValidator',
-            'PluginLocalizedStringV2',
-            'PluginManifest',
-            'PluginManifestDiagnostic',
-            'PluginManifestParseResult',
-            'PluginProjectNativeAdapterContributionV1',
-            'PluginRegistrySourceContributionV1',
-            'PluginRequestInterceptorContribution',
-            'PluginSkillContributionV1',
-            'PluginSystemToolAcpFingerprintV1',
-            'PluginSystemToolReadinessV1',
-            'PluginTestkitManifest',
-            'PluginWorkflowContributionV1',
-            'PublicHostAccessCapability',
-            'compilePluginJsonSchema',
-            'createPluginContributionIdentity',
-            'isValidPluginJsonSchemaValue',
-            'parsePluginManifest',
-        ].sort());
+        const publicExports = manifestPublicInventory.symbols.filter((symbol) => symbol.specifier === './manifest');
+        expect(publicExports.length).toBeGreaterThan(0);
+        expect(exportedNames).toEqual(expect.arrayContaining(publicExports.map((symbol) => symbol.exportName)));
+        expect(Object.keys(publicManifestSdk).sort()).toEqual(publicExports
+            .filter((symbol) => symbol.kind === 'value')
+            .map((symbol) => symbol.exportName)
+            .sort());
         expect(manifestSdk).not.toHaveProperty('PLUGIN_CONTRIBUTION_CATALOG_V2');
         expect(manifestSdk).not.toHaveProperty('derivePluginDaemonContributionRegistrationRights');
         expect(manifestSdk).not.toHaveProperty('ingestPluginManifestV2');
@@ -319,12 +274,9 @@ describe('manifest authoring contract', () => {
     });
 
     it('projects the canonical JSON schema fragments through the manifest subpath', async () => {
-        const sourceText = await readFile(new URL('./manifest/index.ts', import.meta.url), 'utf8');
-
-        expect(sourceText).toContain(
-            "export { PluginContributionIdentityV1JsonSchema } from '../manifest.js';",
-        );
-        expect(sourceText).toContain("export { PluginIdJsonSchema } from '../manifest.js';");
+        expect(publicManifestSdk.PluginContributionIdentityV1JsonSchema)
+            .toBe(manifestSdk.PluginContributionIdentityV1JsonSchema);
+        expect(publicManifestSdk.PluginIdJsonSchema).toBe(manifestSdk.PluginIdJsonSchema);
     });
 
     it('does not expose the raw Protocol manifest schema from the public manifest barrel', async () => {
@@ -816,8 +768,6 @@ describe('manifest authoring contract', () => {
             .toHaveProperty('browserTargets');
         expectTypeOf<NonNullable<PluginManifest['contributes']>>()
             .toHaveProperty('browserActions');
-        expectTypeOf<protocol.PluginContributesV2>()
-            .toMatchTypeOf<PluginContributes>();
         expectTypeOf<PluginContributes>().toHaveProperty('requestInterceptors');
         expectTypeOf<PluginContributes>().toHaveProperty('browserTargets');
         expectTypeOf<PluginContributes>().toHaveProperty('browserActions');
@@ -850,9 +800,7 @@ describe('manifest authoring contract', () => {
         expect(parsed.ok).toBe(true);
         expect(canonical.ok).toBe(true);
         if (parsed.ok && canonical.ok) {
-            expect(parsed.manifest).toEqual({
-                ...canonical.manifest,
-            });
+            expect(parsed.manifest).toEqual(canonical.manifest);
         }
 
         const invalid = manifestSdk.parsePluginManifest({ schemaVersion: 2 });

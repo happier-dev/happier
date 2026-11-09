@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
-
-import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import ts from 'typescript';
 
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -226,6 +224,42 @@ test('rejects metadata that does not join a canonical public subpath', () => {
   );
 });
 
+test('source publication spec closes the public testkit mount contract family without per-symbol posture', async () => {
+  const packageRoot = resolve(import.meta.dirname, '..');
+  const publicSpecText = await readFile(resolve(packageRoot, 'src/testing/index.public.ts'), 'utf8');
+  const publicSpec = ts.createSourceFile(
+    'src/testing/index.public.ts',
+    publicSpecText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const mountContractSymbols = publicSpec.statements
+    .filter((statement) => (
+      ts.isExportDeclaration(statement)
+      && statement.isTypeOnly
+      && ts.isStringLiteralLike(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === './uiHost.js'
+      && statement.exportClause
+      && ts.isNamedExports(statement.exportClause)
+    ))
+    .flatMap((statement) => statement.exportClause.elements.map((element) => element.name.text))
+    .filter((symbol) => symbol.startsWith('PluginUiTestkitMount'))
+    .sort((left, right) => left.localeCompare(right));
+
+  assert.deepEqual(mountContractSymbols, [
+    'PluginUiTestkitMountAvailability',
+    'PluginUiTestkitMountInput',
+    'PluginUiTestkitMountOptions',
+    'PluginUiTestkitMountResult',
+  ]);
+  assert.doesNotMatch(publicSpecText, /@(preview|experimental|stable|incubating)\b/u);
+  assert.match(
+    await readFile(resolve(packageRoot, 'src/testing/uiHost.ts'), 'utf8'),
+    /^\/\*\* @moduleRealm daemon \*\//mu,
+  );
+});
+
 test('derives the portable Account service subset from the public invocation context', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const [servicesSource, accountContextSource] = await Promise.all([
@@ -426,7 +460,6 @@ test('plans the current author-source matrix through the sole publisher output',
   assert.equal(matrix.subpaths.some((row) => row.specifier === './automations'), true);
   assert.equal(matrix.subpaths.some((row) => row.specifier === './protocol'), true);
   assert.equal(matrix.subpaths.some((row) => row.specifier === './contributions'), true);
-
   assert.deepEqual(matrix.services.find((row) => row.serviceId === 'targetedContributions'), {
     serviceId: 'targetedContributions',
     property: 'targetedContributions',
@@ -443,7 +476,7 @@ test('plans the current author-source matrix through the sole publisher output',
     property: 'machineConnectorSecrets',
     publicType: 'MachineConnectorSecretsService',
     authorEntrypoints: ['./secrets'],
-    realms: ['any'],
+    realms: ['cli'],
     accountInvocation: { members: 'all' },
     producer: 'src/secrets.ts',
     lifecycle: 'invocation-scoped',

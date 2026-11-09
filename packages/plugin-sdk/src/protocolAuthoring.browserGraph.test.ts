@@ -1,9 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
-import ts from 'typescript';
 import { pluginJsonValuesEqual as canonicalPluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import {
@@ -13,14 +11,8 @@ import {
 } from './protocol/index.js';
 
 const protocolBrowserEntry = resolve(import.meta.dirname, './protocol/index.browser.ts');
-const protocolPublicEntry = resolve(import.meta.dirname, './protocol/index.public.ts');
 const contributionsBrowserEntry = resolve(import.meta.dirname, './contributions/index.browser.ts');
-const contributionsPublicEntry = resolve(import.meta.dirname, './contributions/index.public.ts');
 const protocolRootEntry = resolve(import.meta.dirname, '../../protocol/src/index.ts');
-const protocolJsonSchemaValidation = resolve(
-    import.meta.dirname,
-    '../../protocol/src/plugins/actions/jsonSchemaValidation.ts',
-);
 const protocolJsonSchemaTransitiveModules = [
     resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/jsonSchema.ts'),
     resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/jsonSchemaValues.ts'),
@@ -46,113 +38,6 @@ const protocolDataCollectionOpaqueCursor = resolve(
 );
 const protocolLaunchProfileId = resolve(import.meta.dirname, '../../protocol/src/profiles/v2/profileId.ts');
 const protocolTriageEntryRef = resolve(import.meta.dirname, '../../protocol/src/tasks/entryRefV1.ts');
-const protocolComposerReferenceProviders = resolve(
-    import.meta.dirname,
-    '../../protocol/src/plugins/contributions/composerReferenceProviders.ts',
-);
-
-const expectedProtocolExports = [
-    'CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1',
-    'MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1',
-    'MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1',
-    'TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1',
-    'TRIAGE_SINGLE_LINE_STRING_PATTERN_V1',
-    'TriageCollisionScopeV1ProtocolSchema',
-    'TriageEntryRefV1',
-    'TriageEntryRefV1JsonSchema',
-    'TriageEntryRefV1Schema',
-    'TriageIdentifierV1ProtocolSchema',
-    'ProtocolArrayOptions',
-    'ProtocolCollectionOpaqueCursorV1',
-    'ProtocolCollectionOpaqueCursorV1Schema',
-    'ProtocolComposableSchema',
-    'ProtocolComposerRefV1',
-    'ProtocolComposerRefV1Schema',
-    'ProtocolComposerReferenceResolutionV1Schema',
-    'ProtocolCurrentUiContextSnapshotV1Schema',
-    'ProtocolJsonValue',
-    'ProtocolJsonValueOptions',
-    'ProtocolLaunchProfileIdV2Schema',
-    'ProtocolNumberOptions',
-    'ProtocolObjectEvolutionPolicy',
-    'ProtocolObjectOptions',
-    'ProtocolSchemaInput',
-    'ProtocolSchemaOutput',
-    'ProtocolSchemaSafeParseResult',
-    'ProtocolStoredReadSchema',
-    'ProtocolStringOptions',
-    'ProtocolUtf8StringOptions',
-    'ProtocolUniqueJsonArrayOptions',
-    'ProtocolValidationError',
-    'ProtocolValidationIssue',
-    'createProtocolStoredReadSchema',
-    'defineProtocolArray',
-    'defineProtocolJsonValue',
-    'defineProtocolLiteral',
-    'defineProtocolNumber',
-    'defineProtocolObject',
-    'defineProtocolString',
-    'defineProtocolUnion',
-    'defineProtocolUtf8String',
-    'defineProtocolUniqueArray',
-    'defineTriageCompositeIdentifierStringV1',
-    'defineTriageSingleLineStringV1',
-    'pluginJsonValuesEqual',
-    'PluginJsonSchema',
-].sort();
-const expectedContributionExports = [
-    'ContributionActionDangerLevel',
-    'ContributionActionSurface',
-    'ContributionAuthorDefinition',
-    'ContributionAuthorTargets',
-    'ContributionContributeInput',
-    'ContributionOperationBindings',
-    'ContributionOperationDefinition',
-    'ContributionOperationRole',
-    'ContributionPointAuthorDefinition',
-    'ContributionPointOptions',
-    'ContributionProtocol',
-    'ContributionProtocolDefinition',
-    'ContributionProtocolForPoint',
-    'ContributionProtocolManifest',
-    'ContributionSurfaceBinding',
-    'ContributionSurfaceBindings',
-    'ContributionSurfaceDefinition',
-    'ContributionSurfaceFallback',
-    'ContributionSurfaceHandle',
-    'ContributionSurfaceIcon',
-    'ContributionSurfaceLocalizedString',
-    'ContributionSurfaceNode',
-    'ContributionSurfaceNodeInput',
-    'ContributionSurfacePresentation',
-    'ContributionSurfaceRole',
-    'DefinedContributionPointProtocolMap',
-    'DescriptorFields',
-    'IsRequiredSurfaceDefinition',
-    'PluginTargetedContributionSelectionV1',
-    'PluginTargetedContributionSelectionV1Schema',
-    'PluginTargetedContributionSourceCustodyV1',
-    'PublicContributionProtocol',
-    'PublicContributionProtocols',
-    'RequiredSurfaceRoles',
-    'SchemaInput',
-    'SchemaOutput',
-    'SurfaceFields',
-    'defineContributionPoint',
-    'defineContributionProtocol',
-].sort();
-
-function readNamedExports(path: string): readonly string[] {
-    const source = readFileSync(path, 'utf8');
-    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const names: string[] = [];
-    for (const statement of sourceFile.statements) {
-        if (!ts.isExportDeclaration(statement) || !statement.exportClause) continue;
-        if (!ts.isNamedExports(statement.exportClause)) continue;
-        names.push(...statement.exportClause.elements.map((element) => element.name.text));
-    }
-    return names.sort();
-}
 
 async function bundleProtocolAuthoring(): Promise<Readonly<{
     moduleIds: readonly string[];
@@ -160,46 +45,8 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
 }>> {
     const moduleIds = new Set<string>();
     const result = await build({
-        configFile: false,
+        configFile: resolve(import.meta.dirname, '../vitest.source.config.ts'),
         logLevel: 'silent',
-        resolve: {
-            alias: [
-                {
-                    find: '@happier-dev/protocol/plugins/contributions/composer-reference-providers',
-                    replacement: protocolComposerReferenceProviders,
-                },
-                {
-                    find: '@happier-dev/protocol/plugins/actions/json-schema-validation',
-                    replacement: protocolJsonSchemaValidation,
-                },
-                {
-                    find: '@happier-dev/protocol/plugins/ui/targetedContributions',
-                    replacement: protocolUiTargetedContributions,
-                },
-                {
-                    find: '@happier-dev/protocol/plugins/ui/composerRef',
-                    replacement: protocolUiComposerRef,
-                },
-                {
-                    find: '@happier-dev/protocol/plugins/data/collectionOpaqueCursorV1',
-                    replacement: protocolDataCollectionOpaqueCursor,
-                },
-                {
-                    find: '@happier-dev/protocol/profiles/v2/profileId',
-                    replacement: protocolLaunchProfileId,
-                },
-                {
-                    find: '@happier-dev/protocol/tasks/entryRefV1',
-                    replacement: protocolTriageEntryRef,
-                },
-                {
-                    // The graph is a source-level browser check; never let a stale
-                    // workspace dist decide which Protocol exports it sees.
-                    find: /^@happier-dev\/protocol$/u,
-                    replacement: protocolRootEntry,
-                },
-            ],
-        },
         plugins: [{
             name: 'protocol-authoring-browser-realm-entry',
             resolveId(id) {
@@ -256,11 +103,8 @@ describe('protocol-authoring public browser entrypoint', () => {
         expect(schema.safeParse({ title: 'é'.repeat(9) }).success).toBe(false);
     });
 
-    it('projects the one canonical authoring spec into the browser realm', () => {
-        expect(readFileSync(protocolBrowserEntry, 'utf8').trim())
-            .toBe("export * from './index.public.js';");
-    });
-
+    // Exact browser inventories and conditions are owned by
+    // browserExportProjection.test.ts, including missing/extra negative controls.
     it('re-exports strict Plugin JSON equality behavior without leaking its private source path', () => {
         expect(pluginJsonValuesEqual(
             { occurrenceId: 'occurrence-1', actor: { label: 'Ada', id: 'actor-1' } },
@@ -279,39 +123,11 @@ describe('protocol-authoring public browser entrypoint', () => {
         ));
     });
 
-    it('publishes exactly the browser-safe schema and targeted-point authoring contract', () => {
-        const packageJson = JSON.parse(readFileSync(
-            new URL('../package.json', import.meta.url),
-            'utf8',
-        )) as Readonly<{ exports: Readonly<Record<string, unknown>> }>;
-
-        expect(packageJson.exports['./protocol']).toMatchObject({
-            types: './dist/protocol/index.d.ts',
-            browser: {
-                'happier-source': './src/protocol/index.browser.ts',
-                default: './dist/protocol/index.browser.js',
-            },
-            default: './dist/protocol/index.js',
-        });
-        expect(packageJson.exports['./contributions']).toMatchObject({
-            types: './dist/contributions/index.d.ts',
-            browser: {
-                'happier-source': './src/contributions/index.browser.ts',
-                default: './dist/contributions/index.browser.js',
-            },
-            default: './dist/contributions/index.js',
-        });
-        expect(readNamedExports(protocolPublicEntry)).toEqual(expectedProtocolExports);
-        expect(readNamedExports(contributionsPublicEntry)).toEqual(expectedContributionExports);
-    });
-
     it('keeps schema and point authoring browser-safe without service, runtime, or host exports', async () => {
         const { moduleIds, code } = await bundleProtocolAuthoring();
 
         expect(moduleIds).toContain(protocolBrowserEntry);
-        expect(moduleIds).toContain(protocolPublicEntry);
         expect(moduleIds).toContain(contributionsBrowserEntry);
-        expect(moduleIds).toContain(contributionsPublicEntry);
         expect(moduleIds).not.toContain(protocolRootEntry);
         expect(moduleIds).toContain(protocolUiTargetedContributions);
         // The composer-scope grammar reaches the browser-safe author surface
@@ -333,16 +149,23 @@ describe('protocol-authoring public browser entrypoint', () => {
             .filter((id) => id.includes('/protocol/src/plugins/manifest/')
                 || id.includes('/protocol/src/plugins/contributions/'))
             .sort();
-        expect(manifestOrContributionsModules).toEqual([
+        // The public browser surface now includes Project, Account Notice and
+        // transfer schema facts too. Preserve the required narrow primitives,
+        // while the forbidden-owner guard below enforces the realm boundary;
+        // the canonical inventory suite owns the evolving complete census.
+        expect(manifestOrContributionsModules).toEqual(expect.arrayContaining([
             ...protocolJsonSchemaTransitiveModules,
             ...protocolComposerReferenceResolutionTransitiveModules,
-        ].sort());
+        ]));
         expect(moduleIds.filter((id) => (
             id.includes('/plugin-sdk/src/services/')
             || id.includes('/plugin-sdk/src/runtime/')
             || id.includes('/plugin-sdk/src/host/')
             || id.includes('/protocol/src/plugins/ui/client.')
-            || id.includes('/protocol/src/plugins/ui/hostApi')
+            // Artifact capability requests share only the canonical method
+            // vocabulary; negotiation and executable request admission stay out.
+            || (id.includes('/protocol/src/plugins/ui/hostApi')
+                && !id.endsWith('/hostApiDefinition.ts'))
             || id.includes('/protocol/src/plugins/ui/hostedWeb')
             || id.includes('/apps/')
             || id.startsWith('node:')

@@ -111,6 +111,11 @@ export type AgentSessionProviderTranscriptPublishRequest = Readonly<{
 }>;
 
 export interface AgentSessionHooksService {
+  /** Observe lifecycle evidence delivered by the Agent's owned in-process transport. */
+  observeSessionHook(request: Readonly<{
+    providerSessionId: string;
+    payload: AgentSessionHookProviderPayload;
+  }>): Promise<void>;
   startServer(request: AgentSessionHookServerStartRequest): Promise<AgentSessionHookServerHandle>;
   resolveForwarderAssets(): Promise<AgentSessionHookForwarderAssets>;
   createPluginDir(request: AgentSessionHookPluginDirCreateRequest): Promise<string>;
@@ -437,9 +442,11 @@ export type AgentSessionModelOption = Readonly<{
   id: string;
   name: string;
   description?: string;
+  category?: string;
   type: string;
   currentValue: string | number | boolean | null;
   options?: readonly AgentSessionModelOptionChoice[];
+  groups?: readonly Readonly<{ id: string; name: string; options: readonly AgentSessionModelOptionChoice[] }>[];
   /**
    * Producer-declared override rule (see {@link AgentModelOptionOverrideRule}). This runtime
    * mirror widens `currentValue` but must otherwise carry the same producer facts as the
@@ -609,11 +616,13 @@ export type AgentSessionNativeToolBridgeConfig = Readonly<{
   launch: Readonly<{
     executablePath: string;
     argsPrefix: readonly string[];
+    /** Opaque host-owned bridge context. Forward only to this child; never log or put it in argv. */
     env?: Readonly<Record<string, string>>;
   }>;
 }>;
 
 export type AgentSessionHappierToolsService = Readonly<{
+  /** Resolves this live Session's authenticated tool launch; no Account credential discovery is needed. */
   resolveNativeBridge(
     request: Readonly<{ systemPrompt?: string | null }>,
     options?: Readonly<{ signal?: AbortSignal }>,
@@ -709,6 +718,9 @@ export type AgentExecutionRunHostServicesV1 = Readonly<{
 export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{
   session: Readonly<{
     id: string;
+    /** Host-owned Run using this native Session; absent for interactive Sessions.
+     * Retains Session event identity and grants no additional host authority. */
+    executionRunId?: string;
     services: AgentSessionHostServices;
   }>;
   workState: WorkStateService;

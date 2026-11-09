@@ -1,4 +1,5 @@
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseAllDocuments } from 'yaml';
@@ -103,7 +104,14 @@ async function readSource(path, label) {
 }
 
 async function writeFileIfChanged(path, source, output) {
-  if (source !== output) await writeFile(path, output, 'utf8');
+  if (source === output) return;
+  const staged = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(staged, output, 'utf8');
+    await rename(staged, path);
+  } finally {
+    await rm(staged, { force: true });
+  }
 }
 
 function readDependency(manifest, packageName, label) {
@@ -753,6 +761,17 @@ function parseArgs(args) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.write) {
+    const { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } = await import('../../../scripts/workspaces/workspaceBundleLock.mjs');
+    return withWorkspaceBundleLock(() => run(options), {
+      lockPath: resolveWorkspaceBundleLockPath(options.repoRoot),
+      errorLabel: 'public toolchain publication',
+    });
+  }
+  return run(options);
+}
+
+async function run(options) {
   const outputPath = resolve(options.repoRoot, options.outputPath ?? DEFAULT_OUTPUT_PATH);
   if (options.checkGenerated) {
     await checkGeneratedPublicToolchainCompatibility({

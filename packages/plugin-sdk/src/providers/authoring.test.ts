@@ -8,14 +8,71 @@ import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/prov
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { resolveProviderModelPickerVisibility } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
+import { endpointPolicyPlugin, endpointPolicyProvider } from '../../fixtures/authoring-inference/providerEndpointPolicies.js';
 import {
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
+  resolveProviderBindingCompatibilityWithFingerprintV1,
+  type AgentProviderRequirementsV1,
   type ProviderConnectionMutationRequest,
   type ProviderContribution,
 } from './index.js';
 
 describe('Provider authoring through the public manifest SDK', () => {
+  it('admits required endpoint policy through the canonical public Provider schema', () => {
+    const declaration = endpointPolicyProvider;
+    const endpoint = declaration.endpointTemplates[0];
+    expect(ProviderContributionV1Schema.parse(declaration).endpointTemplates[0]).toMatchObject(endpoint);
+    const authored = ProviderContributionV1Schema.parse(endpointPolicyPlugin.manifest.contributes.providers?.[0]);
+    expect(authored).toMatchObject(declaration);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration,
+      endpointTemplates: [{ ...endpoint, publicHeaders: { authorization: 'Bearer forbidden' } }],
+    }).success).toBe(false);
+  });
+  it('keeps external companion-key pairings unavailable until the Agent can materialize both secrets', () => {
+    const declaration = endpointPolicyProvider;
+    const agent = {
+      acceptsProtocols: ['anthropic'],
+      required: { streaming: true },
+      credentialSupport: {
+        supportsNoAuth: false,
+        apiKeyTransports: [{ protocol: 'anthropic', destination: {
+          kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'],
+        } }],
+        requiredApiKeyTransports: [{ protocol: 'anthropic', destination: {
+          kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'],
+        } }],
+      },
+      authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+      materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+    } as const satisfies AgentProviderRequirementsV1;
+    const input = { agentTargetKey: 'agent:example', adapterVersion: 1,
+      endpoints: declaration.endpointTemplates, credential: declaration.credential,
+      model: { id: 'claude-example', name: 'Example' }, agent };
+    expect(resolveProviderBindingCompatibilityWithFingerprintV1(input).result.status).toBe('incompatible');
+    expect(resolveProviderBindingCompatibilityWithFingerprintV1({ ...input,
+      agent: { ...agent, credentialSupport: { ...agent.credentialSupport, supportsAdditionalCredentials: true } },
+    }).result.status).toBe('experimental');
+  });
+  it('activates the declared request-cost decoder', async () => {
+    const parse = (usage: unknown) => typeof usage === 'number' ? usage : null;
+    const definition = { declaration: { v: 1 as const, name: 'Request gateway', kind: 'cloud' as const,
+      endpointTemplates: [{ id: 'api', protocol: 'openai-chat' as const, baseUrl: 'https://gateway.example/v1',
+        capabilities: { streaming: 'supported' as const, toolRoundTrips: 'unknown' as const,
+          statefulResponses: 'unknown' as const, reasoningControls: 'unknown' as const } }],
+      catalog: { source: 'manual' as const, manualModelPolicy: 'allowed' as const },
+      requestCost: { endpointTemplateIds: ['api'] } }, requestCostParser: parse };
+    const plugin = definePlugin({ id: 'acme.request-cost', version: '1.0.0', entrypoints: { daemon: './daemon.js' },
+      providers: { gateway: definition } });
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+    try {
+      const registration = kit.registration('providers', 'gateway');
+      const parser: unknown = registration && Reflect.get(registration, 'requestCostParser');
+      expect(typeof parser).toBe('function');
+      if (typeof parser !== 'function') throw new Error('Missing request-cost decoder');
+      expect(parser(0)).toBe(0);
+    } finally { await kit.dispose(); }
+  });
   it('activates an external usage parser through the declared Provider and admits Q1 output', async () => {
     const parse = (body: unknown) => ({ meters: [{ meterId: 'balance', label: 'Balance', used: null,
       remaining: Number(body), limit: null, unit: 'usd' as const, utilizationPct: null, resetsAt: null,

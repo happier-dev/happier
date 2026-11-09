@@ -1,5 +1,20 @@
-import type { AccessProviderRefV1 } from './accessProviders.js';
 /** @moduleRealm daemon */
+import type { AccessProviderRefV1 } from './accessProviders.js';
+
+/**
+ * Invocation-bound connector sink; the host captures the controller, receiver
+ * and operation. Token bytes never become public Action operands or results.
+ * @realm cli
+ */
+export interface MachineConnectorSecretsService {
+    write(input: Readonly<{
+        token: Uint8Array;
+        subject: Readonly<{ provider: AccessProviderRefV1; connectorId: string }>;
+    }>): Promise<Readonly<{
+        grants: readonly Readonly<{ machineId: string; installationId: string; grantRef: string }>[];
+    }>>;
+}
+
 /** @realm any */
 export { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 
@@ -10,11 +25,19 @@ export type SecretStatus = Readonly<{
 
 export type SecretMutationResult = Readonly<{ revision: string }>;
 
+/** Existing Saved Secret grant fields; the parent Action admits the exact audience. */
+export type SharedSecretAudience = Readonly<{
+    accountGrants?: string[] | undefined;
+    teamGrants?: string[] | undefined;
+    groupGrants?: string[] | undefined;
+}>;
+
 export type SharedSecretSaveInput = Readonly<{
     label: string;
     bytes: Uint8Array;
     audience: SharedSecretAudience;
 }>;
+export type SharedSecretSaveResult = Readonly<{ ref: string; resourceRevision: number }>;
 
 export interface SecretsService {
     /** Save under the exact id, purpose and audience reviewed by the parent Action. */
@@ -32,21 +55,4 @@ export interface SecretsService {
         id: string,
         options?: { expectedRevision?: string; signal?: AbortSignal },
     ): Promise<SecretMutationResult>;
-}
-
-export type SharedSecretAudience = Readonly<{
-    accountGrants?: string[] | undefined;
-    teamGrants?: string[] | undefined;
-    groupGrants?: string[] | undefined;
-}>;
-
-export type SharedSecretSaveResult = Readonly<{ ref: string; resourceRevision: number }>;
-
-export interface MachineConnectorSecretsService {
-    write(input: Readonly<{
-        token: Uint8Array;
-        subject: Readonly<{ provider: AccessProviderRefV1; connectorId: string }>;
-    }>): Promise<Readonly<{
-        grants: readonly Readonly<{ machineId: string; installationId: string; grantRef: string }>[];
-    }>>;
 }

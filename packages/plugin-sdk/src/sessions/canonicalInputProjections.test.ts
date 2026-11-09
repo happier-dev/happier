@@ -16,6 +16,8 @@ import {
     SessionAuthoringCheckoutCreationDraftV1Schema as canonicalSessionAuthoringCheckoutCreationDraftV1Schema,
     SessionSpawnNewInputV2Schema as canonicalSessionSpawnNewInputV2Schema,
     SessionServerStartSpawnDraftV1Schema as canonicalSessionServerStartSpawnDraftV1Schema,
+    SessionSpawnNewActionInputV2Schema as canonicalActionSpawnInput,
+    projectSessionSpawnNewActionInputV2 as canonicalSpawnActionProjector,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type {
     SessionAuthoringCheckoutCreationDraftV1 as CanonicalSessionAuthoringCheckoutCreationDraftV1,
@@ -35,7 +37,6 @@ import type {
     SessionSpawnNewInputV2 as PublicSessionSpawnNewInputV2,
 } from './index.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
-
 import {
     SessionInputForgeEvidenceV1Schema as canonicalForgeEvidence,
     readSessionInputForgeEvidenceV1 as canonicalForgeEvidenceReader,
@@ -43,6 +44,29 @@ import {
 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 
 describe('Session input canonical SDK projections', () => {
+    it('projects an admitted native spawn recipe into the canonical Action organization placement', () => {
+        const draft = publicSessions.SessionServerStartSpawnDraftV1Schema.parse({
+            executionTarget: { serverId: 'home', machineId: 'machine' },
+            directory: { kind: 'path', path: '/workspace/project' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            organizationPlacement: { folderId: 'folder', tagIds: ['tag'] },
+        });
+        expect(sessions.projectSessionSpawnNewActionInputV2).toBe(canonicalSpawnActionProjector);
+        expect(publicSessions.projectSessionSpawnNewActionInputV2).toBe(canonicalSpawnActionProjector);
+        const action = publicSessions.projectSessionSpawnNewActionInputV2(draft);
+        expect(canonicalActionSpawnInput.parse(action).organizationPlacement).toEqual({ sectionId: 'folder', tagIds: ['tag'] });
+        expect(action).not.toHaveProperty('organizationPlacement.folderId');
+        expect(action.directory).toEqual(draft.directory);
+        const native = publicSessions.SessionSpawnNewInputV2Schema.parse({ ...draft,
+            creationKey: 'channel-thread', attestedContext: { externalPrincipalId: 'principal', sourceMessageId: 'message' },
+        });
+        const admittedAction = publicSessions.projectSessionSpawnNewActionInputV2(native);
+        expect(canonicalActionSpawnInput.parse(admittedAction)).toMatchObject({
+            organizationPlacement: { sectionId: 'folder', tagIds: ['tag'] },
+            creationKey: 'channel-thread', attestedContext: { externalPrincipalId: 'principal', sourceMessageId: 'message' },
+        });
+    });
+
     it('projects forge evidence and its escaped renderer from the same Protocol owner', () => {
         expect(sessions.SessionInputForgeEvidenceV1Schema).toBe(canonicalForgeEvidence);
         expect(publicSessions.SessionInputForgeEvidenceV1Schema).toBe(canonicalForgeEvidence);
@@ -153,7 +177,7 @@ describe('Session input canonical SDK projections', () => {
         expectTypeOf<NonNullable<PublicSessionSpawnNewInputV2['checkoutCreationDraft']>>()
             .toEqualTypeOf<CanonicalSessionAuthoringCheckoutCreationDraftV1>();
         expectTypeOf<CanonicalSessionSpawnNewInputV2>()
-            .toMatchTypeOf<PublicSessionSpawnNewInputV2>();
+            .toEqualTypeOf<PublicSessionSpawnNewInputV2>();
         expectTypeOf<CanonicalSessionServerStartSpawnDraftV1>()
             .toMatchTypeOf<PublicSessionServerStartSpawnDraftV1>();
         expectTypeOf<CanonicalSessionMessageProvenanceV1>()

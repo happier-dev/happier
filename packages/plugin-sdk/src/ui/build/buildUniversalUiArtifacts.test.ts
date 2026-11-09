@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runInNewContext } from 'node:vm';
+import { evaluatePortableCommonJs } from '../../test-support/evaluatePortableCommonJs.js';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -97,9 +97,7 @@ describe('buildUniversalPluginUiArtifacts hosted static staging', () => {
         ]));
         const artifact = result.manifest.entries.find((entry) => entry.artifactId === 'collection-migrations')!;
         const module = { exports: {} as Record<string, unknown> };
-        runInNewContext(await readFile(join(result.artifactsRoot, artifact.entry), 'utf8'), {
-            module, exports: module.exports,
-        });
+        evaluatePortableCommonJs(await readFile(join(result.artifactsRoot, artifact.entry), 'utf8'), module);
         const factory = module.exports.collectionMigrations;
         if (typeof factory !== 'function') throw new Error('Missing migration factory');
         const payload = factory();

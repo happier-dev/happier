@@ -28,3 +28,22 @@ while SDK and protocol publication remain pending. The aggregate
 source-mapped SDK fixture stays the authoring-inference verification, and
 loaded-platform and release availability remain separate evidence recorded by
 the capability matrix.
+
+For a mounted search, filter retained rows immediately and schedule only the
+remote read with the development SDK's shared Universal Search debounce:
+
+```ts
+import { scheduleSearchQuery } from '@happier-dev/plugin-sdk/async';
+
+let cancelPendingSearch: (() => void) | undefined;
+function queryChanged(query: string) {
+  cancelPendingSearch?.();
+  cancelPendingSearch = scheduleSearchQuery(() => readRemote(query));
+}
+```
+
+Here `readRemote` is the target's existing scan entry; cancel the pending callback
+on disposal and abort an in-flight read through its existing cancellation owner.
+The helper shares Universal Search's default delay rather than naming another
+duration. This is current development source; generated API records and loaded
+host validation are separate availability evidence.

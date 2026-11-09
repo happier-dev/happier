@@ -172,6 +172,7 @@ export type {
     TargetedContributionSnapshot,
     TargetedContributionsService,
     SessionMediaPublishGeneratedRequest,
+    SessionMediaPublishToolResultRequest,
     SessionMediaService,
     SessionMediaSourceRoot,
     SessionEvent,

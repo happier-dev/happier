@@ -60,6 +60,7 @@ export {
     buildProviderReasoningModelOptions,
     readProviderReasoningEffortOption,
 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+export type { ProviderReasoningEffortLevelV1 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 export { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 export type {
     ProviderConnectionId,
@@ -139,6 +140,7 @@ export type {
     ProviderCatalogParseResult,
     ProviderCatalogParser,
     ProviderUsageParser,
+    ProviderRequestCostParser,
     ProviderUsageParseResult,
     ProviderLocalId,
     ProvidersRegistrationApi,

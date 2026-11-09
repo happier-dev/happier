@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     ComposerReferenceResolutionV1Schema as canonicalComposerReferenceResolutionV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/composer-reference-providers';
 
 import { ProtocolComposerReferenceResolutionV1Schema } from './index.js';
 

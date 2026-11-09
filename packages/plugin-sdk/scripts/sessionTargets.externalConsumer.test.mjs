@@ -35,6 +35,17 @@ test('generated external Action clients accept shared targets without widening e
       sessionId: { selector: 'self' }, roleId: 'orchestrator', keep: 'none', ruleSuggestions: [],
     };
     const handoff: PluginActionInputById['session.handoff'] = { sessionId: { selector: 'self' } };
+    const roleSet: PluginActionInputById['session.role.set'] = { sessionId: genericTarget, roleId: 'orchestrator' };
+    const roleOverride: PluginActionInputById['session.roles.override.set'] = { sessionId: workers, roleId: 'orchestrator', workspaceWrites: 'deny' };
+    const roleOverrideClear: PluginActionInputById['session.roles.override.clear'] = { sessionId: workers, roleId: 'orchestrator' };
+    const roleAdd: PluginActionInputById['session.roles.add'] = { sessionId: workers, roleId: 'scout', role: {
+      name: 'Scout', instructions: 'Read and report.', runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true,
+    } };
+    const roleRemove: PluginActionInputById['session.roles.remove'] = { sessionId: workers, roleId: 'scout' };
+    const notes: PluginActionInputById['session.notes.set'] = { sessionId: { selector: 'manager' }, notes: 'Verify before reporting.' };
+    const applyRoles: PluginActionInputById['session.roles.apply_to_reports'] = { sessionId: { selector: 'self' } };
+    // @ts-expect-error Role identity is not a Session selector.
+    const invalidRole: PluginActionInputById['session.roles.remove'] = { sessionId: workers, roleId: workers };
     // @ts-expect-error The manager CAS witness remains an exact identity, not an operational selector.
     const invalidManager: PluginActionInputById['session.manager.set'] = { sessionId: workers, managerSessionId: null, expectedManagerSessionId: workers };
     const inspect: PluginActionInputById['session.targets.resolve'] = {
@@ -102,6 +113,7 @@ test('generated external Action clients accept shared targets without widening e
     const wrongRecipient: PluginActionInputById['session.message.send'] = { sessionId: workers, message: 'Review', idempotencyKey: 'wrong', recipient: { selector: 'manager' } };
     void send; void genericSend; void status; void inspect; void inspectContributed; void inspected; void invalidInspect; void open; void oldSend; void declaration; void contributedDeclaration; void fanout; void invalidFanout;
     void stop; void cancel; void recent; void archive; void goal; void manager; void coordinator; void handoff; void invalidManager;
+    void roleSet; void roleOverride; void roleOverrideClear; void roleAdd; void roleRemove; void notes; void applyRoles; void invalidRole;
     void nested; void unknown; void wrongRecipient;
     void inboxType; void inboxView; void inboxRead; void inboxPage; void inboxSource; void inboxCoverage; void invalidInboxType;
     void narrowInbox; void readyInbox; void partialInbox; void sourceCoverage;

@@ -3,6 +3,33 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCoalescedScheduler } from './coalescedScheduler.js';
 
 describe('createCoalescedScheduler', () => {
+  it('lets concurrent demand join the active drain without queueing another read', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const readValues: number[] = [];
+    let value = 1;
+    const scheduler = createCoalescedScheduler({
+      drain: async () => {
+        readValues.push(value);
+        if (readValues.length === 1) await held;
+      },
+    });
+    const first = scheduler.flush();
+    let joinedSettled = false;
+    const joined = scheduler.flush({ ifRunning: 'join' }).then(() => { joinedSettled = true; });
+    await Promise.resolve();
+    expect(joinedSettled).toBe(false);
+    expect(readValues).toEqual([1]);
+    release();
+    await Promise.all([first, joined]);
+    expect(readValues).toEqual([1]);
+
+    value = 2;
+    await scheduler.flush({ ifRunning: 'join' });
+    expect(readValues).toEqual([1, 2]);
+    scheduler.dispose();
+  });
+
   it('coalesces a synchronous trigger from the active drain without starting a competing drain', async () => {
     let drains = 0;
     let release!: () => void;

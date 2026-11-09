@@ -24,17 +24,18 @@ export interface MachineProvisionersService {
      */
     materializeNativeCredentialHeaders(request: Readonly<{ bindingKey: string }>):
         Promise<MachineProvisionerNativeCredentialHeadersResultV1>;
-
     /**
      * Temporarily deliver the admitted SSH key and its derived .pub sibling at
      * a native-required plugin-relative path. The host serializes publication,
      * the callback and file-only cleanup; native claim directories are retained.
+     * Account hosts without native files refuse with plugin_service_unavailable.
      */
     withBootstrapCredentialFile<TResult>(request: Readonly<{ relativePath: string }>,
         effect: (lease: Extract<MachineProvisionerBootstrapCredentialLeaseV1, { kind: 'file' }>) => Promise<TResult>): Promise<TResult>;
     /**
      * Materialize only the credential retained by this managed-resource invocation.
      * The host also disposes the lease when the invocation settles.
+     * Byte leases are portable; file leases require a native host.
      */
     materializeBootstrapCredential(request: Readonly<{ kind: 'bytes' | 'file' }>):
         Promise<MachineProvisionerBootstrapCredentialLeaseV1>;

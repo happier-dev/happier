@@ -5,6 +5,8 @@ export type { PluginInterceptorResult } from '../http.js';
 export type { PluginRequestInterceptor } from '../http.js';
 export type { RequestInterceptorContribution } from '../http.js';
 export type { HttpService } from '../http.js';
+export type { HttpRequest, HttpResponse, HttpPreparedReadInput, PreparedHttpRead } from '../http.js';
+export type { HttpStreamRequest, HttpStreamResponse } from '../http.js';
 export type { PluginFetchCredentialBinding } from '../http.js';
 export type { PluginWebSocketClose } from '../http.js';
 export type { PluginWebSocketConnection } from '../http.js';
@@ -13,7 +15,3 @@ export type { PluginWebSocketMessage } from '../http.js';
 export type { PluginWebSocketOpenInput } from '../http.js';
 
 export { readHttpStatus, isPermanentRequestStatus, isPermanentRequestError } from '../httpStatusError.js';
-
-
-
-export type { HttpRequest, HttpResponse, HttpPreparedReadInput, PreparedHttpRead } from '../http.js';

@@ -31,4 +31,5 @@ export type { ManagedServiceNativeInstanceV1, ManagedServiceNativeObservationV1,
 export type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogPageV1, ManagedServiceNativeLogReadV1,
     ManagedServiceNativeLogResultV1, ManagedServiceNativeLogWatchV1, ManagedServiceUnavailableReasonV1 } from './contract.js';
 export type { ManagedServices } from './contract.js';
+export type { ManagedWorkloadObservationV1, ManagedWorkloadControlResultV1, ManagedWorkloadHandleV1, ManagedWorkloadResultV1 } from './contract.js';
 export { readManagedServiceEndpointUrl } from './contract.js';

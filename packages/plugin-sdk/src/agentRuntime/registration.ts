@@ -247,6 +247,15 @@ export type AgentCliSessionCommandPluginSettingsV1 = Readonly<Partial<Record<
   Readonly<Record<string, JsonValue>>
 >>>;
 
+/** Account intent applied to host-known native and materialized homes. */
+export type AgentAccountSettingsContributionV1 = Readonly<{
+  settingLocalIds: readonly string[];
+  apply(input: Readonly<{
+    pluginSettings: AgentCliSessionCommandPluginSettingsV1;
+    targets: readonly Readonly<{ id: string; directory: string }>[];
+  }>): Promise<JsonValue>;
+}>;
+
 export type AgentCliSessionCommandBuildInputV1 = Readonly<{
   isExplicitCliSubcommand: boolean;
   parsed: AgentCliSessionCommandParsedArgsV1;
@@ -390,6 +399,10 @@ export type AgentConnectedAccountStateSharingDynamicEntryPatternV1 = Readonly<{
 /** Native source and optional bound-account home layout consumed by the host. */
 export type AgentConnectedAccountNativeHomeV1 = Readonly<{
   environmentKey: string;
+  /** Ordered native configuration aliases, after environmentKey. */
+  fallbackEnvironmentKeys?: readonly string[];
+  /** Preserve the original native home when the active environment selects a materialized home. */
+  sourceEnvironmentKey?: string;
   defaultRelativePath: string;
   /** Opts native credential-bound account/group launches into the host's durable home lifecycle. */
   materializedDirectoryName?: string;
@@ -824,6 +837,7 @@ export type AgentRuntimeRegistrationOptions = Readonly<{
   cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
   cliAuth?: AgentCliAuthContributionV1;
   connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+  accountSettings?: AgentAccountSettingsContributionV1;
   preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
   terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
   sessionStartup?: AgentSessionStartupContributionV1;

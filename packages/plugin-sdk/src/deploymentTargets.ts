@@ -5,15 +5,6 @@ import {
     DeploymentTargetRoleInputProtocolSchemasV1 as canonicalRoleInputs,
     DeploymentTargetRoleResultV1ProtocolSchema as canonicalRoleResult,
     DeploymentTargetPreparationBaseV1ProtocolSchema as canonicalPreparationBase,
-    type DeploymentTargetInspectInputV1,
-    type DeploymentTargetLinkRoleInputV1,
-    type DeploymentTargetDeployInputV1,
-    type DeploymentTargetUploadDeployInputV1,
-    type DeploymentTargetObserveInputV1,
-    type DeploymentTargetCancelInputV1,
-    type DeploymentTargetRollbackInputV1,
-    type DeploymentTargetPromoteInputV1,
-    type DeploymentTargetTeardownInputV1,
     type DeploymentTargetRoleResultV1,
     type DeploymentTargetPreparationBaseV1,
 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -33,17 +24,9 @@ export type {
 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
-    inspect: ProtocolComposableSchema<DeploymentTargetInspectInputV1>;
-    link: ProtocolComposableSchema<DeploymentTargetLinkRoleInputV1>;
-    deploy: ProtocolComposableSchema<DeploymentTargetDeployInputV1>;
-    uploadDeploy: ProtocolComposableSchema<DeploymentTargetUploadDeployInputV1>;
-    observe: ProtocolComposableSchema<DeploymentTargetObserveInputV1>;
-    cancel: ProtocolComposableSchema<DeploymentTargetCancelInputV1>;
-    rollback: ProtocolComposableSchema<DeploymentTargetRollbackInputV1>;
-    promote: ProtocolComposableSchema<DeploymentTargetPromoteInputV1>;
-    teardown: ProtocolComposableSchema<DeploymentTargetTeardownInputV1>;
-    'logs.build': typeof canonicalRoleInputs['logs.build'];
-    'logs.runtime': typeof canonicalRoleInputs['logs.runtime'];
+    [TRole in keyof typeof canonicalRoleInputs]: ProtocolComposableSchema<
+        ReturnType<(typeof canonicalRoleInputs)[TRole]['parse']>
+    >;
 }> = canonicalRoleInputs;
 export { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleResultV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetRoleResultV1> = canonicalRoleResult;

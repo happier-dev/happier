@@ -1,17 +1,1 @@
-export type { LimaCommandResult } from '../lima.js';
-export type { LimaExecutor } from '../lima.js';
-export type { LimaIdentity } from '../lima.js';
-export type { LimaInstance } from '../lima.js';
-export type { LimaInstanceOptions } from '../lima.js';
-export { changeLimaPower } from '../lima.js';
-export { createLimaInstance } from '../lima.js';
-export { deleteLimaInstance } from '../lima.js';
-export { execLimaGuest } from '../lima.js';
-export { inspectLimaCapabilities } from '../lima.js';
-export { inspectLimaInstance } from '../lima.js';
-export { limaInstanceField } from '../lima.js';
-export { limaVersionAtLeast } from '../lima.js';
-export { parseLimaVersion } from '../lima.js';
-export { putLimaGuestFile } from '../lima.js';
-export { runLimaCommand } from '../lima.js';
-export { validateLimaStore } from '../lima.js';
+export * from './index.public.js';

@@ -3,6 +3,7 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1, SessionSpawnNewInputV2 } from '../sessions/authoring.js';
 import type { JsonValue } from '../identity.js';
+import type { PluginUiNewSessionActionDefaultV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
@@ -436,6 +437,7 @@ export type PluginUiSelectActionInputHostRequestV1 = ProtocolPluginUiSelectActio
  * the reader already chose.
  */
 export type PluginUiNewSessionSeedV1 = DeepReadonly<{
+    actionDefault?: PluginUiNewSessionActionDefaultV1;
     sessionName?: string;
     initialSessionFacts?: SessionServerStartSpawnDraftV1['identity'];
     promptStack?: SessionServerStartSpawnDraftV1['promptStack'];

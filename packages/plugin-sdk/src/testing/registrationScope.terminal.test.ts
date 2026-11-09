@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentTerminalSurface } from '../agentRuntime/index.js';
 import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 const factory = (async () => ({
     sessions: {

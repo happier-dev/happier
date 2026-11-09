@@ -21,6 +21,7 @@ describe('composer-reference provider browser graph', () => {
     expect(protocolPackage.exports).toHaveProperty(
       './plugins/contributions/composer-reference-candidate-id',
       {
+        'happier-source': './src/plugins/contributions/composerReferenceCandidateIdV1.ts',
         types: './dist/plugins/contributions/composerReferenceCandidateIdV1.d.ts',
         default: './dist/plugins/contributions/composerReferenceCandidateIdV1.js',
       },

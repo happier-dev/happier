@@ -1,4 +1,3 @@
-import { isRecord } from '../identity.js';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
@@ -16,6 +15,7 @@ import {
     type HostedWebPluginUiClientRealm,
 } from './hostedWebClientBootstrap.js';
 import { createSurfaceContextFixture } from './surfaceContext.fixture.js';
+import { isRecord } from '../identity.js';
 
 // Load the second real SDK graph during collection. Cold graph loading is
 // setup, rather than part of the timed guest-lifecycle behavior below.
@@ -139,7 +139,6 @@ describe('hosted-web UI client bootstrap', () => {
                 && Reflect.get(envelope.payload, 'kind') === 'negotiate');
         expect(requests).toHaveLength(2);
     });
-
 
     it('projects only semantic 1.0 context presentation, including observed context updates', async () => {
         // The installed generation's strict theme reader rejects statusTint:

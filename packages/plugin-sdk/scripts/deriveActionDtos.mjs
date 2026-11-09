@@ -82,16 +82,30 @@ function selectSchemaRows(protocol, keys, readSource) {
     }
     return null;
   };
+  const helperBindings = (path, helper, bindings = new Map()) => {
+    const locals = new Map(bindings);
+    for (const statement of helper.body.statements) {
+      if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+          locals.set(declaration.name.text, { path, node: declaration.initializer });
+        }
+      }
+    }
+    return locals;
+  };
   const property = (path, expression, key, bindings = new Map()) => {
     let node = unwrapped(expression);
     if (ts.isIdentifier(node)) {
+      const local = bindings.get(node.text);
+      if (local) return property(local.path, local.node, key, bindings);
       const found = variable(path, node.text);
       return found ? property(found.path, found.node, key) : null;
     }
-    if (ts.isCallExpression(node) && node.expression.getText(source(path)) === 'Object.freeze') return property(path, node.arguments[0], key);
+    if (ts.isCallExpression(node) && node.expression.getText(source(path)) === 'Object.freeze') return property(path, node.arguments[0], key, bindings);
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'lazyDefinition') {
       const create = node.arguments[0];
-      if (create && ts.isArrowFunction(create) && !ts.isBlock(create.body)) return property(path, create.body, key);
+      if (create && ts.isArrowFunction(create) && !ts.isBlock(create.body)) return property(path, create.body, key, bindings);
     }
     // A metadata-only helper may supply the id while its enclosing row owns schemas.
     if (key === 'id' && ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
@@ -99,7 +113,7 @@ function selectSchemaRows(protocol, keys, readSource) {
         && statement.name?.text === node.expression.text && statement.body);
       const returns = helper?.body.statements.filter(statement => ts.isReturnStatement(statement) && statement.expression);
       if (returns?.length === 1) {
-        const argumentsByName = new Map(bindings);
+        const argumentsByName = helperBindings(path, helper, bindings);
         helper.parameters.forEach((parameter, index) => {
           if (ts.isIdentifier(parameter.name) && node.arguments[index]) {
             argumentsByName.set(parameter.name.text, { path, node: unwrapped(node.arguments[index]) });
@@ -127,7 +141,10 @@ function selectSchemaRows(protocol, keys, readSource) {
     if (!ts.isTypeQueryNode(node) || !ts.isIdentifier(node.exprName)) return null;
     const found = variable(path, node.exprName.text);
     if (!found) return null;
-    return property(found.path, found.node, key);
+    // A schema family can derive its maps through a typed shared definition.
+    // Let the same checker infer the keyed schema rather than requiring literal rows.
+    return property(found.path, found.node, key)
+      ?? { path: found.path, node: found.node.parent.name, key };
   };
   const query = (path, node, key) => {
     if (ts.isIndexedAccessTypeNode(node)) return fromType(path, node, key);
@@ -139,6 +156,7 @@ function selectSchemaRows(protocol, keys, readSource) {
   };
   const actionPath = resolve(protocol, 'actions/actionSpecs.ts');
   const selected = new Map();
+  const inferred = new Map();
   let requiredSurface = false;
   const definition = source(actionPath).statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'CanonicalActionSchemaDefinition');
   if (definition) {
@@ -166,7 +184,10 @@ function selectSchemaRows(protocol, keys, readSource) {
           };
           findOverride(surface);
         }
-        if (!selected.has(key)) selected.set(key, [inputRow, outputRow]);
+        // A mapped type's parameter can range over only part of the catalog.
+        // Prefer a concrete authored row before asking the checker to infer a map key.
+        const destination = inputRow.key === undefined && outputRow.key === undefined ? selected : inferred;
+        if (!destination.has(key)) destination.set(key, [inputRow, outputRow]);
       }
     }
     ts.forEachChild(node, visitType);
@@ -223,23 +244,23 @@ function selectSchemaRows(protocol, keys, readSource) {
           && statement.name?.text === node.expression.text && statement.body);
         const binding = helper?.parameters.length >= 1 ? helper.parameters[0].name : null;
         if (binding) {
+          const locals = helperBindings(path, helper);
           for (const statement of helper.body?.statements ?? []) {
             if (!ts.isReturnStatement(statement) || !statement.expression) continue;
             const row = unwrapped(statement.expression);
-            if (!ts.isObjectLiteralExpression(row)) continue;
-            const id = row.properties.find(member => member.name?.text === 'id');
-            const idExpression = id && (ts.isShorthandPropertyAssignment(id) ? id.name
-              : ts.isPropertyAssignment(id) ? id.initializer : undefined);
+            const idExpression = property(path, row, 'id', locals)?.node;
             if (!idExpression || !ts.isIdentifier(idExpression)) continue;
             const idIndex = ts.isArrayBindingPattern(binding) ? binding.elements.findIndex(element =>
               ts.isBindingElement(element) && ts.isIdentifier(element.name) && element.name.text === idExpression.text) : -1;
             const idArgument = ts.isIdentifier(binding) && binding.text === idExpression.text ? argument
               : idIndex >= 0 && ts.isArrayLiteralExpression(argument) ? argument.elements[idIndex] : undefined;
-            if (!idArgument || !ts.isStringLiteral(idArgument)) continue;
-            const key = idArgument.text;
+            if (!idArgument) continue;
+            let key;
+            try { key = catalogReader.evaluate(path, idArgument); } catch { continue; }
+            if (typeof key !== 'string') continue;
             if (!keys.includes(key) || selected.has(key)) continue;
             const keyed = name => {
-              const field = property(path, row, name);
+              const field = property(path, row, name, locals);
               if (!field || !ts.isElementAccessExpression(field.node)
                 || !ts.isIdentifier(field.node.argumentExpression)
                 || field.node.argumentExpression.text !== idExpression.text) return null;
@@ -308,14 +329,17 @@ function selectSchemaRows(protocol, keys, readSource) {
     };
     visit(source(path));
   }
-  for (const key of keys) if (!selected.has(key)) throw Error(`No canonical schema expression for Action ${key}`);
+  for (const key of keys) {
+    if (!selected.has(key) && inferred.has(key)) selected.set(key, inferred.get(key));
+    if (!selected.has(key)) throw Error(`No canonical schema expression for Action ${key}`);
+  }
   for (const [key, rows] of selected) selected.set(key, rows.map(row => {
     if (ts.isElementAccessExpression(row.node) && ts.isStringLiteral(row.node.argumentExpression)) {
       row = property(row.path, row.node.expression, row.node.argumentExpression.text) ?? row;
     }
     if (!ts.isIdentifier(row.node)) return row;
     const found = variable(row.path, row.node.text);
-    return found ? { path: found.path, node: found.node.parent.name } : row;
+    return found ? { ...row, path: found.path, node: found.node.parent.name } : row;
   }));
   return { rows: selected, sources: files, inputProjection: source(actionPath).statements.some(statement =>
     ts.isTypeAliasDeclaration(statement) && statement.name.text === 'WithClientRoutingInput') };
@@ -431,10 +455,11 @@ function createDerivationProgram({ repoRoot, requests = [], bindings = [], clien
       rootImports.push("import type { ActionDtoInputProjection } from './actionSpecs.js';");
     }
     let counter = 0;
-    for (const [key, expressions] of rows) expressions.forEach(({ path, node }, i) => {
+    for (const [key, expressions] of rows) expressions.forEach(({ path, node, key: schemaKey }, i) => {
       const name = `ActionSchema${counter++}`;
       if (!required.has(path)) required.set(path, []);
-      required.get(path).push(`const ${name} = ${node.getText(sources.get(path))};\nexport type ${name}Value = z.${i ? 'output' : 'input'}<typeof ${name}>;`);
+      const expression = node.getText(sources.get(path)) + (schemaKey === undefined ? '' : `[${JSON.stringify(schemaKey)}]`);
+      required.get(path).push(`const ${name} = ${expression};\nexport type ${name}Value = z.${i ? 'output' : 'input'}<typeof ${name}>;`);
       rootImports.push(`import type { ${name}Value } from ${JSON.stringify('./' + relative(resolve(protocol, 'actions'), path).replaceAll('\\', '/').replace(/\.ts$/u, '.js'))};`);
       const value = !i && inputProjection ? `ActionDtoInputProjection<${JSON.stringify(key)}, ${name}Value>` : `${name}Value`;
       members[i].set(key, `readonly ${JSON.stringify(key)}: ${value};`);

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 import { build, normalizePath } from 'vite';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ const protocolUiClientEntry = normalizePath(resolve(
 async function bundleHostedWebGuestClient(): Promise<Readonly<{
     moduleIds: readonly string[];
     code: string;
+    imports: readonly string[];
 }>> {
     const moduleIds = new Set<string>();
     const virtualEntry = 'virtual:hosted-web-guest-client';
@@ -42,7 +44,8 @@ async function bundleHostedWebGuestClient(): Promise<Readonly<{
                 input: virtualEntry,
                 preserveEntrySignatures: 'strict',
                 output: {
-                    format: 'es',
+                    format: 'iife',
+                    name: 'HostedWebGuestClient',
                     inlineDynamicImports: true,
                 },
             },
@@ -54,16 +57,33 @@ async function bundleHostedWebGuestClient(): Promise<Readonly<{
     if (!entry || entry.type !== 'chunk') {
         throw new Error('Vite did not emit the hosted-web guest client entry');
     }
-    return { moduleIds: [...moduleIds], code: entry.code };
+    return { moduleIds: [...moduleIds], code: entry.code, imports: [...entry.imports, ...entry.dynamicImports] };
 }
 
 describe('hosted-web guest client browser graph', () => {
-    it('keeps Host API semver admission in the host, not every guest bundle', async () => {
-        const { moduleIds, code } = await bundleHostedWebGuestClient();
+    it('bundles canonical per-range negotiation without host admission or Node dependencies', async () => {
+        const { moduleIds, code, imports } = await bundleHostedWebGuestClient();
+        const browserModule: unknown = runInNewContext(`${code}\nHostedWebGuestClient;`, {
+            URL, URLSearchParams, TextEncoder, TextDecoder, AbortController,
+            self: { crypto: { getRandomValues: (array: Uint8Array) => array } },
+        });
+        expect(browserModule).toMatchObject({
+            createPluginUiHostApiClient: expect.any(Function),
+            createPluginUiRenderContext: expect.any(Function),
+        });
 
         expect(moduleIds).toContain(hostedWebGuestClientEntry);
         expect(moduleIds).toContain(protocolUiClientEntry);
-        expect(moduleIds.filter((id) => id.includes('/semver/'))).toEqual([]);
+        // Both peers validate the selected generation; N2's 1.0/1.1 contract
+        // therefore consumes the shared range owner in the guest too.
+        expect(moduleIds).toContain(normalizePath(resolve(
+            import.meta.dirname, '../../../protocol/src/plugins/ui/hostApi.ts',
+        )));
+        // TweetNaCl declares crypto/buffer as browser:false. Vite's empty
+        // placeholders are not Node dependencies; emitted imports and actual
+        // execution in a browser-only realm establish the runtime boundary.
+        expect(imports).toEqual([]);
+        expect(moduleIds.filter((id) => /(?:\/plugins\/artifacts\/|\/node:)/u.test(id))).toEqual([]);
         expect(code).not.toMatch(/(?:from\s*|import\s*\(|require\()\s*['"]semver['"]/u);
     }, 60_000);
 });

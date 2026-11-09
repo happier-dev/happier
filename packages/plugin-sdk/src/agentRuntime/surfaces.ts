@@ -115,6 +115,8 @@ export type AgentTerminalLaunchRequest = Readonly<{
   sessionId: string;
   cwd: string;
   metadata: AgentTerminalLaunchMetadata;
+  /** Effective host-selected environment before the Agent's launch-plan additions. */
+  launchEnvironment?: AgentLaunchEnvironment;
   /** Host-owned current Session configuration, shared with Session open. */
   configuration?: AgentSessionConfigurationSnapshot;
   modelSelection: ProviderBoundModelRef | null;

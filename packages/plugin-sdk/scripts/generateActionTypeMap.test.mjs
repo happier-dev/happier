@@ -19,8 +19,43 @@ import {
   writeFileIfChanged,
 } from './generateActionTypeMap.mjs';
 import * as actionTypeMapGenerator from './generateActionTypeMap.mjs';
-import { readActionCatalog } from './deriveActionDtos.mjs';
+import { deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { withPatchedProcessEnv } from '../../../apps/stack/scripts/testkit/core/env_scope.mjs';
+
+// These independent temporary-lock fixtures may contend. The routed runner's
+// charged-payload wait restriction belongs to its real workspace publication.
+withPatchedProcessEnv(test, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
+
+test('approval reads derive sanitized requester attribution instead of opaque JSON', async () => {
+  const derived = await deriveActionDtoSchemas({ repoRoot: process.cwd(), onlyFamilies: ['approvals'] });
+  const dto = derived.outputs.get(resolve('packages/protocol/src/actions/approvalsActionDtos.ts'));
+  assert.ok(dto, 'the approval family must produce its canonical DTO');
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const results = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'ApprovalsActionResultById').type;
+  const get = results.members.find(member => member.name.text === 'approval.request.get').type;
+  assert.equal(ts.isTypeLiteralNode(get), true, 'get must expose the public request rather than JsonValue');
+  const request = get.members.find(member => member.name.text === 'request').type;
+  const attributions = [];
+  const visit = node => {
+    if (ts.isPropertySignature(node) && node.name.text === 'actionRequestAttributionV1') attributions.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(request);
+  assert.ok(attributions.length > 0, 'the public execution origin retains its admitted cause');
+  for (const attribution of attributions) {
+    const shape = attribution.getText(source);
+    for (const field of ['requestRef', 'requester', 'accountId', 'persona', 'sessionId', 'origin']) {
+      assert.match(shape, new RegExp(`\\b${field}\\??:`, 'u'));
+    }
+    assert.doesNotMatch(shape, /\b(?:unknown|any|JsonValue)\b/u);
+  }
+  assert.doesNotMatch(get.getText(source), /\b(?:externalActionExecutionAuthorization|externalActionInputSignature|originalActionEnvelope|decidingAccountId|toolInput)\??:/u);
+  const list = results.members.find(member => member.name.text === 'approval.request.list').type;
+  assert.equal(ts.isTypeLiteralNode(list), true, 'list must expose its existing header projection');
+  assert.ok(list.members.some(member => member.name.text === 'items'));
+});
 
 test('filtered canonical Action families preserve their exact partition without executing source', t => {
   const root = mkdtempSync(resolve(tmpdir(), 'happier-action-partition-'));
@@ -277,7 +312,7 @@ test('the retained Action publisher checks and fences every prepared family outp
   assert.equal(readFileSync(familyPath, 'utf8'), 'corrupt\n', 'the family is not written after losing its lease');
 });
 
-test('Action map remembers a failed derivation for unchanged inputs instead of re-deriving it on every dispatch', async (t) => {
+test('Action map derives again after a projection failure and recovers on the next demand', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-failure-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -300,14 +335,14 @@ test('Action map remembers a failed derivation for unchanged inputs instead of r
   await assert.rejects(run, /validator-library/);
   assert.equal(programs, 2);
 
-  // Same inputs, same deterministic failure: report it without constructing another compiler program.
+  // Each failed demand derives afresh; only successful output is cached.
   await assert.rejects(run, /validator-library/);
-  assert.equal(programs, 2, 'an unchanged failing input set must not re-derive');
+  assert.equal(programs, 3, 'an unchanged failing input set must re-derive');
 
   // Any input change re-derives.
   writeFileSync(sourcePath, 'export type Action = "fixed";\n');
   await run();
-  assert.equal(programs, 3);
+  assert.equal(programs, 4);
   assert.equal(readFileSync(outputPath, 'utf8'), 'export type Action = "fixed";\n');
 });
 
@@ -342,7 +377,7 @@ test('Action map retries module-resolution and I/O failures, including new files
   // The fix is a NEW file that no previously successful input set contained.
   writeFileSync(missingPath, 'export type Missing = string;\n');
   await run();
-  assert.equal(programs, 3, 'a new file beside an input must clear the failure memo');
+  assert.equal(programs, 3, 'a new file beside an input must recover on the next demand');
 
   missingPath = resolve(directory, 'existing/missing.ts');
   writeFileSync(sourcePath, 'import type { Missing } from "./existing/missing";\n');
@@ -420,7 +455,7 @@ test('Action map compiler diagnostics can recover through an ambient declaration
   assert.equal(programs, 3, 'unchanged recorded files do not prove a compiler diagnostic is still current');
 });
 
-test('Action map cache and projection-failure hits bypass a busy workspace lock', async (t) => {
+test('Action map successful cache hits bypass a busy workspace lock', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-fast-cache-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -430,7 +465,6 @@ test('Action map cache and projection-failure hits bypass a busy workspace lock'
   writeFileSync(sourcePath, 'first');
   const derive = async () => {
     const output = readFileSync(sourcePath, 'utf8');
-    if (output === 'broken') validateGeneratedModuleSyntax('export type Broken = z.ZodString;');
     return { inputPaths: [sourcePath], output };
   };
   const run = (withDerivationLock) => runCachedActionTypeMap({ cachePath, outputPath, derive, withDerivationLock });
@@ -440,25 +474,18 @@ test('Action map cache and projection-failure hits bypass a busy workspace lock'
     return await withWorkspaceBundleLock(operation, { lockPath });
   });
   assert.equal(admitted, true, 'a cache miss must derive under the workspace lock');
-  for (const state of ['first', 'broken']) {
-    if (state === 'broken') {
-      writeFileSync(sourcePath, state);
-      await assert.rejects(run, /validator-library/);
-    }
-    let lockEntered = false;
-    await withWorkspaceBundleLock(async () => {
-      const withDerivationLock = async (operation) => {
-        lockEntered = true;
-        return await withWorkspaceBundleLock(operation, { lockPath, timeoutMs: 0 });
-      };
-      if (state === 'first') assert.equal(await run(withDerivationLock), false);
-      else await assert.rejects(() => run(withDerivationLock), /validator-library/);
-    }, { lockPath });
-    assert.equal(lockEntered, false, 'a cache or memo hit must not wait behind a workspace builder');
-  }
+  let lockEntered = false;
+  await withWorkspaceBundleLock(async () => {
+    const withDerivationLock = async (operation) => {
+      lockEntered = true;
+      return await withWorkspaceBundleLock(operation, { lockPath, timeoutMs: 0 });
+    };
+    assert.equal(await run(withDerivationLock), false);
+  }, { lockPath });
+  assert.equal(lockEntered, false, 'a successful cache hit must not wait behind a workspace builder');
 });
 
-test('Action map projection failure tracks dependencies discovered by the failed derivation', async (t) => {
+test('Action map recovers after a dependency discovered by a failed derivation is repaired', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-new-dependency-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -470,12 +497,7 @@ test('Action map projection failure tracks dependencies discovered by the failed
     const paths = existsSync(dependencyPath) ? [sourcePath, dependencyPath] : [sourcePath];
     const sources = paths.map((path) => [path, readFileSync(path, 'utf8')]);
     const output = sources.map(([, text]) => text).join('\n');
-    try {
-      validateGeneratedModuleSyntax(output);
-    } catch (error) {
-      error.inputDigests = sources.map(([path, text]) => [path, createHash('sha256').update(text).digest('hex')]);
-      throw error;
-    }
+    validateGeneratedModuleSyntax(output);
     return { inputPaths: paths, output };
   } });
   await run();
@@ -488,7 +510,7 @@ test('Action map projection failure tracks dependencies discovered by the failed
   assert.match(readFileSync(outputPath, 'utf8'), /Fixed/);
 });
 
-test('Action map input edited during derivation publishes the snapshot, reports stale, and re-derives next run', async (t) => {
+test('Action map input edited during derivation publishes successfully, checks stale, and re-derives next run', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-race-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -509,18 +531,25 @@ test('Action map input edited during derivation publishes the snapshot, reports 
   };
 
   writeFileSync(outputPath, 'previous current output');
-  await assert.rejects(() => runCachedActionTypeMap({ cachePath, outputPath, derive: () => derive({ editDuringDerivation: true }) }), /inputs changed/i);
+  assert.equal(await runCachedActionTypeMap({ cachePath, outputPath, derive: () => derive({ editDuringDerivation: true }) }), true);
   assert.equal(readFileSync(outputPath, 'utf8'), 'export type Action = "first";\n');
-  assert.equal(existsSync(cachePath), false);
+  assert.equal(existsSync(cachePath), true);
+  await assert.rejects(() => runCachedActionTypeMap({
+    cachePath, outputPath, mode: '--check',
+    derive: () => derive({ editDuringDerivation: false }),
+    publish: (prepared, context) => publishPreparedActionTypeMap('--check', {
+      ...prepared, outputs: new Map([[outputPath, prepared.output]]), timing: () => {},
+    }, { ...context, assertOwned: () => {} }),
+  }), /stale/i);
 
-  // The next run sees no cache and re-derives from the edited input.
+  // The captured publication remains stale until a writer derives the edited input.
   await runCachedActionTypeMap({ cachePath, outputPath, derive: () => derive({ editDuringDerivation: false }) });
-  assert.equal(programs, 2);
+  assert.equal(programs, 3);
   assert.equal(readFileSync(outputPath, 'utf8'), 'export type Action = "second";\n');
   assert.equal(existsSync(cachePath), true);
 });
 
-test('Action map finishes every snapshot output before reporting inputs stale or changed during publication', async (t) => {
+test('Action map writers finish every snapshot output while checks reject input drift during publication', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-publication-race-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'source.ts');
@@ -528,9 +557,10 @@ test('Action map finishes every snapshot output before reporting inputs stale or
   const siblingPath = resolve(directory, 'sibling.ts');
   const cachePath = resolve(directory, 'cache.json');
   for (const mode of ['--write', '--check']) for (const stale of [true, false]) {
+    if (existsSync(cachePath)) rmSync(cachePath);
     writeFileSync(sourcePath, 'first');
     writeFileSync(outputPath, 'previous');
-    await assert.rejects(() => runCachedActionTypeMap({
+    const run = () => runCachedActionTypeMap({
       cachePath, outputPath, mode,
       derive: () => ({ inputPaths: [sourcePath], inputDigests: [[sourcePath, createHash('sha256').update('first').digest('hex')]],
         output: 'first', outputs: new Map([[outputPath, 'first'], [siblingPath, 'same snapshot']]), stale, timing: () => {} }),
@@ -538,8 +568,10 @@ test('Action map finishes every snapshot output before reporting inputs stale or
         writeFileSync(sourcePath, 'second');
         await publishPreparedActionTypeMap(mode, prepared, { ...context, assertOwned: () => {} });
       },
-    }), /inputs changed/i);
-    assert.equal(existsSync(cachePath), false);
+    });
+    if (mode === '--write') assert.equal(await run(), true);
+    else await assert.rejects(run, /inputs changed/i);
+    assert.equal(existsSync(cachePath), mode === '--write');
     assert.equal(readFileSync(outputPath, 'utf8'), mode === '--write' ? 'first' : 'previous');
     if (mode === '--write') assert.equal(readFileSync(siblingPath, 'utf8'), 'same snapshot');
   }
@@ -571,21 +603,40 @@ for (const mode of ['--check', '--write']) {
   });
 }
 
-test('Action checks finish without acquiring a busy workspace publication lock', async (t) => {
+for (const mode of ['--write', '--check']) {
+test(`Action DTO ${mode} publishes independently of a held CLI dist lock`, async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-check-lock-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const lockPath = resolve(directory, 'workspace.lock');
+  const lockPath = resolve(directory, 'cli-dist-build.lock');
+  const derivationLockPath = resolve(directory, 'plugin-sdk-action-type-map.lock');
+  const outputPath = resolve(directory, 'actionTypeMap.generated.ts');
+  const siblingPath = resolve(directory, 'dtos/family.generated.ts');
+  mkdirSync(dirname(siblingPath), { recursive: true });
+  writeFileSync(outputPath, mode === '--write' ? 'previous\n' : 'export type Current = string;\n');
+  writeFileSync(siblingPath, 'export type Family = number;\n');
   const cancellation = new AbortController();
-  await withWorkspaceBundleLock(async () => {
+  await withWorkspaceBundleLock(async ({ heldLockValue, assertOwned }) => {
+    const cliLease = readFileSync(lockPath, 'utf8');
     await assert.doesNotReject(() => runActionTypeMapWithWorkspaceLock({
-      mode: '--check', lockPath, env: {},
+      mode, lockPath, derivationLockPath,
+      env: mode === '--check' ? { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue } : {},
       // A publication wait is the defect; abort immediately if it happens.
       lockOptions: { signal: cancellation.signal, onWait: () => cancellation.abort() },
-      prepare: () => ({ output: 'current' }),
-      publish: (_mode, _prepared, { assertOwned }) => { assertOwned(); return 'checked'; },
+      prepare: () => {
+        assert.equal(existsSync(derivationLockPath), true, 'DTO custody must not be borrowed from CLI dist');
+        return { output: 'export type Current = string;\n',
+        outputs: new Map([[outputPath, 'export type Current = string;\n'],
+          [siblingPath, 'export type Family = number;\n']]), timing: () => {} };
+      },
+      publish: publishPreparedActionTypeMap,
     }));
+    assertOwned();
+    assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).token, JSON.parse(cliLease).token);
+    assert.equal(readFileSync(outputPath, 'utf8'), 'export type Current = string;\n');
+    assert.equal(readFileSync(siblingPath, 'utf8'), 'export type Family = number;\n');
   }, { lockPath });
 });
+}
 
 for (const mode of ['--write', '--check']) {
   test(`Action map inherited ${mode} completes while an external contender waits for its parent`, async (t) => {
@@ -638,7 +689,7 @@ for (const mode of ['--write', '--check']) {
   });
 }
 
-test('Action type map generation shares the canonical workspace publication lock', async (t) => {
+test('Action type map writers serialize on their output lease', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-lock-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const lockPath = resolve(directory, 'plugin-sdk.lock');
@@ -682,17 +733,26 @@ test('Action type map generation shares the canonical workspace publication lock
   assert.equal(secondEntered, true);
 });
 
-test('Action type map derives under its own lock while workspace publication is busy', async (t) => {
+test('colliding Action DTO publications retain custody until every module is published', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-prepare-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const lockPath = resolve(directory, 'plugin-sdk.lock');
+  const lockPath = resolve(directory, 'plugin-sdk-action-type-map.lock');
+  const outputPath = resolve(directory, 'actionTypeMap.generated.ts');
+  const siblingPath = resolve(directory, 'family.generated.ts');
   let releaseOwner;
+  let ownerEntered;
+  const entered = new Promise(resolve => { ownerEntered = resolve; });
+  const release = new Promise(resolve => { releaseOwner = resolve; });
   const owner = runActionTypeMapWithWorkspaceLock({
-    mode: '--write',
-    lockPath,
-    run: async () => await new Promise((resolve) => { releaseOwner = resolve; }),
+    mode: '--write', lockPath, env: {},
+    prepare: () => ({ output: 'first', outputs: new Map([[outputPath, 'first'], [siblingPath, 'first family']]), timing: () => {} }),
+    publish: async (mode, prepared, context) => {
+      await publishPreparedActionTypeMap(mode, prepared, context);
+      ownerEntered();
+      await release;
+    },
   });
-  while (!releaseOwner) await new Promise((resolve) => setTimeout(resolve, 0));
+  await entered;
 
   let prepared = false;
   let published = false;
@@ -700,29 +760,35 @@ test('Action type map derives under its own lock while workspace publication is 
   const waiting = new Promise((resolveWaited) => { waited = resolveWaited; });
   const contender = runActionTypeMapWithWorkspaceLock({
     mode: '--write',
-    lockPath,
+    lockPath, env: {},
     lockOptions: { onWait: waited },
     prepare: () => {
-      assert.equal(existsSync(resolve(directory, 'plugin-sdk-action-type-map.lock')), true);
       prepared = true;
-      return { output: 'generated' };
+      return { output: 'second', outputs: new Map([[outputPath, 'second'], [siblingPath, 'second family']]), timing: () => {} };
     },
-    publish: async () => {
+    publish: async (mode, snapshot, context) => {
       published = true;
+      await publishPreparedActionTypeMap(mode, snapshot, context);
     },
   });
 
-  await waiting;
-  const preparedWhileLocked = prepared;
-  assert.equal(published, false);
-  releaseOwner();
-  await Promise.all([owner, contender]);
-  assert.equal(preparedWhileLocked, true);
+  try {
+    await Promise.race([waiting, contender.then(() => assert.fail('colliding writer published before custody was released'))]);
+    assert.equal(prepared, false);
+    assert.equal(published, false);
+    assert.equal(readFileSync(outputPath, 'utf8'), 'first');
+    assert.equal(readFileSync(siblingPath, 'utf8'), 'first family');
+  } finally {
+    releaseOwner();
+    await Promise.all([owner, contender]);
+  }
   assert.equal(prepared, true);
   assert.equal(published, true);
+  assert.equal(readFileSync(outputPath, 'utf8'), 'second');
+  assert.equal(readFileSync(siblingPath, 'utf8'), 'second family');
 });
 
-test('Action type map serializes derivation without taking the publication lock early', async (t) => {
+test('Action type map retains its output lease through derivation', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-derivation-owner-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const lockPath = resolve(directory, 'cli-dist-build.lock');
@@ -748,11 +814,11 @@ test('Action type map serializes derivation without taking the publication lock 
   release();
   await Promise.all([first, second]);
   assert.equal(preparedBeforeRelease, false);
-  assert.equal(publicationLockedEarly, false);
+  assert.equal(publicationLockedEarly, true);
   assert.equal(secondPrepared, true);
 });
 
-test('Action map concurrent processes reuse one changed-input derivation and its failure memo', async (t) => {
+test('Action map concurrent processes reuse successful derivation and independently report failures', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-single-flight-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -805,13 +871,13 @@ test('Action map concurrent processes reuse one changed-input derivation and its
 
   writeFileSync(sourcePath, 'broken\n');
   assert.deepEqual(await concurrent(), Array.from({ length: 4 }, () => ({ error: 'Generated Action type map contains a validator-library implementation reference.' })));
-  assert.equal(readFileSync(derivationsPath, 'utf8'), 'second\nbroken\n');
+  assert.equal(readFileSync(derivationsPath, 'utf8'), 'second\n' + 'broken\n'.repeat(4));
   assert.equal(readFileSync(outputPath, 'utf8'), 'second\n');
 
   writeFileSync(sourcePath, 'fixed\n');
   const recovered = await concurrent();
   assert.equal(recovered.filter(({ result }) => result === true).length, 1);
-  assert.equal(readFileSync(derivationsPath, 'utf8'), 'second\nbroken\nfixed\n');
+  assert.equal(readFileSync(derivationsPath, 'utf8'), 'second\n' + 'broken\n'.repeat(4) + 'fixed\n');
   assert.equal(readFileSync(outputPath, 'utf8'), 'fixed\n');
 });
 
@@ -919,10 +985,11 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   for (const output of outputs.values()) {
     assert.doesNotMatch(output, /export type ScmComparisonSource\s*=/u);
   }
-  const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
-  assert.ok(/import type \{ MachinePresetItemV1 \} from '\.\.\/\.\.\/machineSetup\.js';/u.test(support),
-    'Machine Preset values must reuse their existing SDK public declaration');
-  assert.doesNotMatch(support, /export type MachinePresetItemV1\s*=/u);
+  const presetFamily = outputs.get('packages/plugin-sdk/src/actions/dtos/machinePresetsActionDtos.generated.ts');
+  assert.match(presetFamily, /import type \{ MachinePresetItemV1 \} from '\.\.\/\.\.\/machineSetup\.js';/u);
+  for (const output of outputs.values()) {
+    assert.doesNotMatch(output, /export type MachinePresetItemV1\s*=/u);
+  }
 });
 
 test('Action DTO projection scopes mapped keys without hiding external declarations', () => {
@@ -972,22 +1039,21 @@ test('Action DTO projection scopes mapped keys without hiding external declarati
 });
 
 test('generated Plugin Action projection does not publish the host Action census', () => {
-  const { outputs } = actionTypeMapGenerator.projectActionDtoDeclarations();
+  const { inputKeys, resultKeys, outputs } = actionTypeMapGenerator.projectActionDtoDeclarations();
+  const { families, excluded } = readActionCatalog(process.cwd());
+  const pluginCallableIds = Object.values(families).flat()
+    .filter(id => !Object.hasOwn(excluded, id)).sort();
+  assert.deepEqual(inputKeys, pluginCallableIds);
+  assert.deepEqual(resultKeys, pluginCallableIds);
   const output = [...outputs.values()].join('\n');
   // The generated plugin map is an author capability projection, not a census
   // of every host Action. Publishing the canonical ActionId union here bypasses
   // the exact PluginInvocableActionId census and leaks host-only names that are
   // not invocable through PluginApi.actions.
   assert.doesNotMatch(output, /\bHostActionId\b/u);
-  for (const internalActionId of [
-    'session.handoff.commit',
-    'sessions.subagents.upsert',
-    'plugin.webhook.delivery.movePending',
-  ]) {
-    assert.doesNotMatch(
-      output,
-      new RegExp(`readonly "${internalActionId.replaceAll('.', '\\\\.')}":`, 'u'),
-    );
+  for (const internalActionId of Object.keys(excluded)) {
+    assert.equal(output.includes(`readonly ${JSON.stringify(internalActionId)}:`), false,
+      `${internalActionId} must not have a generated Action DTO row`);
   }
 });
 

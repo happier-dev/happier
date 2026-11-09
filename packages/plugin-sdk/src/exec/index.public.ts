@@ -6,6 +6,7 @@ export type { AgentNativeLaunchQualifier } from '../exec.js';
 export type { ExecService } from '../exec.js';
 export type { ExecSpawnRequest } from '../exec.js';
 export type { PluginExecSpawnRequest } from '../services/io.js';
+export type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1 } from '../services/io.js';
 export type { PluginProcessHandle } from '../services/io.js';
 export type { PluginProcessObservedTermination } from '../services/io.js';
 export type { PluginProcessOutput } from '../services/io.js';
@@ -16,9 +17,3 @@ export type { SystemToolContribution } from '../exec.js';
 export type { SystemToolDiagnostic } from '../exec.js';
 export type { SystemToolResolveRequest } from '../exec.js';
 export type { SystemToolsService } from '../exec.js';
-
-
-
-export type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1 } from '../services/io.js';
-
-export type { GhCommandDeps, GhCommandParams, GhCommandResult, GhNativeTokenResult } from '../exec.js';

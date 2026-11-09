@@ -4,7 +4,7 @@ import { spawnForegroundCommand } from '../../../apps/stack/scripts/utils/proc/p
 import { fileURLToPath } from 'node:url';
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
 
-import { findRepoRoot } from './vendoredWorkspaceDeclarations.mjs';
+import { captureVendoredWorkspaceDeclarationIdentity, findRepoRoot, VENDORED_WORKSPACE_DECLARATION_IDENTITY_ENV_VAR } from './vendoredWorkspaceDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault } from '../../../apps/stack/scripts/utils/proc/pm.mjs';
 import { bundleWorkspacePackageDependencies } from '../../../scripts/workspaces/bundleWorkspacePackageDependencies.mjs';
 import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
@@ -20,9 +20,9 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath = '' }) {
+export function resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath = '', env = process.env }) {
   const explicitLockPath = String(lockPath ?? '').trim();
-  return explicitLockPath || resolveWorkspaceBundleLockPath(repoRoot);
+  return explicitLockPath || resolveWorkspaceBundleLockPath(env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR || repoRoot);
 }
 
 function pluginSdkRepoRoot() {
@@ -52,13 +52,30 @@ export async function preparePluginSdkWorkspacePrerequisites(opts = {}) {
 export async function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? pluginSdkRepoRoot();
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
-  const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath });
+  const env = opts.env ?? process.env;
+  const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath, env });
   return await bundleWorkspacePackageDependencies({
     ...opts,
     repoRoot,
+    env,
     hostPackageDir: pluginSdkDir,
     lockPath,
     quiet: true,
+    ...(opts.consumePreparedWorkspace ? {
+      consumePreparedWorkspace: async (prepared) => {
+        // Bind the reader to the copy just admitted under the existing bundle
+        // lease. New workspace output belongs to the next demand; the physical
+        // copy and the installed-dependency fence remain authoritative here.
+        const identity = await captureVendoredWorkspaceDeclarationIdentity({ packageRoot: pluginSdkDir });
+        return await opts.consumePreparedWorkspace({
+          ...prepared,
+          preparedWorkspaceEnv: {
+            ...prepared.preparedWorkspaceEnv,
+            [VENDORED_WORKSPACE_DECLARATION_IDENTITY_ENV_VAR]: identity,
+          },
+        });
+      },
+    } : {}),
   });
 }
 
@@ -89,7 +106,7 @@ async function preparedScriptPublicationPaths({ repoRoot, pluginSdkDir, env }) {
   // capture remains only the source/tooling cwd and never gains another owner.
   const publicationRoot = env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR || repoRoot;
   const publicationPackageDir = resolve(publicationRoot, relative(repoRoot, pluginSdkDir));
-  return { packageJson, locks: [resolveWorkspaceBundleLockPath(publicationRoot),
+  return { packageJson, locks: [resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, env }),
     resolveWorkspacePackageBuildLockPath(publicationPackageDir, packageJson)] };
 }
 
@@ -128,13 +145,17 @@ async function runPreparedWorkspace(scriptName, { signal } = {}) {
 
 export async function runPluginSdkPreparedScript(scriptName, opts = {}) {
   const env = opts.env ?? process.env;
+  // SDK governance/publication has exhausted Node's default 4 GiB heap.
+  // Own its 8 GiB budget here so every prepared child inherits it, including
+  // workers whose executor does not forward the caller's NODE_OPTIONS.
+  const childEnv = { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --max-old-space-size=8192`.trim() };
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(opts.repoRoot ?? pluginSdkRepoRoot(), 'packages', 'plugin-sdk');
   const invocation = resolvePnpmCommandInvocation(['--silent', 'run', scriptName], { npmExecPath: String(env.npm_execpath ?? '') });
   const spawnImpl = opts.spawnImpl ?? spawnForegroundCommand;
   await new Promise((resolveRun, rejectRun) => {
     const child = spawnImpl(invocation.command, invocation.args, {
       cwd: pluginSdkDir,
-      env,
+      env: childEnv,
       stdio: 'inherit',
       ownedProcessGroup: true,
       ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),

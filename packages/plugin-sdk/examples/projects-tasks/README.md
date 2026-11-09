@@ -10,6 +10,19 @@ It is not an ordinary authoring template. Start a new plugin with
 `hdev plugins create` and declare ordinary contributions through
 `definePlugin(...)`; the canonical author build projects its cold manifest.
 
+Current 0.3 development tooling can inspect a Collection's static declaration
+through the public Collections entrypoint, using the same definition as the UI:
+
+```ts
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
+import { Tasks } from './src/collections.js';
+
+const declaration = projectPluginAccountCollectionDeclaration('tasks', Tasks);
+```
+
+This projects schema and migration identities without migration callbacks;
+the manifest parser continues to validate the resulting declaration.
+
 The surface asks for an existing Project ID, presents only the query's declared
 fields, and rereads a Task before marking it complete with that row's current
 revision. Its public virtualized List keeps a last-known-good page visible with

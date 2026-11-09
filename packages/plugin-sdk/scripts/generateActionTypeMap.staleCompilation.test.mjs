@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import ts from 'typescript';
 
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
@@ -35,8 +36,20 @@ test('SDK compilation admits stale generated DTOs while the correspondence gate 
   // only stable aliases. Corrupt the generated owner, not its alias wrapper.
   const grammarPath = supportPath;
   const current = readFileSync(grammarPath, 'utf8');
-  const stale = current.replace("direction?: 'vertical' | 'horizontal'", "direction: 'vertical' | 'horizontal'")
-    .replace("gap?: 'small' | 'medium' | 'large'", "gap: 'small' | 'medium' | 'large'");
+  // Mutate optionality, not the printer's order of equivalent union members.
+  const parsed = ts.createSourceFile(grammarPath, current, ts.ScriptTarget.ES2022, true);
+  const grammar = parsed.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'PluginDeclarativeNodeV2');
+  const optionalTokens = [];
+  const visit = node => {
+    if (ts.isPropertySignature(node) && node.questionToken && ['direction', 'gap'].includes(node.name.text)) {
+      optionalTokens.push(node.questionToken.getStart(parsed));
+    }
+    ts.forEachChild(node, visit);
+  };
+  assert.ok(grammar, 'the generated declarative grammar must be present');
+  visit(grammar);
+  let stale = current;
+  for (const offset of optionalTokens.sort((a, b) => b - a)) stale = stale.slice(0, offset) + stale.slice(offset + 1);
   assert.notEqual(stale, current, 'the fixture must actually change the generated node contract');
   writeFileSync(grammarPath, stale);
   const support = readFileSync(supportPath, 'utf8');

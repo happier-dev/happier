@@ -17,7 +17,7 @@ import type {
 describe('notification declaration ownership', () => {
     it('keeps the public notifications path on host-mediated service outcomes', async () => {
         const sourceText = await readFile(
-            new URL('./notifications/index.ts', import.meta.url),
+            new URL('./notifications/index.public.ts', import.meta.url),
             'utf8',
         );
         const sourceFile = ts.createSourceFile(
