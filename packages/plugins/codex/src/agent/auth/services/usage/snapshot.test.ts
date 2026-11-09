@@ -4,6 +4,26 @@ import { resolveCodexUsageSubjectRef } from './identity.js';
 import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from './snapshot.js';
 
 describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
+  it.each([
+    { rateLimitsByLimitId: { spark: { limitName: 'Spark', primary: { usedPercent: 91, resetsAt: 1_768_020_000 } } } },
+    { additionalRateLimits: { spark: { limitName: 'Spark', primary: { usedPercent: 91, resetsAt: 1_768_020_000 } } } },
+  ])('preserves a named allowance without a direct primary window: %j', (rawSnapshot) => {
+    const snapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+      subject: resolveCodexUsageSubjectRef({ provisionalDiscriminator: 'native-home' }),
+      rawSnapshot,
+      observedAtMs: 1_768_000_000_000,
+      fetchedAtMs: 1_768_000_000_000,
+    });
+
+    expect(snapshot.state).toBe('loaded_data');
+    expect(snapshot.meters).toEqual([expect.objectContaining({
+      meterId: 'spark:primary',
+      label: 'Spark · Primary',
+      utilizationPct: 91,
+      resetsAt: 1_768_020_000_000,
+    })]);
+  });
+
   it('maps native app-server rate limits to a canonical provider account usage snapshot', () => {
     const subject = resolveCodexUsageSubjectRef({
       authStoreProviderAccountIdProof: {
@@ -36,7 +56,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
         kind: 'providerSubject',
         id: 'chatgpt-account-1',
       },
-      planLabel: 'team',
+      planLabel: 'ChatGPT Team',
       accountLabel: 'alice@example.com',
       meters: [expect.objectContaining({
         meterId: 'primary',

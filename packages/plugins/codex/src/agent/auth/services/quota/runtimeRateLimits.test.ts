@@ -41,4 +41,16 @@ describe('Codex runtime rate-limit reads', () => {
       status: 'loaded_data',
     });
   });
+
+  it.each([
+    { rateLimitsByLimitId: { spark: { primary: { usedPercent: 50 } } } },
+    { additionalRateLimits: [{ limitId: 'spark', primary: { usedPercent: 50 } }] },
+  ])('recognizes named-only meter evidence: %j', (rawSnapshot) => {
+    expect(resolveCodexRuntimeRateLimitsState(rawSnapshot)).toEqual({ status: 'loaded_data', rawSnapshot });
+  });
+
+  it('does not treat an unrecognized direct window as meter data', () => {
+    const rawSnapshot = { primary: { futureField: 1 } };
+    expect(resolveCodexRuntimeRateLimitsState(rawSnapshot)).toEqual({ status: 'loaded_empty', rawSnapshot });
+  });
 });

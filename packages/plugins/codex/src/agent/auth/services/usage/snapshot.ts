@@ -90,7 +90,8 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
   params: MapCodexRateLimitSnapshotToProviderAccountUsageSnapshotInput,
 ): AgentAccountUsageSnapshot {
   const recordKey = buildRecordKey(params.subject);
-  const state = resolveCodexRuntimeRateLimitsState(params.rawSnapshot).status;
+  const meters = mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot);
+  const state = resolveCodexRuntimeRateLimitsState(params.rawSnapshot, meters).status;
   const recoveryCredits = mapCodexRateLimitResetCredits({
     rawUsage: params.rawSnapshot,
     rawResetCredits: params.rawResetCredits,
@@ -115,8 +116,6 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
     planLabel: readCodexRateLimitSnapshotPlanLabel(params.rawSnapshot),
     accountLabel: readCodexRateLimitSnapshotAccountLabel(params.rawSnapshot) ?? readString(params.accountLabel),
     ...(agentRecoveryCredits ? { recoveryCredits: agentRecoveryCredits } : {}),
-    meters: state === 'loaded_data'
-      ? [...mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot)]
-      : [],
+    meters: [...meters],
   };
 }

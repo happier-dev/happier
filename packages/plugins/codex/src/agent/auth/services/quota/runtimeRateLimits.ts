@@ -1,4 +1,6 @@
-import { unwrapCodexRateLimitSnapshot } from './rateLimitSnapshot.js';
+import type { AgentAccountUsageMeter } from '@happier-dev/plugin-sdk/agents/runtime';
+
+import { mapCodexRateLimitSnapshotToUsageMeters } from './rateLimitSnapshot.js';
 
 export type CodexRuntimeRateLimitsClient = Readonly<{
   request: (method: 'account/rateLimits/read', params: null | Record<string, never>) => Promise<unknown>;
@@ -14,21 +16,6 @@ export type CodexRuntimeRateLimitsState =
   | Readonly<{ status: 'not_loaded' }>
   | Readonly<{ status: 'loaded_empty'; rawSnapshot: unknown }>
   | Readonly<{ status: 'loaded_data'; rawSnapshot: unknown }>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function hasMeterEvidence(value: unknown): boolean {
-  const snapshot = isRecord(unwrapCodexRateLimitSnapshot(value))
-    ? unwrapCodexRateLimitSnapshot(value) as Record<string, unknown>
-    : null;
-  if (!snapshot) return false;
-  for (const key of ['primary', 'secondary', 'primary_window', 'secondary_window', 'primaryWindow', 'secondaryWindow']) {
-    if (isRecord(snapshot[key]) && Object.keys(snapshot[key]).length > 0) return true;
-  }
-  return false;
-}
 
 export async function readCodexRuntimeRateLimitsSnapshot(
   client: CodexRuntimeRateLimitsClient,
@@ -52,9 +39,12 @@ export async function readCodexRuntimeRateLimitsSnapshot(
   }
 }
 
-export function resolveCodexRuntimeRateLimitsState(rawSnapshot: unknown): CodexRuntimeRateLimitsState {
+export function resolveCodexRuntimeRateLimitsState(
+  rawSnapshot: unknown,
+  meters?: readonly AgentAccountUsageMeter[],
+): CodexRuntimeRateLimitsState {
   if (rawSnapshot === undefined) return { status: 'not_loaded' };
-  return hasMeterEvidence(rawSnapshot)
+  return (meters ?? mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot)).length > 0
     ? { status: 'loaded_data', rawSnapshot }
     : { status: 'loaded_empty', rawSnapshot };
 }
