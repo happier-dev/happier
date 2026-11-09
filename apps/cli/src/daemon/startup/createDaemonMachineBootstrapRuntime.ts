@@ -229,6 +229,7 @@ export function createDaemonMachineBootstrapRuntime(
     machineReboot?: ApiMachineClientLifecycleDependencies['machineReboot'];
     isPublicationQuiescing?: () => boolean;
     readSpawnFailureLimits?: ApiMachineClientLifecycleDependencies['readSpawnFailureLimits'];
+    readMachineEffectiveCores?: ApiMachineClientLifecycleDependencies['readMachineEffectiveCores'];
     ownerRemainder?: ApiMachineClientLifecycleDependencies['ownerRemainder'];
     agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
     getServerFeaturesSnapshot?: BootstrapRuntime['getServerFeaturesSnapshot'];
@@ -462,6 +463,7 @@ export function createDaemonMachineBootstrapRuntime(
             ...(params.resolveCurrentServerIdentityId ? { resolveCurrentServerIdentityId: params.resolveCurrentServerIdentityId } : {}),
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
             readSpawnFailureLimits: params.readSpawnFailureLimits,
+            readMachineEffectiveCores: params.readMachineEffectiveCores,
             agentIsolation: params.agentIsolation,
             ownerRemainder: params.ownerRemainder,
             ...(machineSkillTarget ? { machineSkillInstalls: {
