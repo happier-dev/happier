@@ -81,7 +81,7 @@ export function resolveExternalUrlTargetFromInput(value: string): BrowserViewTar
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
             return null;
         }
-        if (!parsed.hostname.includes('.') && parsed.hostname !== 'localhost') {
+        if (!parsed.hostname.includes('.') && !isLoopbackHostname(parsed.hostname)) {
             return null;
         }
         normalizedUrl = parsed.toString();

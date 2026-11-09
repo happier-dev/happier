@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 describe('browser address normalization', () => {
+    it('keeps IPv6 Machine loopback links eligible for in-app address resolution', async () => {
+        const { resolveExternalUrlTargetFromInput } = await import('./address');
+        expect(resolveExternalUrlTargetFromInput('http://[::1]:5173/docs?tab=1#intro'))
+            .toMatchObject({ kind: 'externalUrl', url: 'http://[::1]:5173/docs?tab=1#intro' });
+    });
     it('normalizes absolute URLs, localhost addresses, domain-like input, and configured search terms', async () => {
         const mod = await import('./address').catch(() => null);
 

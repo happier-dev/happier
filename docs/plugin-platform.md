@@ -1984,6 +1984,18 @@ Dependabot and code-scanning alerts; secret-scanning alert links stay external.
 opens; it does not decide where existing resource links open. These are
 development-source contracts, not a released-availability claim.
 
+Chat links also honor the deliberate device preference `chatLinkOpenLocation`
+(Settings → Session → Transcript): **Your browser** by default, **Embedded** on
+desktop/native hosts, or **Managed**. The existing `settings.get` / `settings.set`
+Actions expose it as `transcript.chatLinkOpenLocation`; it is not Account-synced.
+Transcript Markdown supplies its Session and destination-instance scope to core
+`openResource`, which delegates a Browser open through `browser.workspace.open`.
+Explicit SCM resource intents retain their contributed destinations and Account
+preference. Machine localhost addresses always
+stay in the app: Browser's shared address resolver prefers a running Service
+preview, otherwise the managed Browser on the Machine. This is development-source
+behavior; it does not claim released availability.
+
 The presented Session Git pane demands the existing branch list operation on
 mount, branch change, successful push/publish and explicit Refresh. Snapshot
 refreshes do not demand another list read. The existing bounded SCM cache keeps

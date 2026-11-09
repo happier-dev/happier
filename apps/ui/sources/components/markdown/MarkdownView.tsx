@@ -16,6 +16,9 @@ export type { MarkdownInlineReference, MarkdownInlineReferences } from './markdo
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 import type { MarkdownStreamingMode } from './streaming/usePreparedStreamingMarkdown';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { useOpenResource } from '@/utils/url/openResource';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { openMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
 
 export type { Option };
 export type { OptionLongPressHandler };
@@ -96,6 +99,15 @@ export const MarkdownView = React.memo((props: {
     /** Explicit Machine context for workspace image bytes; never inferred from a Session. */
     imageScope?: WorkspaceScopeBase;
 }) => {
+    const transcript = useOptionalSessionTranscriptSource();
+    const { openResourceUrl } = useOpenResource({ sessionId: transcript?.sessionId,
+        serverId: transcript?.serverId ?? undefined, chatLink: transcript !== null });
+    const onLinkPress = props.onLinkPress;
+    const handleLinkPress = React.useCallback((url: string) => {
+        if (onLinkPress?.(url) === true) return true;
+        void openMarkdownLinkUrl(url, openResourceUrl);
+        return true;
+    }, [onLinkPress, openResourceUrl]);
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
         variant: props.variant,
@@ -108,7 +120,7 @@ export const MarkdownView = React.memo((props: {
             markdown={props.markdown}
             onOptionPress={props.onOptionPress}
             onOptionLongPress={props.onOptionLongPress}
-            onLinkPress={props.onLinkPress}
+            onLinkPress={handleLinkPress}
             textStyle={props.textStyle}
             selectable={selectable}
             profile={profile}

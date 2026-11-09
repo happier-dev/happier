@@ -9,6 +9,7 @@ export const TRANSCRIPT_SETTINGS = defineSettingsPage({
         layout: {
             titleKey: 'settingsSession.transcript.layoutTitle',
             settings: {
+                chatLinkOpenLocation: {},
                 layoutPicker: {},
                 messageTimestamps: {},
             },

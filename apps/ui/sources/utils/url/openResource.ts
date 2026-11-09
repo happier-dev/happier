@@ -9,10 +9,21 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import { selectPluginSurfacePlacementsByDestination, selectRenderablePluginResourceLinkPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { storage } from '@/sync/domains/state/storageStore';
 import { requestOpenExternalUrl } from './requestOpenExternalUrl';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell/address';
+import { selectChatLinkEngineOverride } from '@/sync/domains/browser/adapters/selection';
+import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+
+const execute = createFrontDoorActionExecute();
+let chatLinkSequence = 0;
 
 export type OpenResourceContext = Readonly<{
   sessionId?: string;
   serverId?: string;
+  chatLink?: boolean;
+  scopeId?: string;
   navigation?: Pick<PluginSurfaceDestinationNavigationBinding, 'targetKind' | 'projection' | 'openSurface'> | null;
   /** An explicit catalog overrides the navigation scope's resource catalog. */
   projection?: PluginUiProjectionModel | null;
@@ -30,6 +41,35 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
     const opened = await (context?.openExternal ? context.openExternal(url) : requestOpenExternalUrl(url));
     return { status: opened ? 'external' : 'unavailable' };
   };
+  // Chat URLs honor this device's deliberate destination. Explicit SCM resource intents below
+  // retain their contributed destinations and Account preference.
+  if (kind === undefined && context?.chatLink) {
+    const unavailable = async (): Promise<OpenResourceOutcome> => {
+      const [{ Modal }, { t }] = await Promise.all([import('@/modal'), import('@/text')]);
+      Modal.alert(t('common.error'), t('browserSurface.unavailable.generic'));
+      return { status: 'unavailable' };
+    };
+    const target = resolveExternalUrlTargetFromInput(url);
+    const engineOverride = target && selectChatLinkEngineOverride(target, storage.getState().localSettings.chatLinkOpenLocation);
+    if (!target || !engineOverride) return external();
+    if (!context.scopeId) return unavailable();
+    try {
+      const result = await execute('browser.workspace.open', {
+        scopeId: context.scopeId, commandId: `chat-link:${Date.now()}:${++chatLinkSequence}`, target, engineOverride,
+      }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: context.serverId, defaultSessionId: context.sessionId });
+      if (!result.ok) {
+        const { presentActionTurnedOffNoticeIfOff } = await import('@/sync/ops/actions/actionTurnedOffNotice');
+        return presentActionTurnedOffNoticeIfOff(result, 'browser.workspace.open')
+          ? { status: 'unavailable' } : unavailable();
+      }
+      const opened = BrowserWorkspaceOpenResultV1Schema.safeParse(result.result);
+      if (!opened.success || opened.data.status !== 'dispatched') return unavailable();
+      return { status: opened.data.outcome === 'workspaceTab' ? 'inApp' : 'external' };
+    } catch {
+      return unavailable();
+    }
+  }
   if (storage.getState().settings.scmResourceOpenLocation === 'github' || !context?.navigation) return external();
   const scopedProjection = context.projection === undefined ? context.navigation.projection : context.projection;
   const scoped = scopedProjection === undefined ? readCurrentAppShellPluginUiProjection() : scopedProjection;
@@ -82,15 +122,18 @@ export function requestOpenResourceOutcome(resource: PluginUiResourceIntentV1, c
   return openResourceUrl(resource.url, resource.kind, context);
 }
 
-export function useOpenResource(context?: Readonly<{ sessionId?: string; serverId?: string }>) {
+export function useOpenResource(context?: Readonly<{ sessionId?: string; serverId?: string; chatLink?: boolean }>) {
   const navigation = usePluginSurfaceDestinationNavigationBinding();
   const sessionId = context?.sessionId;
   const serverId = context?.serverId;
+  const chatLink = context?.chatLink;
+  const instanceKey = useDestinationInstanceKey();
+  const scopeId = sessionId ? createSessionPaneScopeId(sessionId, serverId, instanceKey) : undefined;
   const openResource = React.useCallback((resource: PluginUiResourceIntentV1) => (
     requestOpenResource(resource, { navigation, sessionId, serverId })
   ), [navigation, serverId, sessionId]);
   const openResourceUrl = React.useCallback((url: string) => (
-    requestOpenResourceUrl(url, { navigation, sessionId, serverId })
-  ), [navigation, serverId, sessionId]);
+    requestOpenResourceUrl(url, { navigation, sessionId, serverId, chatLink, scopeId })
+  ), [navigation, serverId, sessionId, chatLink, scopeId]);
   return { openResource, openResourceUrl };
 }

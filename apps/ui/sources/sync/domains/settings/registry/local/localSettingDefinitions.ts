@@ -22,6 +22,12 @@ import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders
 import { MachineStorageViewMapSchema } from './machineStorageViewSetting';
 
 const localSettingInputs = {
+    chatLinkOpenLocation: {
+        schema: z.catch(z.enum(['browser', 'embedded', 'managed']), 'browser'),
+        default: 'browser',
+        description: 'Where links from chats open on this device',
+        storageScope: 'local',
+    },
     screenCaptureSound: {
         schema: z.catch(z.boolean(), true),
         default: true,

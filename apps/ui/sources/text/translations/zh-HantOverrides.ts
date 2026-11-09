@@ -1,3 +1,4 @@
+import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
@@ -5863,6 +5864,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     settingsAppearance: {
         ...paneArrangementTranslations['zh-Hant'],
+        chatLinks: chatLinksTranslations['zh-Hant'],
         needsYouHighlight: needsYouHighlightTranslations['zh-Hant'],
         workingIndicator: workingIndicatorTranslations['zh-Hant'],
       pageDescription: '主題、文字、版面與動態效果。',

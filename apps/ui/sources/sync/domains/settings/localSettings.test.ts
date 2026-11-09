@@ -4,6 +4,11 @@ import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProf
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('defaults chat links on older devices and preserves the deliberate device choice', () => {
+        expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({ themePreference: 'dark', chatLinkOpenLocation: 'browser' });
+        expect(localSettingsParse({ chatLinkOpenLocation: 'managed' })).toMatchObject({ chatLinkOpenLocation: 'managed' });
+        expect(localSettingsParse({ chatLinkOpenLocation: 'invalid' })).toMatchObject({ chatLinkOpenLocation: 'browser' });
+    });
     it('keeps remote image consent device-local, tolerant and scoped to the chosen document', () => {
         expect(localSettingsParse({}).remoteImageConsentV1).toEqual([]);
         const input = { remoteImageConsentV1: [['workspace-a', 'README.md'], ['workspace-a', 'README.md'], ['workspace-b', 'README.md'], null, ['only-one'], ['', 'README.md']] };

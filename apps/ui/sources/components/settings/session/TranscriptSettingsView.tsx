@@ -12,6 +12,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { ChatLinkOpenLocationSetting } from './ChatLinkOpenLocationSetting';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Typography } from '@/constants/Typography';
@@ -217,6 +218,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             <SettingsPageHeader description={t('settingsSessionPages.transcript.pageDescription')} />
             <ItemGroup title={t('settingsSession.transcript.layoutTitle')} description={t('settingsSession.transcript.layoutFooter')}>
+                <ChatLinkOpenLocationSetting />
                 <SettingAnchor setting={TRANSCRIPT_SETTINGS.settings.layoutPicker}>
                     <Item
                         testID="settings-session-transcript-layout-picker"
