@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fixture } from './sessionSpaceMembership.testHelpers';
+import { fixture, homes } from './sessionSpaceMembership.testHelpers';
 
 const { setSessionSpaceMembership, ensureSessionSpaceMembershipTag } = await import('./sessionSpaceMembership');
 
@@ -20,6 +20,7 @@ describe('Space membership with a cold organization projection', () => {
         expect(await setSessionSpaceMembership({ input: f.input('b', 'remove'), context: f.context })).toMatchObject({ ok: true });
         expect(f.read().assigned).toEqual(['ordinary']);
         expect(f.read().raw).toEqual(settings);
+        expect(homes.requests.filter(request => request.method === 'POST' && request.path === '/v2/account/settings')).toHaveLength(0);
     });
 
     it.each(['add', 'remove', 'move'] as const)('resolves persisted membership through the reader for cold %s', async operation => {

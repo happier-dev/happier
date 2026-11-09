@@ -27,18 +27,22 @@ export function selectSessionSpaceMembershipTags(tags: Readonly<Record<string, U
 /** All matching tags are members, including overlapping first preparations and historical links. */
 export function projectSessionSpaceMemberships(spaces: readonly CollectionSpaceV1<'sessionWork'>[],
     tags: Readonly<Record<string, UiSessionOrganizationTag>>, viewerAccounts: ReadonlyMap<string, string>): readonly CollectionSpaceV1<'sessionWork'>[] {
+    const relatedBySpace = new Map<string, QualifiedSessionSpaceTagV1[]>();
+    for (const [serverId, accountId] of viewerAccounts) {
+        for (const tag of Object.values(tags)) {
+            if (tags[buildSessionOrganizationServerKey(serverId, tag.tagId)] !== tag) continue;
+            const identity = readSessionOrganizationSpaceMembership(tag);
+            if (!identity) continue;
+            const related = relatedBySpace.get(identity.spaceId) ?? [];
+            related.push({ serverId, accountId, tagId: tag.tagId });
+            relatedBySpace.set(identity.spaceId, related);
+        }
+    }
     let changed = false;
     const projected = spaces.map(space => {
-        const related: QualifiedSessionSpaceTagV1[] = [];
-        for (const [serverId, accountId] of viewerAccounts) {
-            for (const tag of Object.values(tags)) {
-                if (tags[buildSessionOrganizationServerKey(serverId, tag.tagId)] !== tag
-                    || readSessionOrganizationSpaceMembership(tag)?.spaceId !== space.id) continue;
-                if (space.membership?.tags.some(held => held.accountId === accountId && held.tagId === tag.tagId
-                    && areServerProfileIdentifiersEquivalent(held.serverId, serverId))) continue;
-                related.push({ serverId, accountId, tagId: tag.tagId });
-            }
-        }
+        const related = (relatedBySpace.get(space.id) ?? []).filter(tag => !space.membership?.tags.some(held =>
+            held.accountId === tag.accountId && held.tagId === tag.tagId
+            && areServerProfileIdentifiersEquivalent(held.serverId, tag.serverId)));
         if (!related.length) return space;
         changed = true;
         return { ...space, membership: { mode: space.membership?.mode ?? 'filter_or_manual',
