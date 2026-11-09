@@ -439,7 +439,7 @@ describe('local voice engine device STT (experimental)', () => {
                 ...snapshot, surfaceState: resolveVoiceSurfaceState(snapshot), tone: 'neutral',
                 muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
             });
-            expect(control).toMatchObject({ surfaceState: 'idle', live: true, primaryAction: 'end' });
+            expect(control).toMatchObject({ surfaceState: 'live', live: true, primaryAction: 'end' });
             expect(getVoiceSessionEndedAttempt()).toBeNull();
             expect(getVoiceConversationRuntimeSnapshot().state).toBe('ending');
             let restartSettled = false;
@@ -738,7 +738,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(getLocalVoiceState().status).toBe('recording');
     });
 
-    it('rearms hands-free listening when the endpointed transcript is only a backchannel', async () => {
+    it('submits a short finalized utterance outside playback and rearms hands-free listening', async () => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -781,7 +781,12 @@ describe('local voice engine device STT (experimental)', () => {
 
         await waitForLocalVoiceBoundaryEvent('recognizer-start', 2);
         await waitForLocalVoiceState(state => state.status === 'recording');
-        expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+        expect(localVoicePendingEnqueue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            sessionId: 's1',
+            body: expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({
+                role: 'user', content: { type: 'text', text: 'yeah' },
+            }) } }),
+        }));
         expect(speechRecStart).toHaveBeenCalledTimes(2);
         expect(getLocalVoiceState().status).toBe('recording');
     });
