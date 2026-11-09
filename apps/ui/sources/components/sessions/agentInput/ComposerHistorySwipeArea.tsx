@@ -14,6 +14,10 @@ const FLICK_MAX_DURATION_MS = 250;
 const FLICK_MIN_DISTANCE = 30;
 
 const stylesheet = StyleSheet.create((theme) => ({
+    touchArea: {
+        flex: 1,
+        minWidth: 0,
+    },
     hint: {
         position: 'absolute',
         top: 4,
@@ -79,6 +83,7 @@ export function ComposerHistorySwipeArea(props: Readonly<{
     if (Platform.OS === 'web') return props.children;
     return (
         <View
+            style={styles.touchArea}
             collapsable={false}
             testID="composer-history-swipe-area"
             onTouchStart={handleTouchStart}
