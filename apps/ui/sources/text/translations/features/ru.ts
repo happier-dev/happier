@@ -14501,7 +14501,11 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 
 const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
     ready: 'Голосовой режим готов.',
-    permissionAnnouncement: ({ summary }) => `Сеансу разработки требуется разрешение для ${summary}.`,
+    permissionAnnouncement: ({ session, summary }) => `${session} запрашивает разрешение: ${summary}.`,
+    requestingSession: 'Сеанс разработки',
+    permissionRunCommand: 'выполнить команду терминала',
+    permissionAccessFile: ({ path }) => `работать с ${path}`,
+    permissionUseTool: ({ tool }) => `использовать ${tool}`,
     permissionQuestion: ({ approve, deny }) => `Разрешить? Скажите «${approve}» или «${deny}».`,
     permissionTapRequired: "Чтобы продолжить, воспользуйтесь карточкой подтверждения.",
     userActionAnnouncement: ({ question }) => `Сеансу разработки нужен ваш ответ. ${question}`,

@@ -5,6 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useVoiceReadAloudMessagePhase } from '@/components/voice/presence/useVoiceReadAloudMessagePhase';
+import { t } from '@/text';
 
 import {
     TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS,
@@ -30,8 +32,8 @@ const TRANSCRIPT_JUMP_HIGHLIGHT_POP_SCALE = 1.012;
  * subscriptions. The ring inherits the element's own radius and paints behind its
  * content. Reduced motion keeps a static ring for the full duration: no pop, no fade.
  *
- * Timing and identity stay owned by `transcriptJumpHighlightStore`; this
- * component only renders what the store says is the landed row.
+ * Jump timing stays owned by `transcriptJumpHighlightStore`. Read-aloud uses
+ * the same treatment without animation, for the speech owner's active row.
  */
 export function TranscriptJumpAttention(props: Readonly<{
     sessionAddress: SessionAddress | null;
@@ -50,9 +52,15 @@ export function TranscriptJumpAttention(props: Readonly<{
         seq: props.seq ?? null,
         filePath: props.filePath ?? null,
     });
+    const readAloud = useVoiceReadAloudMessagePhase(props.filePath ? null : props.sessionAddress, props.routeMessageId ?? null);
     return (
         <View {...(props.viewProps ?? null)} ref={props.viewRef} style={props.style}>
-            {token != null ? <TranscriptJumpAttentionRing key={token} token={token} radius={props.radius} /> : null}
+            {readAloud !== 'idle' ? (
+                <View pointerEvents="none" accessible
+                    accessibilityLabel={readAloud === 'preparing' ? t('voicePresence.readAloud.preparing') : t('voicePresence.readAloud.speaking')}
+                    style={[styles.ring, { borderRadius: props.radius }]}
+                    testID="transcript-read-aloud-highlight" />
+            ) : token != null ? <TranscriptJumpAttentionRing key={token} token={token} radius={props.radius} /> : null}
             {props.children}
         </View>
     );

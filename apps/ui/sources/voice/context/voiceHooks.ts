@@ -21,7 +21,7 @@ import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffecti
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { readSessionIncludedInVoiceFromState, resolveVoiceSessionUpdatePolicy, type VoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
-import type { AgentRequestKind } from '@happier-dev/protocol';
+import type { AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
 import type { HostAuthoredContextClass, VoiceHostAuthoredContextScope } from '@/voice/session/types';
@@ -30,6 +30,8 @@ import { areSessionAddressesEqual, normalizeSessionAddress, sessionAddressKey, t
 import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
+import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
+import { t } from '@/text';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -329,17 +331,19 @@ export const voiceHooks = {
 
     if (resolvePolicy(address).level === 'none') return;
     reportSession(sink, address);
+    const prefs = getVoiceContextPrefs(address);
     announceAssistantText(
       sink,
       sessionId,
-      summarizeAgentRequestForVoiceHuman(requestKind, requestId, toolName, toolArgs, getVoiceContextPrefs(address)),
+      summarizeAgentRequestForVoiceHuman(requestKind, requestId, toolName, toolArgs, prefs,
+        resolveVoiceSessionLabel(address, prefs, { fallbackLabel: t('voice.readiness.requestingSession') })),
     );
     reportAnnouncedSessionUpdate(
       sink,
       sessionId,
       requestKind === 'user_action'
-        ? formatUserActionRequest(address, requestId, toolName, toolArgs, getVoiceContextPrefs(address))
-        : formatPermissionRequest(address, requestId, toolName, toolArgs, getVoiceContextPrefs(address)),
+        ? formatUserActionRequest(address, requestId, toolName, toolArgs, prefs)
+        : formatPermissionRequest(address, requestId, toolName, toolArgs, prefs),
     );
   },
 
@@ -356,7 +360,7 @@ export const voiceHooks = {
     // This is one explicit user request, not an ambient Session/Follow update.
     // Local Agent channels deliberately discard ambient session_context, so
     // keep the privacy-projected facts with the request that consumes them.
-    sink.sendTextMessage(controlSessionId, `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Inbox work: needs-you, failures, then ready work. Say when information is incomplete. Follow the approval guidance in this Brief.`);
+    sink.sendTextMessage(controlSessionId, `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Account Inbox work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads: needs-you, failures, then ready work. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);
     return true;
   },
 

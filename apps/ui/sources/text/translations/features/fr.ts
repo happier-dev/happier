@@ -14516,7 +14516,11 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 
 const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
     ready: 'Prêt pour Voice.',
-    permissionAnnouncement: ({ summary }) => `La session de code a besoin d’une autorisation pour ${summary}.`,
+    permissionAnnouncement: ({ session, summary }) => `${session} a besoin d’une autorisation pour ${summary}.`,
+    requestingSession: 'La session de code',
+    permissionRunCommand: 'exécuter une commande de terminal',
+    permissionAccessFile: ({ path }) => `travailler avec ${path}`,
+    permissionUseTool: ({ tool }) => `utiliser ${tool}`,
     permissionQuestion: ({ approve, deny }) => `Dois-je l’autoriser ? Dites « ${approve} » ou « ${deny} ».`,
     permissionTapRequired: "Utilisez la carte d’approbation pour continuer.",
     userActionAnnouncement: ({ question }) => `La session de code a besoin de ta réponse. ${question}`,

@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import type { PropsWithChildren } from 'react';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
@@ -11,6 +12,7 @@ import {
     createMachineFixture,
     createRootLayoutFeaturesResponse,
     renderHook,
+    renderScreen,
     waitForTestEvent,
     standardCleanup,
 } from '@/dev/testkit';
@@ -29,12 +31,26 @@ import { resolveVoiceDictationReadiness } from './voiceDictationReadiness';
 
 const machineRpcWithServerScopeSpy = vi.hoisted(() => vi.fn());
 const stopRecording = vi.hoisted(() => vi.fn(async () => 'blob:dictation-composed-recording'));
+const recognition = vi.hoisted(() => ({ listeners: new Map<string, (event: unknown) => void>() }));
 let account: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
 let credentials: Awaited<ReturnType<typeof TokenStorage.getCredentialsForServerUrl>>;
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('socket.io-client', async importOriginal => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
+vi.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: {
+    isRecognitionAvailable: () => true,
+    requestPermissionsAsync: async () => ({ granted: true }),
+    addListener: (name: string, listener: (event: unknown) => void) => {
+        recognition.listeners.set(name, listener);
+        return { remove: () => recognition.listeners.delete(name) };
+    },
+    start: () => recognition.listeners.get('audiostart')?.({}),
+    stop: () => {
+        recognition.listeners.get('result')?.({ isFinal: true, results: [{ transcript: 'SUMMARIZE THIS PROJECT' }] });
+        recognition.listeners.get('end')?.({});
+    },
+} }));
 
 // Expo is the SDK leaf. NativeMicSession, audio-mode custody and capture stay real.
 vi.mock('expo-audio', () => {
@@ -88,6 +104,41 @@ describe('useVoiceDictation composed daemon readiness', () => {
         machineRpcWithServerScopeSpy.mockReset();
         await account?.dispose();
         vi.unstubAllGlobals();
+    });
+
+    it('shows a real recognizer partial in its composer leaf without committing the draft', async () => {
+        const deviceModule = await loadVitestModuleForNodeRequire(
+            new URL('../input/DeviceSttController.ts', import.meta.url),
+            () => import('@/voice/input/DeviceSttController'),
+        );
+        try {
+            account = await createPlainArtifactHomeFixture('https://dictation-preview.test');
+            credentials = await TokenStorage.getCredentialsForServerUrl('https://dictation-preview.test');
+            vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
+            storage.setState({ settings: { ...storage.getState().settings, voice: {
+                ...voiceSettingsDefaults, dictation: { ...voiceSettingsDefaults.dictation,
+                    sttBinding: 'explicit', stt: { ...voiceSettingsDefaults.dictation.stt, provider: 'device' } },
+            } } });
+            const { voiceDictationController } = await import('./useVoiceDictation');
+            const { SessionAuthoringComposer } = await import('@/components/sessions/authoring/SessionAuthoringComposer');
+            const { composerRefV1Key } = await import('@happier-dev/protocol/plugins/ui/composerRef');
+            const composerRef = { kind: 'newSession', instanceId: 'dictation-preview' } as const;
+            const changed = vi.fn();
+            const screen = await renderScreen(React.createElement(SessionAuthoringComposer, {
+                composerRef, value: 'Existing draft', onChangeText: changed,
+            }));
+            await act(async () => { await voiceDictationController.toggle({ controlId: composerRefV1Key(composerRef), transcriptionSessionId: null }); });
+            await act(async () => {
+                recognition.listeners.get('result')?.({ isFinal: false, results: [{ transcript: 'SUMMARIZE' }] });
+            });
+            expect(screen.findHostByTestId('voice-dictation-partial')?.props.children).toBe('Summarize');
+            expect(changed).not.toHaveBeenCalled();
+            await act(async () => { await voiceDictationController.cancel(); });
+            expect(screen.findHostByTestId('voice-dictation-partial')).toBeNull();
+            expect(changed).not.toHaveBeenCalled();
+        } finally {
+            deviceModule.dispose();
+        }
     });
 
     it('does not report Ready when the real controller will fail the daemon feature gate before RPC', async () => {
@@ -237,6 +288,9 @@ describe('useVoiceDictation composed daemon readiness', () => {
             },
         });
         await act(async () => {
+            // The failed recording belongs to Retry/Discard until explicitly
+            // released; selecting another provider does not abandon it.
+            await hook.getCurrent().discard();
             await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'started' });
         });
         expect(stopRecording).toHaveBeenCalledOnce();

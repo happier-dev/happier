@@ -4,7 +4,11 @@ export type VoiceReadinessCopy = {
   ready: string;
   permissionQuestion: (params: { approve: string; deny: string }) => string;
   permissionTapRequired: string;
-  permissionAnnouncement: (params: { summary: string }) => string;
+  permissionAnnouncement: (params: { session: string; summary: string }) => string;
+  requestingSession: string;
+  permissionRunCommand: string;
+  permissionAccessFile: (params: { path: string }) => string;
+  permissionUseTool: (params: { tool: string }) => string;
   userActionAnnouncement: (params: { question: string }) => string;
   userActionFallback: string;
   requestedTool: string;
@@ -84,7 +88,11 @@ export function defineVoiceReadinessTranslation(readiness: VoiceReadinessCopy) {
 
 export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTranslation({
     ready: 'Ready for Voice.',
-    permissionAnnouncement: ({ summary }) => `The coding session needs permission for ${summary}.`,
+    permissionAnnouncement: ({ session, summary }) => `${session} needs permission to ${summary}.`,
+    requestingSession: 'The coding session',
+    permissionRunCommand: 'run a terminal command',
+    permissionAccessFile: ({ path }) => `work with ${path}`,
+    permissionUseTool: ({ tool }) => `use ${tool}`,
     permissionQuestion: ({ approve, deny }) => `Should I allow it? Say “${approve}” or “${deny}”.`,
     permissionTapRequired: "Use the approval card to continue.",
     userActionAnnouncement: ({ question }) => `The coding session needs your input. ${question}`,

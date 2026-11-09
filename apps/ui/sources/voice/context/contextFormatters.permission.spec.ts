@@ -97,19 +97,27 @@ describe('formatPermissionRequest privacy', () => {
     expect(result).toContain('Never claim it was settled until canonical session updates show the result.');
   });
 
-  it('creates a short human-facing permission summary for deterministic voice announcements', () => {
+  it('describes a terminal permission in plain words without reading shell input aloud', () => {
     const result = summarizeAgentRequestForVoiceHuman(
       'permission',
       'req_4',
       'Bash',
-      { command: 'rm -rf /tmp/x' },
+      { command: '/bin/bash -lc "printf secrets > /tmp/x"' },
       SHARE_ALL,
     );
 
     expect(result).toContain('needs permission');
-    expect(result).toContain('Run:');
-    expect(result).toContain('rm -rf /tmp/x');
+    expect(result).toContain('terminal command');
+    expect(result).not.toContain('printf');
+    expect(result).not.toContain('/bin/bash');
     expect(result).not.toContain('req_4');
+  });
+
+  it('names the requesting Session only when Session summary sharing permits it', () => {
+    const summarize = (share: boolean) => summarizeAgentRequestForVoiceHuman('permission', 'req_named', 'Bash',
+      { command: 'pwd' }, { ...SHARE_ALL, voiceShareSessionSummary: share }, 'Morning Coffee');
+    expect(summarize(true)).toContain('Morning Coffee');
+    expect(summarize(false)).not.toContain('Morning Coffee');
   });
 
   it('redacts file paths inside the human-facing permission summary when file path sharing is disabled', () => {

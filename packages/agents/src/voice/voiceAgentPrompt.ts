@@ -18,12 +18,18 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 6;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 7;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
 const VOICE_AGENT_IRREVERSIBLE_ACTION_RULE =
   'Do not take irreversible actions unless the user explicitly asked you to.';
+const VOICE_AGENT_SPOKEN_RESULT_RULES = [
+  'Lead with the answer or actual outcome. Keep spoken replies brief unless the person asks for detail.',
+  'Do tool discovery and routine checks silently. Do not narrate plans, tool calls, backend lookups, or intermediate catalog results; speak when you have an outcome, a real blocker, or a question the person must answer.',
+  'For a broad question about what needs attention, read the canonical Account Inbox. An empty request list or missing updates in one bound Session never establishes that the Inbox is empty. If the Inbox read is partial or unavailable, say what is known and what could not be checked.',
+  'An INBOX BRIEF already supplies the privacy-approved Inbox snapshot for that request. Answer from those facts immediately, with needs-you work first, then failures and ready work. Mention incomplete coverage briefly with the outcome; do not fetch or rediscover the same work before answering, invent names for unnamed items, or claim caught up unless caughtUp is true. Use tools for a requested follow-up.',
+] as const;
 const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
   'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
@@ -73,6 +79,7 @@ export function buildGlobalVoiceAgentStartupInstructionsPlanV1() {
           'Report delegated results truthfully.',
           'Do not claim completion before canonical results exist.',
           'Distinguish accepted work, progress, completed results, failures, and unknown outcomes.',
+          ...VOICE_AGENT_SPOKEN_RESULT_RULES,
           ...VOICE_AGENT_SESSION_CREATION_RULES,
         ].join('\n'),
       },
@@ -112,6 +119,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     'Core behavior:',
     brevityRule.trimEnd(),
     `- ${VOICE_AGENT_DIRECT_IDENTITY_RULE}`,
+    ...VOICE_AGENT_SPOKEN_RESULT_RULES.map(rule => `- ${rule}`),
     '- For codebase questions or actions, use tools first before answering when inspection is needed.',
     '- Ask one clarifying question if the user request is ambiguous.',
     ...(hasTool('sendSessionMessage')
@@ -133,9 +141,9 @@ function buildVoiceAgentBaseText(params?: Readonly<{
         ].filter(Boolean).join(' or ')} with that title before using discovery.`]
         : []),
     ...(discoveryTools.length === 3
-      ? ['- When you do not already know the right tool or valid input values, start with searchActionSpecs, then getActionSpec, then resolveActionOptions before calling the final action.']
+      ? ['- Call a known action directly when its schema and required input values are already available. Otherwise use searchActionSpecs to find the action, getActionSpec only for missing schema details, and resolveActionOptions only for missing valid input values; skip discovery steps you do not need.']
       : discoveryTools.length > 0
-        ? [`- When you do not already know the right tool or valid input values, use ${discoveryTools.join(', then ')} before calling the final action.`]
+        ? [`- Call a known action directly when its schema and required input values are already available. Use ${discoveryTools.join(', ')} only to obtain missing action or input facts; skip discovery steps you do not need.`]
       : []),
     '- Never read raw JSON, raw tool payloads, or raw ids aloud to the user. Summarize tool results in plain language.',
     ...(params?.welcome?.enabled === true ? [] : [

@@ -68,6 +68,7 @@ function createRealCaptureBoundary(input: Readonly<{
     prepare?: () => Promise<void>;
     stop?: () => Promise<string | null>;
     restore?: () => Promise<void>;
+    onPartialTranscript?: (partial: Readonly<{ controlSessionId: string; transcript: string }>) => void;
 }> = {}) {
     const native = createNativeVoicePcmCaptureHarness();
     const preparing = createDeferred<void>();
@@ -88,7 +89,8 @@ function createRealCaptureBoundary(input: Readonly<{
         setFileRecordingMuted: async () => {},
         stopFileRecording: async () => ({ uri: await finalizeRecording() ?? '' }),
     };
-    const real = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted: () => {}, onCaptureError: () => {} }, {
+    const real = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted: () => {}, onCaptureError: () => {},
+        onPartialTranscript: input.onPartialTranscript }, {
         createDeviceSttController: deps => createDeviceSttController({ ...deps, getAudioSessionCoordinator: () => native.coordinator }),
         createLiveMicSession: () => createNativeMicSession(),
         createRecordingMicSession: () => createExpoAudioRecordingMicSession({
@@ -272,6 +274,67 @@ afterEach(async () => {
 });
 
 describe('createVoiceDictationController', () => {
+    it('delivers recognizer partials only to the active composer without lifecycle or global store publications', async () => {
+        const captureOwner = createRealCaptureBoundary({
+            recognizedText: () => 'SUMMARIZE THIS PROJECT',
+            onPartialTranscript: partial => controller.reportPartialTranscript(partial),
+        });
+        const controller = createVoiceDictationController({
+            captureOwner, ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({ voice: { dictation: { sttBinding: 'explicit', stt: { provider: 'device' } } } }),
+            transcribeRecordedAudio: createTranscriptionProbe(),
+        });
+        const previews: Array<string | null> = [];
+        const otherPreviews: Array<string | null> = [];
+        const unsubscribe = controller.subscribePartialTranscript('session-1', () => previews.push(controller.getPartialTranscript('session-1')));
+        const unsubscribeOther = controller.subscribePartialTranscript('other-composer', () => otherPreviews.push(controller.getPartialTranscript('other-composer')));
+        await controller.toggle('session-1');
+        const lifecycle = vi.fn();
+        const unsubscribeLifecycle = controller.subscribe(lifecycle);
+        const globalNotifications = vi.fn();
+        const unsubscribeGlobal = storage.subscribe(globalNotifications);
+        for (const transcript of ['SUMMARIZE', 'SUMMARIZE THIS PROJECT']) {
+            physicalRecognition.listeners.get('result')?.({ isFinal: false, results: [{ transcript }] });
+        }
+        expect(previews[0]).toBe('Summarize');
+        expect(lifecycle).not.toHaveBeenCalled();
+        expect(globalNotifications).not.toHaveBeenCalled();
+        expect(otherPreviews).toEqual([]);
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'completed', text: 'Summarize this project' });
+        expect(previews.at(-1)).toBeNull();
+        expect(otherPreviews).toEqual([]);
+        const settled = [...previews];
+        controller.reportPartialTranscript({ controlSessionId: 'session-1', transcript: 'LATE RESULT' });
+        expect(previews).toEqual(settled);
+        unsubscribe(); unsubscribeOther(); unsubscribeLifecycle(); unsubscribeGlobal();
+    });
+
+    it.each([
+        ['SUMMARIZE WHAT CHANGED IN THIS PROJECT TO DAY IN THREE BULLET POINTS', 'Summarize what changed in this project to day in three bullet points'],
+        ['HELLO. I NEED HELP!', 'Hello. I need help!'],
+        ['Summarize the API changes in README.md', 'Summarize the API changes in README.md'],
+    ])('normalizes uppercase dictation at completion while preserving mixed case: %s', async (recognized, expected) => {
+        const controller = createVoiceDictationController({
+            captureOwner: createRealCaptureBoundary({ recognizedText: () => recognized }),
+            ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({ voice: { dictation: { sttBinding: 'explicit', stt: { provider: 'device' } } } }),
+            transcribeRecordedAudio: createTranscriptionProbe(),
+        });
+        await controller.toggle('session-1');
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'completed', text: expected });
+    });
+
+    it('normalizes recorded-audio dictation through the same completion owner', async () => {
+        const controller = createVoiceDictationController({
+            captureOwner: createRealCaptureBoundary(),
+            ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({ voice: { dictation: { sttBinding: 'explicit', stt: { provider: 'happier.voice.openai-compat/stt' } } } }),
+            transcribeRecordedAudio: createTranscriptionProbe(async () => '  SUMMARIZE THIS PROJECT  '),
+        });
+        await controller.toggle('session-1');
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'completed', text: 'Summarize this project' });
+    });
+
     it('uses explicit Dictation STT instead of silently inheriting conversational Voice', async () => {
         const captureOwner = createRealCaptureBoundary({ recordedUri: () => 'file:///dictation.m4a' });
         const settings = {

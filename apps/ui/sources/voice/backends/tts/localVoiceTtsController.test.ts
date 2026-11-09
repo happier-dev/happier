@@ -12,6 +12,7 @@ import { DaemonVoiceInferenceTtsStreamStartResponseSchema } from '@happier-dev/p
 import { DaemonVoiceInferenceModelStatusSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { getDefaultModelPackId, getModelPackCatalogEntry } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { buildMessageRouteId } from '@happier-dev/session-core/messages';
 
 import { createExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';
 import {
@@ -196,6 +197,8 @@ describe('localVoiceTtsController', () => {
         const credentials = await TokenStorage.getCredentialsForServerUrl(account.homes.voice!.serverUrl);
         const { VoiceTopBarPresence } = await import('@/components/voice/presence/VoiceTopBarPresence');
         const { useVoiceReadAloud } = await import('@/components/voice/presence/VoiceReadAloud');
+        const { TranscriptJumpAttention } = await import('@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay');
+        const { useVoiceReadAloudMessagePhase } = await import('@/components/voice/presence/useVoiceReadAloudMessagePhase');
         const { buildVoicePresenceFixture } = await import('@/components/dev/voicePresence/voicePresenceFixtures');
         const { t } = await import('@/text');
         const { translateVoiceReadiness } = await import('@/voice/settings/panels/voiceProviderReadinessPresentation');
@@ -239,9 +242,20 @@ describe('localVoiceTtsController', () => {
             });
         }
         const presence = await renderScreen(React.createElement(Presence));
+        const rowRenders = { target: 0, sibling: 0, foreignHome: 0 };
+        function RowProbe(props: { row: keyof typeof rowRenders; serverId: string; routeMessageId: string }) {
+            rowRenders[props.row] += 1;
+            const phase = useVoiceReadAloudMessagePhase({ serverId: props.serverId, sessionId: 's1' }, props.routeMessageId);
+            return React.createElement('ReadAloudRowProbe', { row: props.row, phase });
+        }
         // Device speech also covers a long message; this daemon boundary returns one protocol-sized segment.
         const text = provider === 'device' ? 'A chosen progress note. '.repeat(200) : 'A chosen progress note.';
         const message = { kind: 'agent-text' as const, id: 'answer', localId: 'answer', text, createdAt: 1, seq: 1, isThinking: false };
+        const probes = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(RowProbe, { row: 'target', serverId: account.homes.voice!.id, routeMessageId: buildMessageRouteId(message) }),
+            React.createElement(RowProbe, { row: 'sibling', serverId: account.homes.voice!.id, routeMessageId: 'local:another-answer' }),
+            React.createElement(RowProbe, { row: 'foreignHome', serverId: 'another-home', routeMessageId: buildMessageRouteId(message) })));
+        const initialRowRenders = { ...rowRenders };
         const messageContent = wrapWithSessionTranscriptSource(React.createElement(CommittedMessageActions, {
             message, sessionId: 's1', serverId: account.homes.voice!.id,
             selectableText: { role: 'assistant', text }, copyText: text, isStructuredOnly: false,
@@ -252,7 +266,10 @@ describe('localVoiceTtsController', () => {
             settings: { ...storage.getState().settings, workspacePath: null, debugInformationEnabled: false },
             showActions: true, showPinAction: false, timestampText: null, invertTimestampAndActions: false,
             onActionsFocus: () => {}, onActionsBlur: () => {}, touchRevealKey: null,
-            children: row => row,
+            children: row => React.createElement(TranscriptJumpAttention, {
+                sessionAddress: { serverId: account.homes.voice!.id, sessionId: 's1' },
+                routeMessageId: buildMessageRouteId(message), radius: 0, children: row,
+            }),
         }), createTestSessionTranscriptSource({ sessionId: 's1', serverId: account.homes.voice!.id }));
         // Enter through the web app's actual platform composition, not a manually mounted producer.
         const appContent = platform === 'web'
@@ -274,12 +291,18 @@ describe('localVoiceTtsController', () => {
             if (provider === 'device') expect(expoSpeechSpeak).toHaveBeenCalledWith(text.trim(), expect.anything());
             else expect(daemonStreamStartRpc).toHaveBeenCalledWith(expect.objectContaining({ text: text.trim() }));
             expect(localVoiceTtsController.readSay()).toBe('speaking');
+            await vi.waitFor(() => expect(messageActions.findAllHostsByTestId('transcript-read-aloud-highlight')).toHaveLength(1));
+            expect(probes.findAllByType('ReadAloudRowProbe').find(row => row.props.row === 'target')?.props.phase).toBe('speaking');
+            expect(rowRenders.target).toBeGreaterThan(initialRowRenders.target);
+            expect(rowRenders.sibling).toBe(initialRowRenders.sibling);
+            expect(rowRenders.foreignHome).toBe(initialRowRenders.foreignHome);
             await vi.waitFor(() => expect(presence.getTextContent()).toContain(t('voicePresence.readAloud.speaking')));
             await presence.pressByTestIdAsync('voice-top-bar-read-aloud-stop');
             if (provider === 'device') expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
             else if (platform === 'web') expect(browserAudio.pause).toHaveBeenCalledTimes(1);
             else expect(encodedAudio.stop).toHaveBeenCalledTimes(1);
             expect(localVoiceTtsController.readSay()).toBe('idle');
+            expect(messageActions.findAllHostsByTestId('transcript-read-aloud-highlight')).toHaveLength(0);
             await presence.pressByTestIdAsync('voice-top-bar-transport-dismiss');
             expect(dismiss).toHaveBeenCalledTimes(1);
             expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); options.onDone?.(); });
@@ -298,6 +321,7 @@ describe('localVoiceTtsController', () => {
             }
         } finally {
             localVoiceTtsController.stopSay();
+            await probes.unmount();
             await presence.unmount();
             await messageActions.unmount();
             await catalog?.unmount();

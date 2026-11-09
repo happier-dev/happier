@@ -696,6 +696,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   voiceSettingsEdit?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceSettingsEdit'];
   /** Mounted History delivery; the consumer retains Account binding and delete-wins ownership. */
   voiceHistory?: import('@/voice/history/voiceHistoryActions').VoiceHistoryActionPorts;
+  /** Originating message presentation, private to this speech invocation. */
+  voiceSpeechSource?: import('@/voice/backends/tts/localVoiceTtsProviderControllers').VoiceReadAloudSource;
   /** Mounted model-pack progress presentation; Action policy owns admission. */
   voiceModelPackPresentation?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceModelPackPresentation'];
   /** Captured profile candidate; Settings admission remains in the shared executor. */
@@ -2103,7 +2105,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const settings = accountContext.readLiveSettings();
         if (!settings) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         // The Protocol executor admitted this exact Action's closed input before entering this port.
-        return await executeVoiceSpeechAction(actionId, input as Parameters<typeof executeVoiceSpeechAction>[1], settings, context.signal);
+        return await executeVoiceSpeechAction(actionId, input as Parameters<typeof executeVoiceSpeechAction>[1], settings, context.signal, opts?.voiceSpeechSource);
       }
       if (isVoiceHistoryActionId(actionId)) {
         const [{ executeVoiceHistoryAction }, { getDefaultVoiceHistoryConsumer }, { saveVoiceHistoryExportArtifact }] = await Promise.all([
@@ -5047,6 +5049,8 @@ type DefaultActionExecutorOptions = Parameters<typeof buildDefaultActionExecutor
 /** UI-only projection qualifier; the captured Account owner enforces it before admission. */
 export type UiActionExecutorContext = import('@/components/plugins/surfaces/pluginSurfaceActionDispatch').PluginSurfaceActionExecutorContext & Readonly<{
   expectedAccountId?: string;
+  /** Local read-aloud presentation only; never serialized into Action custody. */
+  voiceSpeechSource?: import('@/voice/backends/tts/localVoiceTtsProviderControllers').VoiceReadAloudSource;
   /** Reviewed Delete routing only; the receiving owner still admits expectedRevision and authority. Never serialized. */
   reviewedManagedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
   /** Exact object admitted by the enclosing UI stop/archive lifecycle. */
@@ -5060,7 +5064,7 @@ type DefaultActionExecutor = Omit<UiProtocolActionExecutor, 'execute' | 'prepare
   prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext,
     options?: import('@happier-dev/protocol/actions/executor/types').ActionPrepareOptions) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
 }>;
-type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute' | 'archiveOperation' | 'defaultSessionId' | 'contributedActionInvocation'> & Readonly<{
+type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute' | 'archiveOperation' | 'defaultSessionId' | 'contributedActionInvocation' | 'voiceSpeechSource'> & Readonly<{
   archiveInput?: unknown;
   serverId: string;
   signal?: AbortSignal;
@@ -5326,6 +5330,7 @@ export async function withDefaultActionExecuteContext<TResult>(
       throwIfAborted(context.signal);
       const listContributedActionDefinitions = context.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
       const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation,
+        ...(context.voiceSpeechSource ? { voiceSpeechSource: context.voiceSpeechSource } : {}),
         ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
         ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
@@ -5526,7 +5531,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       input = parsed.data;
     }
-    const { openRoute, archiveOperation, reviewedManagedMachine, ...actionContext } = context ?? {};
+    const { openRoute, archiveOperation, reviewedManagedMachine, voiceSpeechSource, ...actionContext } = context ?? {};
     const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
     if (custodyFailure) return custodyFailure;
     const api = await apiTokenTransport();
@@ -5537,7 +5542,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
     if (!serverId) return await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, input, actionContext);
     try {
-      const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, archiveInput: input, serverId }, async (executor, account) => {
+      const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, voiceSpeechSource, archiveInput: input, serverId }, async (executor, account) => {
         const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts, reviewedManagedMachine);
         if (native && 'ok' in native) return native;
         const actionRequestId = native || confirmInFlow ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;
@@ -5578,7 +5583,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     execute: executeAction,
     executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
     prepare: async (actionId, input, context, options) => {
-      const { openRoute, archiveOperation, reviewedManagedMachine, ...actionContext } = context ?? {};
+      const { openRoute, archiveOperation, reviewedManagedMachine, voiceSpeechSource, ...actionContext } = context ?? {};
       const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return { kind: 'settled', result: custodyFailure };
       const api = await apiTokenTransport();
@@ -5599,6 +5604,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         throwIfAborted(context?.signal);
         const listContributedActionDefinitions = actionContext.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
         const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation,
+          ...(voiceSpeechSource ? { voiceSpeechSource } : {}),
           ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
           ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
         const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts, reviewedManagedMachine);

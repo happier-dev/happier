@@ -14448,7 +14448,11 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 
 const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation({
     ready: '語音功能已就緒。',
-    permissionAnnouncement: ({ summary }) => `編碼工作階段需要以下權限：${summary}。`,
+    permissionAnnouncement: ({ session, summary }) => `${session}需要獲得許可來${summary}。`,
+    requestingSession: '編碼工作階段',
+    permissionRunCommand: '執行終端機命令',
+    permissionAccessFile: ({ path }) => `操作${path}`,
+    permissionUseTool: ({ tool }) => `使用${tool}`,
     permissionQuestion: ({ approve, deny }) => `是否允許？請說「${approve}」或「${deny}」。`,
     permissionTapRequired: "請使用核准卡片繼續。",
     userActionAnnouncement: ({ question }) => `編碼工作階段需要你的回答。${question}`,

@@ -14453,7 +14453,11 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 
 const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
     ready: '音声機能を利用できます。',
-    permissionAnnouncement: ({ summary }) => `コーディングセッションには${summary}の許可が必要です。`,
+    permissionAnnouncement: ({ session, summary }) => `${session}は${summary}の許可が必要です。`,
+    requestingSession: 'コーディングセッション',
+    permissionRunCommand: 'ターミナルコマンドを実行する',
+    permissionAccessFile: ({ path }) => `${path}を操作する`,
+    permissionUseTool: ({ tool }) => `${tool}を使用する`,
     permissionQuestion: ({ approve, deny }) => `許可しますか？「${approve}」または「${deny}」と言ってください。`,
     permissionTapRequired: "続けるには承認カードを使ってください。",
     userActionAnnouncement: ({ question }) => `コーディングセッションにはあなたの回答が必要です。${question}`,

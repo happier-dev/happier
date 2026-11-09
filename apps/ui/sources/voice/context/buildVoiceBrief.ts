@@ -10,7 +10,7 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import type { WorkflowAttentionSource } from '@/hooks/inbox/useWorkflowAttentionSource';
 import type { AutomationInboxItem } from '@/hooks/inbox/useInboxModel';
-import type { AgentRequestKind } from '@happier-dev/protocol';
+import type { AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { resolveVoiceSessionUpdatePolicyV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 import { buildInboxSessionContextLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
@@ -67,7 +67,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
             includeInVoice, isCurrentAttemptTarget });
         speechByKey.set(sessionAddressKey(address), {
             ...(prefs.voiceShareSessionSummary ? { title: safeTitle(candidate.title) } : {}),
-            ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs)).filter((value): value is string => Boolean(value)) } : {}),
+            ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, candidate.title)).filter((value): value is string => Boolean(value)) } : {}),
         });
     };
     for (const entry of inbox.sessionPresentation.sessionsNeedingAttention) {

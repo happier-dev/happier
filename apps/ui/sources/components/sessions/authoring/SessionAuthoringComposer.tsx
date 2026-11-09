@@ -1,4 +1,4 @@
-import type { ComposerRefV1 } from '@happier-dev/protocol';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/forms/MultiTextInput';
 import { applyDictationToComposer } from '@/components/sessions/agentInput/applyDictationToComposer';
 import { useTextInputDictation, type TextInputDictation } from '@/voice/dictation/useTextInputDictation';
+import { VoiceDictationTranscriptPreview } from '@/voice/dictation/VoiceDictationTranscriptPreview';
 
 export type SessionAuthoringComposerDictation = TextInputDictation;
 
@@ -133,6 +134,9 @@ const SessionAuthoringComposerSurface = React.forwardRef<
                 onStateChange={handleStateChange}
                 onFocus={handleFocus}
             />
+            {composerRef && presented && inputProps.editable !== false
+                ? <VoiceDictationTranscriptPreview controlId={composerRefV1Key(composerRef)} />
+                : null}
             {dictationEnabled && renderDictationAccessory
                 ? <SessionAuthoringComposerDictationAccessory composerRef={composerRef} presented={presented}
                     editable={inputProps.editable !== false} transcriptionSessionId={transcriptionSessionId ?? null}

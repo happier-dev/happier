@@ -14448,7 +14448,11 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 
 const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation({
     ready: '语音功能已就绪。',
-    permissionAnnouncement: ({ summary }) => `编码会话需要获得以下权限：${summary}。`,
+    permissionAnnouncement: ({ session, summary }) => `${session}需要获得许可来${summary}。`,
+    requestingSession: '编码会话',
+    permissionRunCommand: '运行终端命令',
+    permissionAccessFile: ({ path }) => `操作${path}`,
+    permissionUseTool: ({ tool }) => `使用${tool}`,
     permissionQuestion: ({ approve, deny }) => `是否允许？请说“${approve}”或“${deny}”。`,
     permissionTapRequired: "请使用审批卡片继续。",
     userActionAnnouncement: ({ question }) => `编码会话需要你的回答。${question}`,

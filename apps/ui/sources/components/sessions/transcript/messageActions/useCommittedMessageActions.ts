@@ -31,6 +31,8 @@ import type { ReadAloudReadiness } from './ReadAloudReadinessSubscription';
 import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { resolveVoiceSettingsRecoveryTarget } from '@/voice/settings/voiceSettingsRouteFocus';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useOptionalSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 
 const executeSpeechAction = createFrontDoorUiActionExecutor();
 
@@ -76,6 +78,7 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
 }> = { rowVisible: true, menuVisible: false }) {
     const { message, settings } = input;
     const router = useRouter();
+    const transcriptSource = useOptionalSessionTranscriptSource();
     const readableAssistantMessage = message.kind === 'agent-text' && !message.isThinking && input.selectableText != null
         && !input.isStructuredOnly && !input.hasUnsupportedContent;
     const readAloudEligible = readableAssistantMessage && input.copyText.trim().length > 0;
@@ -178,7 +181,10 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
             disabledRecovery: readAloudRecovery,
             icon: 'speaker-high', title: t('committedMessageActions.readAloud'), onPress: async () => {
                 try {
-                    const result = VoiceSayActionResultSchema.parse(await executeSpeechAction('ui.voice_global.say.start', { text: input.copyText }));
+                    const sessionAddress = normalizeSessionAddress(input.serverId
+                        ?? (transcriptSource?.sessionId === input.sessionId ? transcriptSource.serverId : null), input.sessionId);
+                    const result = VoiceSayActionResultSchema.parse(await executeSpeechAction('ui.voice_global.say.start', { text: input.copyText },
+                        sessionAddress ? { voiceSpeechSource: { sessionAddress, routeMessageId: buildMessageRouteId(message) } } : undefined));
                     if (result.status !== 'unavailable') return;
                 } catch { /* The Action owns typed refusal; presentation never exposes transport or provider prose. */ }
                 Modal.alert(t('common.error'), t('settingsVoice.local.machineErrors.tts_failed'));

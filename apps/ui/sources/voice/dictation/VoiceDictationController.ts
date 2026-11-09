@@ -33,6 +33,18 @@ export const VOICE_DICTATION_LIMITS = Object.freeze({
 
 const TRANSCRIPTION_CANCELLED = Symbol('voice_dictation_transcription_cancelled');
 
+function normalizeDictationTranscript(rawText: string | null): string | null {
+    const text = rawText?.trim();
+    if (!text) return null;
+    // Recognizers without punctuation/casing can return whole utterances in
+    // uppercase. Keep supplied mixed casing, including acronyms and filenames.
+    if (text !== text.toUpperCase() || text === text.toLowerCase()) return text;
+    return text.toLowerCase()
+        .replace(/(^|[.!?]\s+)([^\p{L}]*)(\p{L})/gu, (_match, boundary: string, prefix: string, letter: string) => (
+            boundary + prefix + letter.toUpperCase()
+        ));
+}
+
 export type VoiceDictationFailureReason =
     | 'capture_failed'
     | 'provider_unavailable'
@@ -128,6 +140,9 @@ export type VoiceDictationController = Readonly<{
     retry: (sessionId: string) => Promise<VoiceDictationToggleResult>;
     dismissFailure: (failureId: number) => void;
     getSnapshot: () => VoiceDictationSnapshot;
+    getPartialTranscript: (sessionId: string) => string | null;
+    subscribePartialTranscript: (sessionId: string, listener: () => void) => () => void;
+    reportPartialTranscript: (partial: Readonly<{ controlSessionId: string; transcript: string }>) => void;
     reportCaptureError: (error: VoiceDictationCaptureError) => void;
     subscribe: (listener: () => void) => () => void;
     toggle: (target: string | VoiceDictationTarget) => Promise<VoiceDictationToggleResult>;
@@ -145,6 +160,9 @@ export function createVoiceDictationController(deps: Readonly<{
     deleteRecordedAudio: (uri: string) => Promise<void>;
 }>): VoiceDictationController {
     const listeners = new Set<() => void>();
+    const partialListeners = new Map<string, Set<() => void>>();
+    let partialSessionId: string | null = null;
+    let partialTranscript: string | null = null;
     let snapshot: VoiceDictationSnapshot = {
         sessionId: null,
         status: 'idle',
@@ -155,6 +173,12 @@ export function createVoiceDictationController(deps: Readonly<{
     let nativeLifecycleWork = Promise.resolve();
 
     const publish = (next: VoiceDictationSnapshot): void => {
+        if (partialSessionId !== null && (next.status === 'idle' || next.sessionId !== partialSessionId)) {
+            const previousSessionId = partialSessionId;
+            partialSessionId = null;
+            partialTranscript = null;
+            partialListeners.get(previousSessionId)?.forEach(listener => listener());
+        }
         if (
             snapshot.sessionId === next.sessionId
             && snapshot.status === next.status
@@ -413,9 +437,7 @@ export function createVoiceDictationController(deps: Readonly<{
                 ) {
                     return { kind: 'cancelled' } as const;
                 }
-                const text = typeof rawText === 'string' && rawText.trim()
-                    ? rawText.trim()
-                    : null;
+                const text = normalizeDictationTranscript(rawText);
                 return { kind: 'completed', text } as const;
             });
             if (result === TRANSCRIPTION_CANCELLED) {
@@ -649,6 +671,24 @@ export function createVoiceDictationController(deps: Readonly<{
                     : 'capture_failed',
             })) return;
             void cleanup(attempt);
+        },
+        getPartialTranscript: sessionId => partialSessionId === sessionId ? partialTranscript : null,
+        subscribePartialTranscript: (sessionId, listener) => {
+            const subscribers = partialListeners.get(sessionId) ?? new Set<() => void>();
+            partialListeners.set(sessionId, subscribers);
+            subscribers.add(listener);
+            return () => {
+                subscribers.delete(listener);
+                if (subscribers.size === 0) partialListeners.delete(sessionId);
+            };
+        },
+        reportPartialTranscript: ({ controlSessionId, transcript }) => {
+            if (!active || active.sessionId !== controlSessionId || active.cancelled || active.failed) return;
+            const text = normalizeDictationTranscript(transcript);
+            if (partialSessionId === controlSessionId && partialTranscript === text) return;
+            partialSessionId = controlSessionId;
+            partialTranscript = text;
+            partialListeners.get(controlSessionId)?.forEach(listener => listener());
         },
         subscribe: (listener) => {
             listeners.add(listener);

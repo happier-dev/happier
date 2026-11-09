@@ -4,6 +4,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { localVoiceTtsController } from '@/voice/backends/tts/localVoiceTtsController';
 import { parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettingsFromVoice } from '@/voice/local/localVoiceSettings';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import type { VoiceReadAloudSource } from '@/voice/backends/tts/localVoiceTtsProviderControllers';
 
 /** The Action port adapts the incumbent output owner; it owns no speech state. */
 export async function executeVoiceSpeechAction(
@@ -11,6 +12,7 @@ export async function executeVoiceSpeechAction(
     input: Readonly<{ text?: string }>,
     settings: Pick<Settings, 'voice'>,
     signal?: AbortSignal,
+    source?: VoiceReadAloudSource,
 ): Promise<VoiceSayActionResult> {
     if (actionId === 'ui.voice_global.say.stop') {
         localVoiceTtsController.stopSay();
@@ -20,7 +22,7 @@ export async function executeVoiceSpeechAction(
     if (!text) return { status: 'completed' };
     const { config } = resolveLocalVoiceAdapterSettingsFromVoice(settings.voice);
     try {
-        return await localVoiceTtsController.say({ text, settings, signal,
+        return await localVoiceTtsController.say({ text, settings, signal, source,
             tts: parseLocalVoiceTtsSettings(config.tts), networkTimeoutMs: config.networkTimeoutMs,
             onSpeaking: () => {},
         });
