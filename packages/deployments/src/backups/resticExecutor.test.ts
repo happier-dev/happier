@@ -40,7 +40,7 @@ describe('restic request contract', () => {
         expect(cases.map(command => request(command).runtime)).toEqual(cases.map(() => RESTIC_RUNTIME_V1));
         expect(request({ kind: 'init' }).argv.slice(-3)).toEqual(['init', '--repository-version', '2']);
         expect(request({ kind: 'config' }).argv.slice(-2)).toEqual(['cat', 'config']);
-        expect(request({ kind: 'tree', treeId: 'b'.repeat(64) }).argv.slice(-3)).toEqual(['cat', 'tree', 'b'.repeat(64)]);
+        expect(request({ kind: 'tree', treeId: 'b'.repeat(64) }).argv.slice(-3)).toEqual(['cat', 'blob', 'b'.repeat(64)]);
         expect(request({ kind: 'dump', snapshotId: 'a'.repeat(64), path: '/db.dump' }).argv).not.toContain('--json');
     });
 

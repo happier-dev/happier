@@ -1,4 +1,4 @@
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { isResticSnapshotBoundToManifestV1, readResticRepositoryConfigV1, readResticSnapshotsV1 } from './manifestV1.js';
 import { selectResticForgetCandidatesV1 } from './retentionV1.js';
 import { backupOperationFailureV1, backupOperationStepV1, executeBackupOperationStepV1,
@@ -15,7 +15,7 @@ export type DeploymentBackupPruneResultV1 = Readonly<{
     kind: 'pruned' | 'kept'; removedSnapshotIds: readonly string[];
 }>;
 export { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 }
-    from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+    from '@happier-dev/deployment-protocol';
 
 /** Restic owns policy grouping/locking/compaction. This owner deletes only proven-owned, unprotected exact ids. */
 export async function pruneDeploymentBackupsV1(input: DeploymentBackupPruneInputV1): Promise<DeploymentBackupPruneResultV1> {
@@ -56,6 +56,7 @@ export async function pruneDeploymentBackupsV1(input: DeploymentBackupPruneInput
     } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'outcome_unknown';
         const step = error && typeof error === 'object' && 'step' in error && typeof error.step === 'string' ? error.step : 'retention';
-        throw Object.assign(new Error(code), { code, step, details: { removedSnapshotIds, uncertainSnapshotIds } });
+        throw Object.assign(new Error(code), { code, step,
+            details: { ...readDeploymentBackupMaintenanceFailureEvidenceV1(error), removedSnapshotIds, uncertainSnapshotIds } });
     }
 }

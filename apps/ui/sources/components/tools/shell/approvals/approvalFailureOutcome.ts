@@ -8,7 +8,8 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
-import { DeploymentTeardownEnvironmentPartialDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
@@ -23,7 +24,7 @@ import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetail
 /** Both Action executions and durable operation failures carry these same diagnostic facts. */
 export type ApprovalFailureDiagnostics = Pick<ActionExecuteFailure, 'error' | 'errorCode' | 'details' | 'failureCause' | 'effectAttempted'>;
 
-/** Project only the named, content-free fields of the owning failure schemas, never arbitrary details. */
+/** Project only named facts and owner-redacted diagnostics from the failure schemas, never arbitrary details. */
 export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDiagnostics, scope?: 'deployment'): readonly TechnicalDetailsLine[] {
     const lines: TechnicalDetailsLine[] = [];
     const add = (key: string, label: string, value: string | number | boolean | null | undefined) => {
@@ -38,26 +39,32 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const conflict = DeploymentReviewConflictFailureDetailsV1Schema.safeParse(failure.details);
     const domain = DeploymentDomainFailureDetailsV1Schema.safeParse(failure.details);
     const environmentRemoval = DeploymentTeardownEnvironmentPartialDetailsV1Schema.safeParse(failure.details);
+    const backup = scope === 'deployment' ? DeploymentBackupFailureDetailsV1Schema.safeParse(failure.details) : null;
     const receiptFailure = execution.success ? execution.data.failure : null;
     const directSourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(failure.details);
     const sourceAdmission = directSourceAdmission.success ? directSourceAdmission.data : receiptFailure?.sourceAdmission;
     const domainFailure = domain.success && 'failure' in domain.data ? domain.data.failure : undefined;
     const genericRecovery = DeploymentFailureRecoveryV1Schema.safeParse(failure.details);
     const settlementRecovery = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(failure.details);
+    const partial = DeploymentTemplateInstantiationPartialV1Schema.safeParse(failure.details);
     const authoredRecovery = conflict.success ? conflict.data : domain.success ? domain.data
-        : environmentRemoval.success ? environmentRemoval.data : sourceAdmission ?? (genericRecovery.success ? genericRecovery.data
-            : settlementRecovery.success ? settlementRecovery.data : receiptFailure);
+        : environmentRemoval.success ? environmentRemoval.data : sourceAdmission ?? (backup?.success ? backup.data : genericRecovery.success ? genericRecovery.data
+            : settlementRecovery.success ? settlementRecovery.data : partial.success ? partial.data : receiptFailure);
     const recovery = scope === 'deployment' || authoredRecovery
         ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}, failure.errorCode) : null;
     const cause = failure.failureCause ?? receiptFailure?.failureCause;
     add('failure-phase', t('approvals.failureTechnicalLabels.phase'), receiptFailure?.phase ?? (domain.success ? domain.data.step
-        : environmentRemoval.success ? environmentRemoval.data.step : sourceAdmission?.phase));
+        : environmentRemoval.success ? environmentRemoval.data.step : sourceAdmission?.phase ?? (backup?.success ? backup.data.step : undefined)));
     add('failure-reason', t('approvals.failureTechnicalLabels.reason'), domainFailure?.reason ?? sourceAdmission?.reason);
     add('failure-cause-phase', t('approvals.failureTechnicalLabels.causePhase'), cause?.phase ?? sourceAdmission?.phase
         ?? (domainFailure && 'phase' in domainFailure ? domainFailure.phase : domainFailure?.nativeCommand?.phase));
     add('failure-error-class', t('approvals.failureTechnicalLabels.errorClass'), cause?.errorClass);
     add('failure-cause-code', t('approvals.failureTechnicalLabels.causeCode'), cause?.errorCode
         ?? (domainFailure && 'errorCode' in domainFailure ? domainFailure.errorCode : undefined));
+    const nativeFailure = backup?.success ? backup.data.nativeFailure : undefined;
+    add('failure-native-exit-code', t('tools.structuredResult.exit'), nativeFailure?.exitCode);
+    add('failure-native-stderr', t('tools.structuredResult.stderr'), nativeFailure?.stderr);
+    add('failure-native-stderr-truncated', t('browserDiagnostics.host.fields.truncated'), nativeFailure?.stderrTruncated);
     add('failure-http-status', t('approvals.failureTechnicalLabels.httpStatus'), cause?.httpStatus ?? receiptFailure?.validation?.httpStatus);
     add('failure-effect-attempted', t('approvals.failureTechnicalLabels.effectAttempted'), failure.effectAttempted ?? receiptFailure?.effectAttempted);
     add('failure-required-fact', t('approvals.failureTechnicalLabels.requiredFact'), recovery?.requiredFact);

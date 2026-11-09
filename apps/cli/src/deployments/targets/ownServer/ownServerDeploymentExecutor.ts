@@ -38,6 +38,7 @@ import { captureOwnServerDeploymentSource, createOwnServerSourceCustodyReader, r
 import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination, prepareOwnServerNativeRestore,
     confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput } from './nativeRestore';
 import { executeOwnServerBackupForHost } from './backup';
+import { createOwnServerDatabaseUsernameReaderForHost } from './backupDestination';
 export { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { executeOwnServerRollout, recordOwnServerCandidateCleanup, projectOwnServerCandidateCleanupFailure, OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID } from './ownServerRollout';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentReviewRequest, OwnServerDeploymentRuntimeRequest, OwnServerDeploymentResult, OwnServerDeploymentReview,
@@ -353,6 +354,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 if (observed.kind !== 'active') refuse(observed.kind === 'unknown' ? 'outcome_unknown' : 'deployment_generation_required');
                 const currentActivation = activation = observed.activation;
                 const native = { project, render, activation: currentActivation, context, io: recovery.runtime.nativeIo,
+                    readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({ data: environment.content.template?.data,
+                        preparation: { ...recovery.runtime.secrets, environmentId: environment.environment.id,
+                            machineId: host.machineId, installationId: input.installationId,
+                            bindings: environment.content.bindings, assertCurrent: recovery.assertCurrent } }),
                     onIncumbentServicesChanged: input.onIncumbentServicesChanged };
                 const createInput: OwnServerNativeRestoreInputFactory = async capture => {
                     const identities = new Set(capture.configuration.credentialBindings.map(environmentSecretBindingIdentityV1));
@@ -767,6 +772,46 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     purpose: 'serviceCommand', service: migration.service }) : undefined;
                 if (migration && !firstRuntime && !receipt.content.steps.some(step => step.id === MIGRATION_STEP
                     && (step.state === 'succeeded' || step.state === 'skipped'))) refuse('outcome_unknown');
+                const settlePrivatePublications = input.phase !== 'observe' && await (async () => {
+                    if (selectedSnapshot.environment.content.ownServer?.serviceExports
+                        ?.some(exported => exported.exposure === 'privateNetwork')) return true;
+                    const hadPrivatePublications = (value: OwnServerDeploymentReceipt) => {
+                        const approval = value.content.ownServer?.approvedInputBasis;
+                        return approval?.members.some(member => member.machineId === host.machineId
+                            && member.installationId === input.installationId) === true
+                            && approval.ownServer?.serviceExports?.some(exported => exported.exposure === 'privateNetwork') === true;
+                    };
+                    // A failed candidate may have applied permits before activation;
+                    // restoration's current receipt is excluded from history below.
+                    if (restored && hadPrivatePublications(receipt)) return true;
+                    if (!host.readBuildHistory) refuse('deployment_executor_unavailable');
+                    for await (const value of host.readBuildHistory({ environmentId: receipt.deployment.environmentId,
+                        targetLinkId: snapshot.link.id, environment: snapshot.environment, context: request.context })) {
+                        if (value.deployment.id === receipt.deployment.id) continue;
+                        if (hadPrivatePublications(value)) return true;
+                        // The exact successful serving member bounds prior attempts.
+                        // An unshared baseline means older permits already settled.
+                        if (value.deployment.id === snapshot.link.activeDeploymentId
+                            && (value.deployment.state === 'succeeded' || value.deployment.state === 'running_unverified')
+                            && value.content.machineResults.some(member => member.machineId === host.machineId
+                                && member.installationId === input.installationId && member.activation === 'succeeded')) break;
+                    }
+                    return false;
+                })();
+                const nativeEffectAdmission = { operation: { operationId: receipt.deployment.actionOperationId,
+                    kind: request.actionId, signal: snapshot.signal },
+                    keys: settlePrivatePublications ? [...activationRender.keys, { kind: 'machineSetup' as const }] : activationRender.keys,
+                    settleNative: prepared.project.settleNative };
+                const settlePublications = async (context: MachineNativeEffectContext) => {
+                    if (!settlePrivatePublications) return;
+                    if (!host.settlePrivateWorkloadFirewall) return refuse('private_scope_unenforceable');
+                    const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
+                    try {
+                        await host.settlePrivateWorkloadFirewall(request, { environment: selectedSnapshot.environment,
+                            render: activationRender, docker, installationId: input.installationId,
+                            context, signal: snapshot.signal });
+                    } finally { await docker.dispose(); }
+                };
                 if (restored) {
                     if (rendered.servicePlatforms.some(value => !selected.content.images.some(image => image.service === value.service
                         && normalizeNativeComposePlatform(image.platform) === normalizeNativeComposePlatform(value.platform)))) {
@@ -777,6 +822,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     if (observed.status === 'unknown') return failure('outcome_unknown');
                     if (observed.status === 'matching' && previous?.currentDeploymentId === selected.deployment.id) {
                         await prepared.assertCurrent();
+                        if (settlePrivatePublications) return await machineNativeEffectAdmission.run(nativeEffectAdmission, async context => {
+                            await settlePublications(context);
+                            return stage(row(observed.health));
+                        });
                         return stage(row(observed.health));
                     }
                     if (input.phase === 'observe') {
@@ -788,13 +837,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 }
                 // Forward cutover observes retained U. Reverse cutover observes
                 // the candidate B from this same receipt, never today's source.
-                // Observe-only/already-restored paths above need neither effect.
-                // The serving receipt also owns the previous private exports.
-                // Recreate needs that provenance to withdraw their permits.
+                // Observe-only/already-restored paths above need no cutover.
                 const incumbentReceipt = restored ? receipt : snapshot.link.activeDeploymentId ? await host.readReceipt({
                     environmentId: receipt.deployment.environmentId, deploymentId: snapshot.link.activeDeploymentId,
                     context: request.context }) : undefined;
                 let incumbentRender: NativeComposeProjectRender | undefined;
+                let readIncumbentDatabaseUsername: OwnServerNativeRestoreInput['readDatabaseUsername'] | undefined;
                 const prepareIncumbent = async (current: OwnServerDeploymentReceipt) => {
                     const incumbentBasis = current.content.ownServer?.approvedInputBasis;
                     if (!incumbentBasis) refuse('rollback_image_unavailable');
@@ -803,6 +851,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         environment: { ...snapshot.environment, content: { ...snapshot.environment.content,
                             bindings: incumbentBasis.bindings, ownServer: incumbentBasis.ownServer } },
                         content: current.content });
+                    readIncumbentDatabaseUsername = createOwnServerDatabaseUsernameReaderForHost({
+                        data: snapshot.environment.content.template?.data,
+                        preparation: { ...retained.runtime.secrets, environmentId: receipt.deployment.environmentId,
+                            machineId: host.machineId, installationId: input.installationId,
+                            bindings: incumbentBasis.bindings, assertCurrent: retained.assertCurrent } });
                     retainedProject = incumbentBasis.ownServer?.rollout === 'startFirst'
                         ? retained.project.createStartFirstCandidate() : retained.project;
                     incumbentRender = await retainedProject.render({ signal: snapshot.signal });
@@ -826,15 +879,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         deployment: { ...receipt.deployment, revision: written.deploymentRevision } };
                 }
                 await prepared.assertCurrent();
-                const hasPrivatePublications = selectedSnapshot.environment.content.ownServer?.serviceExports
-                    ?.some(exported => exported.exposure === 'privateNetwork') === true;
-                const hadPrivatePublications = incumbentReceipt?.content.ownServer?.approvedInputBasis.ownServer?.serviceExports
-                    ?.some(exported => exported.exposure === 'privateNetwork') === true;
-                const settlePrivatePublications = hasPrivatePublications || hadPrivatePublications;
-                return await machineNativeEffectAdmission.run({ operation: { operationId: receipt.deployment.actionOperationId,
-                    kind: request.actionId, signal: snapshot.signal },
-                    keys: settlePrivatePublications ? [...activationRender.keys, { kind: 'machineSetup' }] : activationRender.keys,
-                    settleNative: prepared.project.settleNative }, async context => {
+                return await machineNativeEffectAdmission.run(nativeEffectAdmission, async context => {
                     if (!restored) await prepared.project.assertReviewedGeneration(rendered, snapshot.signal);
                     const restoreBackupId = !restored && request.actionId === 'deployments.rollback'
                         && 'restoreBackupId' in request.input ? request.input.restoreBackupId : undefined;
@@ -910,9 +955,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                     await prepareIncumbent(await host.readReceipt({ environmentId: receipt.deployment.environmentId,
                                         deploymentId: snapshot.link.activeDeploymentId, context: request.context }));
                                 }
-                                if (!retained || !retainedProject || !incumbentRender || !incumbent) return refuse('backup_required');
+                                if (!retained || !retainedProject || !incumbentRender || !incumbent || !readIncumbentDatabaseUsername) return refuse('backup_required');
                                 return { input: { ...operands, project: retainedProject, render: incumbentRender, activation: incumbent,
                                     context, io: retained.runtime.nativeIo,
+                                    readDatabaseUsername: readIncumbentDatabaseUsername,
                                     onIncumbentServicesChanged,
                                     runtimeImage: await retainedProject.prepareResticRuntime({ render: incumbentRender, context }),
                                     onStopPending() { prepared.stageOutput?.appendRedacted('stderr', Buffer.from('Native backup stop is pending\n')); } },
@@ -934,15 +980,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     });
                     const activate = async () => {
                         await prepared.stageOutput?.beginStep({ stepId: input.phase });
-                        if (settlePrivatePublications) {
-                            if (!host.settlePrivateWorkloadFirewall) return refuse('private_scope_unenforceable');
-                            const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
-                            try {
-                                await host.settlePrivateWorkloadFirewall(request, { environment: selectedSnapshot.environment,
-                                    render: activationRender, docker, installationId: input.installationId,
-                                    context, signal: snapshot.signal });
-                            } finally { await docker.dispose(); }
-                        }
+                        await settlePublications(context);
                         if (startFirst && incumbent) {
                             if (!host.readStartFirstRoutes) return refuse('native_route_unavailable');
                             const composeService = incumbent.services[0];

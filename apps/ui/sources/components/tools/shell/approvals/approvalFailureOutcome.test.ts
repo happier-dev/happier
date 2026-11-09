@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
-import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { ApprovalRequestV1Schema, ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -35,6 +36,60 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it.each([undefined, { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true }])('retains the backup stream step and native evidence in direct and recorded failure Details: %j', nativeFailure => {
+        const code = nativeFailure ? 'backup_failed' : 'outcome_unknown';
+        const phase = nativeFailure ? 'deployment.backup.native' : 'dispatch';
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: code, error: code,
+            details: { requiredFact: 'deploymentActionResult', step: nativeFailure ? 'tree' : 'backupStdin', code,
+                ...(nativeFailure ? { nativeFailure } : {}) },
+            failureCause: projectActionFailureCauseV1({ code }, phase) });
+        const authored = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId: 'deployments.backups.run', summary: 'Back up now',
+            actionArgs: { serverId: 'home', environmentId: 'environment', machineId: 'machine', installationId: 'installation',
+                targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1 },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+                serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'deployments.backups.run', requestId: 'request' } });
+        const settle = (refusal: typeof failure) => StoredApprovalRequestSchema.parse({ ...authored, status: 'failed', updatedAtMs: 3,
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: projectApprovalExecutionFailureV2({ request: authored, failure: refusal, executedAtMs: 3 }) });
+        const request = settle(failure);
+        const recorded = readApprovalExecutionFailure(request);
+        expect(recorded).not.toBeNull();
+        for (const outcome of [presentActionFailureOutcome(failure, 'deployment'), presentApprovalFailureOutcome(request, recorded!)]) {
+            expect(outcome.technicalDetails).toContainEqual(expect.objectContaining({ key: 'failure-phase', value: nativeFailure ? 'tree' : 'backupStdin' }));
+            expect(outcome.technicalDetails).toContainEqual(expect.objectContaining({ key: 'failure-cause-phase', value: phase }));
+            if (nativeFailure) expect(outcome.technicalDetails).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'failure-native-exit-code', value: '1' }),
+                expect.objectContaining({ key: 'failure-native-stderr', value: nativeFailure.stderr }),
+                expect.objectContaining({ key: 'failure-native-stderr-truncated', value: 'true' }),
+            ]));
+        }
+        const untyped = presentActionFailureOutcome({ ...failure, details: { step: 'private-untyped-data' } }, 'deployment');
+        expect(JSON.stringify(untyped.technicalDetails)).not.toContain('private-untyped-data');
+        expect(settle({ ...failure, details: { ...failure.details as object, code: 'unrelated_failure' } }).execution).not.toHaveProperty('details');
+        expect(settle({ ...failure, details: { ...failure.details as object, token: 'private-token' } }).execution).not.toHaveProperty('details');
+        if (nativeFailure) expect(settle({ ...failure, details: { ...failure.details as object,
+            nativeFailure: { ...nativeFailure, argv: 'private-native-argv' } } }).execution).not.toHaveProperty('details');
+    });
+
+    it('presents a retained Store Domain cause like the direct Add Domain failure', () => {
+        const domain = DeploymentDomainFailureDetailsV1Schema.parse({ environmentId: 'environment-private', domainId: 'domain-private',
+            step: 'native_execution', requiredFact: 'caddyAdminConfig',
+            remedy: 'Caddy cannot bind a public port. Use Tunnel ingress or stop the other proxy, then retry.',
+            failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig',
+                stepId: 'caddy-container-start', nativeCommand: { command: 'docker', phase: 'start', exitCode: 1 },
+                containerExitCode: 128, containerError: 'port_in_use' } });
+        const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'domains',
+            errorCode: 'native_effect_failed', environmentId: 'environment-private', savedSecrets: [], failure: domain,
+            requiredFact: 'deploymentActionResult', remedy: 'The machine could not apply the address change.' });
+        const failure = { errorCode: 'native_effect_failed', error: 'native_effect_failed' };
+        const direct = presentActionFailureOutcome({ ...failure, details: domain }, 'deployment');
+        const store = presentActionFailureOutcome({ ...failure, details: partial }, 'deployment');
+        expect(store.reason).toBe(direct.reason);
+        expect(store.technicalDetails).toContainEqual(expect.objectContaining({ key: 'failure-required-fact', value: 'caddyAdminConfig' }));
+        expect(JSON.stringify(store.technicalDetails)).not.toMatch(/environment-private|domain-private/);
+    });
+
     it('retains a document proposal posting refusal as readable cause and typed technical detail', () => {
         const errorCode = 'discussion_post_denied';
         const request = ApprovalRequestV1Schema.parse({ ...approval(), status: 'failed', actionId: 'doc.edit.propose',

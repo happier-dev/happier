@@ -28,7 +28,7 @@ function safetyBackup(producerExitCode = 0, onPayloadRead?: () => void): Deploym
                 total_bytes_processed: 123, total_files_processed: 1 })), producer: { exitCode: producerExitCode, checksumSha256: checksum } };
             if (request.argv.includes('snapshots')) return complete(JSON.stringify([{ id: 'e'.repeat(64), tree: treeId,
                 hostname: 'happier-env-target', time: manifest.snapshot.time, paths: ['/db.dump'], tags: ['happier', 'env:target', 'src:main', 'kind:dump'] }]));
-            if (request.argv.includes('tree')) return complete(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
+            if (request.argv.includes('blob')) return complete(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
             onPayloadRead?.();
             return { ...complete(), stdoutChecksumSha256: checksum, stdoutBytes: 123 };
         } };
@@ -57,7 +57,7 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
             if (argv.includes('config')) return complete(JSON.stringify({ id: options.wrongRepository ? 'f'.repeat(64) : repositoryId, version: 2 }));
             if (argv.includes('snapshots')) return complete(JSON.stringify([{ id: source.snapshot.snapshotId, tree: source.snapshot.treeId,
                 hostname: source.snapshot.hostname, time: source.snapshot.time, paths: source.snapshot.paths, tags: source.snapshot.tags }]));
-            if (argv.includes('tree')) return complete(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
+            if (argv.includes('blob')) return complete(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
             return { ...complete(), stdoutChecksumSha256: checksum, stdoutBytes: 123 };
         }
         if (request.kind === 'restoreStream') return { ...complete(), exitCode: options.streamFails ? 1 : 0,

@@ -6,6 +6,31 @@ import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDestinationV1 } from '@happier-dev/deployments';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createDeploymentBackupEnvironmentForHost, prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
+import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
+
+export type OwnServerDatabaseUsernameForHost = Readonly<{ username: string; secretValues: readonly string[] }>;
+
+/** Database connection operands use the service's admitted runtime grant and
+ * masking custody. They never enter the captured restore wire model. */
+export function createOwnServerDatabaseUsernameReaderForHost(input: Readonly<{
+    data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'];
+    preparation: Pick<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0],
+        'environmentId' | 'machineId' | 'installationId' | 'installationPrivateSeed' | 'bindings' | 'grants' | 'assertCurrent' | 'resolveNonSecret'>;
+}>): (service: string) => Promise<OwnServerDatabaseUsernameForHost | undefined> {
+    return async service => {
+        const logical = input.data?.find(data => data.service === service)?.logicalBackup;
+        if (logical?.adapter !== 'postgres-v1' || !logical.username) return undefined;
+        const binding = input.preparation.bindings.find(binding => binding.purpose === 'variable'
+            && binding.phase === 'runtime' && binding.name === logical.username);
+        if (!binding || binding.purpose !== 'variable') throw new PluginError({
+            code: 'secret_missing', message: 'The configured database username binding is unavailable' });
+        const { environmentId, machineId, installationId, installationPrivateSeed, grants, assertCurrent, resolveNonSecret } = input.preparation;
+        const prepared = await prepareEnvironmentSecretBindingsForLaunch({ environmentId, machineId, installationId,
+            installationPrivateSeed, grants, assertCurrent, resolveNonSecret, phase: 'runtime', bindings: [binding] });
+        try { return { username: prepared.env[binding.name]!, secretValues: [...prepared.secretValues] }; }
+        finally { prepared.dispose(); }
+    };
+}
 
 export type DeploymentBackupDestinationRegistryForHost = Pick<ResolvedExecutablePluginRuntimeRegistry,
     'targetActionInvocations' | 'readPluginOccurrenceId' | 'activateContributionsOnDemand'> & Readonly<{

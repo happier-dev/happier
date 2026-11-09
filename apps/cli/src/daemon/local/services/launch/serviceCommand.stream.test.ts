@@ -9,8 +9,28 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import * as commands from './serviceCommand';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
+import { logger } from '@/ui/logger';
 
 describe('host service command stream', () => {
+    it('redacts a completed native read failure before releasing its lease while preserving raw binary stdout measurements', async () => {
+        const secret = 'native-read-credential-sentinel';
+        const bytes = Buffer.concat([Buffer.from([0, 255, 195, 40, 128]), Buffer.from(secret)]);
+        const redaction = createProviderRedactionLease({ values: [secret] });
+        let released = false;
+        try {
+            await machineNativeEffectAdmission.run({ operation: { operationId: 'native-read-failure-evidence', kind: 'backup' }, keys: [] }, async context => {
+                const command = commands.admitNativeServiceCommandForHost({ context, rawStdout: true, async assertCurrent() {},
+                    async launch() { return { command: process.execPath, args: ['-e',
+                        `process.stdout.write(Buffer.from(${JSON.stringify(bytes.toString('base64'))},'base64'));process.stderr.write(${JSON.stringify(`Fatal: could not find snapshot ${secret}`)});process.exitCode=1;`],
+                        env: {}, secretRedactionLease: redaction, release() { released = true; redaction.close(); } }; } });
+                const result = await commands.executeAdmittedServiceCommand(command);
+                expect(result).toMatchObject({ kind: 'completed', exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]',
+                    stderrTruncated: false, stdoutBytes: bytes.byteLength, stdoutChecksumSha256: createHash('sha256').update(bytes).digest('hex') });
+                expect(released).toBe(true);
+            });
+        } finally { redaction.close(); }
+    });
+
     it.each(['shell', 'exec', 'stream'] as const)('requires redeploy before %s when original masking custody is lost', async mode => {
         const redaction = createProviderRedactionLease({ values: ['retired-command-secret'] });
         redaction.close();
@@ -187,6 +207,9 @@ describe('host service command stream', () => {
     });
 
     it.each([0, 7, 'cancel', 'consumerExit'] as const)('withholds consumer EOF after dump stdout closes until producer outcome %s', async exitCode => {
+        // Replace only the private file sink; native processes and supervision remain real.
+        const localLog = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        onTestFinished(() => localLog.mockRestore());
         const root = await mkdtemp(join(tmpdir(), 'happier-stream-'));
         const success = join(root, 'producer-success');
         const eof = join(root, 'consumer-eof');
@@ -227,6 +250,12 @@ describe('host service command stream', () => {
                         checksumSha256: JSON.parse(result.stdout).checksum });
                 } else {
                     expect(result.kind).toBe('outcome_unknown');
+                    if (exitCode === 7) {
+                        expect(localLog).toHaveBeenCalledWith('[Service command stream] Native stream failed', expect.objectContaining({
+                            operationId: context.operation.operationId, producerExitCode: 7,
+                        }));
+                        expect(JSON.stringify(localLog.mock.calls)).not.toContain('raw-secret-sentinel');
+                    }
                     await expect(readFile(eof)).rejects.toMatchObject({ code: 'ENOENT' });
                     if (exitCode !== 'consumerExit') expect(await readFile(stopped, 'utf8')).toBe('stopped');
                 }

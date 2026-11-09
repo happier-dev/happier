@@ -1,5 +1,6 @@
-import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema } from '@happier-dev/deployment-protocol';
-import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
+import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, DeploymentBackupNativeFailureV1Schema,
+    readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupNativeResultV1, DeploymentBackupRunInputV1 } from '../actions/backups.js';
 import { isResticSnapshotBoundToManifestV1, readResticNativeJsonV1, readResticNativeRecordV1,
     readResticRepositoryConfigV1, readResticSnapshotsV1, type BackupManifestV1 } from './manifestV1.js';
 import { buildResticRequestV1, type ResticCommandV1 } from './resticExecutor.js';
@@ -12,16 +13,21 @@ export type DeploymentBackupVerifyInputV1 = DeploymentBackupReadInputV1 & Readon
     configRevision: number; manifest: BackupManifestV1; level: DeploymentBackupVerificationV1['level'];
 }>;
 
-export function backupOperationFailureV1(code: string, step: string): never {
-    throw Object.assign(new Error(code), { code, step });
+export function backupOperationFailureV1(code: string, step: string, evidence?: DeploymentBackupMaintenanceFailureEvidenceV1): never {
+    throw Object.assign(new Error(code), { code, step, ...(evidence ? { details: evidence } : {}) });
 }
 
-/** Strip native payloads/secrets while retaining the producing boundary's exact code and step. */
-export async function backupOperationStepV1<T>(step: string, effect: () => T | Promise<T>): Promise<T> {
+/** Native stdout stays private; only the admitted adapter's closed, redacted failure facts cross a catch. */
+export async function backupOperationStepV1<T>(step: string, effect: () => T | Promise<T>,
+    nativeResult?: Extract<DeploymentBackupNativeResultV1, { kind: 'completed' }>): Promise<T> {
     try { return await effect(); } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : 'outcome_unknown';
-        return backupOperationFailureV1(code, step);
+        const native = nativeResult && nativeResult.exitCode !== 0
+            ? DeploymentBackupNativeFailureV1Schema.safeParse({ exitCode: nativeResult.exitCode,
+                stderr: nativeResult.stderr, stderrTruncated: nativeResult.stderrTruncated }) : undefined;
+        return backupOperationFailureV1(code, step, { ...readDeploymentBackupMaintenanceFailureEvidenceV1(error),
+            ...(native?.success ? { nativeFailure: native.data } : {}) });
     }
 }
 
@@ -31,7 +37,7 @@ export async function executeBackupOperationStepV1(input: DeploymentBackupReadIn
         if (input.signal.aborted) return backupOperationFailureV1('cancelled', step);
         const result = await input.execute(buildResticRequestV1({ environmentId: input.environmentId, access: input.access, command }));
         if (result.kind === 'outcome_unknown') return backupOperationFailureV1('outcome_unknown', step);
-        if (result.exitCode !== 0) return backupOperationFailureV1('backup_failed', step);
+        if (result.exitCode !== 0) return backupOperationStepV1(step, () => backupOperationFailureV1('backup_failed', step), result);
         return result;
     });
 }

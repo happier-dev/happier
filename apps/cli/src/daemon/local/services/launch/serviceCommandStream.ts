@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import type { NativeServiceCommandCaptureForHost, ServiceCommandResultV1 } from './serviceCommand';
 import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
 
 type Child = ReturnType<typeof spawnAuthorizedHostExecLaunchForHost>;
+type ChildOutcome = Awaited<ReturnType<Child['handle']['wait']>>;
 
 /** One raw pipe beneath the existing command owner and process supervisor.
  * Stdout EOF alone never gives the consumer permission to commit a snapshot. */
@@ -18,6 +21,8 @@ export async function executeServiceCommandStream(input: Readonly<{
     const launches: HostAuthorizedPluginExecLaunch[] = [];
     const children: Child[] = [];
     const releases: HostAuthorizedPluginExecLaunch['release'][] = [];
+    let producerOutcome: ChildOutcome | undefined;
+    let consumerOutcome: ChildOutcome | undefined;
     let producerSettled = false;
     let stopping: Promise<void> | undefined;
     const stop = () => stopping ??= (async () => {
@@ -65,11 +70,12 @@ export async function executeServiceCommandStream(input: Readonly<{
                 bytes += data.byteLength;
             }
         })();
-        const consumerExit = consumer.handle.wait();
+        const consumerExit = consumer.handle.wait().then(outcome => { consumerOutcome = outcome; return outcome; });
         const prematureExit = consumer.handle.waitForExit().then(() => { throw new Error('Service stream consumer exited before producer success'); });
+        const producerExit = producer.handle.wait().then(outcome => { producerOutcome = outcome; return outcome; });
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort();
-        const [, produced] = await Promise.race([Promise.all([transfer, producer.handle.wait()]), prematureExit, cancelled]);
+        const [, produced] = await Promise.race([Promise.all([transfer, producerExit]), prematureExit, cancelled]);
         if (produced.termination.requestedBy.kind !== 'none' || produced.termination.observed.kind !== 'exit') {
             throw new Error('Service stream producer did not settle');
         }
@@ -96,16 +102,38 @@ export async function executeServiceCommandStream(input: Readonly<{
             for (const release of releases) await release();
             throw error;
         }
+        // Keep only typed cause/exit facts in the private daemon file. Raw
+        // stream data, stderr, argv and credential-bearing messages stay out.
+        logger.warnLocalFile('[Service command stream] Native stream failed', {
+            operationId: input.producer.context.operation.operationId,
+            failureCause: projectActionFailureCauseV1(error, 'service.stream'),
+            producerExitCode: producerOutcome?.termination.observed.kind === 'exit' ? producerOutcome.termination.observed.exitCode : null,
+            consumerExitCode: consumerOutcome?.termination.observed.kind === 'exit' ? consumerOutcome.termination.observed.exitCode : null,
+        });
+        let nativeCleanupSettled = false;
         try {
             await stop();
             for (const launch of launches) await launch.retireDeploymentRuntimeFiles?.();
-        } catch { /* Native custody remains unknown; do not release or pretend EOF succeeded. */ }
+            nativeCleanupSettled = true;
+        } catch (cleanupError) {
+            // Native custody remains unknown; preserve its typed cause without
+            // releasing it or pretending the consumer received a valid EOF.
+            logger.warnLocalFile('[Service command stream] Native cleanup failed', {
+                operationId: input.producer.context.operation.operationId,
+                failureCause: projectActionFailureCauseV1(cleanupError, 'service.stream.cleanup'),
+            });
+        }
         for (const [index, release] of releases.entries()) {
-            // A reported native exit (including nonzero) already settled the
-            // producer, just as for a finite command. Retaining it as unknown
-            // would make the consumer's later native proof unreconcilable.
-            if (index === 1 && producerSettled) {
-                try { await release(); continue; } catch { /* Retain failed release below. */ }
+            // A natural producer exit or the native owner's successful stop,
+            // followed by physical child settlement, already proves custody.
+            // Ordinary Docker exec has no native-stop proof; keep it unknown.
+            if ((index === 1 && producerSettled) || (nativeCleanupSettled && captures[index]!.stopNative)) {
+                try { await release(); continue; } catch (releaseError) {
+                    logger.warnLocalFile('[Service command stream] Native release failed', {
+                        operationId: input.producer.context.operation.operationId,
+                        failureCause: projectActionFailureCauseV1(releaseError, 'service.stream.release'),
+                    });
+                }
             }
             const observeNativeSettlement = captures[index]!.observeNativeSettlement;
             machineNativeEffectAdmission.markUnsettled(input.producer.context, { releaseAfterNativeSettlement: release,

@@ -7,6 +7,7 @@ import { BackupDestinationContributionV1Schema } from '../plugins/contributions/
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { DeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupHistoryResultV1Schema } from './deploymentBackupHistoryV1.js';
+import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 export * from './deploymentBackupHistoryV1.js';
 
 /** Shared backup evidence and policy: deployment-protocol consumes this same closed wire owner. */
@@ -32,21 +33,35 @@ export const DeploymentBackupSnapshotV1Schema = lazyZodSchema(() => z.strictObje
   time: z.iso.datetime({ offset: true }), paths: z.array(text), tags: z.array(text),
 }));
 export type DeploymentBackupSnapshotV1 = z.infer<typeof DeploymentBackupSnapshotV1Schema>;
+/** Completed native diagnostics, credential-redacted by the admitted process owner before release. */
+export const DeploymentBackupNativeFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  exitCode: z.number().check(z.int()), stderr: z.string(), stderrTruncated: z.boolean(),
+}));
+export type DeploymentBackupNativeFailureV1 = z.infer<typeof DeploymentBackupNativeFailureV1Schema>;
 /** Closed nonsecret facts retained when native maintenance fails or is cancelled. */
 const backupFailureFields = () => ({
   step: z.string(), code: z.string(),
   probe: z.optional(z.strictObject({ key: text, cleanup: z.enum(['deleted', 'failed', 'unknown']) })),
+  nativeFailure: z.optional(DeploymentBackupNativeFailureV1Schema),
 });
-export const DeploymentBackupFailureResultV1Schema = lazyZodSchema(() => z.union([
+const backupFailureVariants = () => [
   z.strictObject(backupFailureFields()),
   z.strictObject({ ...backupFailureFields(),
     removedSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId),
     uncertainSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId) }),
-]));
+] as const;
+export const DeploymentBackupFailureResultV1Schema = lazyZodSchema(() => z.union(backupFailureVariants()));
 export type DeploymentBackupFailureResultV1 = z.infer<typeof DeploymentBackupFailureResultV1Schema>;
+/** The same native evidence with the Action envelope's existing recovery facts. */
+export const DeploymentBackupFailureDetailsV1Schema = lazyZodSchema(() => {
+  const variants = backupFailureVariants();
+  const recovery = z.partial(DeploymentFailureRecoveryV1Schema).shape;
+  return z.union([z.extend(variants[0], recovery), z.extend(variants[1], recovery)]);
+});
 export type DeploymentBackupMaintenanceFailureEvidenceV1 = Readonly<{
   removedSnapshotIds?: readonly string[]; uncertainSnapshotIds?: readonly string[];
   probe?: DeploymentBackupFailureResultV1['probe'];
+  nativeFailure?: DeploymentBackupNativeFailureV1;
 }>;
 
 /** The Action failure presenter may disclose these native identities, never arbitrary thrown details or payloads. */
@@ -58,6 +73,7 @@ export function readDeploymentBackupMaintenanceFailureEvidenceV1(error: unknown)
     ...('removedSnapshotIds' in details ? { removedSnapshotIds: details.removedSnapshotIds } : {}),
     ...('uncertainSnapshotIds' in details ? { uncertainSnapshotIds: details.uncertainSnapshotIds } : {}),
     ...('probe' in details && details.probe !== undefined ? { probe: details.probe } : {}),
+    ...('nativeFailure' in details && details.nativeFailure !== undefined ? { nativeFailure: details.nativeFailure } : {}),
   };
   if (!Object.keys(candidate).length) return undefined;
   const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: '', code: '', ...candidate });

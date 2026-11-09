@@ -11,6 +11,8 @@ export { DeploymentRestoreStepV1Schema, deploymentRestoreStepProgressV1, readDep
 import { DeploymentBackupManifestV1Schema, DeploymentBackupConfigurationV1Schema,
     DeploymentPreMigrationBackupV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 export { DeploymentBackupSourceV1Schema, DeploymentBackupRetentionV1Schema, DeploymentBackupSnapshotV1Schema,
+    DeploymentBackupNativeFailureV1Schema, type DeploymentBackupNativeFailureV1,
+    readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1,
     DeploymentBackupFailureResultV1Schema, type DeploymentBackupFailureResultV1,
     DeploymentBackupConfigurationV1Schema, type DeploymentBackupConfigurationV1,
     DeploymentPreMigrationBackupV1Schema, type DeploymentPreMigrationBackupV1,

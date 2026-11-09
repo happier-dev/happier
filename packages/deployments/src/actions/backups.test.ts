@@ -47,7 +47,8 @@ function nativeBoundary(options: Readonly<{ readBackChecksum?: string; producerE
         producer: options.missingProducer ? undefined : { exitCode: options.producerExitCode ?? 0,
           checksumSha256: options.missingProducerChecksum ? undefined : checksum } };
     if (request.argv.includes('snapshots')) return { ...result(JSON.stringify([snapshot])), exitCode: options.snapshotsExitCode ?? 0 };
-    if (request.argv.includes('tree')) return result(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123,
+    if (request.argv.includes('tree')) return { ...result(''), exitCode: 1 };
+    if (request.argv.includes('blob')) return result(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123,
       content: ['e'.repeat(64)] }] }));
     if (request.argv.includes('dump')) return { ...result(''), stdoutChecksumSha256: options.readBackChecksum ?? checksum, stdoutBytes: 123 };
     throw new Error('Unexpected native command');
@@ -116,7 +117,7 @@ describe('backup Action parent', () => {
       repositoryId, snapshot: { snapshotId, treeId }, producerChecksumSha256: checksum }] });
     const commands = native.requests.map(request => request.argv);
     expect(commands.find(argv => argv.includes('snapshots'))).toContain(snapshotId);
-    expect(commands.find(argv => argv.includes('tree'))).toContain(treeId);
+    expect(commands.find(argv => argv.includes('blob'))).toContain(treeId);
     expect(commands.at(-1)).toContain('dump');
     expect(native.requests.every(request => request.runtime === owners.RESTIC_RUNTIME_V1)).toBe(true);
     expect(JSON.stringify(commands)).not.toContain('/private/operation-password');

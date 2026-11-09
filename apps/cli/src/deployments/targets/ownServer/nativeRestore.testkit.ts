@@ -76,7 +76,12 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             : [state.snapshot, ...(state.safetySnapshot ? [state.safetySnapshot] : [])];
         output = JSON.stringify(selected);
     }
-    else if (argv.includes('tree')) output = JSON.stringify({nodes:[{name:argv.includes('e'.repeat(64)) ? state.safetySnapshot.paths[0].slice(1) : 'database.dump',type:'file',size:Buffer.from(state.archive,'base64').length}]});
+    // restic 0.19.1 cat tree resolves a snapshot selector, not a tree blob ID.
+    else if (argv.includes('tree')) {
+        process.stderr.write('Fatal: could not find snapshot: no matching ID found\n');
+        process.exit(1);
+    }
+    else if (argv.includes('blob')) output = JSON.stringify({nodes:[{name:argv.includes('e'.repeat(64)) ? state.safetySnapshot.paths[0].slice(1) : 'database.dump',type:'file',size:Buffer.from(state.archive,'base64').length}]});
     else if (argv.includes('backup')) {
         const filename = argv[argv.indexOf('--stdin-filename')+1];
         // A real restic snapshot becomes visible only when stdin reaches EOF.

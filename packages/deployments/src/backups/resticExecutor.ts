@@ -76,7 +76,8 @@ export function buildResticRequestV1(input: Readonly<{
             if (command.latest !== undefined) argv.push('--latest', String(command.latest));
             if (command.snapshotId !== undefined) argv.push(nativeId(command.snapshotId));
             break;
-        case 'tree': argv.push('cat', 'tree', nativeId(command.treeId)); break;
+        // cat tree takes a snapshot selector; cat blob loads this exact tree ID.
+        case 'tree': argv.push('cat', 'blob', nativeId(command.treeId)); break;
         case 'dump': argv.push('dump', nativeId(command.snapshotId), command.path); break;
         case 'forget': {
             const retention = buildResticRetentionArgsV1(command.retention);
@@ -92,3 +93,4 @@ export function buildResticRequestV1(input: Readonly<{
     return { runtime: RESTIC_RUNTIME_V1, argv, passwordFilePath: access.passwordFilePath,
         environmentVariableNames: [...access.environmentVariableNames], credentialFiles: access.credentialFiles.map(file => ({ ...file })) };
 }
+

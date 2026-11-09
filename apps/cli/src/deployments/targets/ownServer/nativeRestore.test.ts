@@ -12,6 +12,7 @@ import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { RESTIC_RUNTIME_V1, buildResticRequestV1, type DeploymentRestoreResolvedCaptureV1 } from '@happier-dev/deployments';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import * as backupEnvironment from '@/deployments/secrets/deploymentExecEnvPort';
+import { createOwnServerDatabaseUsernameReaderForHost } from './backupDestination';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { nativeRestic0191 } from '@/daemon/local/services/launch/nativeResticRegistry.testkit';
@@ -58,6 +59,20 @@ describe('native restore adapter', () => {
                     environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
                     resourceId: role, resourceRevision: 1 }, installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
                     content: { kind: 'secret', value: role === 'repositoryPassword' ? 'repository-private' : role === 'accessKeyId' ? 'access-private' : 'secret-private' } }));
+                const username = "database user\\' --literal";
+                const usernameBinding: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> = {
+                    purpose: 'variable', phase: 'runtime', name: 'LOGICAL_USER', source: mode === 'receiptCapture'
+                        ? { kind: 'secret', ref: formatSharedSavedSecretRefV1('logical-user'), resourceRevision: 1 }
+                        : { kind: 'value', value: username } };
+                const usernameGrant = usernameBinding.source.kind === 'secret'
+                    ? sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: source.environmentId,
+                        machineId: source.machineId, installationId: source.installationId, resourceId: 'logical-user', resourceRevision: 1 },
+                        installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey, content: { kind: 'secret', value: username } })
+                    : sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
+                    environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
+                    binding: { purpose: 'variable', phase: 'runtime', name: usernameBinding.name } },
+                    installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
+                    content: { kind: 'environmentValues', definition: usernameBinding.source } });
                 const controller = new AbortController();
                 let passwordPath: string | undefined;
                 let pending = 0;
@@ -85,6 +100,12 @@ describe('native restore adapter', () => {
                             return repositoryOverride ? { ...selected, repository: repositoryOverride } : selected;
                         };
                         const input = { project, render, activation, context, io, ...environment, readAccess, runtimeImage,
+                            readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({
+                                data: [{ engine: 'postgres', service: 'worker', logicalBackup: {
+                                    adapter: 'postgres-v1', ...(mode === 'success' ? {} : { username: usernameBinding.name }) } }], preparation: {
+                                    environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
+                                    installationPrivateSeed: seed, bindings: [usernameBinding],
+                                    grants: [usernameGrant], assertCurrent: source.assertCurrent } }),
                             operationProgress: { update(progress: Readonly<{ phase?: string }>) {
                                 if (progress.phase) progressPhases.push(progress.phase);
                             } },
@@ -112,6 +133,8 @@ describe('native restore adapter', () => {
                             expect(result).toMatchObject({ kind: 'completed', exitCode: 0 });
                             return;
                         }
+                        if (mode === 'safety') await adapter.observeOwnServerNativeRestoreDestination(input, {
+                            operationId: 'username-observation', environmentId: source.environmentId, revision: 1, target: destination });
                         const capture = { source: sourceManifest, destination, sourceFormat: 'postgresCustom' as const };
                         // Prepare/confirm are separate real lifecycle invocations; each owns
                         // one preparation, and prepare leaves no password file behind.
@@ -173,6 +196,14 @@ describe('native restore adapter', () => {
                                 return;
                             }
                             const completed = await backup;
+                            if (mode === 'receiptCapture') {
+                                const observer = activation.authorizeServiceObserver();
+                                try {
+                                    expect(observer.secretRedactionLease?.redact(username)).not.toContain(username);
+                                    expect(observer.secretRedactionLease?.redact(JSON.stringify(username)))
+                                        .not.toContain(JSON.stringify(username).slice(1, -1));
+                                } finally { await observer.release(); }
+                            }
                             recoveryReceipt = completed.receipt;
                             expect(recoveryReceipt.content.ownServer?.preMigrationBackup?.target.database).toBe(database);
                             expect(recoveryReceipt.content.ownServer?.preMigrationBackup?.repository.repository).toBe('s3:https://fixture.invalid/backup');
@@ -279,14 +310,21 @@ describe('native restore adapter', () => {
                 } finally { await activation.dispose(); }
                 if (!passwordPath) throw new Error('Expected an acquired backup environment');
                 if (mode === 'dumpFailure') {
-                    // A failed native stream preserves custody until the next
-                    // admitted operation reconciles both original child proofs.
-                    await access(passwordPath);
+                    // Natural dump exit plus the exact restic helper's proven
+                    // removal settles custody despite an invalid backup stream.
+                    await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
                     await machineNativeEffectAdmission.run({ operation: { operationId: 'backup-reconcile', kind: 'backup' },
                         keys: render.keys, settleNative: project.settleNative }, async () => {});
                 }
                 await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
                 const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+                if (mode !== 'repositoryOnly') {
+                    const commands = events.filter(row => row.kind === 'postgres');
+                    for (const command of commands) {
+                        if (command.argv.includes('--version') || mode === 'success') expect(command.argv).not.toContain(`--username=${username}`);
+                        else expect(command.argv).toContain(`--username=${username}`);
+                    }
+                }
                 if (mode === 'repositoryOnly') {
                     expect(events.filter(row => row.kind === 'restic')).toHaveLength(1);
                     expect(events.some(row => row.kind === 'postgres' || row.kind === 'nativeControl')).toBe(false);
@@ -312,7 +350,7 @@ describe('native restore adapter', () => {
                 }
                 if (mode === 'safety' || mode === 'receiptCapture') {
                     expect(events.find(row => row.argv?.[0] === 'pg_dump' && !row.argv.includes('--version'))?.argv)
-                        .toEqual(['pg_dump', '-Fc', '--no-owner', '--no-acl', "dbname='live\\\\db\\''"]);
+                        .toEqual(['pg_dump', `--username=${username}`, '-Fc', '--no-owner', '--no-acl', "dbname='live\\\\db\\''"]);
                     expect(events.find(row => row.kind === 'safetyBytes')).toMatchObject({ bytes: archive.length });
                 }
                 if (mode === 'receiptCapture') {

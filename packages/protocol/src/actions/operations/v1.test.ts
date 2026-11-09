@@ -22,6 +22,7 @@ import {
   projectActionOperationSnapshotForV1Reader,
   readActionOperationTerminalResultV1,
   projectActionOperationListSnapshotV1,
+  projectDeploymentBackupFailureResultV1,
 } from './v1.js';
 
 const baseSnapshot = {
@@ -37,6 +38,20 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it.each(['failed', 'cancelled'] as const)('retains completed backup native failure evidence through the %s operation writer and serialized terminal reader', state => {
+    const errorCode = state === 'failed' ? 'backup_failed' : 'cancelled';
+    const nativeFailure = { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true };
+    const result = projectDeploymentBackupFailureResultV1('deployments.backups.run', errorCode,
+      { step: 'tree', code: errorCode, nativeFailure, untrustedPayload: 'PRIVATE_NATIVE_PAYLOAD' });
+    expect(result).toEqual({ step: 'tree', code: errorCode, nativeFailure });
+    const operation = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify({ ...baseSnapshot,
+      actionId: 'deployments.backups.run', state, startedAt: 110, settledAt: 120, result,
+      ...(state === 'failed' ? { error: { errorCode, error: errorCode } } : {}) })));
+    expect(readActionOperationTerminalResultV1(operation)).toEqual({ ok: false, errorCode, error: errorCode, details: result });
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...operation,
+      result: { ...result, nativeFailure: { ...nativeFailure, argv: 'PRIVATE_NATIVE_ARGV' } } }).success).toBe(false);
+  });
+
   it.each(['succeeded', 'failed', 'cancelled'] as const)('omits only terminal result from the %s list projection', state => {
     const full = { ...baseSnapshot, state, startedAt: 110, settledAt: 120,
       result: { retained: true } };

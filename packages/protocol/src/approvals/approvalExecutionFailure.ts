@@ -39,13 +39,13 @@ import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
-import { DeploymentActionInputSchemasV1, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentActionInputSchemasV1, DeploymentBackupFailureDetailsV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
   readDeploymentReceiptFailureCodeV1 } from '../deployments/deploymentReceiptResultV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
@@ -85,6 +85,16 @@ function parseStrictApprovalFailure(input: Readonly<{
       const schema = getActionSpec(input.request.actionId).inputSchema;
       const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
       return args.success ? { ...input.failure, details: workflow.data.details } : null;
+    }
+  }
+  if (isDeploymentBackupActionIdV1(input.request.actionId)) {
+    const schema = DeploymentActionInputSchemasV1[input.request.actionId];
+    const details = (storedRead ? createStoredReadSchema(DeploymentBackupFailureDetailsV1Schema)
+      : DeploymentBackupFailureDetailsV1Schema).safeParse(input.failure.details);
+    if (details.success) {
+      const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+      return args.success && details.data.code === input.failure.errorCode
+        ? { ...input.failure, details: details.data } : null;
     }
   }
   if (isDeploymentActionIdV1(input.request.actionId)) {

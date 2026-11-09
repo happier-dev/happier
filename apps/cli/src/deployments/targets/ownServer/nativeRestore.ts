@@ -11,10 +11,12 @@ import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBa
     type DeploymentBackupRunInputV1, type DeploymentBackupRunResultV1, type DeploymentRestoreResolvedCaptureV1,
     type ResticAccessV1, type DeploymentRestoreDestinationV1 } from '@happier-dev/deployments';
 import type { OwnServerDeploymentReceipt, OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
+import type { OwnServerDatabaseUsernameForHost } from './backupDestination';
 import { createNativeComposeLifecycle, executeAdmittedServiceCommand, admitServiceCommandStreamForHost,
     type NativeComposeEnvironmentProject, type NativeComposeProjectRender,
     type NativeComposeActivatedProject, type NativeComposeObservationIo } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { machineNativeEffectAdmission, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { readCredentialRedactionValues } from '@/plugins/runtime/invocation/services/credentialRedactionValues';
 
 /** Captured by the existing own-server host, inside its admitted native job.
  * readAccess belongs to the SAME P42 prepare closure, not attachment decoding.
@@ -28,6 +30,7 @@ export type OwnServerNativeRestoreInput = Readonly<{
     runtimeImage: DeploymentImageV1;
     execEnv: DeploymentExecEnvPortV1;
     readAccess(): ResticAccessV1;
+    readDatabaseUsername(service: string): Promise<OwnServerDatabaseUsernameForHost | undefined>;
     onStopPending(status: 'stop_pending'): void;
     onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
     operationProgress?: ActionExecutorContext['operationProgress'];
@@ -60,9 +63,10 @@ function integrityCommand(database: string): readonly string[] {
     return ['pg_amcheck', '--no-password', '--install-missing', databaseConninfo(database)];
 }
 
-type NativeRestoreServiceInput = Pick<OwnServerNativeRestoreInput, 'project' | 'activation' | 'io' | 'render' | 'context'>;
+type NativeRestoreServiceInput = Pick<OwnServerNativeRestoreInput, 'project' | 'activation' | 'io' | 'render' | 'context' | 'readDatabaseUsername'>;
 function restoreServices(input: NativeRestoreServiceInput) {
-    const services = new Map<string, Readonly<{ native: ReturnType<typeof createNativeComposeLifecycle>; release(): Promise<void> }>>();
+    const services = new Map<string, { native: ReturnType<typeof createNativeComposeLifecycle>;
+        username?: Promise<string | undefined>; launch: ReturnType<NativeComposeActivatedProject['authorizeServiceObserver']> }>();
     const lifecycle = (name: string) => {
         const existing = services.get(name);
         if (existing) return existing.native.lifecycle;
@@ -71,7 +75,7 @@ function restoreServices(input: NativeRestoreServiceInput) {
             environment: { composeService: name, containerIds: input.activation.nativeIdsForService(name),
                 facts: input.activation.nativeFactsForService(name) } });
         const launch = input.activation.authorizeServiceObserver();
-        services.set(name, { native, release: () => Promise.resolve(launch.release()) });
+        services.set(name, { native, launch });
         native.bindLaunch(launch);
         return native.lifecycle;
     };
@@ -79,13 +83,23 @@ function restoreServices(input: NativeRestoreServiceInput) {
         async admit(name: string, argv: readonly string[]) {
             const service = lifecycle(name);
             if (!service.admitServiceCommand) return unsupported();
-            return service.admitServiceCommand({ mode: 'exec', argv }, { context: input.context,
+            const captured = services.get(name)!;
+            // One resolution per native service capture; version probes do not
+            // connect, and writer lifecycle operations need no database operand.
+            const username = argv.includes('--version') ? undefined
+                : await (captured.username ??= input.readDatabaseUsername(name).then(material => {
+                    captured.launch.secretRedactionLease?.add(material?.secretValues.flatMap(rawCredential =>
+                        readCredentialRedactionValues({ rawCredential })) ?? []);
+                    return material?.username;
+                }));
+            const command = username === undefined ? argv : [argv[0]!, `--username=${username}`, ...argv.slice(1)];
+            return service.admitServiceCommand({ mode: 'exec', argv: command }, { context: input.context,
                 keys: input.render.keys, signal: input.context.operation.signal, async assertCurrent() {
                     if (!input.activation.isCurrent()) throw new PluginError({ code: 'deployment_generation_required',
                         message: 'The admitted restore generation is unavailable' });
                 } });
         },
-        async dispose() { await Promise.all([...services.values()].map(service => service.release())); },
+        async dispose() { await Promise.all([...services.values()].map(service => service.launch.release())); },
     };
 }
 

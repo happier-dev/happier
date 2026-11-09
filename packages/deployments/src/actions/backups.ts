@@ -1,4 +1,4 @@
-import { DeploymentBackupSnapshotV1Schema,
+import { DeploymentBackupSnapshotV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
     type DeploymentBackupConfigurationV1, type DeploymentBackupSourceV1, type DeploymentEnvironmentContentV1,
     type DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
 
@@ -10,6 +10,8 @@ import { backupOperationStepV1, readBackDeploymentBackupManifestV1 } from '../ba
 /** Facts supplied by the canonical native execution adapter; dump bytes never cross this result. */
 export type DeploymentBackupNativeResultV1 = Readonly<{ kind: 'outcome_unknown' }> | Readonly<{
     kind: 'completed'; exitCode: number; stdout: string; stdoutTruncated: boolean;
+    /** Captured stderr has already crossed the admitted native owner's credential redactor. */
+    stderr?: string; stderrTruncated?: boolean;
     producer?: Readonly<{ exitCode: number; checksumSha256: string }>;
     stdoutChecksumSha256?: string; stdoutBytes?: number;
 }>;
@@ -85,13 +87,13 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
         const initialized = configResult.exitCode === 10 ? await execute({ kind: 'init' }) : undefined;
         const { repositoryId } = initialized
             ? await backupOperationStepV1('init', () => readResticRepositoryInitializationV1(
-                initialized.stdout, initialized.exitCode, initialized.stdoutTruncated))
+                initialized.stdout, initialized.exitCode, initialized.stdoutTruncated), initialized)
             : await backupOperationStepV1('repository', () =>
-                readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated));
+                readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated), configResult);
         for (const { source, filename } of recipes) {
             const backup = await execute({ kind: 'backupStdin', sourceId: source.sourceId, filename }, source);
             if (!backup.producer || backup.producer.exitCode !== 0) return refuse('backup_failed', 'producer');
-            const summary = await backupOperationStepV1('backup', () => readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated));
+            const summary = await backupOperationStepV1('backup', () => readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated), backup);
             snapshots.push({ environmentId: input.environmentId, sourceId: source.sourceId,
                 configRevision: input.configuration.configRevision, repositoryId, snapshotId: summary.snapshotId });
             const producerChecksumSha256 = await backupOperationStepV1('producer', () =>
@@ -100,7 +102,7 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             const manifest = await backupOperationStepV1('snapshot', () => readResticBackupManifestV1({ summary,
                 snapshots: readResticSnapshotsV1(inventory.stdout, inventory.exitCode, inventory.stdoutTruncated),
                 environmentId: input.environmentId, sourceId: source.sourceId, kind: 'dump',
-                configRevision: input.configuration.configRevision, repositoryId, producerChecksumSha256 }));
+                configRevision: input.configuration.configRevision, repositoryId, producerChecksumSha256 }), inventory);
             manifests.push(manifest);
             await readBackDeploymentBackupManifestV1({ ...input, manifest });
         }
@@ -108,7 +110,8 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
     } catch (error) {
         const code = failureCode(error);
         const step = error && typeof error === 'object' && 'step' in error ? error.step : 'source';
-        throw Object.assign(new Error(code), { code, step, details: { snapshots, manifests } });
+        throw Object.assign(new Error(code), { code, step,
+            details: { snapshots, manifests, ...readDeploymentBackupMaintenanceFailureEvidenceV1(error) } });
     }
     const recording = input.preMigrationBackup;
     const target = recording?.target ?? input.restoreTarget;

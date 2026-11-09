@@ -143,7 +143,7 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
             const step = error && typeof error === 'object' && 'step' in error && typeof error.step === 'string'
                 ? error.step : 'native';
             const partial = readDeploymentBackupMaintenanceFailureEvidenceV1(error);
-            const projected = projectDeploymentFailure(code, error, `deployment.backup.${step}`);
+            const projected = projectDeploymentFailure(code, error, 'deployment.backup.native');
             return { ...projected, details: { ...(isRecord(projected.details) ? projected.details : {}), step, code, ...partial } };
         }
     };

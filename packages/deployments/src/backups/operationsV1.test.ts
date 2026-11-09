@@ -3,6 +3,8 @@ import * as owners from '../index.js';
 import type { DeploymentBackupConfigurationV1, DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
 import type { ResticRequestV1 } from './resticExecutor.js';
+import { DeploymentBackupFailureDetailsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 }
+    from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
 const environmentId = 'environment-a';
 const snapshotId = 'a'.repeat(64), treeId = 'b'.repeat(64), repositoryId = 'c'.repeat(64), checksum = 'd'.repeat(64);
@@ -26,7 +28,7 @@ function boundary(options: Readonly<{ inventory?: unknown[]; repository?: string
     // Substitute only the native process boundary; all request and evidence owners remain real.
     const execute: DeploymentBackupRunInputV1['execute'] = async request => {
         requests.push(request);
-        const command = request.argv.includes('config') ? 'config' : request.argv.includes('tree') ? 'tree'
+        const command = request.argv.includes('config') ? 'config' : request.argv.includes('blob') ? 'tree'
             : ['snapshots', 'dump', 'forget', 'prune', 'check'].find(command => request.argv.includes(command));
         if (!command) throw new Error('Unexpected native command');
         if (options.unknown === command) return { kind: 'outcome_unknown' };
@@ -52,6 +54,29 @@ const input = (native: ReturnType<typeof boundary>) => ({ environmentId, configu
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
 describe('selected repository backup operations', () => {
+    it.each(['run', 'verify', 'prune'] as const)('retains completed native failure evidence through the %s catch and closed Details decoder', async mode => {
+        const nativeFailure = { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true };
+        const native = boundary();
+        const step = mode === 'prune' ? 'prune' : 'tree';
+        const execute: DeploymentBackupRunInputV1['execute'] = async request => {
+            if (request.argv.includes(mode === 'prune' ? 'prune' : 'blob')) return { kind: 'completed', stdout: '', stdoutTruncated: false, ...nativeFailure };
+            if (request.argv.includes('backup')) return { kind: 'completed', exitCode: 0, stdoutTruncated: false,
+                stdout: JSON.stringify({ message_type: 'summary', snapshot_id: snapshotId, total_bytes_processed: 123, total_files_processed: 1 }),
+                producer: { exitCode: 0, checksumSha256: checksum } };
+            return native.execute(request);
+        };
+        const effect = mode === 'run' ? owners.runDeploymentBackupV1({ ...input(native), execute,
+            data: { engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } } })
+            : mode === 'verify' ? owners.verifyDeploymentBackupV1({ ...input(native), execute, configRevision: 1, manifest, level: 'manifestReadBack' })
+                : owners.pruneDeploymentBackupsV1({ ...input(native), execute, verification, protectedSnapshotIds: [protectedId] });
+        const error = await effect.then(() => { throw new Error('Expected the native failure'); }, error => error);
+        expect(error).toMatchObject({ code: 'backup_failed', step, details: { nativeFailure } });
+        const evidence = readDeploymentBackupMaintenanceFailureEvidenceV1(error);
+        expect(evidence).toMatchObject({ nativeFailure });
+        expect(DeploymentBackupFailureDetailsV1Schema.parse({ step, code: 'backup_failed', ...evidence })).toMatchObject({ nativeFailure });
+        expect(readDeploymentBackupMaintenanceFailureEvidenceV1({ details: { nativeFailure: { ...nativeFailure, argv: 'private' } } })).toBeUndefined();
+    });
+
     it('never initializes an absent repository from inventory, verification or pruning', async () => {
         for (const name of ['inventoryDeploymentBackupsV1', 'verifyDeploymentBackupV1', 'pruneDeploymentBackupsV1']) {
             const native = boundary({ repositoryExitCode: 10 });
@@ -144,7 +169,7 @@ describe('selected repository backup operations', () => {
         const result = await operation('verifyDeploymentBackupV1')({ ...input(native), configRevision: 1, manifest, level: 'repositoryCheck' });
         expect(result).toEqual({ kind: 'verified', level: 'repositoryCheck', manifest });
         expect(native.requests.find(request => request.argv.includes('snapshots'))!.argv).toContain(snapshotId);
-        expect(native.requests.find(request => request.argv.includes('tree'))!.argv).toContain(treeId);
+        expect(native.requests.find(request => request.argv.includes('blob'))!.argv).toContain(treeId);
         expect(native.requests.at(-1)!.argv).toContain('check');
         expect(native.requests.some(request => request.argv.some(arg => ['backup', 'forget', 'prune', 'restore'].includes(arg)))).toBe(false);
     });
