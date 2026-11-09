@@ -195,6 +195,16 @@ Agent-owned aliases and native wrappers are decoded by the Agent's plugin before
 shared semantic normalization. ACP wrapper decoding uses observed transport
 provenance; a user-shaped input alone cannot authorize unwrapping.
 
+In **0.3 development source**, Muse's plugin decodes MSP `toolCall` and
+`userShell` items before this boundary. Native `bash` and `userShell` use `Bash`;
+`userShell.commandText` supplies its command. Other native tool names, including
+MCP names, are preserved with their arguments. Incomplete argument JSON remains
+readable text. The native call/item identity stays stable across revisions, and
+a newer terminal output updates that same tool result. Native failure status is
+preserved independently of its visible output. These mappings are characterized
+against Muse 1.4.14 recordings; file, patch and search arguments are not inferred
+from tool names. The shared normalizer and renderers remain the semantic owners.
+
 ---
 
 ## CLI: tool tracing + fixtures
