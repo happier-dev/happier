@@ -1899,6 +1899,17 @@ end the detail's own full-height column with
 Beside the list or in the host's details pane `pushed` is `false`: draw no footer
 and keep the primary in the details header's `actions`.
 
+An item opened by its address rather than from a list on the page (a link to a
+pull request opened in its own tab) uses `DetailPage`. Give it the item's
+`title`, `subtitle`, `leading`, `actions`, `onBack` and `pushedBelowWidthPx` (the
+width at which the item's list page stops splitting: its `minListWidth` plus
+`minDetailWidth`), and render the detail as its child function:
+`{({ pushed, headerHosted }) => <EntryDetail ... />}`. Narrower than that it
+composes exactly like a Collection's pushed detail: the way back, the title
+leading the detail's story (`useDetailPageLead`) and the primary in a
+`DetailsPaneFooter`. Wider, `pushed` and `headerHosted` are `false`, so the
+detail draws its own header and actions.
+
 A row can open in place: pass `expanded` and `expandedContent` to `List.Item`
 and toggle `expanded` from its `onPress`. Put a few calm facts in it
 (`Metadata`), then the row's own actions at the bottom as buttons, one of them

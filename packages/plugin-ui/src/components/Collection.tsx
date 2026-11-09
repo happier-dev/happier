@@ -90,7 +90,7 @@ import { ListCollectionControlContext, type ListCollectionControl } from './list
 import { CollectionKeyCap, ListCollectionHeader, useListCollectionSearch, useListSelectionModeControl, type ListCollectionSearchToken } from './listCollectionHeader.js';
 import { ListMultiSelectionProvider, useListMultiSelectionStoreSnapshot } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
-import { DetailsPane, DetailsPaneBody, PushedDetailHeader, PushedDetailLeadContextInternal, useDetailsPanePlacement, useDetailsPaneHostInstalled, type PushedDetailHeaderPlacementInternal, type PushedDetailLeadInternal } from './DetailsPane.js';
+import { DetailsPane, DetailsPaneBody, PushedDetailHeader, PushedDetailLeadContextInternal, useDetailsPanePlacement, useDetailsPaneHostInstalled, usePushedDetailPageInternal, type PushedDetailHeaderPlacementInternal } from './DetailsPane.js';
 import { CollectionRowNeedsYouHighlightInViewport } from './CollectionRowNeedsYouHighlight.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
@@ -2800,20 +2800,12 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // the one way back and, given `detailHeader`, the hosted title band: the same header the app pane draws.
   const pushedPage = !pane && composition === 'detail' && detail !== 'none';
   const headerHosted = (pane || pushedPage) && (props.detailHeader !== undefined || props.useDetailHeader !== undefined);
-  // A pushed detail may carry its hosted title in its own scrolling story (`useDetailPageLead`), as the lab's phone
-  // detail does; while it does, the title is not also drawn here as a fixed band.
-  const [pushedLeadClaims, setPushedLeadClaims] = useState(0);
-  const claimPushedLead = useCallback(() => {
-    setPushedLeadClaims((count) => count + 1);
-    return () => { setPushedLeadClaims((count) => count - 1); };
-  }, []);
   const detailNode = openKey !== null && props.renderDetail !== undefined && detail !== 'none'
     ? <CollectionDetailHeadingFocusContext.Provider value={headerHosted ? null : headingFocus}>
         {props.renderDetail(openKey, { headerHosted, pushed: composition === 'detail' || (pane && !panePlacement.beside) })}
       </CollectionDetailHeadingFocusContext.Provider>
     : transition !== null ? lastDetailRef.current : null;
   lastDetailRef.current = openKey !== null ? detailNode : transition !== null ? lastDetailRef.current : null;
-  const storyCarriesTitle = headerHosted && pushedLeadClaims > 0;
   const renderPushedHeader = (placement: PushedDetailHeaderPlacementInternal) => openKey === null ? null : (
     <CollectionDetailHeadingFocusContext.Provider value={headerHosted && placement !== 'backOnly' ? headingFocus : null}>
       <CollectionOwnedDetailHeader
@@ -2823,10 +2815,11 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       />
     </CollectionDetailHeadingFocusContext.Provider>
   );
-  // The band keeps one header instance either way (it owns the way back); the story's copy only draws the title.
-  const pushedHeader = pushedPage ? renderPushedHeader(storyCarriesTitle ? 'backOnly' : 'band') : null;
-  const pushedLead: PushedDetailLeadInternal | null = pushedPage && headerHosted && openKey !== null
-    ? { header: renderPushedHeader('story'), claim: claimPushedLead } : null;
+  // A pushed detail may carry its hosted title in its own scrolling story (`useDetailPageLead`), as the lab's phone
+  // detail does; while it does, the band keeps only the way back. The band keeps one header instance either way.
+  const pushedDetailPage = usePushedDetailPageInternal(renderPushedHeader, pushedPage && headerHosted && openKey !== null);
+  const pushedHeader = pushedPage ? pushedDetailPage.band : null;
+  const pushedLead = pushedDetailPage.lead;
   const detailLeaving = openKey === null && transition !== null;
   const listRatio = geometry?.mode === 'split' ? geometry.listRatio : 1;
   const overlayDetail = transition?.kind === 'travel';

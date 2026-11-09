@@ -1,14 +1,17 @@
 import * as React from 'react';
-import { Button, ErrorState, Row, Stack, usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, usePluginSurfaceActivity, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, DetailPage, ErrorState, Row, usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, usePluginSurfaceActivity, useSurfaceContext } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceIntentV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { CurrentUiCommandDeclarationV1, PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
-import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_APP_PAGE_DESTINATION_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageStoryLoadingLines, triageSourcePanelActionIdV1 } from '@happier-dev/triage-sources/ui';
 import { buildTriageEntryDetailLaunchInput, type TriageEntryDetailLaunchInputV1 } from '../composer/entryDetailLaunchInput.js';
 import type { TriageListLaneV1 } from '../projection/listWindow.js';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionResultV1Schema } from '../actions/resolveResourceProtocol.js';
 import { useTriagePostMutationRow } from './detail/useTriagePostMutationRow.js';
-import { TriageDetailRegion } from './detail/region.js';
+import { renderTriageDetailHeaderV1, TriageDetailRegion } from './detail/region.js';
+import { projectTriageDetailHeaderV1 } from './detail/header.js';
+import { readTriageSourceDescriptorV1 } from './detail/sourceSurface.js';
+import { useTriagePaneMinimumWidthsV1 } from './shell/usePaneMinimumWidths.js';
 import { useTriageActions } from './actions/useTriageActions.js';
 import { useTriagePinnedEntries } from './marks/useTriagePinnedEntries.js';
 import { indexTriagePinsByEntry, projectTriageWindowRow } from './marks/pinnedRows.js';
@@ -67,6 +70,8 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const [fixRetry, setFixRetry] = React.useState<(() => void) | null>(null);
   const reportFixRetry = React.useCallback((retry: (() => void) | null) => { setFixRetry(() => retry); }, []);
   const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  // Where the list page stops splitting, the entry opened on its own page is the pushed detail, as from the list.
+  const paneMinimumWidths = useTriagePaneMinimumWidthsV1();
   const navigation = context.page?.navigation;
   const tabs = navigation?.pageKind.pluginId === TRIAGE_DETAIL_PAGE_KIND_V1.pluginId
     && navigation.pageKind.localId === TRIAGE_DETAIL_PAGE_KIND_V1.localId ? navigation.items : undefined;
@@ -147,14 +152,24 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
       <Button title="Open on GitHub" titleKey="plugins.triage.resource.openOnGithub" variant="plain" onPress={() => host.openExternalLink(resource.url)} /></Row>
   } />;
   if (row === null || selection === null) return <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />;
-  return <Stack gap="small" style={{ flex: 1, minHeight: 0 }}>
-    <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
+  const pin = { row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),
+    handlers: { busyKey: pins.busyKey, unavailableReason: pins.unavailableReason, onSetPinned: pins.setPinned } };
+  // The entry's title band, read by the same owners as the list page's pushed detail, so both pages read alike.
+  const band = renderTriageDetailHeaderV1({ text, locale: context.locale, nowMs: Date.now(), pin,
+    header: projectTriageDetailHeaderV1({ row, lanes: EMPTY_LANES, connectionLabel: null, linkedSessions: [], linkedSessionsHasMore: false,
+      sourceDescriptor: readTriageSourceDescriptorV1(context, row.entryRef.source), text }) });
+  // Opened by its address, the entry is its own page: on a phone the pushed detail, its way back to PRs & Issues.
+  return <DetailPage title={band.title} leading={band.leading} actions={band.actions}
+    {...(band.subtitle === undefined ? {} : { subtitle: band.subtitle, subtitleLeading: band.subtitleLeading })}
+    pushedBelowWidthPx={paneMinimumWidths.minListWidth + paneMinimumWidths.minDetailWidth}
+    onBack={() => { void host.openSurface(TRIAGE_APP_PAGE_DESTINATION_V1); }}>
+    {({ pushed, headerHosted }) => <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
+      pushed={pushed} headerHosted={headerHosted}
       refreshGeneration={refreshGeneration} onFixPullRequestsRetryChange={reportFixRetry} onRetryFixPullRequests={() => execute({ kind: 'retryFixPullRequests' })}
       tabSelection={{ value: tab, onChange: value => execute({ kind: 'selectDetailTab', tab: value }) }}
       sessionSelection={{ value: sessionId, onChange: id => execute({ kind: 'selectLinkedSession', sessionId: id }),
         onAvailableSessionsChange: reportSessions, onLoadMore: () => execute({ kind: 'loadMore', section: 'linkedSessions' }) }}
       lanes={EMPTY_LANES} rows={[row]} connectionLabel={null} target={resolveTriageActionTargetV1({ selection })}
-      actions={actions} onEditAction={editAction} originComposer={null} pin={{ row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),
-        handlers: { busyKey: pins.busyKey, unavailableReason: pins.unavailableReason, onSetPinned: pins.setPinned } }} />
-  </Stack>;
+      actions={actions} onEditAction={editAction} originComposer={null} pin={pin} />}
+  </DetailPage>;
 }

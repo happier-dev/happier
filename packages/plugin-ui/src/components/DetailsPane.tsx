@@ -1,5 +1,5 @@
 import { useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { resolveHappierUiPalette, useHappierUiInsets, useOptionalHappierUiPalette } from '../environment/context.js';
@@ -212,6 +212,79 @@ export function useDetailPageLead(): ReactNode | null {
   const claim = lead?.claim;
   useLayoutEffect(() => claim?.(), [claim]);
   return lead?.header ?? null;
+}
+
+/**
+ * @internal The one owner of where a pushed detail's title stands: its band above the detail (`band`, or `backOnly`
+ * while the detail's story carries the title) and the lead it offers that story (`useDetailPageLead`). `Collection`
+ * and `DetailPage` compose a detail that is the page through it, so both read alike.
+ */
+export function usePushedDetailPageInternal(
+  renderHeader: (placement: PushedDetailHeaderPlacementInternal) => ReactNode,
+  titleHosted: boolean,
+): Readonly<{ band: ReactNode; lead: PushedDetailLeadInternal | null }> {
+  const [claims, setClaims] = useState(0);
+  const claim = useCallback(() => {
+    setClaims((count) => count + 1);
+    return () => { setClaims((count) => count - 1); };
+  }, []);
+  return {
+    band: renderHeader(titleHosted && claims > 0 ? 'backOnly' : 'band'),
+    lead: titleHosted ? { header: renderHeader('story'), claim } : null,
+  };
+}
+
+export type DetailPageProps = Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'testID'> & {
+  /** The way back from this page: the list or page the item belongs to. */
+  onBack: () => void;
+  /**
+   * Below this measured width the detail is the page: the width at which this item's own list page stops splitting
+   * (its list and detail minima together), so the item reads the same opened from its list or from its address.
+   */
+  pushedBelowWidthPx: number;
+  /**
+   * The detail. `pushed` says the detail is the page (pin its one primary in a `DetailsPaneFooter`); `headerHosted`
+   * says this page draws its title band, so the detail leaves out its own and may lead its story with
+   * `useDetailPageLead`. The same facts a `Collection` hands its `renderDetail`.
+   */
+  children: (context: Readonly<{ pushed: boolean; headerHosted: boolean }>) => ReactNode;
+}>;
+
+/**
+ * An item that is its own page, opened by its address (a link to a pull request) rather than from a list on this
+ * page. Narrower than `pushedBelowWidthPx` it is the detail pushed as the page, exactly as a `Collection`'s pushed
+ * detail: the one way back, the title leading the detail's story and the body on the title's edge. Wider it is the
+ * plain page and the detail draws its own header and actions. Like the Collection it is the narrow page until it has
+ * measured, and the detail stays mounted when the page crosses between the two.
+ */
+export function DetailPage(props: DetailPageProps): ReactElement {
+  const [widthPx, setWidthPx] = useState<number | null>(null);
+  const pushed = widthPx === null || widthPx < props.pushedBelowWidthPx;
+  const headerHosted = pushed && props.title !== undefined;
+  const page = usePushedDetailPageInternal((placement) => (
+    <PushedDetailHeader
+      {...(props.title === undefined ? {} : { title: props.title })}
+      {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
+      {...(props.leading === undefined ? {} : { leading: props.leading })}
+      {...(props.subtitleLeading === undefined ? {} : { subtitleLeading: props.subtitleLeading })}
+      {...(props.actions === undefined ? {} : { actions: props.actions })}
+      onClose={props.onBack}
+      placement={placement}
+      {...(props.testID === undefined ? {} : { testID: props.testID })}
+    />
+  ), headerHosted);
+  return (
+    <View
+      style={{ flex: 1, minHeight: 0 }}
+      onLayout={(event) => { setWidthPx(event.nativeEvent.layout.width); }}
+      {...(props.testID === undefined ? {} : { testID: props.testID })}
+    >
+      {pushed ? page.band : null}
+      <PushedDetailLeadContextInternal.Provider value={pushed ? page.lead : null}>
+        <DetailsPaneBody inset={headerHosted}>{props.children({ pushed, headerHosted })}</DetailsPaneBody>
+      </PushedDetailLeadContextInternal.Provider>
+    </View>
+  );
 }
 
 /**

@@ -11,6 +11,7 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { useWebScrollLockBypass } from '@/components/ui/scroll/useWebScrollLockBypass';
 import { DIFF_SPLIT_MIN_WIDTH_PX, DiffPresentationWidthProvider, resolveDiffSplitFits } from '@/components/ui/code/diff/diffPresentationStyle';
 import { DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
@@ -112,8 +113,12 @@ const DetailsTabSurface = React.memo((props: Readonly<{
             {...a11yHiddenProps}
         >
             <PluginSurfaceFocusEligibilityProvider active={props.isActive}>
-                {/* Each retained tab is its own header/body pair: its scroll drives only its header's shade. */}
-                <PaneHeaderScrollScope>{props.children}</PaneHeaderScrollScope>
+                {/* A tab is not the page its pane sits in: it draws its own title and way back under its strip,
+                    never in that page's navigation band (a second header over a Session's). */}
+                <NavigationTitleChromeProvider showsTitle={false}>
+                    {/* Each retained tab is its own header/body pair: its scroll drives only its header's shade. */}
+                    <PaneHeaderScrollScope>{props.children}</PaneHeaderScrollScope>
+                </NavigationTitleChromeProvider>
             </PluginSurfaceFocusEligibilityProvider>
         </AccessibleTabPanelView>
     );

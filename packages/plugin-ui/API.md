@@ -223,6 +223,8 @@ Declaration: `dist/index.d.ts`
 - value `DataRows` from `dist/index.d.ts`
 - type `DataRowsProps` from `dist/index.d.ts`
 - value `DataTable` from `dist/index.d.ts`
+- value `DetailPage` from `dist/index.d.ts`
+- type `DetailPageProps` from `dist/index.d.ts`
 - value `DetailsPane` from `dist/index.d.ts`
 - value `DetailsPaneFooter` from `dist/index.d.ts`
 - value `DetailsPaneOpenAsPageButton` from `dist/index.d.ts`
@@ -2182,6 +2184,8 @@ Declaration: `dist/components/index.d.ts`
 - value `DataRows` from `dist/components/index.d.ts`
 - type `DataRowsProps` from `dist/components/index.d.ts`
 - value `DataTable` from `dist/components/index.d.ts`
+- value `DetailPage` from `dist/components/index.d.ts`
+- type `DetailPageProps` from `dist/components/index.d.ts`
 - value `DetailsPane` from `dist/components/index.d.ts`
 - value `DetailsPaneFooter` from `dist/components/index.d.ts`
 - value `DetailsPaneOpenAsPageButton` from `dist/components/index.d.ts`

@@ -74,6 +74,29 @@ const testIds = { tab: (key: string) => `strip-tab-${key}` };
 const renderPaneActions = () => <View testID="pane-close" />;
 
 describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
+  it('keeps the enclosing page navigation title chrome out of a tab: the tab is not the navigation page', async () => {
+    // Live READY162 (390): a PR opened in a Session's details tab published its title and way back into the
+    // Session's own band, a second header above the Session header.
+    const { NavigationTitleChromeProvider, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } =
+      await import('@/components/ui/layout/navigationTitleChrome');
+    const seen: Array<Readonly<{ showsTitle: boolean; publisher: boolean }>> = [];
+    function ChromeReader() {
+      seen.push({ showsTitle: useNavigationTitleChromeShowsTitle(), publisher: useNavigationTitleChromePublisher() !== null });
+      return <View testID="chrome-reader" />;
+    }
+    await renderScreen(
+      <NavigationTitleChromeProvider showsTitle publisher={{ setTitle: vi.fn(), setPageTitle: vi.fn(), setBack: vi.fn() }}>
+        <DetailsTabGroupPanel
+          pane={pane}
+          group={group([tab('pr', 'Pull request')])}
+          testIds={testIds}
+          renderTabContent={() => <ChromeReader />}
+        />
+      </NavigationTitleChromeProvider>,
+    );
+    expect(seen.at(-1)).toEqual({ showsTitle: false, publisher: false });
+  });
+
   it("drops its tab strip and lends the pane controls to the tab's own header", async () => {
     const screen = await renderScreen(
       <DetailsTabGroupPanel

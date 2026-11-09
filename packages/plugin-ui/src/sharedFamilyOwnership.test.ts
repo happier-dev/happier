@@ -87,7 +87,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'SessionProvider', 'SessionTranscript', 'SessionComposer', 'SessionChat',
   // Pane states and shell columns: existing public adapters over shared presentation owners.
   'FreshnessLine', 'NavigationList', 'NavigationList.Group', 'NavigationList.Row',
-  'DetailsPane', 'DetailsPaneFooter', 'DetailsPaneOpenAsPageButton', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
+  'DetailPage', 'DetailsPane', 'DetailsPaneFooter', 'DetailsPaneOpenAsPageButton', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
   'TaskStatusGlyph', 'ProgressRing', 'CheckStatusGlyph', 'AnsiText',
   'HappierPublicProfile', 'HappierPublicProfileWidget', 'HappierPublicProfileDataProvider',
   'UsageDailyChart', 'UsageRhythmChart', 'UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody',
@@ -2343,6 +2343,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
   })),
   // Named exports are catalogued too. These record source ownership, not loaded-platform graduation.
   ...[
+    { publicName: 'DetailPage', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailPage' },
     { publicName: 'DetailsPane', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailsPane' },
     { publicName: 'DetailsPaneFooter', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailsPaneFooter' },
     { publicName: 'PaneHeaderContent', module: 'components/PaneHeaderContent.tsx', sharedModule: 'components/PaneHeaderContent.tsx', sharedSymbol: 'PaneHeaderContent' },
@@ -4023,7 +4024,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'NavigationList.Group',
       'NavigationList.Row',
       'DragSource', 'DropTarget',
-      'DetailsPane', 'DetailsPaneFooter', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
+      'DetailPage', 'DetailsPane', 'DetailsPaneFooter', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
       'DetailsPaneOpenAsPageButton',
       'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
       'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',

@@ -11,7 +11,7 @@ import type {
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { DetailsPane, DetailsPaneFooter, PushedDetailHeader } from './DetailsPane.js';
+import { DetailPage, DetailsPane, DetailsPaneFooter, PushedDetailHeader, useDetailPageLead } from './DetailsPane.js';
 import { PluginUiProviderInternal, usePluginTheme, usePluginTranslation, useSurfaceContext } from './PluginUiProvider.js';
 import { Text } from './Text.js';
 import { ScrollArea } from './Layout.js';
@@ -319,6 +319,69 @@ describe('DetailsPane (host details pane binding)', () => {
     await flush();
     expect(view.container.querySelector('[data-testid="entry-pane"]')).toBeNull();
     expect(view.container.querySelector('[data-testid="probe-facts"]')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('DetailPage (an item that is its own page)', () => {
+  function Story(props: Readonly<{ pushed: boolean; headerHosted: boolean }>) {
+    const lead = useDetailPageLead();
+    return (
+      <>
+        <RNText testID="context">{`${props.pushed}:${props.headerHosted}`}</RNText>
+        {lead === null ? null : <div data-testid="story-lead">{lead}</div>}
+      </>
+    );
+  }
+  const page = (onBack: () => void) => (
+    <DetailPage title="Move cart totals to server-side rounding" onBack={onBack} pushedBelowWidthPx={720} testID="entry-page">
+      {(context) => <Story {...context} />}
+    </DetailPage>
+  );
+  // Layout is a native boundary: deliver the page's measured width to its real handler.
+  function measure(view: ReturnType<typeof mountWithPane>, width: number) {
+    const root = view.container.querySelector('[data-testid="entry-page"]') as unknown as {
+      __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void;
+    };
+    act(() => { root.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } } }); });
+  }
+
+  it('is the pushed detail on a narrow page: its own way back, the title leading the story', async () => {
+    const onBack = vi.fn();
+    const view = mountWithPane(page(onBack), null);
+    await flush();
+    measure(view, 390);
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('true:true');
+    const headings = [...view.container.querySelectorAll('[role="heading"]')];
+    expect(headings.map((heading) => heading.textContent)).toEqual(['Move cart totals to server-side rounding']);
+    expect(view.container.querySelector('[data-testid="story-lead"] [role="heading"]')).not.toBeNull();
+    const back = view.container.querySelector<HTMLElement>('[data-testid="entry-page:back"]');
+    expect(back).not.toBeNull();
+    act(() => { back!.click(); });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it('hands its way back to a navigation band that shows the title, as a Collection\'s pushed detail does', async () => {
+    const published: ((() => void) | null)[] = [];
+    const onBack = vi.fn();
+    const view = mountWithPane(page(onBack), null,
+      { host: { pageChrome: { showsTitle: true, publishBack: (press: (() => void) | null) => { published.push(press); } } as never } });
+    await flush();
+    measure(view, 390);
+    expect(view.container.querySelector('[data-testid="entry-page:back"]')).toBeNull();
+    published.find((press) => press !== null)?.();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it('is the plain page where its list page would split: the detail draws its own header', async () => {
+    const view = mountWithPane(page(vi.fn()), null);
+    await flush();
+    measure(view, 1440);
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('false:false');
+    expect(view.container.querySelector('[role="heading"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="entry-page:back"]')).toBeNull();
     view.unmount();
   });
 });

@@ -30,18 +30,15 @@ import {
   Text,
   useHappierCollection,
   useListMultiSelectionController,
-  usePluginAccessibility,
   usePluginHostApi,
   usePluginUiEphemeralSharedScope,
   usePluginSurfaceActivity,
-  usePluginTheme,
   usePluginTranslation,
   useSurfaceContext,
   type CollectionDetailRenderContext,
 } from '@happier-dev/plugin-ui';
 import {
   HAPPIER_COLLECTION_WINDOW_COMPLETE,
-  scaleTextStyleMetrics,
   type CollectionHeaderSlots,
   type HappierCollectionGroup,
   type HappierCollectionWindow,
@@ -188,10 +185,8 @@ import { retainTriageLastKnownRowV1, type TriageLastKnownRowV1 } from './lastKno
 import {
   TRIAGE_BOARD_CARD_MIN_WIDTH_V1,
   TRIAGE_SPLIT_LIST_RATIO_PREFERENCE_V1,
-  resolveTriageDetailPaneMinimumWidthV1,
-  resolveTriageListPaneMinimumWidthV1,
-  type TriageScaledTypeMetricsV1,
 } from './layout.js';
+import { useTriagePaneMinimumWidthsV1 } from './usePaneMinimumWidths.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import {
   readTriageListReadFailureNotice,
@@ -306,27 +301,6 @@ const TRIAGE_FILL_STYLE_V1 = Object.freeze({
   overflow: 'hidden' as const,
 });
 const TRIAGE_LIST_STYLE_V1 = Object.freeze({ flex: 1, minHeight: 0 });
-/**
- * The reader's own type size applied to the host's four measured text roles.
- *
- * The scaling itself belongs to `plugin-ui`'s canonical text-scale owner, the
- * same one every `Text` on this page goes through. Multiplying the host's
- * typography here instead would be a second text-scale decision, and the two
- * would disagree the first time either rounded differently — with the pane
- * minima quietly measuring a size nothing on screen is drawn at.
- */
-function readTriageScaledTypeMetricsV1(
-  typography: ReturnType<typeof usePluginTheme>['typography'],
-  textScale: number,
-): TriageScaledTypeMetricsV1 {
-  return {
-    title: scaleTextStyleMetrics(typography.title, textScale),
-    body: scaleTextStyleMetrics(typography.body, textScale),
-    caption: scaleTextStyleMetrics(typography.caption, textScale),
-    label: scaleTextStyleMetrics(typography.label, textScale),
-  };
-}
-
 export type TriageListShellProps = Readonly<{
   tasksPage?: boolean;
   createDraft?: import('../../actions/tasksProtocol.js').TriageTaskDraftV1;
@@ -2025,15 +1999,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     rowsByKey,
   });
 
-  const theme = usePluginTheme();
-  const { textScale } = usePluginAccessibility();
-  const scaledType = React.useMemo(
-    () => readTriageScaledTypeMetricsV1(theme.typography, textScale),
-    [textScale, theme.typography],
-  );
-  const paneMeasure = { type: scaledType, spacing: theme.spacing };
-  const minListWidth = resolveTriageListPaneMinimumWidthV1(paneMeasure);
-  const minDetailWidth = resolveTriageDetailPaneMinimumWidthV1(paneMeasure);
+  const { minListWidth, minDetailWidth } = useTriagePaneMinimumWidthsV1();
 
   /**
    * The way out of an unconfigured PRs & Issues, or nothing at all.
