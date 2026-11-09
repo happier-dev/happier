@@ -3,7 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
-import { readProjectRuntimeRequesterRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
+import { readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetupPreparation';
 import { resolveProjectRequesterSecretEnvironment } from './projectSetupRequesterInputs';
@@ -29,35 +29,19 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
     };
     let releaseRequester: (() => Promise<void>) | undefined;
     const unknown = (code: string): ProjectSetupInspection => ({ setupReadiness: { kind: 'unknown', code } });
-    const requester = runtime.accountAuthorization === ingress.callerInputAuthorization
-        ? readRequesterAccountActionContext(runtime.accountAuthorization) : null;
-    const current = async (fresh = true) => !signal.aborted
-        && (!runtime.isCurrent || await phase('requester_currentness', () => runtime.isCurrent!()))
-        // Only the exact installed execution carries both the fresh-effect
-        // verifier and FX62's observed custody predicate. Passive review has no
-        // native effect: reuse that custody between initial and final admission.
-        // Generic/Session runtimes retain their existing fresh Machine checks.
-        && (!fresh && runtime.verifyCurrent && requester?.isCustodyCurrent
-            ? await requester.isCustodyCurrent()
-            : Boolean(ingress.verifyMachineAdmissionCurrent && await phase('machine_admission', () => ingress.verifyMachineAdmissionCurrent!())))
-        && !signal.aborted;
     try {
         if (!await isServerProfileHomeIdentity(authorityRuntime.serverId, input.workspace.serverId) || input.workspace.machineId !== runtime.machineId
             || ingress.machineAdmission && ingress.machineAdmission.machineId !== runtime.machineId) return unknown('target_mismatch');
-        const refused = await phase('requester', () => readProjectRuntimeRequesterRefusal(authorityRuntime, ingress));
+        const refused = await phase('requester', () => readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal }));
         if (refused) return unknown(refused.errorCode);
-        // Admitted requester resolution already brackets fresh Machine admission
-        // with installed, Account and HTTP custody. Consume that initial fence
-        // directly; no async work intervenes before the first private read.
-        // Legacy own-Account resolution only checks identity, so still admit it.
-        if (signal.aborted || !ingress.callerInputAuthorization && !await current()) return unknown('project_requester_credentials_unavailable');
         releaseRequester = readRequesterAccountActionContext(runtime.accountAuthorization)?.retain();
         const association = await phase('workspace', () => resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
             ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId,
             serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
         const secretEnvironment = await phase('requester_environment', () => resolveProjectRequesterSecretEnvironment(runtime, undefined, signal));
-        if (!await current(false)) return unknown('project_requester_credentials_unavailable');
+        signal.throwIfAborted();
         const inspection = await phase('review', () => inspectProjectSetup({ workspace: association.workspace, projectAssociation: association,
+            requesterIdentity: runtime.requesterIdentity,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl },
             purpose: 'setup', approvalContext: input.context,
             platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
@@ -65,7 +49,8 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
             ...(secretEnvironment ? { secretEnvironment } : {}), ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}), ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}) },
             input.reviewSetupConsent ? { reviewConsent: true } : undefined));
-        return await current() ? inspection : unknown('project_requester_credentials_unavailable');
+        signal.throwIfAborted();
+        return inspection;
     } catch (error) {
         return projectSetupInspectionFailure(error, signal);
     } finally {

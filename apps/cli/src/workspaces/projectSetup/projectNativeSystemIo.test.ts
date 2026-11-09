@@ -2,10 +2,10 @@ import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { findBuiltinNativeEnvironmentAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import { findBuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 import { createProjectNativeIo } from './projectNativeIo';
-import { produceProjectNativeEnvironment } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { prepareProjectNativeToolchain } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 
 const roots: string[] = [];
 const hostPath = process.env.PATH ?? '';
@@ -116,7 +116,7 @@ describe('installed native tool producer', () => {
         expect(await projectNativeSystemIo.resolveTool('mise', { cwd: root })).toMatchObject({ executablePath: binary });
         await expect(readFile(called)).rejects.toMatchObject({ code: 'ENOENT' });
         const io = createProjectNativeIo();
-        if (process.arch !== 'x64' || !findBuiltinNativeEnvironmentAdapterV1('mise', process.platform)) {
+        if (process.arch !== 'x64' || !findBuiltinNativeToolchainAdapterV1('mise', process.platform)) {
             expect(await io.environmentIo.resolveTool('mise')).toBeNull();
             await expect(readFile(called)).rejects.toMatchObject({ code: 'ENOENT' });
             return;
@@ -144,7 +144,7 @@ describe('installed native tool producer', () => {
         const io = createProjectNativeIo();
         expect(await io.commandIo.resolveTool('mise', { cwd: root })).toMatchObject({ executablePath: binary });
         expect(await io.environmentIo.resolveTool('mise')).toMatchObject({ executablePath: binary, version: '2026.10.4' });
-        const result = await produceProjectNativeEnvironment({ selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+        const result = await prepareProjectNativeToolchain({ selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
             root, cwd: root, platform: process.platform, io: io.environmentIo, env: {
                 ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
                 MISE_TRUSTED_CONFIG_PATHS: root, MISE_DATA_DIR: join(root, 'data'), MISE_CACHE_DIR: join(root, 'cache'),

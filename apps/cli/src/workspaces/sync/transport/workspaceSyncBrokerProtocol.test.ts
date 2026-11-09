@@ -14,6 +14,15 @@ import {
 const validPolicy = { selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
 
 describe('workspace sync broker protocol', () => {
+  it('preserves the native uint64 change index without JSON number rounding', () => {
+    for (const previousStateIndex of ['0', '9007199254740993', '18446744073709551615']) {
+      const command = { t: 'wait_for_change', requestId: 'wait-1', previousStateIndex };
+      expect(parseMutagenControlCommandV1(command)).toEqual(command);
+    }
+    for (const previousStateIndex of [1, '-1', '01', '18446744073709551616']) {
+      expect(() => parseMutagenControlCommandV1({ t: 'wait_for_change', requestId: 'wait-1', previousStateIndex })).toThrow();
+    }
+  });
   it('frames control JSON with a big-endian length and decodes fragmented input', () => {
     const frame = encodeBrokerControlFrame({ t: 'open_data', requestId: 'r1', endpointId: 'ws1_ep', expiresAtMs: 100 });
     expect(frame.readUInt32BE(0)).toBe(frame.byteLength - 4);

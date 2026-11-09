@@ -209,8 +209,9 @@ function mutationFailure(result: ProjectAccountSnapshotMutationResult): Error & 
 const RECONCILING_REFUSAL_CODES: ReadonlySet<string> = new Set(['peer_unavailable', 'relationship_not_ready', 'agent_unavailable']);
 
 function isReconcilingRefusal(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error
-    && typeof error.code === 'string' && RECONCILING_REFUSAL_CODES.has(error.code);
+  const code = readRpcErrorCode(error) ?? (typeof error === 'object' && error !== null && 'code' in error
+    && typeof error.code === 'string' ? error.code : undefined);
+  return code !== undefined && RECONCILING_REFUSAL_CODES.has(code);
 }
 
 function isIndeterminate(error: unknown): boolean {
@@ -569,8 +570,8 @@ export function createWorkspaceSyncRelationshipOwner(
           } catch (cleanupError) {
             cleanupErrors.push(cleanupError);
           }
-          const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : undefined;
+          const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : undefined);
           if (cleanupErrors.length) {
             throw withCleanupErrors(error, cleanupErrors);
           }

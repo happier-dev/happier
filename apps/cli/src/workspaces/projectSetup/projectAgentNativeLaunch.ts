@@ -13,8 +13,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
-import { ProjectNativeEnvironmentUncertainError } from '@/workspaces/environment/produceProjectNativeEnvironment';
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
+
 
 /** An invocation's existing Project IO custody, activated only by an exact native launch. */
 export function createProjectAgentNativeLaunchOwner(input: Readonly<{
@@ -65,6 +65,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
             const read = (presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>) => prepareProjectAgentLaunch({
                 onPhase: phase => { pendingPhase = phase; },
                 cwd: input.cwd, machineId: runtime.machineId, serverId: runtime.serverId,
+                requesterIdentity: runtime.requesterIdentity,
                 serverHttpBaseUrl: runtime.serverHttpBaseUrl, account: projectRuntimeAccountRowsInput(runtime),
                 nativeIo: runtime.nativeIo, plugins: runtime.plugins, successHomeDir: runtime.successHomeDir,
                 platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
@@ -121,7 +122,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     onQueue: queueAhead => operation.operationProgress.update({ phase: 'queued', queueAhead }),
                     onReserved: () => operation.operationProgress.update({ phase: 'setup' }),
                     onUnknown: () => operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } }),
-                    run: reservation => runWithRequesterSessionCurrentnessCheckpoint<ProjectSetupExecutionOutcome>(async () => {
+                    run: reservation => (async () : Promise<ProjectSetupExecutionOutcome> => {
                         let kind: ProjectSetupExecutionOutcome['kind'] = 'no_launch';
                         try {
                             reservation.phase('setup');
@@ -130,7 +131,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                 if (current.kind !== 'pendingApproval') break;
                                 if (!operation.operationReview) return { kind, result: { ok: false, errorCode: current.code, error: current.code } };
                                 pendingPhase = 'setup_review';
-                                await operation.operationReview.waitForResume(pending(current), { review: selected => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+                                await operation.operationReview.waitForResume(pending(current), { review: selected => (async () => {
                                     const reviewed = await refresh();
                                     if (reviewed.kind !== 'pendingApproval') return null;
                                     if (selected?.reviewedEffectDigest === reviewed.plan.reviewedEffectDigest) {
@@ -138,15 +139,15 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                         return null;
                                     }
                                     return pending(selected ? { ...reviewed, code: 'project_setup_effect_changed' } : reviewed);
-                                }) });
-                                await runWithRequesterSessionCurrentnessCheckpoint(() => assertCurrent(signal));
+                                })() });
+                                await (() => assertCurrent(signal))();
                                 if (decision) break;
                             }
                             pendingPhase = 'setup_execution';
                             const executed = await executeProjectSetup({ preparation: preparation(), requesterAccountId: runtime.accountId,
                                 operation, terminalSessions: runtime.terminalSessions, environmentIo: runtime.environmentIo,
-                                deferEnvironmentToLaunch: true, beforeNativeEffect: async () => {
-                                    await runWithRequesterSessionCurrentnessCheckpoint(() => assertCurrent(signal));
+                                deferToolchainToLaunch: true, beforeNativeEffect: async () => {
+                                    await (() => assertCurrent(signal))();
                                     pendingPhase = 'setup_execution';
                                 },
                                 ...(runtime.platform ? { platform: runtime.platform } : {}),
@@ -158,10 +159,10 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                 && typeof error.code === 'string' ? error.code : 'project_setup_launch_refused';
                             // A failed passive remeasurement started no process. Only
                             // native custody's explicit uncertainty retains the slot.
-                            return { kind: isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError
+                            return { kind: isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError
                                 ? 'outcome_uncertain' : kind, result: { ok: false, errorCode: code, error: code } };
                         }
-                    }) });
+                    })() });
                 await assertCurrent(signal);
                 if (!result.ok) return fail(result.errorCode);
                 if (result.result && typeof result.result === 'object' && 'kind' in result.result && result.result.kind === 'not_accepted') {
@@ -172,7 +173,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
             const final = prepared.outcome;
             if (final.kind === 'pendingApproval') return fail(final.code, pending(final));
             const plan = final.plan;
-            const verifyCurrent = () => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+            const verifyCurrent = () => (async () => {
                 await assertCurrent(signal);
                 const current = await refresh({ provenance: plan.reviewedEffect.presentation.provenance });
                 await assertCurrent(signal);
@@ -181,7 +182,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     || currentPlan.project.projectId !== plan.project.projectId) return fail('project_workspace_changed');
                 if (currentPlan.reviewedEffectDigest !== plan.reviewedEffectDigest) return fail('project_setup_effect_changed');
                 if (current.kind === 'pendingApproval') fail(current.code);
-            });
+            })();
             const projectLaunch = { ...createProjectNativeLaunchAdmission({
                 preparation: preparation(), environmentIo: runtime.environmentIo, hostEnvironment: environment ?? runtime.hostEnvironment,
                 platform: runtime.platform, operation: { signal },

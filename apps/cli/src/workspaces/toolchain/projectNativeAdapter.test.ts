@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { definePlugin, PluginError, type PluginProjectNativeAdapterRuntimeV1 } from '@happier-dev/plugin-sdk';
 
-import { pixiPlugin, pixiAdapter, importedPixiEnvironment } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source.ts';
+import { pixiPlugin, pixiAdapter, importedPixiToolchain } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source.ts';
 import { ingestCanonicalPluginManifest } from '../../plugins/manifest/ingest.ts';
 import { createResolvedContributionRegistry } from '../../plugins/projection/registry/createResolvedContributionRegistry.ts';
 import { activatePluginRuntimeRegistry } from '../../plugins/runtime/lifecycle/manager.ts';
@@ -14,9 +14,9 @@ import { resolveProjectNativeAdapter, type ProjectNativeAdapterProductionV1 } fr
 import { createPluginRuntimeOccurrenceId } from '../../plugins/runtime/runtimeSlots.ts';
 import { createProductionPluginInvocationServiceOwners } from '../../plugins/runtime/invocation/services/production.ts';
 import { createPluginInvocationLifetime } from '../../plugins/runtime/invocation/lifetime.ts';
-import { produceProjectNativeEnvironment } from './produceProjectNativeEnvironment.ts';
+import { prepareProjectNativeToolchain } from './prepareProjectNativeToolchain.ts';
 import * as processTreeBoundary from '../../processes/terminate/terminateProcessTree.ts';
-import type { ProjectNativeEnvironmentInput } from './produceProjectNativeEnvironment.ts';
+import type { ProjectNativeToolchainInput } from './prepareProjectNativeToolchain.ts';
 import type { ActivationTarget } from '../../plugins/runtime/lifecycle/activation/targets.ts';
 import { produceProjectLaunchEnvironmentForHost } from '../../plugins/runtime/invocation/services/exec.ts';
 
@@ -33,7 +33,7 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
   let unsubscribeUncertainty: (() => void) | undefined;
   let stopReadinessObservation: (() => void) | undefined;
   const runtime: PluginProjectNativeAdapterRuntimeV1 = {
-    async produceEnvironment(request, context) {
+    async prepareToolchain(request, context) {
       if (mode === 'environmentOnly' || mode === 'environmentOnlyWrapper') {
         assert.equal(request.launch, undefined, 'Environment preparation must not fabricate a process intent');
         return { kind: 'ready', env: { NATIVE: 'active' }, reviewInputs: request.files,
@@ -53,7 +53,7 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
       scope: { executables: [{ kind: 'systemTool', id: 'pixi' }] } }], optional: [] },
     systemTools: { pixi: { title: 'Pixi', executableNames: ['pixi'] } },
     projectNativeAdapters: { [pixiAdapter.localId]: {
-      declaration: { files: ['pixi.toml'], roles: ['produceEnvironment'] }, runtime,
+      declaration: { files: ['pixi.toml'], roles: ['prepareToolchain'] }, runtime,
     } },
   });
   const root = await mkdtemp(join(tmpdir(), 'happier-project-native-plugin-'));
@@ -84,10 +84,9 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
     },
   });
   try {
-    const selected = await resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'produceEnvironment', targets, registry,
+    const selected = await resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'prepareToolchain', targets, registry,
       createInvocationContext(input) {
-                    if (input.root === undefined) throw new Error('Expected workspace invocation');
-                    const lifetime = createPluginInvocationLifetime(input.signal);
+        const lifetime = createPluginInvocationLifetime(input.signal);
         const seed = { plugin: { id: pixiAdapter.pluginId, version: plugin.manifest.version },
           contribution: { id: pixiAdapter.localId, qualifiedId: `${pixiAdapter.pluginId}/projectNativeAdapters/${pixiAdapter.localId}` },
           occurrenceId: input.occurrenceId, correlationId: 'native-environment-source-test', surface: 'cli' as const,
@@ -105,7 +104,7 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
     const retainedProduction = acquired.production;
     production = retainedProduction;
     const files = [{ file: 'pixi.toml', content }];
-    const input: ProjectNativeEnvironmentInput = { selection: importedPixiEnvironment, root, cwd: root, env: { KEEP: 'host' }, platform: 'linux', signal: controller.signal,
+    const input: ProjectNativeToolchainInput = { selection: importedPixiToolchain, root, cwd: root, env: { KEEP: 'host' }, platform: 'linux', signal: controller.signal,
       io: { resolveTool: async () => { throw new Error('No builtin probing for a plugin adapter'); },
         run: async () => { throw new Error('No host-owned plugin native flags'); } },
       pluginAdapter: { lease: production, files, launch: { command: '/bin/echo', args: ['checked'] } } };
@@ -113,12 +112,12 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
       const prepareEnvironment = () => produceProjectLaunchEnvironmentForHost({ cwd: root, env: { REMOVE: 'host' },
         signal: controller.signal, assertCurrent: () => assert.ok(production?.isCurrent()),
         projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed-environment-only-effect',
-          environment: { root, selection: importedPixiEnvironment, platform: 'linux', io: input.io },
+          toolchain: { root, selection: importedPixiToolchain, platform: 'linux', io: input.io },
           nativeAdapter: { lease: retainedProduction, files },
         },
       });
       if (mode === 'environmentOnlyWrapper') {
-        await assert.rejects(prepareEnvironment(), { code: 'native_environment_launch_required' });
+        await assert.rejects(prepareEnvironment(), { code: 'native_toolchain_launch_required' });
       } else {
         assert.deepEqual(await prepareEnvironment(), { NATIVE: 'active' }, 'Complete native environment must preserve removals');
       }
@@ -162,7 +161,7 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
         void readPid();
       });
       let completed = false;
-      const running = produceProjectNativeEnvironment(input).finally(() => { completed = true; });
+      const running = prepareProjectNativeToolchain(input).finally(() => { completed = true; });
       void running.catch(() => undefined); // Preserve failure for await without an unhandled rejection during OS observation.
       const readyPid = await Promise.race([
         pidReady,
@@ -177,7 +176,7 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
       assert.ok(processId);
       assert.equal(process.kill(processId, 0), true);
       await production.requestStop();
-      assert.deepEqual(await running, { status: 'refused', kind: 'cancelled', code: 'native_environment_cancelled' });
+      assert.deepEqual(await running, { status: 'refused', kind: 'cancelled', code: 'native_toolchain_cancelled' });
       await expect.poll(() => {
         try { process.kill(processId!, 0); return false; }
         catch (error) {
@@ -191,28 +190,28 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
       return;
     }
     if (mode === 'ordinaryFailed') {
-      const outcome: unknown = await produceProjectNativeEnvironment(input).then(value => value, (error: unknown) => error);
+      const outcome: unknown = await prepareProjectNativeToolchain(input).then(value => value, (error: unknown) => error);
       assert.ok(nativeOsFailureRaised, 'Native effect must reach the genuine OS boundary before classification');
       assert.deepEqual(outcome, { status: 'refused', kind: 'native_failed', code: 'native_adapter_failed' });
       return;
     }
-    const produced = await produceProjectNativeEnvironment(input);
+    const produced = await prepareProjectNativeToolchain(input);
     if (produced.status !== 'ready') assert.fail(`Expected ready native production, got ${produced.kind}/${produced.code}`);
     assert.deepEqual(produced.env, { KEEP: 'host' });
     assert.deepEqual(produced.nativeLaunch, { executable: { kind: 'systemTool', id: 'pixi' },
       args: ['run', '--', '/bin/echo', 'checked'], cwd: root, reviewInputs: files });
     assert.deepEqual(produced.reviewInputs, files);
-    assert.deepEqual(await produceProjectNativeEnvironment({ ...input, nativeCommandEnvironment: importedPixiEnvironment }),
+    assert.deepEqual(await prepareProjectNativeToolchain({ ...input, nativeCommandToolchain: importedPixiToolchain }),
       { status: 'ready', env: input.env });
-    const differentConfig = await produceProjectNativeEnvironment({ ...input,
-      nativeCommandEnvironment: { kind: 'pluginToolchain', adapter: pixiAdapter, configPath: 'other.toml' },
+    const differentConfig = await prepareProjectNativeToolchain({ ...input,
+      nativeCommandToolchain: { kind: 'pluginToolchain', adapter: pixiAdapter, configPath: 'other.toml' },
     });
     if (differentConfig.status !== 'ready') assert.fail(differentConfig.code);
     assert.deepEqual(differentConfig.nativeLaunch, produced.nativeLaunch);
-    assert.deepEqual(await produceProjectNativeEnvironment({ ...input, signal: AbortSignal.abort() }),
-      { status: 'refused', kind: 'cancelled', code: 'native_environment_cancelled' });
+    assert.deepEqual(await prepareProjectNativeToolchain({ ...input, signal: AbortSignal.abort() }),
+      { status: 'refused', kind: 'cancelled', code: 'native_toolchain_cancelled' });
     await registry.dispose();
-    assert.deepEqual(await produceProjectNativeEnvironment(input), { status: 'refused', kind: 'unavailable', code: 'native_adapter_retired' });
+    assert.deepEqual(await prepareProjectNativeToolchain(input), { status: 'refused', kind: 'unavailable', code: 'native_adapter_retired' });
   } finally {
     stopReadinessObservation?.();
     restoreTermination?.();

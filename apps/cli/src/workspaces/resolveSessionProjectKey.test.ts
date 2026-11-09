@@ -7,17 +7,14 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
+import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from './projectAccountRows.testkit';
 
 const serverId = 'association-home';
 const input = { credentials: { token: 'association-token', encryption: null }, serverId, machineId: 'machine', directory: '/repo',
   metadata: { workspaceId: 'checkout', projectId: 'project', path: '/repo' } };
 const workspaceRef = { id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
 function readRows(refs = [workspaceRef]) {
-  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 0 } });
-  return vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete', rows: refs.map(ref => {
-    const key = { kind: 'workspace-ref', serverId: ref.serverId, id: ref.id };
-    return { key, revision: 1, content: { t: 'plain', v: { key, value: ref } } };
-  }) } });
+  return mockProjectAccountRowsHttpBoundary(refs.map(ref => createPlainProjectAccountRefRow(ref, 1)));
 }
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 it('resolves the exact Account workspace reference and Project key', async () => {

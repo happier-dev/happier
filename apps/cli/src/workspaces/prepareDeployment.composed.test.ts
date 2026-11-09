@@ -37,19 +37,23 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createPrepareSessionCreationAuthorization, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import type { SessionActionRpcOriginV1, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { readSessionInputRequest } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionLookupByTagsRequestV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { managedMachineActionEndpointPathV1, ManagedListInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
-
-import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
-import { readSessionInputRequest } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 
 afterEach(() => {
   vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllGlobals();
@@ -146,9 +150,11 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     if (String(url).endsWith('/v1/machines')) return { status: 200, data: [machine,
       ...(includeController ? [{ ...machine, id: 'another-controller' }] : [])] };
     if (String(url).endsWith(`/v1/machines/${workspace.machineId}`)) return { status: 200, data: { machine } };
+    boundaryErrors.push(`Unexpected read: ${url}`);
     throw new Error(`Unexpected read: ${url}`);
   });
   const dispatched: unknown[] = [];
+  const boundaryErrors: string[] = [];
   const prepareDispatches: unknown[] = [];
   let loseReply = false;
   let childExecution: unknown = { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'prepared-session',
@@ -174,6 +180,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       return projectAccountRowsReadHttpResponse([createPlainProjectAccountRefRow(workspace)], String(url), body);
     }
     if (!String(url).startsWith('https://prepare-home.test/v1/actions/')) {
+      boundaryErrors.push(`Unexpected POST: ${url}`);
       throw new Error(`Unexpected POST: ${url}`);
     }
     const actionId = String(url).includes('/deployments.prepare') ? 'deployments.prepare'
@@ -211,7 +218,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     { surface: 'ui', authority: 'present_user', serverId: workspace.serverId, runtimeAccountId: 'prepare-account',
       actionCaller: { kind: 'host' }, actionRequestId: 'prepare-request', signal: options.signal,
       externalActionTarget: { kind: 'machine', machineId: workspace.machineId } });
-  return { input, execute, dispatched, prepareDispatches, post, rootPath, environment, targetLink, boundReads, launches, accepted,
+  return { input, execute, dispatched, prepareDispatches, post, rootPath, environment, targetLink, boundReads, launches, accepted, boundaryErrors,
     setActionsSettings(next: typeof actionsSettings) { actionsSettings = next; },
     denySource() { denySource = true; }, setSourceRevision(value: number) { sourceRevision = value; },
     admit: async (foreignCustodian = false, next: DeploymentPrepareInputV1 = input, origin?: SessionActionRpcOriginV1,
@@ -303,6 +310,92 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
 }
 
 function sessionCallerRegression() {
+  it('refuses a public spawn directory outside the private reviewed Prepare child', async () => {
+    const f = fixture();
+    const custody = await f.admit(false, f.input, undefined, { runId: 'prepare-workflow', requestId: 'prepare-request' });
+    const identity = deriveDeploymentPrepareSessionCreationIdentityV1(custody.authorization.binding);
+    if (!identity) throw new Error('Missing signed Prepare child identity');
+    const spawn = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: { serverId: 'prepare-home', machineId: 'workspace-daemon' },
+      directory: { kind: 'path', path: f.rootPath },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      initialInput: { text: buildDeploymentPreparationBriefV1(f.input) },
+    });
+    let entered = false;
+    const result = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.prepare', input: f.input },
+      context: { ...custody.ingress, runtimeAccountId: 'prepare-account', actionRequestId: identity.requestId,
+        originalActionEnvelope: custody.envelope, externalActionTarget: { kind: 'machine', machineId: 'workspace-daemon' },
+        externalActionExecutionAuthorization: custody.authorization },
+      child: { action: 'session.spawn_new', role: 'prepare-session', input: spawn },
+      admittedReview: { action: 'session.spawn_new', role: 'prepare-session', surface: 'agent' },
+      execute: async (_input, context) => {
+        entered = true;
+        const issue = (publicInput: typeof spawn) => createPrepareSessionCreationAuthorization({
+          context: { ...context, ...custody.ingress }, publicInput,
+          installationId: 'workspace-installation', privateKey: installationKeys.secretKey,
+        });
+        expect(issue(spawn)).not.toBeNull();
+        expect(issue({ ...spawn, directory: { kind: 'path', path: join(f.rootPath, 'outside-reviewed-directory') } })).toBeNull();
+        return { ok: true as const, result: {} };
+      },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(entered).toBe(true);
+    expect(f.launches).toEqual([]);
+  });
+
+  it.each([false, true])('hands off a signed Workflow caller without replacing its origin with present-person authority (existing Session: %s)', async existingSession => {
+    const f = fixture();
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'deployments.prepare': ['agent'] } });
+    f.setActionsSettings(settings);
+    const workflowOrigin = { runId: 'prepare-workflow', requestId: 'prepare-request' };
+    const input = { ...f.input, ...(existingSession ? { sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } } : {}) };
+    const custody = await f.admit(false, input, undefined, workflowOrigin);
+    const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
+    const result = await runWithServerHttpBaseUrl('https://prepare-home.test', () => createActionExecutor(custody.receiver).execute('deployments.prepare', input, {
+      ...buildWorkflowActionContext({ runId: workflowOrigin.runId, invocationRecordId: 'prepare-workflow-invocation',
+        workDepth: 0, authorization }),
+      ...custody.ingress,
+      serverId: 'prepare-home', runtimeAccountId: 'prepare-account',
+      // Installed ingress carries the admitted Workflow host's start snapshot.
+      agentStartContext: { caller: { kind: 'originless', runId: workflowOrigin.runId, runDepth: 0 },
+        baseline: { machineId: 'workspace-daemon', directory: f.rootPath },
+        roles: {}, ledSubtreeSessionIds: [], callerPermissionCeiling: authorization.admittedPermissionCeiling,
+        workDepthLimit: custody.accountSettings.workDepthLimit, allowLists: custody.accountSettings.sessionAgentStartAllowListsV1 },
+      sessionAgentSpawnPolicyV1: custody.accountSettings.sessionAgentSpawnPolicyV1,
+      actionsSettings: settings, actionRequestId: 'prepare-request', originalActionEnvelope: custody.envelope,
+      externalActionTarget: { kind: 'machine', machineId: 'workspace-daemon' },
+      externalActionExecutionAuthorization: custody.authorization,
+    }));
+    expect(result, JSON.stringify({ result, launches: f.launches.length, accepted: f.accepted.length, boundaryErrors: f.boundaryErrors })).toMatchObject({ ok: true, result: { kind: 'handedOff' } });
+    expect(custody.authorization.binding.workflowActionOrigin).toEqual(workflowOrigin);
+    expect(f.launches).toHaveLength(existingSession ? 0 : 1);
+    if (!existingSession) expect(f.launches[0]).toMatchObject({ originRunId: workflowOrigin.runId });
+    expect(f.accepted).toHaveLength(1);
+    expect(f.accepted[0]?.content.text).toContain(f.input.baseCommit);
+    expect(f.accepted[0]?.content.text).toContain('scm.pullRequest.openOrReuse');
+    if (existingSession) expect(readSessionInputRequest(f.accepted[0]?.meta)).toMatchObject({
+      producer: 'workflow', workflow: { runId: workflowOrigin.runId, invocationRecordId: 'prepare-workflow-invocation', workDepth: 0 },
+      permission: { requestedPermissionCeiling: 'default' },
+    });
+    expect(f.dispatched).toEqual([]);
+  });
+
+  it('refuses a copied signed origin without the admitted requester custody', async () => {
+    const f = fixture();
+    const custody = await f.admit();
+    const forged = ExternalActionExecutionAuthorizationV1Schema.parse(custody.authorization);
+    const result = await createActionExecutor(custody.receiver).execute('deployments.prepare', f.input, {
+      surface: 'agent', authority: 'account_automation', serverId: 'prepare-home', runtimeAccountId: 'prepare-account',
+      actionCaller: { kind: 'session', sessionId: 'foreign-session', starterDepth: 0, turnDepth: 1 },
+      defaultSessionId: 'foreign-session', actionRequestId: 'prepare-request', originalActionEnvelope: custody.envelope,
+      externalActionTarget: { kind: 'machine', machineId: 'workspace-daemon' }, externalActionExecutionAuthorization: forged,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(f.dispatched).toEqual([]);
+  });
+
   it.each([false, true])('hands off a real Session caller without replacing its origin with present-person authority (existing Session: %s)', async existingSession => {
     const f = fixture();
     const input = { ...f.input, ...(existingSession ? { sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } } : {}) };
@@ -340,7 +433,7 @@ function sessionCallerRegression() {
         callerPermissionMode: 'default', causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
         agentStartCaller: { kind: 'session', sessionId: 'prepare-caller', starterDepth: 0, turnDepth: 1 } },
     }, { sessionId: 'prepare-caller', isCurrent: async () => true }));
-    expect(result, JSON.stringify({ result, launches: f.launches.length, accepted: f.accepted.length })).toMatchObject({ ok: true, result: { kind: 'handedOff' } });
+    expect(result, JSON.stringify({ result, launches: f.launches.length, accepted: f.accepted.length, boundaryErrors: f.boundaryErrors })).toMatchObject({ ok: true, result: { kind: 'handedOff' } });
     expect(f.boundReads.map(read => read.effectActionId)).toEqual(['deployments.prepare', 'projects.sources.read']);
     expect(f.boundReads.every(verifiesPrepareRead)).toBe(true);
     expect(custody?.authorization.binding.sessionActionOrigin?.caller).toEqual({

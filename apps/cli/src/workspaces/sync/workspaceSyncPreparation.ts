@@ -1,10 +1,10 @@
-import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual,
+import { areWorkspaceSyncWorkerCopyProvenancesEqual,
   getWorkspaceSyncWorkerCopyV1, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute,
   type WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceRefV1, WorkspaceSyncPrepareBetweenResultV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
-import type { WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
+import type { WorkspaceSyncFlushExpectation, WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import type { StoredCredentials } from '@/persistence';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -13,11 +13,10 @@ import { readWorkspaceSyncRootObjectIdentity } from './workspaceSyncRootIdentity
 import { readWorkspaceSyncChildMachineFacts } from './workspaceSyncTargetAuthority';
 import { managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readWebLatencyTracePoint, timeWebLatencyPhase, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-
-export { assertWorkspaceSyncRequesterBootstrapSupported, WorkspaceSyncInitialPreparationRefusal } from './workspaceSyncBootstrapAdmission';
 
 export type WorkspaceSyncWorkerTargetBasis = Readonly<{
   source: WorkspaceRefV1;
@@ -45,6 +44,7 @@ export async function readWorkspaceSyncWorkerRouteSnapshot(input: Readonly<{
       ...(input.authorization ? { authorization: input.authorization, effectActionId: input.authorization.binding.actionId }
         : { credentials: input.credentials }) });
     const childMachines = await readWorkspaceSyncChildMachineFacts({ ...input,
+      relationshipId: input.authorization?.binding.workspaceSyncAdmission?.relationshipId,
       machineIds: snapshot.workspaceRefs.filter(ref => ref.serverId === input.serverId
         && (ref.id === input.sourceWorkspaceRefId || ref.machineId === input.targetMachineId)).map(ref => ref.machineId) });
     return { ...snapshot, childMachines };
@@ -129,7 +129,6 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
         await readWorkspaceSyncRootObjectIdentity(basis.target.rootPath);
         const prepared = await input.prepareBetween({ sourceWorkspaceRefId: basis.source.id, targetWorkspaceRefId: basis.target.id }, signal);
         if (!prepared.ok) return fail(prepared.errorCode);
-        assertWorkspaceSyncWorkerTargetCurrent(basis, { ...await readCurrent(signal, basis.source), serverId: basis.source.serverId });
         signal.throwIfAborted();
         return prepared;
       })),
@@ -280,9 +279,9 @@ export async function prepareWorkspaceSyncRelationship(
 }
 
 function errorCode(error: unknown, fallback: string): string {
-  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+  return readRpcErrorCode(error) ?? (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
     ? error.code
-    : fallback;
+    : fallback);
 }
 
 type WorkspaceSyncPreparationSnapshot = Readonly<{
@@ -291,8 +290,8 @@ type WorkspaceSyncPreparationSnapshot = Readonly<{
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
 }>;
 
-/** Ordered, ephemeral pair/star barrier. Current settings are re-read before
- * every effect; no route cursor or successful-link rollback is created. */
+/** Ordered, ephemeral pair/star barrier. Execute the admitted route and endpoints;
+ * withdrawals apply to the next admission, while local cancellation stops this one. */
 export async function prepareWorkspaceSyncBetween(input: Readonly<{
   serverId?: string;
   sourceWorkspaceRefId: string;
@@ -300,7 +299,7 @@ export async function prepareWorkspaceSyncBetween(input: Readonly<{
   /** A controller may supply the observation it just admitted, before any effect. */
   initial?: WorkspaceSyncPreparationSnapshot;
   readCurrent(): Promise<WorkspaceSyncPreparationSnapshot>;
-  flush(relationshipId: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1>;
+  flush(relationshipId: string, signal: AbortSignal | undefined, admitted: WorkspaceSyncFlushExpectation): Promise<WorkspaceSyncStatusV1>;
   signal?: AbortSignal;
 }>): Promise<WorkspaceSyncPrepareBetweenResultV1> {
   const initial = input.initial ?? await input.readCurrent();
@@ -316,37 +315,11 @@ export async function prepareWorkspaceSyncBetween(input: Readonly<{
   const completed: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'][number][] = [];
   for (const relationship of route.relationships) {
     input.signal?.throwIfAborted();
-    const current = await input.readCurrent();
-    if ((initial.childMachines?.length ?? 0) !== (current.childMachines?.length ?? 0)
-      || initial.childMachines?.some(accepted => {
-        const now = current.childMachines?.find(fact => fact.serverId === accepted.serverId && fact.machineId === accepted.machineId);
-        return !now || now.installationId !== accepted.installationId
-          || !managedDevcontainerChildProjectionsEqualV1(now.projection, accepted.projection);
-      })) {
-      return { ok: false, errorCode: 'workspace_sync_child_unavailable', completed, blockedRelationshipId: relationship.relationshipId };
-    }
-    const currentRoute = resolveWorkspaceSyncTransferRoute({
-      ...current,
-      serverId: input.serverId,
-      sourceWorkspaceRefId: input.sourceWorkspaceRefId,
-      targetWorkspaceRefId: input.targetWorkspaceRefId,
-    });
-    if (!currentRoute.ok && currentRoute.code === 'workspace_sync_child_unavailable') {
-      return { ok: false, errorCode: currentRoute.code, completed, blockedRelationshipId: relationship.relationshipId };
-    }
-    const currentRelationship = currentRoute.ok && currentRoute.kind !== 'same_workspace'
-      ? currentRoute.relationships.find((candidate) => candidate.relationshipId === relationship.relationshipId)
-      : undefined;
-    if (!currentRelationship || !areWorkspaceSyncRelationshipDefinitionsEqual(currentRelationship, relationship)) {
-      return {
-        ok: false,
-        errorCode: 'relationship_changed',
-        completed,
-        blockedRelationshipId: relationship.relationshipId,
-      };
-    }
     try {
-      const status = await input.flush(relationship.relationshipId, input.signal);
+      const status = await input.flush(relationship.relationshipId, input.signal, {
+        relationship,
+        workspaceRefs: initial.workspaceRefs.filter(ref => ref.id === relationship.alphaWorkspaceRefId || ref.id === relationship.betaWorkspaceRefId),
+      });
       assertWorkspaceSyncStatusClean(status);
       completed.push({
         relationshipId: relationship.relationshipId,

@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
-import { inspectProjectDefinitions, inspectProjectToolFacts } from './projectDefinitionInspection';
+import { inspectProjectDefinitions, inspectProjectDefinitionExecutionFacts, inspectProjectToolFacts } from './projectDefinitionInspection';
 import { resolveNativePackageManager } from './nativePackageScripts';
 
 const roots: string[] = [];
@@ -19,12 +20,82 @@ async function fixture(files: Record<string, string>): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 describe('inspectProjectDefinitions', () => {
+    it('reads execution facts per source and installed selection rather than per target, retaining fresh hashes and availability', async () => {
+        const scripts = Object.fromEntries(Array.from({ length: 128 }, (_, index) => [`check${index}`, 'echo initial']));
+        const manifest = { version: 1 as const, scripts: Object.fromEntries(Object.keys(scripts).map(name => [name, {
+            source: { kind: 'native' as const, tool: 'package_script' as const, file: 'package.json', target: name },
+        }])) };
+        const root = await fixture({ 'package.json': JSON.stringify({ packageManager: 'pnpm@10.0.0', scripts }),
+            ...Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`packages/p${index}/package.json`,
+                JSON.stringify({ scripts: { [`workspace${index}`]: 'echo child' } })])),
+        });
+        const detection = await inspectProjectDefinitions(root);
+        const reads = vi.spyOn(filesystem, 'readFile');
+        const probes: string[] = [];
+        let installed = true;
+        const io = { async resolveTool(tool: string, request: Readonly<{ cwd: string; version?: string }>) {
+            probes.push(JSON.stringify([tool, request.cwd, request.version ?? null]));
+            return installed ? { executablePath: '/installed/pnpm', version: '10.0.0' } : null;
+        } };
+        try {
+            const facts = await inspectProjectDefinitionExecutionFacts({ root, detection, manifest, io });
+            expect(facts.importCandidates).toHaveLength(192);
+            expect(facts.commands).toHaveLength(128);
+            expect(facts.importCandidates.every(candidate => candidate.availability === 'available' && candidate.preselected)).toBe(true);
+            expect(facts.commands.every(command => command.availability === 'available')).toBe(true);
+            expect(probes).toHaveLength(66); // 65 versioned cwd selections plus the distinct unversioned host-tool fact.
+            expect(reads.mock.calls.filter(([path]) => path === join(root, 'package.json')).length).toBeLessThanOrEqual(2);
+            const previousHash = facts.importCandidates[0]?.executionInputs?.[0]?.hash;
+            expect(previousHash).toBeTruthy();
+            await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@10.0.0', scripts: { ...scripts, check0: 'echo changed' } }));
+            installed = false;
+            probes.length = 0;
+            reads.mockClear();
+            const next = await inspectProjectDefinitionExecutionFacts({ root, detection, manifest, io });
+            expect(next.importCandidates.every(candidate => candidate.availability === 'unavailable' && !candidate.preselected)).toBe(true);
+            expect(next.commands.every(command => command.availability === 'unavailable')).toBe(true);
+            expect(next.importCandidates[0]?.executionInputs?.[0]?.hash).not.toBe(previousHash);
+            expect(probes).toHaveLength(66);
+            expect(reads.mock.calls.filter(([path]) => path === join(root, 'package.json')).length).toBeLessThanOrEqual(2);
+        } finally { reads.mockRestore(); }
+    });
+
+    it('discovers packages from directory entries without a stat per unrelated directory and reads changes on the next inspection', async () => {
+        const root = await fixture({});
+        await Promise.all(Array.from({ length: 1024 }, async (_, index) => {
+            const directory = join(root, 'sources', `p${index}`);
+            await mkdir(directory, { recursive: true });
+            if (index % 16 === 0) await writeFile(join(directory, 'package.json'), JSON.stringify({ scripts: { [`check${index}`]: 'echo initial' } }));
+        }));
+        // Observe the real filesystem boundary; discovery and all parsers stay real.
+        const stats = vi.spyOn(filesystem, 'stat');
+        try {
+            const detection = await inspectProjectDefinitions(root);
+            expect(detection.entries).toHaveLength(64);
+            expect(detection.entries).toContainEqual({ source: { kind: 'native', tool: 'package_script', file: 'sources/p0/package.json', target: 'check0' }, usage: 'script' });
+            expect(stats.mock.calls).toHaveLength(0);
+            await writeFile(join(root, 'sources/p0/package.json'), JSON.stringify({ scripts: { changed: 'echo fresh' } }));
+            const next = await inspectProjectDefinitions(root);
+            expect(next.entries).toHaveLength(64);
+            expect(next.entries.some(entry => entry.source.target === 'check0')).toBe(false);
+            expect(next.entries).toContainEqual({ source: { kind: 'native', tool: 'package_script', file: 'sources/p0/package.json', target: 'changed' }, usage: 'script' });
+            expect(stats.mock.calls).toHaveLength(0);
+            await mkdir(join(root, 'linked'));
+            await symlink(join(root, 'sources/p0/package.json'), join(root, 'linked/package.json'));
+            await symlink(join(root, 'sources'), join(root, 'linked-directory'), 'junction');
+            const linked = await inspectProjectDefinitions(root);
+            expect(linked.entries).toHaveLength(65);
+            expect(linked.entries).toContainEqual({ source: { kind: 'native', tool: 'package_script', file: 'linked/package.json', target: 'changed' }, usage: 'script' });
+            expect(stats.mock.calls).toHaveLength(1); // Follow the package file, never directory symlinks.
+        } finally { stats.mockRestore(); }
+    });
+
     it('resolves each host tool once per inspection while retaining every file requirement and refreshing the next request', async () => {
         const tools = Array.from({ length: 128 }, (_, index) => [
             { tool: 'node', file: `packages/p${index}/package.json`, requestedVersion: index % 2 === 0 ? '22' : '24' },
             { tool: 'mise', file: `packages/p${index}/mise.toml` },
         ]).flat();
-        const detection = { entries: [], environments: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [], tools };
+        const detection = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [], tools };
         const probes: string[] = [];
         let observation: 'available' | 'unavailable' | 'unresolved' = 'available';
         // Installed-tool lookup is an OS boundary. Requirement projection stays real.
@@ -80,7 +151,7 @@ describe('inspectProjectDefinitions', () => {
         expect(entries).toContain('compose:web:service');
         expect(entries).toContain('procfile:web:service');
         expect(entries.some((entry) => entry.startsWith('nix'))).toBe(false);
-        expect(detection.environments.map((environment) => environment.kind === 'toolchain' ? environment.tool : environment.kind)).toEqual(expect.arrayContaining(['mise', 'devbox', 'devenv', 'flox', 'nix_flake']));
+        expect(detection.toolchains.map((environment) => environment.kind === 'toolchain' ? environment.tool : environment.kind)).toEqual(expect.arrayContaining(['mise', 'devbox', 'devenv', 'flox', 'nix_flake']));
         expect(detection.devcontainers).toEqual([{ configPath: '.devcontainer/devcontainer.json' }]);
         expect(detection.coverage).toBe('partial');
         expect(detection.diagnostics.map((diagnostic) => diagnostic.file)).toEqual(expect.arrayContaining(['Makefile', 'Taskfile.yml', 'devenv.nix', 'flake.nix']));

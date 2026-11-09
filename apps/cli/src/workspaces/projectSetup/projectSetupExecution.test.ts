@@ -2,14 +2,18 @@ import axios from 'axios';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyProcess, PtyProvider, PtySpawnParams, PtyExitEvent } from '@/terminal/pty/provider';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { reviewProjectSetupEffect, type ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { executeProjectSetup, type ProjectSetupExecutionInput } from './projectSetupExecution';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+
+// Entry callers cannot supply consent carried by an already admitted executor.
+expectTypeOf<ProjectSetupPreparationInput>().not.toHaveProperty('admittedConsent');
+expectTypeOf<ProjectSetupExecutionInput['preparation']>().not.toHaveProperty('admittedConsent');
 
 // The OS PTY and process-tree stop are system boundaries. Preparation, trust,
 // completion storage and terminal custody stay real. The host publication sink
@@ -68,7 +72,7 @@ describe('finite Project setup execution', () => {
         const manager = createTerminalPtySessionManager({ ptyProvider, env: { SHELL: '/bin/bash' },
             probeProcessGroup: () => 'absent',
             stopProcessTree: async () => { stopped++; if (stopUnconfirmed) throw Object.assign(new Error('termination incomplete'), { code: 'plugin_exec_termination_incomplete' }); },
-            config: { bufferMaxBytes: 100000, bufferMaxEvents: 1000, bufferRetentionMs: 600000,
+            config: { bufferMaxBytes: 100000, bufferMaxEvents: 1000,
                 urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 },
         });
         managers.push(manager);
@@ -83,7 +87,7 @@ describe('finite Project setup execution', () => {
                     operation: { actionRequestId: 'operation', signal: controller.signal, operationProgress: { update() {} },
                         operationOwnerUpdate: { update: update => updates.push(update) } },
                     terminalSessions: manager, platform: 'linux', hostEnvironment: { SHELL: '/bin/bash', PUBLIC: 'value' },
-                    environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                    environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
                     ...executionOverrides });
                 return outcome;
             })();
@@ -92,6 +96,18 @@ describe('finite Project setup execution', () => {
         return { root, preparation, plan: review.plan, spawned, updates, store, target, start, manager,
             stopped: () => stopped, unconfirmedStop: () => { stopUnconfirmed = true; }, trust: (digest: string | null) => { trustDigest = digest; } };
     }
+
+    it('refuses trusted setup commands when the held Agent isolation authority is unavailable', async () => {
+        const f = await fixture(['echo must-not-run']);
+        const run = f.start({}, { agentIsolation: { read: () => ({ enabled: true,
+            status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [f.root] }) } });
+        let settled = false;
+        const result = run.completion.then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+        await expect.poll(() => f.spawned.length || settled).toBeTruthy();
+        for (const child of f.spawned) child.pty.exit(0);
+        expect(await result).toMatchObject({ value: { ok: false, errorCode: 'workspace_exec_isolation_unavailable' } });
+        expect(f.spawned).toEqual([]);
+    });
 
     it('keeps invocation skip distinct from completion without any executable work', async () => {
         const f = await fixture(['echo setup']);
@@ -129,6 +145,38 @@ describe('finite Project setup execution', () => {
             expect(update.domainRef).toMatchObject({ sourceWorkspace, script });
         }
         expect(f.updates.at(-1)).toMatchObject({ domainRef: { purpose: 'setup', sourceWorkspace, script, exitCode: 0 } });
+    });
+
+    it.each([1, 3])('reads remembered consent once at admission for %i commands', async commandCount => {
+        const f = await fixture(Array.from({ length: commandCount }, (_, step) => `echo step-${step}`));
+        const run = f.start();
+        for (let step = 0; step < commandCount; step++) {
+            await expect.poll(() => f.spawned.length).toBe(step + 1);
+            f.spawned[step]!.pty.exit(0);
+        }
+        expect(await run.completion).toMatchObject({ ok: true });
+        expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
+        const grantReads = vi.mocked(axios.post).mock.calls.filter(([url]) => url.endsWith('/read'));
+        expect(grantReads).toHaveLength(1);
+    });
+
+    it('finishes admitted commands after consent withdrawal and refuses the next invocation needing setup', async () => {
+        const f = await fixture(['echo first', 'echo second']);
+        const run = f.start();
+        let settled = false;
+        const completion = run.completion.finally(() => { settled = true; });
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.trust(null);
+        f.spawned[0]!.pty.exit(0);
+        await expect.poll(() => f.spawned.length === 2 || settled).toBe(true);
+        f.spawned[1]?.pty.exit(0);
+        expect(await completion).toMatchObject({ ok: true, result: { kind: 'success' } });
+        expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
+        // A completed target has no setup effects to authorize. Invalidate its
+        // completion to exercise the next invocation that needs executable work.
+        await f.store.invalidate(f.target);
+        expect(await f.start().completion).toMatchObject({ ok: false, errorCode: 'project_setup_consent_required' });
+        expect(f.spawned).toHaveLength(2);
     });
 
     it('invalidates prior completion before a failing explicit teardown and never launches its second step', async () => {
@@ -173,25 +221,45 @@ describe('finite Project setup execution', () => {
         expect(f.updates.at(-1)).toMatchObject({ domainRef: { terminalId: expect.any(String) } });
     });
 
-    it('refuses changed inputs after a zero exit and distinguishes pending consent and invocation skip from Ready', async () => {
-        const f = await fixture(['echo setup']);
+    it('refuses changed inputs before the next command even with admitted consent', async () => {
+        const f = await fixture(['echo first', 'echo second']);
         const run = f.start();
         await expect.poll(() => f.spawned.length).toBe(1);
         await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
         f.spawned[0]!.pty.exit(0);
         expect(await run.completion).toMatchObject({ ok: false, errorCode: 'project_setup_effect_changed' });
+        expect(f.spawned).toHaveLength(1);
+        expect(await f.store.read(f.target)).toBeNull();
+    });
+
+    it('succeeds without recording completion when inputs change after the final command and re-runs new bytes next time', async () => {
+        const f = await fixture(['echo setup']);
+        const run = f.start();
+        await expect.poll(() => f.spawned.length).toBe(1);
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
+        f.spawned[0]!.pty.exit(0);
+        expect(await run.completion).toMatchObject({ ok: true, result: { kind: 'success', reviewedEffectDigest: f.plan.reviewedEffectDigest } });
         expect(await f.store.read(f.target)).toBeNull();
         const pending = await executeProjectSetup({ preparation: f.preparation, requesterAccountId: 'requester-account',
             operation: { signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
-            terminalSessions: managers[0]!, environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) });
+            terminalSessions: managers[0]!, environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) });
         expect(pending).toMatchObject({ kind: 'no_launch', result: { ok: false, errorCode: 'project_setup_consent_required', details: { kind: 'pendingApproval' } } });
         expect(JSON.stringify(pending)).not.toContain('secretEnvironment');
         expect(f.spawned.length).toBe(1);
         expect(await executeProjectSetup({ preparation: { ...f.preparation, skipForInvocation: true }, requesterAccountId: 'requester-account',
             operation: { signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
-            terminalSessions: managers[0]!, environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) }))
+            terminalSessions: managers[0]!, environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) }))
             .toMatchObject({ kind: 'no_launch', result: { ok: true, result: { kind: 'skippedForInvocation' } } });
         expect(await f.store.read(f.target)).toBeNull();
+        const review = await reviewProjectSetupEffect(f.preparation);
+        if (review.kind !== 'reviewed') throw new Error(review.code);
+        f.trust(review.plan.reviewedEffectDigest);
+        const next = f.start();
+        await expect.poll(() => f.spawned.length).toBe(2);
+        expect(f.spawned[1]!.launch.args).toEqual(['-c', 'echo changed']);
+        f.spawned[1]!.pty.exit(0);
+        expect(await next.completion).toMatchObject({ ok: true });
+        expect(await f.store.matches(f.target, review.plan.successBasis)).toBe(true);
     });
 
     it('reports lost exit observation as uncertain, preserving no completion and never replaying', async () => {
@@ -236,17 +304,40 @@ describe('finite Project setup execution', () => {
         expect(await f.store.matches(f.target, reviewed.plan.successBasis)).toBe(true);
     });
 
+    it('refuses native environment evaluation under the held Agent isolation authority before the helper effect', async () => {
+        const f = await fixture([]);
+        await writeFile(join(f.root, 'mise.toml'), '[env]\nNATIVE_VALUE = "prepared"\n');
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1,
+            toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+        const nativeIo = { resolveTool: async () => ({ executablePath: process.execPath, version: '2026.10.4' }) };
+        const reviewed = await reviewProjectSetupEffect({ ...f.preparation, nativeIo });
+        if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
+        f.trust(reviewed.plan.reviewedEffectDigest);
+        const marker = join(f.root, 'must-not-evaluate');
+        const agentIsolation = { read: () => ({ enabled: true,
+            status: { kind: 'unavailable' as const, code: 'provisioning_unavailable' as const }, workspaceRoots: [f.root] }) };
+        const environmentIo = createProjectNativeToolchainIoForHost(Object.assign({ resolveTool: async () => ({
+            executablePath: process.execPath, version: '2026.10.4', args: ['-e',
+                `require('node:fs').writeFileSync(${JSON.stringify(marker)},'evaluated');process.stdout.write('NATIVE_VALUE=prepared\\0');`, '--'],
+        }) }, { agentIsolation }));
+        expect(await f.start({ nativeIo }, { environmentIo, agentIsolation }).completion)
+            .toMatchObject({ ok: false, errorCode: 'workspace_exec_isolation_unavailable' });
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await f.store.read(f.target)).toBeNull();
+        expect(f.spawned).toEqual([]);
+    });
+
     it('produces a selected environment even when there are no declared setup steps', async () => {
         const f = await fixture([]);
         await writeFile(join(f.root, 'mise.toml'), '[env]\nNATIVE_VALUE = "prepared"\n');
         await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1,
-            environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+            toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
         const nativeIo = { resolveTool: async () => ({ executablePath: process.execPath, version: '2026.10.4' }) };
         const reviewed = await reviewProjectSetupEffect({ ...f.preparation, nativeIo });
         if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
         f.trust(reviewed.plan.reviewedEffectDigest);
         const observedEnvironment = join(f.root, 'native-environment-path');
-        const environmentIo = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => ({
+        const environmentIo = createProjectNativeToolchainIoForHost({ resolveTool: async () => ({
             executablePath: process.execPath, version: '2026.10.4', args: ['-e',
                 `require('node:fs').writeFileSync(${JSON.stringify(observedEnvironment)},process.env.MISE_OVERRIDE_CONFIG_FILENAMES);process.stdout.write('NATIVE_VALUE=prepared\\0');`, '--'],
         }) });
@@ -257,17 +348,64 @@ describe('finite Project setup execution', () => {
         expect(f.spawned).toEqual([]);
     });
 
+    it('rechecks requester admission at the actual built-in person helper after awaited tool resolution', async () => {
+        const f = await fixture([]);
+        await writeFile(join(f.root, 'mise.toml'), '[env]\nNATIVE_VALUE = "prepared"\n');
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1,
+            toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+        const nativeIo = { resolveTool: async () => ({ executablePath: process.execPath, version: '2026.10.4' }) };
+        const reviewed = await reviewProjectSetupEffect({ ...f.preparation, nativeIo });
+        if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
+        f.trust(reviewed.plan.reviewedEffectDigest);
+        const marker = join(f.root, 'person-helper-ran');
+        let requesterCurrent = true;
+        let pauseResolution = false;
+        let entered!: () => void;
+        let resume!: () => void;
+        const paused = new Promise<void>(resolve => { entered = resolve; });
+        const resumed = new Promise<void>(resolve => { resume = resolve; });
+        // Managed/system tool resolution is the external boundary; native
+        // preparation, final launch authorization and process custody stay real.
+        const environmentIo = createProjectNativeToolchainIoForHost({ async resolveTool() {
+            if (pauseResolution) { entered(); await resumed; }
+            return { executablePath: process.execPath, version: '2026.10.4', args: ['-e',
+                `require('node:fs').writeFileSync(${JSON.stringify(marker)},'evaluated');process.stdout.write('NATIVE_VALUE=prepared\\0');`, '--'] };
+        } });
+        const execution: Partial<ProjectSetupExecutionInput> = { environmentIo, executionKind: 'person_break_glass',
+            requesterIdentity: { kind: 'owner_person', requester: { serverId: 'home', accountId: 'owner',
+                machineId: 'machine', installationId: 'installation' } },
+            agentIsolation: { read: () => ({ enabled: true,
+                status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [f.root] }) },
+            async beforeNativeEffect() {
+                if (!requesterCurrent) throw Object.assign(new Error('Requester retired'), { code: 'requester_retired' });
+            },
+        };
+        expect(await f.start({ nativeIo }, execution).completion).toMatchObject({ ok: true });
+        expect(await readFile(marker, 'utf8')).toBe('evaluated');
+        await rm(marker);
+        await f.store.invalidate(f.target);
+        pauseResolution = true;
+        const waiting = f.start({ nativeIo }, execution).completion;
+        expect(await Promise.race([paused.then(() => 'paused'), waiting.then(() => 'settled')])).toBe('paused');
+        requesterCurrent = false;
+        resume();
+        expect(await waiting).toMatchObject({ ok: false });
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await f.store.read(f.target)).toBeNull();
+        expect(f.spawned).toEqual([]);
+    });
+
     it('does not record environment-only completion when reviewed configuration changes during native evaluation', async () => {
         const f = await fixture([]);
         const config = join(f.root, 'mise.toml');
         await writeFile(config, '[env]\nNATIVE_VALUE = "prepared"\n');
         await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1,
-            environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+            toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
         const nativeIo = { resolveTool: async () => ({ executablePath: process.execPath, version: '2026.10.4' }) };
         const reviewed = await reviewProjectSetupEffect({ ...f.preparation, nativeIo });
         if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
         f.trust(reviewed.plan.reviewedEffectDigest);
-        const environmentIo = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => ({
+        const environmentIo = createProjectNativeToolchainIoForHost({ resolveTool: async () => ({
             executablePath: process.execPath, version: '2026.10.4', args: ['-e',
                 `require('node:fs').writeFileSync(${JSON.stringify(config)},${JSON.stringify('[env]\nNATIVE_VALUE = "changed"\n')});process.stdout.write('NATIVE_VALUE=prepared\\0');`, '--'],
         }) });

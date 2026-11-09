@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { relative, resolve } from 'node:path';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { TerminalPtySessionManager, TerminalPtyCustody, TerminalPtyEnsureInput } from '@/terminal/pty/sessions';
-import { ProjectNativeEnvironmentUncertainError, type ProjectNativeEnvironmentIo } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { ProjectNativeToolchainUncertainError, type ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { configuration } from '@/configuration';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
 import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
@@ -17,7 +17,7 @@ import {
     type HostAuthorizedPluginExecLaunch,
     type HostProjectNativeLaunchAdmission,
     type ProjectNativeEffectCaptureForHost,
-    type ProjectNativeEnvironmentIoForHost,
+    type ProjectNativeToolchainIoForHost,
 } from '@/plugins/runtime/invocation/services/exec';
 import { prepareProjectSetup, type PreparedProjectSetupPlan, type PreparedProjectSetupCommand } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
@@ -33,7 +33,7 @@ export type ProjectSetupExecutionInput = Readonly<{
     terminalCustody?: TerminalPtyCustody;
     operation: ProjectSetupOperationContext;
     terminalSessions: Pick<TerminalPtySessionManager, 'prepare' | 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
-    environmentIo: ProjectNativeEnvironmentIoForHost;
+    environmentIo: ProjectNativeToolchainIoForHost;
     hostEnvironment?: ProcessEnvInput;
     agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     nativeExecutionIdentity?: TerminalPtyEnsureInput['nativeExecutionIdentity'];
@@ -48,7 +48,7 @@ export type ProjectSetupExecutionInput = Readonly<{
     /** Containing installed operation revalidates Home/Machine after native preparation. */
     beforeNativeEffect?: () => Promise<void>;
     /** A containing finite command produces its environment with the real final launch. */
-    deferEnvironmentToLaunch?: boolean;
+    deferToolchainToLaunch?: boolean;
 }>;
 
 export type ProjectSetupExecutionOutcome = Readonly<{
@@ -106,7 +106,7 @@ export async function executeProjectSetup(input: ProjectSetupExecutionInput): Pr
         } });
         return outcome;
     } catch (error) {
-        uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
+        uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
         throw error;
     } finally {
         if (!uncertain && outcome?.kind !== 'outcome_uncertain') {
@@ -180,21 +180,21 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
 export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform' | 'agentIsolation' | 'executionKind' | 'requesterIdentity' | 'beforeNativeEffect'> &
     Readonly<{ operation: Pick<ProjectSetupOperationContext, 'signal'> }>, plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand,
     signal = input.preparation.signal ?? input.operation.signal) {
-    const nativeCommandEnvironment = command?.kind === 'native' ? command.resolution.nativeCommandEnvironment
-        : command?.kind === 'pluginNative' ? command.resolution.environmentApplied : undefined;
-    let environmentProduction: ProjectNativeAdapterProductionV1 | undefined;
-    if (plan.environmentAdapterLease) {
+    const nativeCommandToolchain = command?.kind === 'native' ? command.resolution.nativeCommandToolchain
+        : command?.kind === 'pluginNative' ? command.resolution.toolchainApplied : undefined;
+    let toolchainProduction: ProjectNativeAdapterProductionV1 | undefined;
+    if (plan.toolchainAdapterLease) {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
-        const acquired = plan.environmentAdapterLease.acquireProduction({ root: plan.workspace.rootPath,
+        const acquired = plan.toolchainAdapterLease.acquireProduction({ root: plan.workspace.rootPath,
             environment: projectBaseEnvironment(input, plan), signal, executionKind: input.executionKind,
             requesterIdentity: input.requesterIdentity,
             assertLaunchCurrent: input.beforeNativeEffect });
         if (acquired.kind !== 'ready') throw Object.assign(new Error(acquired.code), { code: acquired.code });
-        environmentProduction = acquired.production;
-        input.preparation.retainNativeInvocation(environmentProduction);
+        toolchainProduction = acquired.production;
+        input.preparation.retainNativeInvocation(toolchainProduction);
     }
-    let environmentIo: ProjectNativeEnvironmentIo = input.environmentIo;
-    if (plan.environment.kind === 'toolchain') {
+    let environmentIo: ProjectNativeToolchainIo = input.environmentIo;
+    if (plan.toolchain.kind === 'toolchain') {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
         environmentIo = input.environmentIo.createInvocation({ signal, retainCapture: input.preparation.retainNativeInvocation,
             agentIsolation: input.agentIsolation, executionKind: input.executionKind,
@@ -203,12 +203,12 @@ export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecu
     }
     return {
         status: 'ready' as const, reviewedEffectDigest: plan.reviewedEffectDigest,
-        environment: { selection: plan.environment, root: plan.workspace.rootPath,
+        toolchain: { selection: plan.toolchain, root: plan.workspace.rootPath,
             platform: input.platform ?? process.platform, io: environmentIo,
-            ...(nativeCommandEnvironment ? { nativeCommandEnvironment } : {}),
+            ...(nativeCommandToolchain ? { nativeCommandToolchain } : {}),
         },
-        ...(environmentProduction ? { nativeAdapter: {
-            lease: environmentProduction, files: plan.environmentReviewInputs,
+        ...(toolchainProduction ? { nativeAdapter: {
+            lease: toolchainProduction, files: plan.toolchainReviewInputs,
         } } : {}),
         ...(input.preparation.secretEnvironment ? { secretReferences: {
             ...input.preparation.secretEnvironment, requirements: plan.manifest?.environmentVariables ?? [],
@@ -224,7 +224,7 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
     await input.beforeNativeEffect?.();
     const assertCurrent = () => {
         if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-        if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
+        if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()
             || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) {
             throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
         }
@@ -270,7 +270,8 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
         const launch = await authorizePluginExecLaunchForHost(command.lease.exec, {
             executable: command.resolution.executable, args: command.resolution.args,
             cwd: { root: 'workspace', relativePath: relative(plan.workspace.rootPath, command.resolution.cwd).replaceAll('\\', '/') }, env,
-        }, { signal, projectLaunch, agentIsolation: input.agentIsolation, ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) });
+        }, { signal, projectLaunch, agentIsolation: input.agentIsolation ?? null,
+            ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) });
         try { assertCurrent(); return launch; }
         catch (error) { launch.release(); throw error; }
     }
@@ -300,9 +301,9 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
     const signal = input.preparation.signal
         ? AbortSignal.any([input.operation.signal, input.preparation.signal]) : input.operation.signal;
     const launchFailure = (error: unknown): ProjectSetupExecutionOutcome => {
-        if (error instanceof ProjectNativeEnvironmentUncertainError || isProjectNativeProcessUncertain(error)) {
+        if (error instanceof ProjectNativeToolchainUncertainError || isProjectNativeProcessUncertain(error)) {
             kind = 'outcome_uncertain';
-            const code = error instanceof ProjectNativeEnvironmentUncertainError ? error.code : 'plugin_exec_termination_incomplete';
+            const code = error instanceof ProjectNativeToolchainUncertainError ? error.code : 'plugin_exec_termination_incomplete';
             input.operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code } });
             return failure(code);
         }
@@ -310,6 +311,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
             ? error.code : 'project_setup_launch_refused');
     };
     const preparation = { ...input.preparation, signal,
+        requesterIdentity: input.preparation.requesterIdentity ?? input.requesterIdentity,
         successHomeDir: input.preparation.successHomeDir ?? configuration.happyHomeDir };
     const prepared = await prepareProjectSetup(preparation);
     if (signal.aborted) return failure('cancelled');
@@ -330,7 +332,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
     if (prepared.previousSuccess && plan.purpose === 'setup') {
         return finish({ ok: true, result: { kind: 'success', reviewedEffectDigest: plan.reviewedEffectDigest } });
     }
-    if (plan.purpose === 'setup' && plan.commands.length === 0 && input.deferEnvironmentToLaunch) {
+    if (plan.purpose === 'setup' && plan.commands.length === 0 && input.deferToolchainToLaunch) {
         // Consent and current inputs were checked above. With no setup process,
         // environment production belongs to the following real launch; it may
         // require that command to wrap it. No setup completion is claimed here.
@@ -338,6 +340,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
     }
     const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
     if (!operationId || !input.requesterAccountId) return failure('project_setup_operation_unavailable');
+    const admittedPreparation = { ...preparation, expectedEffectDigest: plan.reviewedEffectDigest };
     const store = createProjectSetupSuccessStore({ homeDir: preparation.successHomeDir });
     const target = { serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id };
     await store.invalidate(target);
@@ -349,7 +352,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
     publishProjectFiniteAdmission(admitted);
 
     if (plan.commands.length === 0) {
-        const fresh = await prepareProjectSetup({ ...preparation, expectedEffectDigest: plan.reviewedEffectDigest });
+        const fresh = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
         if (signal.aborted) return failure('cancelled');
         if (fresh.kind !== 'prepared') return fresh.kind === 'refused' ? failure(fresh.code)
             : failure(fresh.kind === 'pendingApproval' ? fresh.code : 'project_setup_effect_changed');
@@ -360,7 +363,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
                 projectLaunch: createProjectNativeLaunchAdmission(input, fresh.plan), signal,
                 assertCurrent() {
                     if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-                    if (fresh.plan.environmentAdapterLease && !fresh.plan.environmentAdapterLease.isCurrent()) {
+                    if (fresh.plan.toolchainAdapterLease && !fresh.plan.toolchainAdapterLease.isCurrent()) {
                         throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
                     }
                 },
@@ -370,7 +373,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
         }
     }
     for (const step of plan.commands.keys()) {
-        const fresh = await prepareProjectSetup({ ...preparation, expectedEffectDigest: plan.reviewedEffectDigest });
+        const fresh = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
         if (signal.aborted) return failure('cancelled');
         if (fresh.kind !== 'prepared') return fresh.kind === 'refused' ? failure(fresh.code)
             : failure(fresh.kind === 'pendingApproval' ? fresh.code : 'project_setup_effect_changed');
@@ -385,11 +388,11 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
             if (signal.aborted) return failure('cancelled');
             // Native production may await tools. Re-read reviewed inputs after it,
             // immediately before the OS launch; no stale command is admitted.
-            const current = await prepareProjectSetup({ ...preparation, expectedEffectDigest: plan.reviewedEffectDigest });
+            const current = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
             if (signal.aborted) return failure('cancelled');
             if (current.kind !== 'prepared') return current.kind === 'refused' ? failure(current.code)
                 : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
-            if (fresh.plan.environmentAdapterLease && !fresh.plan.environmentAdapterLease.isCurrent()
+            if (fresh.plan.toolchainAdapterLease && !fresh.plan.toolchainAdapterLease.isCurrent()
                 || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) return failure('native_adapter_retired');
             await input.beforeNativeEffect?.();
             const executed = await executeProjectFiniteProcess({ ...admitted, terminalSessions: input.terminalSessions,
@@ -399,15 +402,18 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
             if (!executed.result.ok) return executed.result.errorCode === 'project_command_step_failed'
                 ? failure('project_setup_step_failed', executed.result.details) : finish(executed.result);
         } catch (error) {
-            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError) kind = 'outcome_uncertain';
+            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) kind = 'outcome_uncertain';
             throw error;
         } finally { if (kind !== 'outcome_uncertain') launch.release(); }
     }
-    const current = await prepareProjectSetup({ ...preparation, expectedEffectDigest: plan.reviewedEffectDigest });
+    const current = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
     if (signal.aborted) return failure('cancelled');
-    if (current.kind !== 'prepared') return current.kind === 'refused' ? failure(current.code)
-        : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
-    if (plan.purpose === 'setup') await store.recordCompletion(target, {
+    if (current.kind !== 'prepared') {
+        // All commands succeeded. Changed bytes need a new run, not a false
+        // failure for this one; leave completion absent for the next invocation.
+        if (plan.commands.length === 0 || current.kind !== 'pendingApproval' || current.code !== 'project_setup_effect_changed') return current.kind === 'refused' ? failure(current.code)
+            : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
+    } else if (plan.purpose === 'setup') await store.recordCompletion(target, {
         v: 1, workspaceRefId: plan.workspace.id, completedAtMs: Date.now(), ...current.plan.successBasis,
     });
     return finish({ ok: true, result: { kind: 'success', reviewedEffectDigest: plan.reviewedEffectDigest } });

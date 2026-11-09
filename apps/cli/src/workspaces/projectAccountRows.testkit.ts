@@ -7,7 +7,8 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 
 export function createPlainProjectAccountRefRow(ref: WorkspaceRefV1, revision = 0) {
   const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
-  return ProjectAccountRowV1Schema.parse({ key, revision, content: { t: 'plain', v: { key, value: ref } } });
+  const { lastOpenedAtMs: _lastOpenedAtMs, ...structuralRef } = ref;
+  return ProjectAccountRowV1Schema.parse({ key, revision, content: { t: 'plain', v: { key, value: structuralRef } } });
 }
 
 /** Wire replies shared by composed fixtures that also serve other Home routes. */

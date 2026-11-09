@@ -136,7 +136,7 @@ describe('worker pool placement through the real target admission', () => {
         expect(envelope.target).toEqual({ kind: 'machine', machineId: 'primary' });
         return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect',
           requestId: envelope.requestId, execution: { ok: true, result: {
-            definition, detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            definition, detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
           } } }) };
       }
       if (url === 'https://home.invalid/v1/actions/projects.script.run') {

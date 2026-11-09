@@ -3,6 +3,7 @@ import { posix, win32 } from 'node:path';
 import { gte, valid } from 'semver';
 import type { DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentStoredDefinitionInputV1 } from '@happier-dev/protocol';
+import { WorkspaceManifestRelativePathSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { isNativeDefinitionRecord } from './nativePackageScripts';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
@@ -18,6 +19,14 @@ export async function parseNativeComposeSource(document: string): Promise<Record
 
 export type StoredComposeDefinition = Extract<DeploymentSourceIntentV1, { kind: 'stored' }>;
 
+/** Preserve document-only pins while binding declared sidecar bytes to the same approval. */
+export function storedComposeDefinitionDigest(source: Pick<StoredComposeDefinition, 'document' | 'publicFiles'>): string {
+    const bytes = source.publicFiles?.length
+        ? JSON.stringify({ document: source.document, publicFiles: source.publicFiles.map(({ path, content }) => ({ path, content })) })
+        : source.document;
+    return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
+
 /** Image creation is source normalization, not an alternate stored writer or native effect. */
 export async function normalizeStoredComposeDefinitionInput(input: DeploymentStoredDefinitionInputV1): Promise<StoredComposeDefinition> {
     const source = input.from === 'compose' ? input : {
@@ -25,8 +34,9 @@ export async function normalizeStoredComposeDefinitionInput(input: DeploymentSto
         profiles: [], services: ['app'], primaryService: 'app',
     };
     return admitStoredComposeDefinition({ kind: 'stored', contentRevision: 1, document: source.document,
-        composeDigest: `sha256:${createHash('sha256').update(source.document).digest('hex')}`,
+        composeDigest: storedComposeDefinitionDigest(source),
         profiles: source.profiles, services: source.services,
+        ...('publicFiles' in source && source.publicFiles !== undefined ? { publicFiles: source.publicFiles } : {}),
         ...(source.primaryService === undefined ? {} : { primaryService: source.primaryService }),
     });
 }
@@ -53,20 +63,29 @@ function assertStoredBind(source: string): void {
     // contained release by the runtime codec; do not interpret expressions here.
     if (source.includes('$')) return;
     const expanded = expandHomeDirPath(source);
-    if (!posix.isAbsolute(expanded) && !win32.isAbsolute(expanded)) needsRepository();
+    if (!posix.isAbsolute(expanded) && !win32.isAbsolute(expanded)
+        && !WorkspaceManifestRelativePathSchema.safeParse(source.replace(/^\.\//u, '')).success) needsRepository();
 }
 
 /** The sole stored source-file policy, before native tools can read sidecars. */
 export async function admitStoredComposeDefinition(definition: StoredComposeDefinition): Promise<StoredComposeDefinition> {
-    if (`sha256:${createHash('sha256').update(definition.document).digest('hex')}` !== definition.composeDigest) {
+    if (storedComposeDefinitionDigest(definition) !== definition.composeDigest) {
         throw Object.assign(new Error('Stored Compose source changed'), { code: 'approval_stale' });
     }
     const source = await parseNativeComposeSource(definition.document);
+    const publicFiles = new Set(definition.publicFiles?.map(file => file.path));
+    const admitFile = (file: unknown) => {
+        if (typeof file !== 'string' || !publicFiles.has(file.replace(/^\.\//u, ''))) needsRepository();
+    };
     if (source.include !== undefined) needsRepository();
     if (!isNativeDefinitionRecord(source.services)) throw Object.assign(new Error('Compose services are required'), { code: 'invalid_request' });
     for (const service of Object.values(source.services)) {
         if (!isNativeDefinitionRecord(service)) continue; // Native validation owns other malformed declarations.
-        if (service.build != null || service.env_file != null || service.extends != null || service.label_file != null) needsRepository();
+        if (service.build != null || service.extends != null) needsRepository();
+        for (const files of [service.env_file, service.label_file]) {
+            if (files == null) continue;
+            for (const file of Array.isArray(files) ? files : [files]) admitFile(isNativeDefinitionRecord(file) ? file.path : file);
+        }
         for (const mount of Array.isArray(service.volumes) ? service.volumes : []) {
             if (isNativeDefinitionRecord(mount) && mount.type === 'bind' && typeof mount.source === 'string') assertStoredBind(mount.source);
             if (typeof mount !== 'string') continue;
@@ -78,7 +97,7 @@ export async function admitStoredComposeDefinition(definition: StoredComposeDefi
     }
     for (const family of [source.configs, source.secrets]) {
         if (!isNativeDefinitionRecord(family)) continue;
-        for (const config of Object.values(family)) if (isNativeDefinitionRecord(config) && config.file != null) needsRepository();
+        for (const config of Object.values(family)) if (isNativeDefinitionRecord(config) && config.file != null) admitFile(config.file);
     }
     return definition;
 }

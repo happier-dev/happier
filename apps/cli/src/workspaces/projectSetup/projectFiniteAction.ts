@@ -1,8 +1,8 @@
-import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { ProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import type { ProjectSetupExecutionInput } from './projectSetupExecution';
@@ -10,8 +10,7 @@ import type { ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import type { ProjectManifestFileSnapshot } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
-import type { ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ProjectDefinitionInspectRead, ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import { FiniteAdmissionV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
@@ -24,7 +23,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetail
 import { resolveProjectExecutionChoiceV1, projectExecutionChoicesEqualV1, type ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { assertProjectReceivingPlacement } from '@/workspaces/execution/projectReceivingPlacement';
 import type { ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ProjectNativeEnvironmentUncertainError } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectCommandSourceV1, ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveProjectMemoryDemandV1 as maximumDemand } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
@@ -34,14 +33,16 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { resolveAdmittedRequesterAccountReadRuntime } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
+import { readAdmittedRequesterAccountReadRuntime, resolveAdmittedRequesterAccountReadRuntime } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 import { runTracedExternalActionStage, traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
-import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
+import { resolveProjectToolchainSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
 import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspection';
+import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectManifest } from './projectManifestFile';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
@@ -59,8 +60,6 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     requesterIdentity?: HostRequesterExecutionIdentity;
     /** Exact Account custody lifetime supplied by the installed host constructor. */
     isCurrent?: () => Promise<boolean>;
-    /** Fresh Machine/root admission at native effects; isCurrent owns local custody. */
-    verifyCurrent?: () => Promise<boolean>;
     operationRuntime: Pick<HostActionOperationRuntime, 'observeExecution' | 'decideSetupReview'>
         & Readonly<{ store: Pick<HostActionOperationRuntime['store'], 'get'> }>
         & Partial<Pick<HostActionOperationRuntime, 'attachOwner'>>;
@@ -71,6 +70,8 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
         => Promise<(Pick<ReturnType<typeof createWorkspaceExecutionConfigClientV1>, 'get'> & Partial<Pick<ReturnType<typeof createWorkspaceExecutionConfigClientV1>, 'getService'>>) | null>;
     nativeIo: ProjectSetupPreparationInput['nativeIo'];
     environmentIo: ProjectSetupExecutionInput['environmentIo'];
+    agentIsolation?: ProjectSetupExecutionInput['agentIsolation'];
+    nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
     terminalSessions: ProjectSetupExecutionInput['terminalSessions'];
     platform?: NodeJS.Platform;
     arch?: string;
@@ -83,8 +84,9 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
     plugins?: ProjectSetupPreparationInput['plugins'];
     /** Canonical projects.inspect on the exact accepted SOURCE, with requester Home authority. */
-    inspectSourceProjectManifest?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<ProjectManifestFileSnapshot
-        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'environmentExecutionInputs'>>;
+    inspectSourceProjectManifest?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal;
+        command?: Extract<ProjectDefinitionInspectRead, { kind: 'execution' }>['command'] }>) => Promise<ProjectDefinitionInspectOutput['definition']
+        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs'>>;
     resolveWorkerTarget?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<WorkspaceSyncWorkerTargetBasis>;
     /** Real B7 Sync/dequeue preparation; revalidation follows this callback. */
     prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
@@ -112,19 +114,28 @@ export function readProjectFiniteIngressRefusal(ingress: RpcHandlerContext): Act
 
 /** Both finite execution and Service Start consume the installed admission owner, not owner credentials. */
 export async function readProjectRuntimeRequesterRefusal(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): Promise<ActionExecuteFailure | null> {
-    if (ingress.signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const refused = readProjectRuntimeRequesterBindingRefusal(runtime, ingress);
+    if (refused) return refused;
+    if (!ingress.callerInputAuthorization) return null;
+    const requester = await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: runtime.serverId, machineId: runtime.machineId,
+        installationId: ingress.machineAdmission!.installationId, isInstalledCurrent: runtime.isCurrent ?? (() => true) });
+    if (ingress.signal.aborted) return failure('cancelled');
+    return requester ? null : failure('project_requester_credentials_unavailable');
+}
+
+function readProjectRuntimeRequesterBindingRefusal(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): ActionExecuteFailure | null {
+    if (ingress.signal.aborted) return failure('cancelled');
     const refused = readProjectFiniteIngressRefusal(ingress);
     if (refused) return refused;
     const admission = ingress.machineAdmission;
-    if (!admission) return { ok: false, errorCode: 'machine_admission_required', error: 'machine_admission_required' };
+    if (!admission) return failure('machine_admission_required');
     if (ingress.callerInputAuthorization) {
         const requester = runtime.accountAuthorization === ingress.callerInputAuthorization
-            ? await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: runtime.serverId, machineId: runtime.machineId,
+            ? readAdmittedRequesterAccountReadRuntime({ ingress, serverId: runtime.serverId, machineId: runtime.machineId,
                 installationId: admission.installationId, isInstalledCurrent: runtime.isCurrent ?? (() => true) }) : null;
-        if (ingress.signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (requester && requester.accountId === runtime.accountId && requester.serverHttpBaseUrl === runtime.serverHttpBaseUrl) return null;
     } else if (runtime.credentials && admission.actorAccountId === runtime.accountId && admission.custodianAccountId === runtime.accountId) return null;
-    return { ok: false, errorCode: 'project_requester_credentials_unavailable', error: 'project_requester_credentials_unavailable' };
+    return failure('project_requester_credentials_unavailable');
 }
 
 /** Currentness can refuse because the containing request ended during its read. */
@@ -133,6 +144,20 @@ export async function readProjectRuntimeCurrentnessRefusal(runtime: ProjectFinit
     const current = !runtime.isCurrent || await runtime.isCurrent();
     if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     return current ? null : { ok: false, errorCode: 'project_requester_credentials_unavailable', error: 'project_requester_credentials_unavailable' };
+}
+
+/** One natural admission: finite dequeue, Service Start, or passive inspection entry. */
+export async function readProjectRuntimeAdmissionRefusal(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): Promise<ActionExecuteFailure | null> {
+    const requester = await readProjectRuntimeRequesterRefusal(runtime, ingress);
+    if (requester) return requester;
+    // Restricted requester resolution already verifies the installed, Account,
+    // HTTP and Machine custody together at its canonical owner.
+    if (ingress.callerInputAuthorization) return null;
+    const custody = await readProjectRuntimeCurrentnessRefusal(runtime, ingress.signal);
+    if (custody) return custody;
+    if (!ingress.verifyMachineAdmissionCurrent) return failure('machine_admission_required');
+    if (!await ingress.verifyMachineAdmissionCurrent()) return failure('machine_admission_changed');
+    return ingress.signal.aborted ? failure('cancelled') : null;
 }
 
 type FiniteRequest =
@@ -201,9 +226,18 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             || !await isServerProfileHomeIdentity(runtime.serverId, request.input.workspace.serverId)
             || args.context.serverId && args.context.serverId !== runtime.serverId
                 && args.context.serverId !== request.input.workspace.serverId) return failure('target_mismatch');
-        const requesterRefusal = await readProjectRuntimeRequesterRefusal(authorityRuntime, ingress);
+        const requesterRefusal = readProjectRuntimeRequesterBindingRefusal(authorityRuntime, { ...ingress, signal });
         if (requesterRefusal) return requesterRefusal;
         if (runtime.serverId !== request.input.workspace.serverId) runtime = { ...runtime, serverId: request.input.workspace.serverId };
+        // The installed profile/Home relation and Account projection were checked
+        // above. Keep this host-selected identity through every native helper and
+        // final launch; the shared Machine receiver is not the payload finalizer.
+        const hostHomeServerIdentityId = runtime.resolveHostHomeServerIdentityId
+            ? await runtime.resolveHostHomeServerIdentityId(signal)
+            : await resolveServerProfileHomeIdentityId(authorityRuntime.serverId);
+        const requesterIdentity: HostRequesterExecutionIdentity = runtime.requesterIdentity
+            ?? { kind: 'unknown', reason: 'requester_authority_unavailable' };
+        if (runtime.agentIsolation) runtime = { ...runtime, agentIsolation: { ...runtime.agentIsolation, requesterIdentity } };
         const requesterBaseline = Object.freeze(RequesterWorkAttributionV1Schema.parse({ serverId: runtime.serverId,
             accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId }));
         const acceptedAttribution = (value: unknown) => {
@@ -212,55 +246,46 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 && parsed.data.machineId === requesterBaseline.machineId && parsed.data.installationId === requesterBaseline.installationId
                 ? parsed.data : undefined;
         };
-        const assertCurrent = async () => {
-            const requester = await readProjectRuntimeCurrentnessRefusal(runtime, signal);
-            if (requester) throw coded(requester.errorCode);
-            // An installed runtime carries the already-verified ingress through
-            // local preparation. Fresh Home proof belongs to the effect below.
-            if (!runtime.verifyCurrent && !await ingress.verifyMachineAdmissionCurrent!()) throw coded('machine_admission_changed');
-            const fresh = await readProjectRuntimeCurrentnessRefusal(runtime, signal);
-            if (fresh) throw coded(fresh.errorCode);
-        };
-        const assertEffectCurrent = async () => {
-            await assertCurrent();
-            if (runtime.verifyCurrent && !await runtime.verifyCurrent()) throw coded('machine_admission_changed');
-            await assertCurrent();
+        const assertNotCancelled = async () => {
+            if (nativeExecutionSignal().aborted) throw coded('cancelled');
         };
         let workerBasis: WorkspaceSyncWorkerTargetBasis | undefined;
         const resolveAccepted = () => stage('project.workspace.resolve', async () => {
-            await assertCurrent();
+            await assertNotCancelled();
             const association = await resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
                 ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
-            await assertCurrent();
+            await assertNotCancelled();
             if (!workerBasis) return association;
             if (association.workspace.id !== workerBasis.source.id || association.workspace.machineId !== workerBasis.source.machineId
                 || association.workspace.rootPath !== workerBasis.source.rootPath || association.workspace.projectKey !== workerBasis.source.projectKey) throw coded('project_workspace_changed');
             const target = await resolveProjectSetupAcceptedWorkspace({ address: { serverId: workerBasis.target.serverId, workspaceId: workerBasis.target.id,
                 machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime),
                 serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
-            await assertCurrent();
+            await assertNotCancelled();
             if (target.workspace.machineId !== runtime.machineId || target.workspace.projectKey !== association.workspace.projectKey) throw coded('project_workspace_changed');
             return target;
         });
         let association: Awaited<ReturnType<typeof resolveAccepted>>;
         try { association = await resolveAccepted(); } catch (error) { return failure(codeOf(error)); }
         if (request.actionId === 'projects.prepare' && request.input.heldOperationId) {
+            const refusal = await readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal });
+            if (refusal) return refusal;
             if (args.context.authority !== 'present_user') return failure('project_setup_consent_invalid');
-            await assertEffectCurrent();
+            await assertNotCancelled();
             const operation = await runtime.operationRuntime.decideSetupReview({ accountId: runtime.accountId, machineId: runtime.machineId },
                 request.input.heldOperationId, request.input.workspace, request.input.phase, {
                     reviewedEffectDigest: request.input.expectedEffectDigest!, skipForInvocation: request.input.skipForInvocation === true,
                 });
-            await assertCurrent();
+            await assertNotCancelled();
             return operation ? { operation } : failure('project_setup_review_unavailable');
         }
         const sourceAssociation = association;
         const assertReceivingPlacement = async (choice: ProjectExecutionChoiceV1) => {
             await assertProjectReceivingPlacement({ choice, sourceMachineId: sourceAssociation.workspace.machineId,
                 receivingMachineId: runtime.machineId, ...(args.executeCanonicalAction ? { readPool: async poolId => {
-                    await assertCurrent();
+                    await assertNotCancelled();
                     const result = await args.executeCanonicalAction!('machines.pools.get', { poolId });
-                    await assertCurrent();
+                    await assertNotCancelled();
                     return result;
                 } } : {}) });
         };
@@ -269,7 +294,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let acceptedScript: ProjectSetupExecutionInput['script'] = request.actionId === 'projects.script.run'
             && request.input.selection.kind === 'native' ? { source: request.input.selection.source } : undefined;
         let workerRelativeCwd: string | undefined;
-        const selectedExecutionDeclaration = (definition: ProjectManifestFileSnapshot) => {
+        const selectedCommand = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
+            ? { usage: 'script' as const, name: request.input.selection.name } : undefined;
+        const selectedExecutionDeclaration = (definition: ProjectDefinitionInspectOutput['definition']) => {
             if (definition.document?.status === 'invalid') throw coded('invalid_manifest');
             const manifest = definition.document?.manifest ?? null;
             const config = resolveProjectSetupConfigEnvironment(manifest, runtime.configEnvironment);
@@ -281,7 +308,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             if (request.actionId === 'projects.script.run' && !source) throw coded('project_script_not_found');
             return projectNativeJsonValueForTransport({ purpose: request.actionId === 'projects.script.run' ? 'script' : 'exec',
                 command: source ?? (request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv } : undefined),
-                execution: named?.execution ?? 'primary', environment: manifest?.environment ?? { kind: 'host' },
+                execution: named?.execution ?? 'primary', toolchain: manifest?.toolchain ?? { kind: 'host' },
                 environmentVariables: manifest?.environmentVariables ?? [], configEnvironment: config.environment });
         };
         const scriptChangedDetails = (reviewedEffect: unknown) => ({ kind: 'pendingApproval' as const,
@@ -290,10 +317,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const readExecutionPolicy = async () => {
             if (request.actionId === 'projects.prepare') throw coded('unsupported_action');
             const config = await runtime.resolveWorkspaceExecutionConfig(args.context, ingress, request.actionId);
-            await assertCurrent();
+            await assertNotCancelled();
             if (!config) throw coded('preferences_unavailable');
             const policy = await config.get({ workspace: { serverId: sourceAssociation.workspace.serverId, refId: sourceAssociation.workspace.id } });
-            await assertCurrent();
+            await assertNotCancelled();
             return policy;
         };
         const reviewSourcePlacement = () => stage('project.placement.review', async () => {
@@ -306,12 +333,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const [definitionRead, policyRead] = await Promise.allSettled([
                 sourceAssociation.workspace.machineId === runtime.machineId
                     ? readProjectManifest({ root: sourceAssociation.workspace.rootPath })
-                    : runtime.inspectSourceProjectManifest!({ source: sourceAssociation.workspace, signal }),
+                    : runtime.inspectSourceProjectManifest!({ source: sourceAssociation.workspace, signal, ...(selectedCommand ? { command: selectedCommand } : {}) }),
                 request.actionId === 'projects.prepare' ? null : readExecutionPolicy(),
             ]);
             if (definitionRead.status === 'rejected') throw definitionRead.reason;
-            const sourceDefinition: ProjectManifestFileSnapshot & Pick<ProjectDefinitionInspectOutput, 'commands' | 'environmentExecutionInputs'> = definitionRead.value;
-            await assertCurrent();
+            const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs'> = definitionRead.value;
+            await assertNotCancelled();
             if (sourceDefinition.document?.status === 'invalid') throw coded('invalid_manifest');
             const sourceManifest = sourceDefinition.document?.manifest;
             if (acceptedDeclaration) {
@@ -328,7 +355,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const named = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
                 ? sourceManifest?.scripts?.[request.input.selection.name] : undefined;
             if (request.actionId === 'projects.script.run' && request.input.selection.kind === 'named' && !named) throw coded('project_script_not_found');
-            const execution = request.actionId === 'projects.compute.exec' ? 'portable'
+            const execution = request.actionId === 'projects.compute.exec' ? request.input.execution ?? 'portable'
                 : named?.execution ?? 'primary';
             if (policyRead.status === 'rejected') throw policyRead.reason;
             // projects.prepare returned above without reading preferences.
@@ -383,11 +410,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const readWorkerExecutionBasis = async (definition: typeof initialSourceDefinition) => {
             const manifest = definition.document?.status === 'valid' ? definition.document.manifest : undefined;
             const declaredEffect = selectedExecutionDeclaration(definition);
+            const selected = selectProjectDefinitionRead(definition, {
+                entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
+            }, { kind: 'execution', ...(selectedCommand ? { command: selectedCommand } : {}) });
             const inspection = sourceAssociation.workspace.machineId === runtime.machineId
                 ? await inspectProjectDefinitionExecutionFacts({ root: sourceAssociation.workspace.rootPath,
-                    ...(manifest ? { manifest } : {}), detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
-                    io: runtime.nativeIo, signal }) : definition;
-            await assertCurrent();
+                    ...(selected.commandManifest ? { manifest: selected.commandManifest } : {}), detection: selected.detection,
+                    io: runtime.nativeIo, signal, ...(selectedCommand ? { command: selectedCommand } : {}),
+                    entries: [], includeTools: false, includeExecutionInputs: true }) : definition;
+            await assertNotCancelled();
             const files = new Map<string, string>();
             const selectedSource = request.actionId === 'projects.script.run'
                 ? request.input.selection.kind === 'named' ? manifest?.scripts?.[request.input.selection.name]?.source : request.input.selection.source : undefined;
@@ -398,9 +429,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (!command?.executionInputs?.length) throw coded('project_source_declaration_unavailable');
                 for (const input of command.executionInputs) files.set(input.file, input.hash);
             }
-            if (manifest?.environment && manifest.environment.kind !== 'host') {
-                if (!inspection.environmentExecutionInputs?.length) throw coded('project_source_declaration_unavailable');
-                for (const input of inspection.environmentExecutionInputs) files.set(input.file, input.hash);
+            if (manifest?.toolchain && manifest.toolchain.kind !== 'host') {
+                if (!inspection.toolchainExecutionInputs?.length) throw coded('project_source_declaration_unavailable');
+                for (const input of inspection.toolchainExecutionInputs) files.set(input.file, input.hash);
             }
             return { declaredEffect, executionInputs: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash })) };
         };
@@ -425,10 +456,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const assertCopiedExecutionCurrent = async () => {
             if (!acceptedWorkerBasis) return;
             const definition = await readProjectManifest({ root: association.workspace.rootPath });
-            await assertCurrent();
+            await assertNotCancelled();
             const declaredEffect = selectedExecutionDeclaration(definition);
             const executionInputs = await readProjectExecutionInputs(association.workspace.rootPath, acceptedWorkerBasis.executionInputs.map(input => input.file));
-            await assertCurrent();
+            await assertNotCancelled();
             const current = { declaredEffect, ...(executionInputs ? { executionInputs } : { executionInputsUnavailable: true }) };
             if (!executionInputs || digest(current) !== digest(acceptedWorkerBasis)) throw coded('project_script_effect_changed', scriptChangedDetails(current));
         };
@@ -440,6 +471,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let environmentBindings: ProjectSetupPreparationInput['environmentBindings'];
         let setupDecision: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationSetupDecision | undefined;
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
+            requesterIdentity,
             approvalContext: args.context,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl },
             purpose: request.actionId === 'projects.prepare' ? request.input.phase : 'setup',
@@ -472,7 +504,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         // plugin an invocation/Exec context before the finite reservation.
         const readPrimaryAdmissionBasis = () => stage('project.primary.review', async (): Promise<string> => {
             const snapshot = await readProjectManifest({ root: association.workspace.rootPath });
-            await assertCurrent();
+            await assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw coded('invalid_manifest');
             const manifest = snapshot.document?.manifest ?? null;
             const config = resolveProjectSetupConfigEnvironment(manifest, runtime.configEnvironment);
@@ -480,7 +512,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const files = new Map<string, string>();
             const addFile = async (file: string) => {
                 const read = await readProjectDefinitionFileBytes(association.workspace.rootPath, file);
-                await assertCurrent();
+                await assertNotCancelled();
                 if (read.kind !== 'read') throw coded(read.kind === 'refused' ? read.code : 'native_configuration_missing');
                 files.set(file.replaceAll('\\', '/'), createHash('sha256').update(read.bytes).digest('hex'));
             };
@@ -490,43 +522,43 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (source.kind === 'pluginNative') {
                     if (!runtime.plugins) throw coded('native_adapter_unavailable');
                     const selected = await runtime.plugins.resolveProjectNativeAdapter(source.adapter, 'resolveCommand');
-                    await assertCurrent();
+                    await assertNotCancelled();
                     if (selected.kind === 'refused') throw coded(selected.code);
                     return { source, adapterVersion: selected.lease.pluginVersion };
                 }
                 const resolved = await inspectProjectNativeCommand({ root: association.workspace.rootPath, source, usage: 'script',
                     io: runtime.nativeIo, signal });
-                await assertCurrent();
+                await assertNotCancelled();
                 if (resolved.kind !== 'resolved') throw coded(resolved.kind === 'refused' ? resolved.code : 'native_adapter_result_invalid');
                 for (const fact of resolved.reviewInputs) await addFile(fact.file);
                 const executable = reviewPath(resolved.command);
                 if (executable !== resolved.command) await addFile(relative(association.workspace.rootPath, resolved.command));
                 return { source, ...(executable !== resolved.command ? { executable } : {}), args: resolved.reviewInvocation.args.map(reviewPath),
                     cwd: reviewPath(resolved.cwd), toolchain: resolved.toolchain,
-                    nativeCommandEnvironment: resolved.nativeCommandEnvironment,
+                    nativeCommandToolchain: resolved.nativeCommandToolchain,
                     environmentOverlay: resolved.reviewInvocation.environmentOverlay && Object.fromEntries(Object.entries(resolved.reviewInvocation.environmentOverlay)
                         .map(([key, value]) => [key, reviewPath(value)])) };
             };
-            const environment = await resolveProjectEnvironmentSelection({ root: association.workspace.rootPath,
-                selection: manifest?.environment ?? { kind: 'host' } });
-            await assertCurrent();
+            const environment = await resolveProjectToolchainSelection({ root: association.workspace.rootPath,
+                selection: manifest?.toolchain ?? { kind: 'host' } });
+            await assertNotCancelled();
             if (environment.kind === 'refused') throw coded(environment.code);
             if (environment.file !== undefined) await addFile(environment.file);
-            let environmentProvenance: unknown;
+            let toolchainProvenance: unknown;
             if (environment.selection.kind === 'pluginToolchain') {
                 if (!runtime.plugins) throw coded('native_adapter_unavailable');
-                const selected = await runtime.plugins.resolveProjectNativeAdapter(environment.selection.adapter, 'produceEnvironment');
-                await assertCurrent();
+                const selected = await runtime.plugins.resolveProjectNativeAdapter(environment.selection.adapter, 'prepareToolchain');
+                await assertNotCancelled();
                 if (selected.kind === 'refused') throw coded(selected.code);
-                environmentProvenance = { adapterVersion: selected.lease.pluginVersion };
+                toolchainProvenance = { adapterVersion: selected.lease.pluginVersion };
             } else if (environment.selection.kind === 'toolchain') {
                 const tool = await runtime.nativeIo.resolveTool(environment.selection.tool === 'nix_flake' ? 'nix' : environment.selection.tool,
                     { cwd: association.workspace.rootPath, signal });
-                await assertCurrent();
+                await assertNotCancelled();
                 if (!tool) throw coded('native_tool_unavailable');
                 const executable = reviewPath(tool.executablePath);
                 if (executable !== tool.executablePath) await addFile(relative(association.workspace.rootPath, tool.executablePath));
-                environmentProvenance = { ...(executable !== tool.executablePath ? { executable } : {}), version: tool.version };
+                toolchainProvenance = { ...(executable !== tool.executablePath ? { executable } : {}), version: tool.version };
             }
             // Setup is reviewed from the current declaration under this same
             // reservation. A queued setup edit must reach its own consent hold,
@@ -540,7 +572,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 const executable = reviewPath(request.input.executable);
                 if (executable !== request.input.executable) await addFile(relative(association.workspace.rootPath, request.input.executable));
             }
-            return digest({ environment: environment.selection, environmentProvenance, configEnvironment: config.environment,
+            return digest({ toolchain: environment.selection, toolchainProvenance, configEnvironment: config.environment,
                 command,
                 files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) });
         });
@@ -559,7 +591,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     ? { environmentBindings: request.input.environmentBindings } : {}),
             }, nativeExecutionSignal()))));
             const prepared = await stage('project.setup.review', () => prepareProjectSetup(preparation()));
-            await assertCurrent();
+            await assertNotCancelled();
             if (prepared.kind === 'refused') return { kind: 'failed', result: failure(prepared.code) };
             if (prepared.kind === 'pendingApproval') return { kind: 'failed', result: withRequestedConsentScope(failure(prepared.code, {
                 kind: 'pendingApproval', code: prepared.code, reviewedEffect: prepared.plan.reviewedEffect, reviewedEffectDigest: prepared.plan.reviewedEffectDigest,
@@ -595,24 +627,25 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     if (source.kind === 'pluginNative') {
                         if (!runtime.plugins) return { kind: 'failed', result: failure('native_adapter_unavailable') };
                         const selected = await runtime.plugins.resolveProjectNativeAdapter(source.adapter, 'resolveCommand');
-                        await assertCurrent();
+                        await assertNotCancelled();
                         if (selected.kind === 'refused') return { kind: 'failed', result: failure(selected.code) };
                         const acquired = selected.lease.acquireProduction({ root: plan.workspace.rootPath,
-                            environment: runtime.configEnvironment, signal: nativeExecutionSignal() });
+                            environment: runtime.configEnvironment, signal: nativeExecutionSignal(), requesterIdentity,
+                            assertLaunchCurrent: assertNotCancelled });
                         if (acquired.kind !== 'ready') return { kind: 'failed', result: failure(acquired.code) };
                         lease = acquired.production;
                         retainNativeInvocation(lease);
                     }
                     const resolved = await resolveProjectNativeCommand({ root: plan.workspace.rootPath, source, usage: 'script', io: runtime.nativeIo, signal: nativeExecutionSignal(),
                         ...(lease ? { plugin: { lease } } : {}) });
-                    await assertCurrent();
+                    await assertNotCancelled();
                     if (resolved.kind === 'refused') return { kind: 'failed', result: failure(resolved.code) };
                     if (source.kind === 'native' && resolved.kind === 'resolved') command = { kind: 'native', source, resolution: resolved };
                     else if (source.kind === 'pluginNative' && resolved.kind === 'pluginResolved' && lease?.isCurrent()) command = { kind: 'pluginNative', source, resolution: resolved.command, lease };
                     else return { kind: 'failed', result: failure('native_adapter_retired') };
                 }
             } else {
-                execution = 'portable';
+                execution = request.input.execution ?? 'portable';
                 if (!isAbsolute(request.input.executable) || request.input.executable.includes('\0') || request.input.argv.some(arg => arg.includes('\0'))) return { kind: 'failed', result: failure('project_command_invalid') };
                 const cwd = validatePath(invocationCwd().replaceAll('\\', '/'), plan.workspace.rootPath);
                 if (!cwd.valid || !cwd.resolvedPath) return { kind: 'failed', result: failure('outside_root') };
@@ -635,7 +668,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (command.kind === 'native' && reviewPath(command.resolution.command) !== command.resolution.command) files.add(relative(plan.workspace.rootPath, command.resolution.command));
                 for (const file of files) {
                     const read = await readProjectDefinitionFileBytes(plan.workspace.rootPath, file);
-                    await assertCurrent();
+                    await assertNotCancelled();
                     if (read.kind !== 'read') return { kind: 'failed', result: failure(read.kind === 'refused' ? read.code : 'native_configuration_missing') };
                     if (native.reviewInputs.some(fact => fact.file === file && fact.content !== read.bytes.toString('utf8'))) return { kind: 'failed', result: failure('project_script_effect_changed') };
                     reviewedFiles.set(file.replaceAll('\\', '/'), createHash('sha256').update(read.bytes).digest('hex'));
@@ -647,9 +680,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     args: (command?.kind === 'native' ? command.resolution.reviewInvocation.args : native.args).map(reviewPath), cwd: reviewPath(native.cwd),
                     files: [...reviewedFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })),
                     ...(command?.kind === 'native' ? { toolchain: command.resolution.toolchain, environmentOverlay: command.resolution.reviewInvocation.environmentOverlay && Object.fromEntries(Object.entries(command.resolution.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(value)])),
-                        nativeCommandEnvironment: command.resolution.nativeCommandEnvironment } : {}),
+                        nativeCommandToolchain: command.resolution.nativeCommandToolchain } : {}),
                     ...(command?.kind === 'pluginNative' ? { adapterVersion,
-                        nativeCommandEnvironment: command.resolution.environmentApplied } : {}),
+                        nativeCommandToolchain: command.resolution.toolchainApplied } : {}),
                 } : request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv, cwd: reviewPath(invocationCwd()) } : {};
             // Only references and config/review inputs enter the digest; preparation has already excluded materialized secrets.
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: request.actionId === 'projects.script.run' ? 'script' : 'exec', setupEffect: plan.reviewedEffectDigest, command: reviewedCommand });
@@ -678,15 +711,20 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             runStarted = true;
             nativeOperation = operation;
             nativeCustody = createProjectNativeInvocationCustody(operation, nativeInvocations);
-            const releaseRequester = readRequesterAccountActionContext(runtime.accountAuthorization)?.retain();
+            const requesterAccount = readRequesterAccountActionContext(runtime.accountAuthorization);
+            const releaseRequester = requesterAccount?.retain();
+            let nativePreparation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+            let materialLive = true;
+            const retirePreparation = async () => { materialLive = false; await nativePreparation?.dispose(); };
             try {
             const operationId = operation.operationAcceptance?.operationId ?? operation.actionRequestId;
             if (!operationId) return failure('project_finite_operation_unavailable');
             const operationSignal = AbortSignal.any([signal, operation.signal]);
+            const material = Object.freeze({ materializationKey: operationId, environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
             let lastCleanSyncAtMs: ProjectSetupExecutionInput['lastCleanSyncAtMs'];
             const prepareDequeue = () => stage('project.sync.prepare', async () => {
                 try {
-                    if (workerBasis) await assertEffectCurrent();
+                    if (workerBasis) await assertNotCancelled();
                     const prepared = await runtime.prepareDequeue?.({ workspace: workerBasis?.source ?? association.workspace, choice: acceptedChoice!,
                         ...(workerBasis ? { basis: workerBasis } : {}), signal: operationSignal });
                     // Primary preparation performs no copy. Keep its accepted root
@@ -707,13 +745,19 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 }
             });
             const executionInput = (): ProjectSetupExecutionInput => ({ preparation: { ...preparation(), signal: operationSignal }, operation,
-                deferEnvironmentToLaunch: request.actionId !== 'projects.prepare',
-                beforeNativeEffect: assertEffectCurrent,
+                deferToolchainToLaunch: request.actionId !== 'projects.prepare',
+                beforeNativeEffect: assertNotCancelled,
                 ...commandIdentity,
                 ...(lastCleanSyncAtMs !== undefined ? { lastCleanSyncAtMs } : {}),
                 requesterAccountId: runtime.accountId, terminalSessions: runtime.terminalSessions, environmentIo: runtime.environmentIo,
+                agentIsolation: runtime.agentIsolation,
+                ...(nativePreparation?.memberIdentity ? { nativeExecutionIdentity: nativePreparation.memberIdentity } : {}),
+                requesterIdentity,
+                // PTY custody names the receiver's routing profile, like every other
+                // terminal owner; the portable Home birth is homeServerIdentityId.
                 terminalCustody: {
-                    serverId: requesterBaseline.serverId, requesterAccountId: requesterBaseline.accountId, machineId: requesterBaseline.machineId,
+                    ...(hostHomeServerIdentityId ? { homeServerIdentityId: hostHomeServerIdentityId } : {}),
+                    serverId: authorityRuntime.serverId, requesterAccountId: requesterBaseline.accountId, machineId: requesterBaseline.machineId,
                     installationId: requesterBaseline.installationId, workspaceRefId: association.workspace.id,
                     projectKey: projectWorkspaceRefV1(association.workspace).projectKey, rootPath: association.workspace.rootPath,
                 },
@@ -752,7 +796,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         if (kind !== 'no_launch' || !pending || !operation.operationReview) return false;
                         preparationPhase('setup');
                         await operation.operationReview.waitForResume(pending.details, { review: async decision => {
-                            await assertCurrent();
+                            await assertNotCancelled();
                             association = await resolveAccepted();
                             const source = await reviewSourcePlacement();
                             if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
@@ -768,7 +812,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             await prepareDequeue();
                             preparationPhase('setup');
                             const refreshed = await prepareProjectSetup(preparation());
-                            await assertCurrent();
+                            await assertNotCancelled();
                             if (refreshed.kind === 'refused') throw coded(refreshed.code);
                             if (refreshed.kind !== 'pendingApproval') return null;
                             if (decision && decision.reviewedEffectDigest === refreshed.plan.reviewedEffectDigest) {
@@ -785,7 +829,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             if (!reviewed) throw coded('project_setup_effect_unavailable');
                             return reviewed.details;
                         } });
-                        await assertCurrent();
+                        await assertNotCancelled();
                         association = await resolveAccepted();
                         const source = await reviewSourcePlacement();
                         if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
@@ -809,6 +853,16 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         return { kind, result: kind === 'no_launch' && operationSignal.aborted ? failure('cancelled') : withRequestedConsentScope(result) };
                     };
                     try {
+                        const refusal = await readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal: operationSignal });
+                        if (refusal) return finish(refusal);
+                        if (requesterIdentity.kind === 'isolated' && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity,
+                            snapshot: runtime.agentIsolation?.read() }) !== 'daemon') {
+                            if (!runtime.nativeOperationRuntime) throw coded('agent_isolation_unavailable');
+                            nativePreparation = await runtime.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity,
+                                ...(requesterAccount ? { requesterAccount } : {}), ingress, signal: operationSignal,
+                                readMaterial: () => materialLive ? material : undefined });
+                            runtime = { ...runtime, agentIsolation: nativePreparation.agentIsolation };
+                        }
                         const source = await reviewSourcePlacement();
                         if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
                             || source.memoryDemand?.bytes !== acceptedMemory?.bytes) return finish(failure('project_script_effect_changed'));
@@ -834,7 +888,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             // A primary no-op Sync no longer spends a row read;
                             // real setup effects retain current association admission.
                             if (!workerBasis) association = await resolveAccepted();
-                            await assertEffectCurrent();
+                            await assertNotCancelled();
                         };
                         let setupReview = current;
                         let setup = await stage('project.setup.execute', () => executeProjectSetup({ ...executionInput(), preparation: { ...executionInput().preparation,
@@ -863,13 +917,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         const invocation = afterSetup.invocation;
                         const input = executionInput();
                         const assertSynchronousCurrent = () => { if (operationSignal.aborted) throw coded('cancelled'); };
-                        await assertCurrent();
+                        await assertNotCancelled();
                         let launch: Awaited<ReturnType<typeof authorizePreparedProjectCommand>>;
                         const command = invocation.command;
                         if (command) launch = await stage('project.native.authorize', () =>
                             authorizePreparedProjectCommand(input, invocation.plan, command, operationSignal));
                         else if (request.actionId === 'projects.compute.exec') {
-                            await assertEffectCurrent();
+                            await assertNotCancelled();
                             const env: Record<string, string> = {};
                             for (const [key, value] of Object.entries(runtime.hostEnvironment ?? process.env)) if (value !== undefined) env[key] = value;
                             Object.assign(env, invocation.plan.configEnvironment);
@@ -877,23 +931,26 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: request.input.executable, args: request.input.argv,
                                 cwd: validatePath(invocationCwd().replaceAll('\\', '/'), association.workspace.rootPath).resolvedPath!, env },
                                 projectLaunch, signal: operationSignal, assertCurrent: assertSynchronousCurrent,
+                                agentIsolation: runtime.agentIsolation,
+                                requesterIdentity,
                                 ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) });
                         } else return finish(failure('project_script_unavailable'));
                         try {
-                            await assertCurrent();
+                            await assertNotCancelled();
                             association = await resolveAccepted();
                             const final = await review();
                             if (final.kind === 'failed') return finish(final.result);
                             if (!unchanged(final.invocation)) return finish(failure('project_script_effect_changed', {
                                 kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: final.invocation.reviewedEffectDigest, reviewedEffect: final.invocation.reviewedEffect,
                             }));
-                            await assertEffectCurrent();
-                            if (invocation.plan.environmentAdapterLease && !invocation.plan.environmentAdapterLease.isCurrent()
+                            await assertNotCancelled();
+                            if (invocation.plan.toolchainAdapterLease && !invocation.plan.toolchainAdapterLease.isCurrent()
                                 || invocation.command?.kind === 'pluginNative' && !invocation.command.lease.isCurrent()) throw coded('native_adapter_retired');
                             reservation.phase('running');
                             traceExternalActionStage(args.actionId, rootRequestId, 'project.native.launch');
                             const outcome = await executeProjectFiniteProcess({ workspace: association.workspace, purpose, requesterAccountId: runtime.accountId,
                                 ...commandIdentity,
+                                ...(nativePreparation?.memberIdentity ? { nativeExecutionIdentity: nativePreparation.memberIdentity } : {}),
                                 ...(lastCleanSyncAtMs !== undefined ? { lastCleanSyncAtMs } : {}),
                                 ...(executionInput().terminalCustody ? { terminalCustody: executionInput().terminalCustody } : {}),
                                 operation, terminalSessions: runtime.terminalSessions, launch, signal: operationSignal, ...(originRun ? { originRun } : {}) });
@@ -901,13 +958,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             if (outcome.kind === 'outcome_uncertain') throw coded(outcome.result.ok ? 'outcome_uncertain' : outcome.result.errorCode);
                             return finish(outcome.result);
                         } catch (error) {
-                            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError) kind = 'outcome_uncertain';
+                            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) kind = 'outcome_uncertain';
                             throw error;
                         } finally { if (kind !== 'outcome_uncertain') launch.release(); }
                     } catch (error) {
                         const cancelledBuiltinEnvironment = operationSignal.aborted
-                            && baseline?.plan.environment.kind === 'toolchain' && nativeInvocations.size > 0;
-                        if (error instanceof ProjectNativeEnvironmentUncertainError
+                            && baseline?.plan.toolchain.kind === 'toolchain' && nativeInvocations.size > 0;
+                        if (error instanceof ProjectNativeToolchainUncertainError
                             || cancelledBuiltinEnvironment && isProjectNativeProcessUncertain(error)) {
                             // Keep the reservation and Stop listener until the
                             // native owner proves settlement, then settle the
@@ -939,8 +996,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     nativeCustody.dispose();
                     if (releaseRequester) {
                         try { await Promise.all([...nativeInvocations].map(production => production.waitForSettlement())); }
-                        finally { await releaseRequester(); }
-                    }
+                        finally { try { await retirePreparation(); } finally { await releaseRequester(); } }
+                    } else await retirePreparation();
                 }
             }
         };
@@ -973,21 +1030,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             execute: run });
         return result.ok ? result.result : withRequestedConsentScope(result);
         } catch (error) {
-            nativeUncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
+            nativeUncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             throw error;
         } finally { if (!runStarted && !nativeUncertain) await releaseNativeInvocations(); }
     };
-}
-
-export async function readProjectRuntimeAdmissionRefusal(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): Promise<ActionExecuteFailure | null> {
-    const requester = await readProjectRuntimeRequesterRefusal(runtime, ingress);
-    if (requester) return requester;
-    // Restricted requester resolution already verifies the installed, Account,
-    // HTTP and Machine custody together at its canonical owner.
-    if (ingress.callerInputAuthorization) return null;
-    const custody = await readProjectRuntimeCurrentnessRefusal(runtime, ingress.signal);
-    if (custody) return custody;
-    if (!ingress.verifyMachineAdmissionCurrent) return failure('machine_admission_required');
-    if (!await ingress.verifyMachineAdmissionCurrent()) return failure('machine_admission_changed');
-    return ingress.signal.aborted ? failure('cancelled') : null;
 }

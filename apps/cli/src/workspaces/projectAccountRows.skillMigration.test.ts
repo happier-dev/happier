@@ -13,6 +13,7 @@ import { commitActiveProfileCatalog, commitActivePromptLibraryCatalog, getActive
   getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountPromptStackSources, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { migrateProjectPromptStackSkillRules, readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from './projectAccountRows';
+import { projectAccountRowsReadHttpResponse } from './projectAccountRows.testkit';
 import { prepareSessionStackSkillMigration, applyStartupMetadataUpdateToSession } from '@/agent/runtime/startupMetadataUpdate';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { SessionSkillSelectionAuthoringV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
@@ -67,15 +68,15 @@ for (const failure of ['ready', 'preserved', 'shared', 'first-launch', 'first-sh
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const raw: unknown = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
       let result: unknown;
-      if (url.pathname === '/v1/account/project-rows/list') {
+      if (url.pathname === '/v1/account/project-rows/list' || url.pathname === '/v1/account/project-rows/read') {
         const workspaceKey = { kind: 'workspace-ref', serverId, id: 'checkout' };
-        result = { status: 'listed', coverage: 'complete', rows: [
+        result = projectAccountRowsReadHttpResponse([
           { key, revision: projectRevision, content: { t: 'plain', v: payload } },
           { key: workspaceKey, revision: 1, content: { t: 'plain', v: { key: workspaceKey, value: {
             id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1,
             ...(shared ? { source: { sourceId: 'shared-source', revision: 1 } } : {}),
           } } } },
-        ] };
+        ], url.pathname, raw).data;
       }
       else if (url.pathname === '/v1/projects/sources/shared-source') {
         expect(request.method).toBe('GET');
@@ -199,7 +200,7 @@ for (const failure of ['ready', 'preserved', 'shared', 'first-launch', 'first-sh
           expect(ruleRecord.value).toMatchObject({ consumedLegacyEntryIds: ['migrated-stack:project:project:old-skill'] });
           const firstEffects = [...effects];
           expect(firstEffects).toEqual(['rules']);
-          await readProjectAccountRows({ credentials, serverId });
+          await readProjectAccountRows({ credentials, serverId, publication: 'installed' });
           if (failure === 'shared') await resolveSessionProjectPromptStack({ credentials, serverId, machineId: 'machine', directory: '/repo',
             metadata: { workspaceId: 'checkout', projectId: 'project', path: '/repo' } });
           expect(effects).toEqual(firstEffects);
@@ -210,7 +211,7 @@ for (const failure of ['ready', 'preserved', 'shared', 'first-launch', 'first-sh
           expect((await createCliPromptLibraryStore({ credentials }).writeRecord({ expectedRevision: rulesRevision,
             record: { key: 'skill-rules', value: { ...ruleRecord.value, rules: off } } })).status).toBe('updated');
           const offEffects = [...effects];
-          await readProjectAccountRows({ credentials, serverId });
+          await readProjectAccountRows({ credentials, serverId, publication: 'installed' });
           if (failure === 'shared') await resolveSessionProjectPromptStack({ credentials, serverId, machineId: 'machine', directory: '/repo',
             metadata: { workspaceId: 'checkout', projectId: 'project', path: '/repo' } });
           expect(effects).toEqual(offEffects);

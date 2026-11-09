@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { produceProjectNativeEnvironment } from './produceProjectNativeEnvironment.ts';
+import { prepareProjectNativeToolchain } from './prepareProjectNativeToolchain.ts';
 
 // Native qualification is explicit: unit fixtures cannot qualify a native CLI.
 // Run with B3_NATIVE_MISE_PATH pointing to the checksum-verified 2026.10.4 binary.
@@ -31,7 +31,7 @@ async function fixture(config) {
 describe('Mise 2026.10.4 native boundary', { skip: !binary }, () => {
   it('produces the complete environment through the host adapter', async () => {
     const f = await fixture('[env]\nB3_VALUE = "native"\nB3_UNSET = false\n');
-    const result = await produceProjectNativeEnvironment({
+    const result = await prepareProjectNativeToolchain({
       selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, cwd: f.cwd, env: f.env, platform: 'linux',
       io: {
         resolveTool: async () => ({ executablePath: binary, version: '2026.10.4' }),
@@ -81,7 +81,7 @@ describe('Mise 2026.10.4 native boundary', { skip: !binary }, () => {
 
   it('refuses a missing selected configuration without evaluating the default config', async () => {
     const f = await fixture('[env]\nB3_VALUE = "must-not-fallback"\n');
-    const result = await produceProjectNativeEnvironment({
+    const result = await prepareProjectNativeToolchain({
       selection: { kind: 'toolchain', tool: 'mise', configPath: 'missing.toml' }, cwd: f.cwd, env: f.env, platform: 'linux',
       io: {
         resolveTool: async () => ({ executablePath: binary, version: '2026.10.4' }),
@@ -95,7 +95,7 @@ describe('Mise 2026.10.4 native boundary', { skip: !binary }, () => {
     const f = await fixture('[env]\nB3_VALUE = "project-root"\n');
     const cwd = join(f.cwd, 'nested command');
     await mkdir(cwd);
-    const result = await produceProjectNativeEnvironment({
+    const result = await prepareProjectNativeToolchain({
       selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, root: f.cwd, cwd, env: f.env, platform: 'linux',
       io: {
         resolveTool: async () => ({ executablePath: binary, version: '2026.10.4' }),

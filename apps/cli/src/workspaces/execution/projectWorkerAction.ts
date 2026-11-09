@@ -1,6 +1,8 @@
 import * as z from 'zod/mini';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readHostAdmittedReviewedChildV1, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { isProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
@@ -151,16 +153,18 @@ export function createProjectWorkerAction(options: Readonly<{
       });
       return { status: 'retired' };
     } catch (error) {
-      const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
-        ? error.code : 'workspace_sync_unavailable';
+      const projected = normalizeActionExecutorThrownError(error);
+      const code = readActionErrorCodeV1(error) ?? projected.errorCode;
       const definitionRetired = typeof error === 'object' && error !== null
         && 'definitionRetired' in error && error.definitionRetired === true;
       const dependencies = error instanceof Error && 'dependencies' in error
         ? z.array(ProjectWorkerDependencyV1Schema).safeParse(error.dependencies) : null;
       if (definitionRetired || code === 'indeterminate' || code === 'workspace_copy_removal_unknown' || code === 'project_account_row_outcome_unknown') {
-        return failure(code, { kind: 'outcomeUnknown', ...(dependencies?.success ? { dependencies: dependencies.data } : {}) });
+        return { ok: false, ...projected, errorCode: code,
+          details: { kind: 'outcomeUnknown', ...(dependencies?.success ? { dependencies: dependencies.data } : {}) } };
       }
-      return failure(code, dependencies?.success ? { dependencies: dependencies.data } : undefined);
+      return { ok: false, ...projected, errorCode: code,
+        ...(dependencies?.success ? { details: { dependencies: dependencies.data } } : {}) };
     }
   };
 }

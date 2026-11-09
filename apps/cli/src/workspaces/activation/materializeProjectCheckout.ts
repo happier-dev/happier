@@ -4,6 +4,9 @@ import { stat, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
+import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { OpenProjectResultV1, WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -105,15 +108,17 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
   const choice = input.materialization;
   if (choice.kind === 'clone') {
     if (choice.initialCheckout && input.ref !== undefined && input.ref !== choice.initialCheckout.commit) return refused('invalid_materialization');
+    const commit = ScmCommitOidSchema.safeParse(input.ref);
+    const initialCheckout = choice.initialCheckout ?? (commit.success ? { branch: null, commit: commit.data } : undefined);
     if (!input.selector) return refused('source_unavailable');
     const { runScmRepositoryCloneRoute } = await import('@/scm/rpc/repositoryProvisioningDispatch');
     const parent = await cloneParentDirectory(choice.destinationParentPath);
     input.signal?.throwIfAborted();
     // A pinned or starter clone must be exactly that commit, so it never adopts what is already there.
-    const retainedRoot = choice.initialCheckout ? null : await retainedCloneRoot(join(parent, choice.destinationDirectoryName), input);
+    const retainedRoot = initialCheckout ? null : await retainedCloneRoot(join(parent, choice.destinationDirectoryName), input);
     const clone = retainedRoot ? null : await runScmRepositoryCloneRoute({
       request: ScmRepositoryCloneInputSchema.parse({ ...input.selector, destinationParentPath: parent, destinationDirectoryName: choice.destinationDirectoryName,
-        ...(choice.initialCheckout ? { initialCheckout: choice.initialCheckout } : {}),
+        ...(initialCheckout ? { initialCheckout } : {}),
         confirmed: true, authorizationToken: 'clone-repository' }),
       workingDirectory: parent, registry: input.registry, signal: input.signal,
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
@@ -127,7 +132,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     }
     if (clone) input.onEffectsIssued?.();
     const rootPath = retainedRoot ?? await existingDirectory(clone?.destinationPath);
-    if (input.ref && !choice.initialCheckout) {
+    if (input.ref && !initialCheckout) {
       input.onEffectsIssued?.();
       const { runScmRoute, notRepositoryResponse } = await import('@/scm/rpc/dispatch');
       const checkout = await runScmRoute({
@@ -138,7 +143,14 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
           context, request: { cwd: rootPath, name: input.ref!, strategy: 'bring_changes' },
         }),
       });
-      if (!checkout.success) return refused(checkout.errorCode ?? 'ref_unavailable', checkout.error);
+      if (!checkout.success) {
+        const code = checkout.errorCode ?? 'ref_unavailable';
+        // Only the SCM owner's terminal result establishes a known refusal.
+        if (checkout.outcome?.kind !== 'failed') return refused(code, checkout.error);
+        const failure = Object.assign(new Error(checkout.error ?? code), { code });
+        throw new PluginError({ code, message: failure.message,
+          failureCause: projectActionFailureCauseV1(failure, 'project_open.checkout_ref') });
+      }
     }
     const directory = input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : rootPath;
     const repositoryIdentity = readScmHostingRepositoryIdentity(clone
@@ -152,9 +164,9 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     if (!input.sync) return refused('workspace_sync_unavailable');
     const request: PrepareWorkspaceSyncHandoffInput = {
       ...input.sync.request, action: choice.workspaceAction, targetRootPath: choice.targetPath, signal: input.signal,
+      onEffectsIssued: input.onEffectsIssued,
     };
     const { materializeWorkspaceSyncForOpen } = await import('@/workspaces/sync/workspaceSyncHandoffAdapter');
-    input.onEffectsIssued?.();
     await materializeWorkspaceSyncForOpen(input.sync.adapter, request, input.sync.context);
     const rootPath = await existingDirectory(choice.targetPath);
     const sourceDirectory = input.sourceDirectory ?? request.sourceRootPath;

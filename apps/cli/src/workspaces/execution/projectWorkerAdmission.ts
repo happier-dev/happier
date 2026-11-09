@@ -61,6 +61,8 @@ export function createProjectWorkerAdmission(options: Readonly<{
   readPolicy: () => Promise<MachineFinitePolicyGetResultV1>;
   admissionDrain: DaemonAdmissionDrain;
   readMemory?: () => ProjectWorkerMemoryObservation | null;
+  /** Held while work waits on memory; admission consumes only readings taken during the hold. */
+  holdMemoryDemand?: () => Readonly<{ readFresh(): ProjectWorkerMemoryObservation | null; release(): void }>;
 }>) {
   const entries = new Map<string, Entry>();
   const queue: Entry[] = [];
@@ -68,13 +70,19 @@ export function createProjectWorkerAdmission(options: Readonly<{
   let admissionTail: Promise<void> = Promise.resolve();
   let pumping: Promise<void> | null = null;
   let changedWhilePumping = false;
+  let memoryHold: ReturnType<NonNullable<typeof options.holdMemoryDemand>> | null = null;
 
+  function syncMemoryHold() {
+    const waiting = queue.some(entry => entry.bytes > 0);
+    if (waiting && !memoryHold) memoryHold = options.holdMemoryDemand?.() ?? null;
+    else if (!waiting && memoryHold) { memoryHold.release(); memoryHold = null; }
+  }
   async function readPolicy(): Promise<MachineFinitePolicyGetResultV1> {
     try { return await options.readPolicy(); } catch { return { status: 'unavailable' }; }
   }
-  function memory(): ProjectWorkerMemoryObservation | null {
+  function memory(read: () => ProjectWorkerMemoryObservation | null = readMemory): ProjectWorkerMemoryObservation | null {
     try {
-      const observation = readMemory();
+      const observation = read();
       return observation && Number.isSafeInteger(observation.totalBytes) && observation.totalBytes > 0
         && Number.isSafeInteger(observation.availableBytes) && observation.availableBytes >= 0
         && observation.availableBytes <= observation.totalBytes ? observation : null;
@@ -127,7 +135,7 @@ export function createProjectWorkerAdmission(options: Readonly<{
   function finish(entry: Entry, result: ActionExecuteResult) {
     if (entries.get(entry.request.operationId) !== entry) return;
     const queuedIndex = queue.indexOf(entry);
-    if (queuedIndex >= 0) queue.splice(queuedIndex, 1);
+    if (queuedIndex >= 0) { queue.splice(queuedIndex, 1); syncMemoryHold(); }
     entries.delete(entry.request.operationId);
     entry.removeAbortListener();
     entry.resolve(result);
@@ -146,7 +154,7 @@ export function createProjectWorkerAdmission(options: Readonly<{
         const active = reservations();
         if (policy.policy.runAtMost !== null && active.length >= policy.policy.runAtMost) break;
         if (entry.bytes > 0) {
-          const observation = memory();
+          const observation = memory(memoryHold ? memoryHold.readFresh : readMemory);
           // Execution-owner notifications/operation inspection can recover telemetry. Accepted custody stays put.
           if (!observation) break;
           if (entry.bytes > observation.totalBytes) {
@@ -158,6 +166,7 @@ export function createProjectWorkerAdmission(options: Readonly<{
           if (entry.bytes > observation.availableBytes || entry.bytes > observation.totalBytes - heldBytes) break;
         }
         queue.shift();
+        syncMemoryHold();
         entry.state = 'reserved';
         entry.request.onReserved?.();
         publishQueuePositions(0);
@@ -220,6 +229,7 @@ export function createProjectWorkerAdmission(options: Readonly<{
         entry.removeAbortListener = () => request.signal.removeEventListener('abort', abort);
         entries.set(request.operationId, entry);
         queue.push(entry);
+        syncMemoryHold();
         request.accept({ kind: 'accepted', operationId: request.operationId, machineId: options.machineId,
           workspaceRefId: request.workspaceRefId });
         if (!request.signal.aborted) publishQueuePositions(queue.length - 1);

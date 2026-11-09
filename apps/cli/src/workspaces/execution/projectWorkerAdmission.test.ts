@@ -324,6 +324,44 @@ describe('finite target admission and real reservation custody', () => {
     h.gates.get('resident')!.resolve(success); h.gates.get('spare')!.resolve(success); await turn();
   });
 
+  it('holds fresh-memory demand only while memory-bound work is queued, admits only on a reading taken after it, and never leaks it', async () => {
+    let fresh: { totalBytes: number; availableBytes: number } | null = null;
+    const holds = { acquired: 0, released: 0 };
+    const started: string[] = [];
+    const finishers: Array<() => void> = [];
+    const admission = createProjectWorkerAdmission({ machineId: scope.machineId, admissionDrain: createDaemonAdmissionDrain(),
+      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, revision: 1, source: 'stored' }),
+      readMemory: () => ({ totalBytes: 100, availableBytes: 100 }),
+      holdMemoryDemand: () => { holds.acquired++; return { readFresh: () => fresh, release: () => { holds.released++; } }; } });
+    const execute = (operationId: string, signal: AbortSignal, bytes: number) => admission.execute({
+      operationId, workspaceRefId: 'worker-copy', signal, accept: () => {},
+      ...(bytes > 0 ? { memoryDemand: { bytes } as ProjectMemoryDemandV1 } : {}),
+      run: async () => { started.push(operationId); await new Promise<void>(resolve => finishers.push(resolve));
+        return { kind: 'process_settled', result: { ok: true, result: {} } }; } });
+    const plain = execute('plain', new AbortController().signal, 0);
+    await turn();
+    expect(started).toEqual(['plain']);
+    expect(holds.acquired).toBe(0);
+    const controller = new AbortController();
+    const cancelledWorker = execute('cancelled', controller.signal, 50);
+    await turn();
+    expect(holds).toEqual({ acquired: 1, released: 0 });
+    expect(started).toEqual(['plain']);
+    controller.abort();
+    await expect(cancelledWorker).resolves.toMatchObject({ errorCode: 'cancelled' });
+    expect(holds).toEqual({ acquired: 1, released: 1 });
+    const admitted = execute('admitted', new AbortController().signal, 50);
+    await turn();
+    expect(holds).toEqual({ acquired: 2, released: 1 });
+    expect(started).toEqual(['plain']);
+    fresh = { totalBytes: 100, availableBytes: 80 };
+    await admission.notifyChanged();
+    expect(started).toEqual(['plain', 'admitted']);
+    expect(holds).toEqual({ acquired: 2, released: 2 });
+    finishers.forEach(finish => finish());
+    await Promise.all([plain, admitted]);
+  });
+
   it('distinguishes permanent total shortage, telemetry refusal and temporary available-memory queueing', async () => {
     const h = harness(null);
     expect(await h.run('too-large', { bytes: 101, basis: { kind: 'declared' } }))

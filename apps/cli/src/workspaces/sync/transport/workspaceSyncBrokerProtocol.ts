@@ -12,7 +12,6 @@ export const WORKSPACE_SYNC_BROKER_MAX_REQUEST_FRAME_BYTES = 2 * 1024 * 1024;
 export const WORKSPACE_SYNC_BROKER_ATTACH_TTL_MS = 30_000;
 export const OPEN_REMOTE_DEADLINE_MS = 15_000;
 export const MAX_CONCURRENT_DATA_STREAMS = 8;
-export const MAX_CONTROL_FRAME_BYTES = WORKSPACE_SYNC_BROKER_MAX_FRAME_BYTES;
 
 export type MutagenSynchronizationMode = 'one-way-safe' | 'one-way-replica' | 'two-way-safe';
 export type MutagenContentPolicy = Readonly<{
@@ -80,6 +79,7 @@ export type MutagenSessionDefinition = Readonly<{
 export type MutagenControlCommandV1 =
   | Readonly<{ t: 'create'; requestId: string; session: MutagenSessionDefinition }>
   | Readonly<{ t: 'get'; requestId: string; sessionIdentifier: string }>
+  | Readonly<{ t: 'wait_for_change'; requestId: string; previousStateIndex: string }>
   | Readonly<{ t: 'list'; requestId: string; cursor?: string; limit: number }>
   | Readonly<{ t: 'flush'; requestId: string; sessionIdentifier: string }>
   | Readonly<{ t: 'pause'; requestId: string; sessionIdentifier: string }>
@@ -234,6 +234,7 @@ function finiteNumber(value: unknown, name: string): number {
 }
 
 const commandFields: Record<MutagenControlCommandV1['t'], readonly string[]> = {
+  wait_for_change: ['t', 'requestId', 'previousStateIndex'],
   create: ['t', 'requestId', 'session'],
   get: ['t', 'requestId', 'sessionIdentifier'], list: ['t', 'requestId', 'cursor', 'limit'], flush: ['t', 'requestId', 'sessionIdentifier'],
   pause: ['t', 'requestId', 'sessionIdentifier'], resume: ['t', 'requestId', 'sessionIdentifier'], terminate: ['t', 'requestId', 'sessionIdentifier'],
@@ -302,6 +303,14 @@ function parseMutagenSessionDefinition(value: unknown): MutagenSessionDefinition
   };
 }
 
+/** Decimal uint64 keeps Mutagen's native cursor exact across the JSON boundary. */
+export function parseMutagenStateIndex(value: unknown): string {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,19})$/u.test(value) || BigInt(value) > 0xffffffffffffffffn) {
+    throw new Error('Invalid generic Mutagen state index');
+  }
+  return value;
+}
+
 export function parseMutagenControlCommandV1(value: unknown): MutagenControlCommandV1 {
   if (!isRecord(value) || typeof value.t !== 'string' || !Object.hasOwn(commandFields, value.t)) throw new Error('unknown mutagen control command');
   const tag = value.t as MutagenControlCommandV1['t'];
@@ -309,6 +318,8 @@ export function parseMutagenControlCommandV1(value: unknown): MutagenControlComm
   boundedIdentifier(value.requestId, 'requestId');
   const requestId = boundedIdentifier(value.requestId, 'requestId');
   switch (tag) {
+    case 'wait_for_change':
+      return { t: tag, requestId, previousStateIndex: parseMutagenStateIndex(value.previousStateIndex) };
     case 'create': {
       return { t: tag, requestId, session: parseMutagenSessionDefinition(value.session) };
     }
@@ -416,8 +427,6 @@ export function encodeBrokerCommandFrame(command: MutagenControlCommandV1): Buff
   payload.copy(frame, 4);
   return frame;
 }
-export const encodeBrokerFrame = encodeBrokerControlFrame;
-export const parseBrokerControlEnvelope = parseBrokerControlV1;
 
 /** Incremental decoder for u32be + UTF-8 JSON control frames. */
 export class BrokerControlFrameDecoder {
@@ -453,7 +462,6 @@ export class BrokerControlFrameDecoder {
   }
   get bufferedBytes(): number { return this.pending.byteLength; }
 }
-export const BrokerControlDecoder = BrokerControlFrameDecoder;
 
 function transcriptPart(value: string | number): Buffer {
   const bytes = Buffer.from(String(value), 'utf8');

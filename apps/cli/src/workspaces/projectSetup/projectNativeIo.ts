@@ -1,22 +1,24 @@
-import { createProjectNativeEnvironmentIoForHost, type ProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost, type ProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { ProjectNativeCommandIo } from './projectNativeResolution';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
-import { findBuiltinNativeEnvironmentAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import { findBuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 
 export type ProjectNativeIo = Readonly<{
     commandIo: ProjectNativeCommandIo;
-    environmentIo: ProjectNativeEnvironmentIoForHost;
+    environmentIo: ProjectNativeToolchainIoForHost;
 }>;
 
 /** Host-only composition. Passive command IO never probes; admitted environment IO may characterize its installed tool. */
-export function createProjectNativeIo(input: Readonly<{ ownerRemainder?: OwnerRemainderPort }> = {}): ProjectNativeIo {
+export function createProjectNativeIo(input: Readonly<{ ownerRemainder?: OwnerRemainderPort;
+    agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext }> = {}): ProjectNativeIo {
     const commandIo = projectNativeSystemIo;
-    const environmentIo = createProjectNativeEnvironmentIoForHost({
+    const environmentIo = createProjectNativeToolchainIoForHost({
         ownerRemainder: input.ownerRemainder,
+        agentIsolation: input.agentIsolation,
         async resolveTool(tool, signal, scopedIo) {
-            const adapter = findBuiltinNativeEnvironmentAdapterV1(tool, process.platform);
-            if (!adapter || process.arch !== 'x64') return null;
+            const adapter = findBuiltinNativeToolchainAdapterV1(tool, process.platform);
+            if (!adapter || process.arch !== adapter.architecture) return null;
             const resolved = await commandIo.resolveTool(adapter.executable, { cwd: process.cwd(), ...(signal ? { signal } : {}) });
             if (!resolved) return null;
             if (resolved.version) return Object.freeze({ executablePath: resolved.executablePath, args: resolved.args, version: resolved.version });

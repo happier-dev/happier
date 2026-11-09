@@ -8,6 +8,7 @@ import { createWorkspaceSyncTargetAuthority } from './workspaceSyncTargetAuthori
 import { computeWorkspaceSyncRootFingerprint } from './workspaceSyncTargetBootstrap';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 
 import {
   computeWorkspaceSyncPolicyDigest,
@@ -615,6 +616,18 @@ describe('WorkspaceSyncRelationshipOwner', () => {
       ]);
       expect(harness.waitForProjectReconciliation).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('reports a committed resume as done after a native target reconciliation refusal', async () => {
+    const harness = createHarness();
+    const prepared = await harness.owner.prepareCreate(createInput);
+    await prepared.commit();
+    await harness.owner.setEnabled('relationship_1', false);
+    harness.waitForProjectReconciliation.mockRejectedValueOnce(createRpcCallError({
+      error: 'Target still reconciling', errorCode: 'peer_unavailable',
+    }));
+    await expect(harness.owner.setEnabled('relationship_1', true)).resolves.toBeUndefined();
+    expect(harness.read().relationships).toEqual([expect.objectContaining({ relationshipId: 'relationship_1', enabled: true })]);
   });
 
   it('keeps a settled stop intent when runtime reconciliation fails', async () => {

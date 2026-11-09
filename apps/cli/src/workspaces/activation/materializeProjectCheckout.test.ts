@@ -59,6 +59,38 @@ describe('materializeProjectCheckout', () => {
     }))).rejects.toMatchObject({ code: 'REMOTE_AUTH_REQUIRED', failureCause, remediation });
   });
 
+  it.each(['commit', 'branch'] as const)('clones a selected %s through the real Git checkout owner without moving branch refs', async selection => {
+    const parent = await temporaryRoot();
+    const remote = createBareRemoteRepository();
+    temporaryRoots.push(join(remote, '..'));
+    const source = join(remote, '..', 'source');
+    const pin = runGit(source, ['rev-parse', 'HEAD']);
+    await writeFile(join(source, 'README.md'), 'advanced upstream main\n');
+    runGit(source, ['add', 'README.md']);
+    runGit(source, ['commit', '-m', 'advance main']);
+    runGit(source, ['push', remote, 'main']);
+    const branchHead = runGit(source, ['rev-parse', 'HEAD']);
+    const registration = createGitScmBackendRuntimeRegistration();
+    if (!registration.runtime) throw new Error('Git SCM test runtime is unavailable');
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(
+        makeProviderRegistry(makeCloneTargetDescription(remote))),
+    })]);
+    const request = makeRequest(parent, remote, 'selected');
+    const result = await runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      ref: selection === 'commit' ? pin : 'main', registry,
+      materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName: 'selected' },
+    }));
+    expect(runGit(result.rootPath, ['rev-parse', 'HEAD'])).toBe(selection === 'commit' ? pin : branchHead);
+    expect(runGit(result.rootPath, ['branch', '--show-current'])).toBe(selection === 'commit' ? '' : 'main');
+    expect(runGit(result.rootPath, ['rev-parse', 'main'])).toBe(branchHead);
+    expect(runGit(result.rootPath, ['rev-parse', 'origin/main'])).toBe(branchHead);
+    expect(runGit(source, ['rev-parse', 'main'])).toBe(branchHead);
+  });
+
   it.each(['plain', 'symlinked ancestor'] as const)('creates a missing destination parent, like the offered ~/src on a fresh Machine (%s)', async shape => {
     const home = await temporaryRoot();
     const real = await realpath(home);

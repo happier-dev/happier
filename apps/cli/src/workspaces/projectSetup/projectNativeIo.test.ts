@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { findBuiltinNativeEnvironmentAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import { findBuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 
 import { createProjectNativeIo } from './projectNativeIo';
 
@@ -39,7 +39,7 @@ describe('Project native host IO', () => {
         // still wins tool selection. A malformed version proves no provenance.
         vi.stubEnv('PATH', [root, originalPath].filter(Boolean).join(delimiter));
         expect(await environmentIo.resolveTool('mise')).toBeNull();
-        if (process.arch === 'x64' && findBuiltinNativeEnvironmentAdapterV1('mise', process.platform)) {
+        if (process.arch === 'x64' && findBuiltinNativeToolchainAdapterV1('mise', process.platform)) {
             expect(await readFile(marker, 'utf8')).toBe('evaluated');
         } else {
             // Presence is still passive on hosts outside the adapter's qualification.

@@ -17,6 +17,7 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
     account: ProjectAccountRowsInput;
+    requesterIdentity?: ProjectSetupPreparationInput['requesterIdentity'];
     workspaceId?: string;
     nativeIo?: ProjectSetupPreparationInput['nativeIo'];
     plugins?: ProjectSetupPreparationInput['plugins'];
@@ -90,6 +91,7 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
         const preparation: ProjectSetupPreparationInput = {
             workspace: association.workspace, projectAssociation: association,
+            requesterIdentity: input.requesterIdentity,
             requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl },
             purpose: 'setup', nativeIo: input.nativeIo ?? projectNativeSystemIo,
             platform: input.platform ?? { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },

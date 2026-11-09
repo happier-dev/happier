@@ -26,7 +26,6 @@ export type PrivateProjectCheckoutOpenRuntime = Readonly<{
     requesterAccount?: RequesterAccountActionContext;
     retainedRequesterCustody?: ReturnType<NonNullable<RequesterAccountActionContext['retainCustody']>>;
     ingress?: RpcHandlerContext;
-    resolveRequesterIdentity: NonNullable<HostAgentIsolationLaunchContext['resolveRequesterIdentity']>;
     readMaterial(): OperationMaterial;
     signal: AbortSignal;
   }>): Promise<Readonly<{
@@ -52,7 +51,6 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
   /** Actual existing Action/native invocation key; no new identity is minted. */
   materializationKey: string;
   signal: AbortSignal;
-  resolveRequesterIdentity: NonNullable<HostAgentIsolationLaunchContext['resolveRequesterIdentity']>;
   onEffectsIssued(): void;
 }>) {
   const refuse = (): never => { throw privateProjectCheckoutRefusal(); };
@@ -72,7 +70,6 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
   const native = await input.runtime.prepareNativeOperation({ requesterIdentity: selected, requesterAccount: input.requesterAccount,
     ...(input.retainedRequesterCustody ? { retainedRequesterCustody: input.retainedRequesterCustody } : {}),
     ingress: input.ingress ? { ...input.ingress, signal } : undefined,
-    resolveRequesterIdentity: sync ? async () => { signal.throwIfAborted(); return selected; } : input.resolveRequesterIdentity,
     readMaterial: () => live && !signal.aborted ? material : undefined, signal }).catch(async error => {
       input.signal.removeEventListener('abort', cancelOpen);
       await releaseAccount?.();
@@ -205,7 +202,6 @@ export async function recoverPrivateProjectSyncCheckout(input: Readonly<{
       materialization: { kind: 'sync', targetPath: target.rootPath,
         workspaceAction: { kind: 'relationship', relationshipId: relationship.relationshipId, flushBeforeCommit: false } } },
     materializationKey: relationship.relationshipId, signal: input.signal,
-    resolveRequesterIdentity: async () => { input.signal.throwIfAborted(); return selected; },
     onEffectsIssued: input.onEffectsIssued ?? (() => {}),
   });
   try {

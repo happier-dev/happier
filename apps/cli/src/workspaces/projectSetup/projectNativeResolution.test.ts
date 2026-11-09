@@ -3,9 +3,37 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ProjectDefinitionDetectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { inspectProjectImportCandidates, resolveProjectDevcontainerSelection, resolveProjectEnvironmentSelection, resolveProjectNativeCommand } from './projectNativeResolution';
+import { inspectProjectImportCandidates, resolveProjectDevcontainerSelection, resolveProjectToolchainSelection, resolveProjectNativeCommand } from './projectNativeResolution';
 
 describe('project native resolution', () => {
+    it('uses one Environment Compose project across actors, releases and service observations', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'native-environment-'));
+        try {
+            await writeFile(join(root, 'compose.yaml'), 'services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n');
+            const io = { resolveTool: async () => ({ executablePath: '/managed/docker', version: '2.39.4' }) };
+            const resolveService = (target: string, serviceScope: string, physicalProjectName?: string) => resolveProjectNativeCommand({
+                root, source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target }, usage: 'service', io, serviceScope,
+                environment: { environmentInstanceId: 'env-instance-A', services: ['web', 'db'], ...(physicalProjectName ? { physicalProjectName } : {}) },
+            });
+            const web = await resolveService('web', 'actor-A');
+            const db = await resolveService('db', 'actor-B');
+            expect(web.kind).toBe('resolved');
+            expect(db.kind).toBe('resolved');
+            if (web.kind !== 'resolved' || db.kind !== 'resolved') throw new Error('expected native resolution');
+            expect(web.args[2]).toBe(db.args[2]);
+            expect(web.args[2]).toMatch(/^happier-[a-f0-9]{64}$/u);
+            expect(web.args.slice(5)).toEqual(['up', '--detach', '--wait', '--remove-orphans', '--no-build', '--pull', 'never', 'web', 'db']);
+            await mkdir(join(root, 'next-release'));
+            await writeFile(join(root, 'next-release/compose.yaml'), 'services:\n  web:\n    image: ${IMAGE:?runtime binding}\n');
+            const nextRelease = await resolveProjectNativeCommand({
+                root: join(root, 'next-release'), source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web' },
+                usage: 'service', io, serviceScope: 'actor-D', environment: { environmentInstanceId: 'env-instance-A', services: ['web'] },
+            });
+            expect(nextRelease).toMatchObject({ kind: 'resolved', args: expect.arrayContaining(['--project-name', web.args[2]]) });
+            const adopted = await resolveService('web', 'actor-C', 'existing-prod_stack');
+            expect(adopted).toMatchObject({ kind: 'resolved', args: expect.arrayContaining(['--project-name', 'existing-prod_stack']) });
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it('previews declared native config paths relative to the invocation while retaining exact execution argv', async () => {
         const root = await mkdtemp(join(tmpdir(), 'native-preview-'));
         try {
@@ -13,7 +41,7 @@ describe('project native resolution', () => {
             await writeFile(join(root, 'tools/Makefile'), 'docker-build:\n\techo build\n');
             const source = { kind: 'native', tool: 'make', file: 'tools/Makefile', target: 'docker-build' } as const;
             const detection: ProjectDefinitionDetectionV1 = { entries: [{ source, usage: 'script' }],
-                environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+                toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
             const io = { resolveTool: async () => ({ executablePath: '/installed/make' }) };
             const [preview] = await inspectProjectImportCandidates({ root, detection, io });
             expect(preview?.invocation).toEqual({ tool: 'make', args: ['-f', 'Makefile', 'docker-build'], cwd: join(root, 'tools') });
@@ -32,7 +60,7 @@ describe('project native resolution', () => {
                 { source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'build' }, usage: 'script' },
                 { source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' }, usage: 'script' },
                 { source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' }, usage: 'script' },
-            ], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+            ], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
             const unbound = await inspectProjectImportCandidates({ root, detection });
             expect(unbound.every(candidate => !candidate.preselected && candidate.availability === 'unresolved')).toBe(true);
             const unproved = await inspectProjectImportCandidates({ root, detection, io: { resolveTool: async tool => ({ executablePath: `/installed/${tool}` }) } });
@@ -71,13 +99,13 @@ describe('project native resolution', () => {
             await writeFile(join(root, 'Makefile'), 'include other.mk\nbuild:\n\techo build\n');
             await writeFile(join(outside, 'devbox.json'), '{}');
             await symlink(join(outside, 'devbox.json'), join(root, 'devbox.json'));
-            expect(await resolveProjectEnvironmentSelection({ root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } })).toMatchObject({ kind: 'selected', selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, file: 'mise.toml' });
-            expect(await resolveProjectEnvironmentSelection({ root, selection: { kind: 'toolchain', tool: 'mise', configPath: '.\\mise.toml' } })).toMatchObject({ kind: 'selected', selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, file: 'mise.toml' });
+            expect(await resolveProjectToolchainSelection({ root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } })).toMatchObject({ kind: 'selected', selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, file: 'mise.toml' });
+            expect(await resolveProjectToolchainSelection({ root, selection: { kind: 'toolchain', tool: 'mise', configPath: '.\\mise.toml' } })).toMatchObject({ kind: 'selected', selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, file: 'mise.toml' });
             expect(await resolveProjectDevcontainerSelection({ root, selection: { configPath: '.devcontainer.json' } })).toMatchObject({ kind: 'selected', selection: { configPath: '.devcontainer.json' }, file: '.devcontainer.json' });
-            expect(await resolveProjectEnvironmentSelection({ root, selection: { kind: 'toolchain', tool: 'devbox', configPath: 'devbox.json' } })).toMatchObject({ kind: 'refused', reason: 'outside_root' });
+            expect(await resolveProjectToolchainSelection({ root, selection: { kind: 'toolchain', tool: 'devbox', configPath: 'devbox.json' } })).toMatchObject({ kind: 'refused', reason: 'outside_root' });
             const io = { resolveTool: async (tool: string) => ({ executablePath: `/managed/${tool}`, version: '2026.10.4' }) };
-            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'build' }, usage: 'script', io })).toMatchObject({ kind: 'resolved', args: ['run', 'build'], nativeCommandEnvironment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, environmentOverlay: { MISE_OVERRIDE_CONFIG_FILENAMES: join(root, 'mise.toml') } });
-            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'build' }, usage: 'script', io: { resolveTool: async () => ({ executablePath: '/managed/runtime', args: ['/installed/mise-entrypoint'], version: '2026.10.4' }) } })).toMatchObject({ kind: 'resolved', command: '/managed/runtime', args: ['/installed/mise-entrypoint', 'run', 'build'], nativeCommandEnvironment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } });
+            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'build' }, usage: 'script', io })).toMatchObject({ kind: 'resolved', args: ['run', 'build'], nativeCommandToolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, environmentOverlay: { MISE_OVERRIDE_CONFIG_FILENAMES: join(root, 'mise.toml') } });
+            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'build' }, usage: 'script', io: { resolveTool: async () => ({ executablePath: '/managed/runtime', args: ['/installed/mise-entrypoint'], version: '2026.10.4' }) } })).toMatchObject({ kind: 'resolved', command: '/managed/runtime', args: ['/installed/mise-entrypoint', 'run', 'build'], nativeCommandToolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } });
             expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'build' }, usage: 'script', io })).toMatchObject({ kind: 'refused', reason: 'dynamic_unsupported' });
             expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'gone' }, usage: 'script', io })).toMatchObject({ kind: 'refused', reason: 'missing' });
         } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
@@ -103,7 +131,7 @@ describe('project native resolution', () => {
                 expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool, file, target }, usage, io })).toMatchObject({ kind: 'resolved', args });
             }
             expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'procfile', file: 'Procfile', target: 'web' }, usage: 'service', io })).toMatchObject({ kind: 'refused', code: 'procfile_runner_not_selected' });
-            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'devenv', file: 'devenv.nix', target: 'build' }, usage: 'script', io })).toMatchObject({ kind: 'resolved', args: ['shell', '--', 'build'], cwd: root, nativeCommandEnvironment: { kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' } });
+            expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'devenv', file: 'devenv.nix', target: 'build' }, usage: 'script', io })).toMatchObject({ kind: 'resolved', args: ['shell', '--', 'build'], cwd: root, nativeCommandToolchain: { kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' } });
             expect(await resolveProjectNativeCommand({ root, source: { kind: 'native', tool: 'devenv', file: 'devenv.nix', target: 'computed' }, usage: 'script', io })).toMatchObject({ kind: 'refused', reason: 'dynamic_unsupported', code: 'unevaluated_nix' });
         } finally { await rm(root, { recursive: true, force: true }); }
     });

@@ -1,5 +1,6 @@
 import { areWorkspaceSyncEntryExpectationsEqual, areWorkspaceSyncRelationshipDefinitionsEqual, ReadWorkspaceSyncFileV1Schema, WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
 import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncConflictInspectEndpointV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1 } from '@happier-dev/protocol';
 import { machineCarrierUnavailableError } from '@/daemon/peer/iroh/machineCarrier';
@@ -208,9 +209,16 @@ function abortIfRequested(signal?: AbortSignal): void { if (signal?.aborted) thr
 
 /** Endpoint states that lose their current authority mid-read disclose no bytes. */
 function readErrorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+  return readRpcErrorCode(error) ?? (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
     ? error.code
-    : undefined;
+    : undefined);
+}
+
+function isRecoveryHoldCode(code: string | undefined): code is string {
+  return code === 'workspace_sync_recovery_needed' || code === 'peer_unavailable'
+    || code === 'agent_unavailable' || code === 'agent_isolation_unavailable' || code === 'relationship_not_ready'
+    || code === 'workspace_root_unsafe' || code === 'workspace_root_ownership_lost'
+    || code === 'workspace_root_in_use' || code === 'approval_stale' || code === 'conflict_changed';
 }
 
 const INSPECT_UNREACHABLE_CODES = new Set([
@@ -621,6 +629,15 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     return status;
   }
 
+  private projectObservedStatus(id: string, observed: WorkspaceSyncStatusV1 | null): WorkspaceSyncStatusV1 | null {
+    const held = this.statuses.get(id);
+    // Recovery pauses belong to the controller, not the native status reader.
+    // A fresh engine observation cannot clear one; a command or changed desired
+    // definition must settle recovery before publishing its replacement.
+    if (held?.state !== 'paused' || !isRecoveryHoldCode(held.errorCode)) return observed;
+    return observed ? { ...observed, state: 'paused', errorCode: held.errorCode } : held;
+  }
+
   private shouldObserveStatus(id: string): boolean {
     // Publication forwards our own commands; it is not a status consumer.
     return !this.shuttingDown && ((this.listeners.get(id)?.size ?? 0) > 0 || this.statusWatches.watcherCount() > 0);
@@ -662,7 +679,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         const nextStateIndex = await this.adapter.waitForChange(stateIndex, signal);
         const observed = await this.enqueue(id, signal, async () => {
           if (!this.shouldObserveStatus(id)) return null;
-          return await this.adapter.get(id, signal);
+          return this.projectObservedStatus(id, await this.adapter.get(id, signal));
         }, false);
         if (!signal.aborted && this.shouldObserveStatus(id)) {
           if (observed) this.publish(observed);
@@ -1202,8 +1219,17 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
     });
   }
-  async get(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1 | null> { abortIfRequested(signal); await this.lifecycle.start(); return await this.adapter.get(id, signal); }
-  async list(signal?: AbortSignal): Promise<readonly WorkspaceSyncStatusV1[]> { abortIfRequested(signal); await this.lifecycle.start(); return await this.adapter.list(signal); }
+  async get(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1 | null> { abortIfRequested(signal); await this.lifecycle.start(); return this.projectObservedStatus(id, await this.adapter.get(id, signal)); }
+  async list(signal?: AbortSignal): Promise<readonly WorkspaceSyncStatusV1[]> {
+    abortIfRequested(signal);
+    await this.lifecycle.start();
+    const observed = new Map((await this.adapter.list(signal)).map(status => [status.relationshipId, status]));
+    for (const id of this.statuses.keys()) {
+      const projected = this.projectObservedStatus(id, observed.get(id) ?? null);
+      if (projected) observed.set(id, projected);
+    }
+    return [...observed.values()];
+  }
   async watchStatuses(request: WorkspaceSyncStatusWatchRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusWatchResultV1> {
     if (signal?.aborted) return { changed: false };
     if (this.shuttingDown) throw Object.assign(new Error('Workspace sync runtime is unavailable'), { code: 'workspace_sync_unavailable' });
@@ -1346,7 +1372,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       if (expected) delete transfer.admission;
     }
   })); }
-  async pause(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, async () => { await this.lifecycle.start(); return this.publish(await this.adapter.pause(id, signal)); }); }
+  async pause(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, async () => {
+    await this.lifecycle.start();
+    const paused = await this.adapter.pause(id, signal);
+    return this.publish(this.projectObservedStatus(id, paused) ?? paused);
+  }); }
   async resume(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, async () => {
     await this.admitTransfer(id, signal);
     if (this.ownershipLost.has(id)) {
@@ -2671,15 +2701,22 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         for (const recovery of await this.adapter.discoverCopyOnceRecoveries()) recoveries.set(recovery.operationId, recovery);
         for (const recovery of recoveries.values()) await this.recoverCopyOnce(recovery);
         for (const relationship of activeRelationships) {
+          const previousDefinition = stagedPrevious.has(relationship.relationshipId)
+            ? stagedPrevious.get(relationship.relationshipId)?.definition
+            : this.definitions.get(relationship.relationshipId);
+          const previousStatus = this.statuses.get(relationship.relationshipId);
+          if (previousDefinition?.enabled === relationship.enabled
+            && areWorkspaceSyncRelationshipDefinitionsEqual(previousDefinition, relationship)
+            && previousStatus?.state === 'paused' && isRecoveryHoldCode(previousStatus.errorCode)) {
+            holdPausedRelationshipIds.add(relationship.relationshipId);
+            recoveryHoldCodes.set(relationship.relationshipId, previousStatus.errorCode);
+            continue;
+          }
           try {
             await this.recoverConflictResolutionForRelationship(relationship);
           } catch (error) {
             const code = readErrorCode(error);
-            if (code !== 'workspace_sync_recovery_needed' && code !== 'peer_unavailable'
-              && code !== 'agent_unavailable' && code !== 'relationship_not_ready'
-              && code !== 'workspace_root_unsafe' && code !== 'workspace_root_ownership_lost'
-              && code !== 'workspace_root_in_use' && code !== 'approval_stale'
-              && code !== 'conflict_changed') throw error;
+            if (!isRecoveryHoldCode(code)) throw error;
             holdPausedRelationshipIds.add(relationship.relationshipId);
             recoveryHoldCodes.set(relationship.relationshipId, code ?? 'workspace_sync_recovery_needed');
           }

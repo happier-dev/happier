@@ -12,13 +12,20 @@ import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import { createWorkspaceSyncMutagenAdapter } from './workspaceSyncMutagenAdapter';
+import { createMutagenChangeWaitBoundary } from './transport/workspaceSyncBrokerClient.testkit';
 import { createWorkspaceSyncTargetAuthority } from './workspaceSyncTargetAuthority';
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
+import { RpcError } from '@happier-dev/protocol/rpc/errors';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { assertWorkspaceSyncRpcSuccess } from '../../../../ui/sources/sync/ops/workspaceSync';
+import { WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncStatusWatchResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
+import { createWorkspaceSyncConflictResolutionAuthorizer } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
 
 const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
 const definition = { v: 1 as const, relationshipId: 'r1', controllerMachineId: 'm1', alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b', mode: 'keep_synced' as const, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
@@ -83,43 +90,121 @@ describe('WorkspaceSyncController', () => {
       },
     });
     try {
-      await controller.flush('r1');
+      const manager = new RpcHandlerManager({ scopePrefix: 'm1', encryptionMode: 'plain', logger: () => {} });
+      const unused = async (): Promise<never> => { throw new Error('Unexpected unrelated RPC'); };
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: manager, service: {
+        controller, relationshipOwner: { setEnabled: unused, stop: unused, create: unused },
+        prepareBetween: unused, readFileAtTarget: unused, observeEntryAtTarget: unused,
+        preflightHandoffTargetReplacement: unused, prepareBootstrapAtTarget: unused,
+        releaseBootstrapAtTarget: unused, inspectRetiredState: unused,
+      } });
+      const flush = () => manager.handleRequest({ method: `m1:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH}`, params: { relationshipId: 'r1' } });
+      const reply = await flush();
+      assertWorkspaceSyncRpcSuccess(reply);
+      expect(WorkspaceSyncStatusV1Schema.parse((reply as { status: unknown }).status)).toMatchObject({ relationshipId: 'r1', state: 'watching' });
       expect(admissions).toBe(1);
       await controller.flush('r1');
       expect(admissions).toBe(2);
       current = false;
       const before = commands.length;
+      const refusal = await flush();
+      expect(refusal).toMatchObject({ errorCode: 'project_requester_authority_unavailable', failureCause: expect.any(Object) });
+      expect(() => assertWorkspaceSyncRpcSuccess(refusal)).toThrow(expect.objectContaining({ rpcErrorCode: 'project_requester_authority_unavailable' }));
       await expect(controller.flush('r1')).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
       expect(commands).toHaveLength(before);
       await expect(controller.resume('r1')).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
       expect(commands).toHaveLength(before);
-      expect(admissions).toBe(4);
+      expect(admissions).toBe(5);
     } finally { await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
   });
+  it('resolves each admitted endpoint fact once before staging a reviewed effect', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-resolution-facts-'));
+    const sourceRoot = join(fixture, 'source');
+    await mkdir(sourceRoot);
+    await writeFile(join(sourceRoot, 'value.bin'), 'source');
+    const snapshot = parseProjectAccountSnapshotV1({ workspaceRefs: [
+      { id: 'a', serverId: 'home', machineId: 'm1', rootPath: sourceRoot, createdAtMs: 1 },
+      { id: 'b', serverId: 'home', machineId: 'm2', rootPath: '/remote/b', createdAtMs: 1 },
+    ], relationships: [definition] });
+    let reads: string[] | undefined;
+    let stagedReads: readonly string[] = [];
+    const authorizations: string[] = [];
+    const authorize = createWorkspaceSyncConflictResolutionAuthorizer();
+    const resolveWorkspaceRef = (id: string) => {
+      reads?.push(id);
+      return resolveWorkspaceRefById(snapshot.workspaceRefs, id, 'home');
+    };
+    let native: MutagenSessionSummaryV1 = {
+      identifier: 'native-r1', name: 'r1', labels: {
+        'external.owner': 'happier-workspace-sync', 'external.relationship_id': 'r1',
+        'external.endpoint_role': 'alpha|beta', 'external.schema': 'workspace-sync-v1',
+        'external.policy_digest': definition.contentPolicy.policyDigest,
+        'external.alpha_workspace_ref_id': 'a', 'external.beta_workspace_ref_id': 'b',
+        'external.controller_machine_id': 'm1', 'external.operation_kind': 'relationship',
+        'external.policy_selection': 'all_files',
+      },
+      alpha: { protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'alpha'), path: '', state: status.endpointStates.alpha },
+      beta: { protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'beta'), path: '', state: status.endpointStates.beta },
+      mode: 'one-way-safe', paused: false, status: 'watching', successfulCycles: 1, conflictCount: 0,
+    };
+    const controller = new WorkspaceSyncController({
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+        // Native broker commands are the process boundary; the adapter and
+        // canonical row resolver both execute their real admission logic.
+        if (command.t === 'list') return { sessions: [native], nextCursor: null };
+        if (command.t === 'pause') native = { ...native, paused: true };
+        if (command.t === 'resume') native = { ...native, paused: false };
+        if (command.t === 'terminate') return null;
+        return native;
+      } }),
+      lifecycle: { start: async () => undefined, stop: async () => undefined },
+      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }),
+      localMachineId: 'm1', localServerId: 'home', resolveWorkspaceRef,
+      resolveAllRelationshipDefinitions: () => snapshot.relationships,
+      // Remote endpoint transport boundaries; admission and topology stay real.
+      stageConflictResolutionAtTarget: async () => { stagedReads = reads ?? []; reads = undefined; },
+      applyStagedConflictResolutionAtTarget: async () => ({ status: 'installed' }),
+      assertConflictResolutionAuthorized: async (receipt, input) => {
+        await authorize(receipt, input);
+        authorizations.push(receipt);
+      },
+    });
+    try {
+      await controller.ensure(definition);
+      reads = [];
+      await expect(controller.resolveConflict({
+        controllerMachineId: 'm1', hubWorkspaceRefId: 'a', path: 'value.bin',
+        source: { workspaceRefId: 'a', expected: { kind: 'file', digest: createHash('sha1').update('source').digest('hex'), executable: false, size: 6 } },
+        targets: [{ workspaceRefId: 'b', expected: { kind: 'missing' } }],
+        relationshipIds: ['r1'], strategy: 'use_source',
+      }, undefined, 'admitted-facts')).resolves.toMatchObject({ endpoints: [{ workspaceRefId: 'b', status: 'applied' }] });
+      expect(new Set(stagedReads)).toEqual(new Set(['a', 'b']));
+      expect(stagedReads).toEqual([...new Set(stagedReads)]);
+      expect(authorizations).toEqual(['admitted-facts']);
+    } finally { await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
+  });
+
   it.each([false, true])('flushes its exact admitted definition and endpoints (warm=%s)', async warm => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-admitted-flush-'));
     const sourceRoot = join(fixture, 'source');
     await mkdir(sourceRoot);
-    const admissions: string[] = [];
     const controller = new WorkspaceSyncController({ adapter: completeAdapter(), lifecycle: lifecycle(),
       rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }), localMachineId: 'm1', localServerId: 'home',
       resolveWorkspaceRef: id => ({ serverId: 'home', machineId: id === 'a' ? 'm1' : 'm2', rootPath: id === 'a' ? sourceRoot : '/b' }),
       resolveRelationshipDefinition: () => definition });
     try {
       if (warm) await controller.ensure(definition);
-      await expect(controller.flush('r1', undefined, { relationship: definition, assertCurrent: async () => { admissions.push('admitted'); }, workspaceRefs: [
+      await expect(controller.flush('r1', undefined, { relationship: definition, workspaceRefs: [
         { id: 'a', serverId: 'home', machineId: 'm1', rootPath: sourceRoot, createdAtMs: 0 },
         { id: 'b', serverId: 'home', machineId: 'm2', rootPath: '/b', createdAtMs: 0 },
       ] })).resolves.toEqual(status);
-      expect(admissions).toEqual(['admitted']);
     } finally { await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
   });
 
   it.each([
     { warm: false, change: 'definition' }, { warm: false, change: 'endpoint' },
     { warm: true, change: 'definition' }, { warm: true, change: 'endpoint' },
-    { warm: true, change: 'authority' },
-  ] as const)('refuses a queued admitted flush after its $change changes (warm=$warm)', async ({ warm, change }) => {
+  ] as const)('executes captured endpoints after queued rows change ($change, warm=$warm)', async ({ warm, change }) => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-queued-admitted-flush-'));
     const sourceRoot = join(fixture, 'source');
     await mkdir(sourceRoot);
@@ -129,42 +214,41 @@ describe('WorkspaceSyncController', () => {
     const started = new Promise<void>(resolve => { entered = resolve; });
     const changedDefinition = { ...definition, mode: 'mirror_exactly' as const };
     let selectedDefinition: WorkspaceSyncRelationshipV1 = definition;
-    let betaRoot = '/b';
-    let current = true;
+    let alphaRoot = sourceRoot;
+    const openedRoots: string[] = [];
     const hold = async () => { entered(); await pending; return status; };
-    const adapter = completeAdapter({ pause: hold,
-      rehydrate: async () => { await hold(); return [status]; } });
+    const adapter = completeAdapter({ pause: hold, flush: async () => {
+      const stream = await controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId('r1', 'alpha') });
+      stream.destroy();
+      return status;
+    } });
     const prepareTarget = vi.fn(async () => undefined);
     const controller = new WorkspaceSyncController({ adapter, lifecycle: lifecycle(),
       rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }),
       localMachineId: 'm1', localServerId: 'home',
-      resolveWorkspaceRef: id => id === 'a' ? { serverId: 'home', machineId: 'm1', rootPath: sourceRoot }
-        : { serverId: 'home', machineId: 'm2', rootPath: betaRoot },
-      resolveRelationshipDefinition: () => selectedDefinition, prepareRelationshipTarget: prepareTarget });
-    const expected = { relationship: definition, assertCurrent: async () => {
-      if (!current) throw Object.assign(new Error('Requester retired'), { code: 'project_requester_authority_unavailable' });
-    }, workspaceRefs: [
+      resolveWorkspaceRef: id => id === 'a' ? { serverId: 'home', machineId: 'm1', rootPath: alphaRoot }
+        : { serverId: 'home', machineId: 'm2', rootPath: '/b' },
+      resolveRelationshipDefinition: () => selectedDefinition, prepareRelationshipTarget: prepareTarget,
+      openLocalWorkspaceAgentStream: async input => {
+        openedRoots.push(input.canonicalRoot);
+        return { stream: new PassThrough(), stop: async () => undefined };
+      } });
+    const expected = { relationship: definition, workspaceRefs: [
       { id: 'a', serverId: 'home', machineId: 'm1', rootPath: sourceRoot, createdAtMs: 0 },
       { id: 'b', serverId: 'home', machineId: 'm2', rootPath: '/b', createdAtMs: 0 },
     ] };
     try {
       if (warm) await controller.ensure(definition);
-      const preceding = warm && change === 'definition' ? controller.rehydrateFromSettings([changedDefinition]) : controller.pause('r1');
+      const preceding = controller.pause('r1');
       await started;
       const flushing = controller.flush('r1', undefined, expected);
-      const refused = expect(flushing).rejects.toMatchObject({ code: change === 'authority'
-        ? 'project_requester_authority_unavailable' : 'relationship_changed' });
+      const completed = expect(flushing).resolves.toEqual(status);
       if (change === 'definition') selectedDefinition = changedDefinition;
-      else if (change === 'endpoint') betaRoot = '/substituted';
-      else current = false;
+      else alphaRoot = join(fixture, 'substituted');
       release();
       await preceding;
-      await refused;
-      expect(adapter.flush).not.toHaveBeenCalled();
-      if (!warm) {
-        expect(prepareTarget).not.toHaveBeenCalled();
-        expect(adapter.ensure).not.toHaveBeenCalled();
-      }
+      await completed;
+      expect(openedRoots).toEqual([await realpath(sourceRoot)]);
     } finally { release(); await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
   });
 
@@ -579,7 +663,7 @@ describe('WorkspaceSyncController', () => {
     }
   });
 
-  it('rejects source drift after staging before any target effect', async () => {
+  it('applies staged reviewed bytes after the live source changes', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-resolution-drift-'));
     const sourceRoot = join(fixture, 'source');
     await mkdir(sourceRoot);
@@ -612,11 +696,11 @@ describe('WorkspaceSyncController', () => {
         targets: [{ workspaceRefId: 'b', expected: { kind: 'missing' } }],
         relationshipIds: ['r1'], strategy: 'use_source',
       }, undefined, 'approval-resolution-drift')).resolves.toEqual({
-        endpoints: [{ workspaceRefId: 'b', status: 'changed' }],
+        endpoints: [{ workspaceRefId: 'b', status: 'applied' }],
       });
-      expect(adapter.pause).not.toHaveBeenCalled();
-      expect(apply).not.toHaveBeenCalled();
-      expect(discard).toHaveBeenCalledWith(expect.objectContaining({ actionReceiptId: 'approval-resolution-drift', targetWorkspaceRefId: 'b' }));
+      expect(adapter.pause).toHaveBeenCalledOnce();
+      expect(apply).toHaveBeenCalledOnce();
+      expect(discard).not.toHaveBeenCalled();
       expect(releaseCapture).toHaveBeenCalledWith(expect.objectContaining({
         operationId: 'approval-resolution-drift', sourceWorkspaceRefId: 'a', sourceMachineId: 'm1',
       }));
@@ -778,7 +862,8 @@ describe('WorkspaceSyncController', () => {
       await rm(fixture, { recursive: true, force: true });
     }
   });
-  it('rehydrates an unrelated link while holding a recovery-affected link paused', async () => {
+  it.each(['workspace_sync_recovery_needed', 'peer_unavailable', 'agent_isolation_unavailable'])(
+    'rehydrates an unrelated link while holding a recovery-affected link paused: %s', async (recoveryCode) => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-resolution-restart-'));
     const alphaRoot = join(fixture, 'alpha');
     const otherRoot = join(fixture, 'other');
@@ -803,13 +888,16 @@ describe('WorkspaceSyncController', () => {
           ? { machineId: 'm1', rootPath: otherRoot }
           : { machineId: 'm2', rootPath: `/remote/${id}` },
       prepareRelationshipTarget: async () => undefined,
-      recoverConflictResolutionAtTarget: async ({ relationshipId }) => relationshipId === 'r1'
-        ? { status: 'recovery_needed', recoveryPath: '/safe/displaced' }
-        : { status: 'settled' },
+      recoverConflictResolutionAtTarget: async ({ relationshipId }) => {
+        if (relationshipId !== 'r1') return { status: 'settled' };
+        if (recoveryCode === 'workspace_sync_recovery_needed') return { status: 'recovery_needed', recoveryPath: '/safe/displaced' };
+        // The remote RPC boundary returns RpcError, including pre-handler admission refusals.
+        throw new RpcError('Recovery endpoint unavailable', recoveryCode);
+      },
     });
     try {
       await expect(controller.rehydrateFromSettings([definition, other])).resolves.toEqual(expect.arrayContaining([
-        expect.objectContaining({ relationshipId: 'r1', state: 'paused', errorCode: 'workspace_sync_recovery_needed' }),
+        expect.objectContaining({ relationshipId: 'r1', state: 'paused', errorCode: recoveryCode }),
         expect.objectContaining({ relationshipId: 'r2', state: 'watching' }),
       ]));
       expect(adapter.ensure).not.toHaveBeenCalled();
@@ -1880,10 +1968,6 @@ describe('WorkspaceSyncController', () => {
     expect(admitted).toHaveLength(33);
     expect(ensure).toHaveBeenCalledTimes(33);
     await controller.shutdown();
-  });
-
-  it('fails closed when a required adapter operation is absent', async () => {
-    expect(() => new WorkspaceSyncController({ adapter: {} as never, lifecycle: lifecycle(), rootOwnershipManager: rootOwnership(), localMachineId: 'm1', resolveWorkspaceRef: () => null })).toThrowError(expect.objectContaining({ code: 'workspace_sync_unavailable' }));
   });
 
   it('pauses Mutagen and releases custody when a mutation detects lost root identity', async () => {
@@ -3031,10 +3115,20 @@ describe('WorkspaceSyncController', () => {
       beta: { protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'beta'), path: '', state: status.endpointStates.beta },
       mode: 'one-way-safe', paused: false, status: 'watching', successfulCycles: 1, conflictCount: 0,
     };
+    const nativeChanges = createMutagenChangeWaitBoundary();
     // Native broker commands and process/root handles are the system boundaries.
-    const send = vi.fn(async (command: MutagenControlCommandV1) => {
+    const send = vi.fn(async (command: MutagenControlCommandV1, signal?: AbortSignal) => {
+      if (command.t === 'wait_for_change') {
+        if (!signal) throw new Error('Native wait needs cancellation');
+        return { stateIndex: await nativeChanges.waitForChange(command.previousStateIndex, signal) };
+      }
       if (command.t === 'list') return { sessions: [engineSession], nextCursor: null };
       if (command.t === 'get') return engineSession;
+      if (command.t === 'pause') {
+        engineSession = { ...engineSession, paused: true };
+        nativeChanges.change();
+        return engineSession;
+      }
       throw new Error(`Unexpected broker command: ${command.t}`);
     });
     const published: WorkspaceSyncStatusV1[] = [];
@@ -3055,6 +3149,7 @@ describe('WorkspaceSyncController', () => {
       published.length = 0;
 
       engineSession = { ...engineSession, status: 'disconnected' };
+      nativeChanges.change();
       await vi.advanceTimersByTimeAsync(600_000);
       expect(send.mock.calls.length).toBe(0);
       expect(managerLifecycle.start).not.toHaveBeenCalled();
@@ -3064,8 +3159,7 @@ describe('WorkspaceSyncController', () => {
       const abort = new AbortController();
       const iterator = controller.subscribe('r1', abort.signal)[Symbol.asyncIterator]();
       await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { state: 'disconnected' } });
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(send.mock.calls[0]?.[0].t).toBe('get');
+      expect(send.mock.calls.filter(([command]) => command.t === 'get')).toHaveLength(1);
       abort.abort();
       await iterator.next();
       send.mockClear();
@@ -3106,18 +3200,22 @@ describe('WorkspaceSyncController', () => {
         send.mockClear();
         published.length = 0;
         await vi.advanceTimersByTimeAsync(600_000);
-        expect(watchCalls - 1).toBe(600_000 / MACHINE_WATCH_WINDOW_MS);
-        expect(send.mock.calls.length).toBeGreaterThan(0);
+        expect(watchCalls - 1).toBe(0);
+        // Mounted demand must park on the native change index, not issue GETs
+        // while nothing changes. The native broker owns the parked wait.
+        expect.soft(send.mock.calls.filter(([command]) => command.t === 'get')).toHaveLength(0);
         expect(send.mock.calls.every(([command]) => command.t === 'get')).toBe(true);
         expect(published).toEqual([]);
 
         engineSession = { ...engineSession, status: 'watching' };
+        nativeChanges.change();
         await vi.advanceTimersByTimeAsync(1_000);
         expect(latest.statuses[0]?.state).toBe('watching');
         expect(published).toHaveLength(1);
         send.mockRejectedValueOnce(new Error('engine temporarily unavailable'));
         engineSession = { ...engineSession, status: 'watching', conflictCount: 1 };
-        await vi.advanceTimersByTimeAsync(1_000);
+        nativeChanges.change();
+        await vi.advanceTimersByTimeAsync(0);
         expect(latest.statuses[0]?.state).toBe('watching');
         await vi.advanceTimersByTimeAsync(1_000);
         expect(latest.statuses[0]).toMatchObject({ state: 'conflicted', conflictCount: 1 });
@@ -3127,6 +3225,7 @@ describe('WorkspaceSyncController', () => {
           parkedAbort.abort();
           await observing;
           engineSession = { ...engineSession, conflictCount: 3 };
+          nativeChanges.change();
           await vi.advanceTimersByTimeAsync(1_000);
           expect(WorkspaceSyncStatusWatchResultV1Schema.parse(await secondWatch))
             .toMatchObject({ changed: true, snapshot: { statuses: [{ conflictCount: 3 }] } });
@@ -3142,6 +3241,7 @@ describe('WorkspaceSyncController', () => {
       expect(managerLifecycle.start).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
       engineSession = { ...engineSession, status: 'disconnected', conflictCount: 0 };
+      nativeChanges.change();
       expect(WorkspaceSyncStatusWatchResultV1Schema.parse(await watch({})))
         .toMatchObject({ changed: true, snapshot: { statuses: [{ state: 'disconnected' }] } });
       let releaseList!: () => void;
@@ -3158,9 +3258,21 @@ describe('WorkspaceSyncController', () => {
       const staleRead = watch({});
       await listStarted;
       engineSession = { ...engineSession, status: 'watching', conflictCount: 2 };
+      nativeChanges.change();
       try { await controller.ensure(definition); } finally { releaseList(); }
       expect(WorkspaceSyncStatusWatchResultV1Schema.parse(await staleRead))
         .toMatchObject({ changed: true, snapshot: { statuses: [{ state: 'conflicted', conflictCount: 2 }] } });
+      const baseline = WorkspaceSyncStatusWatchResultV1Schema.parse(await watch({}));
+      if (!baseline.changed) throw new Error('Expected a status baseline');
+      const mutationAbort = new AbortController();
+      const duringWait = watch({ sinceRevision: baseline.snapshot.revision }, { signal: mutationAbort.signal });
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        // Pause must reach the engine even while its status wait is parked.
+        await expect(controller.pause('r1')).resolves.toMatchObject({ state: 'paused' });
+        expect(WorkspaceSyncStatusWatchResultV1Schema.parse(await duringWait))
+          .toMatchObject({ changed: true, snapshot: { statuses: [{ state: 'paused' }] } });
+      } finally { mutationAbort.abort(); }
     } finally {
       await controller.shutdown();
       vi.useRealTimers();
@@ -3330,50 +3442,6 @@ describe('WorkspaceSyncController', () => {
   });
 
 
-  it('fail-closes every state-touching entry point with the exact typed legacy-state code', async () => {
-    for (const code of ['legacy_workspace_sync_state_unsupported', 'legacy_workspace_sync_state_unknown'] as const) {
-      const adapter = completeAdapter();
-      const lifecycle = { start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined) };
-      const controller = new WorkspaceSyncController({
-        adapter, lifecycle, rootOwnershipManager: rootOwnership(), localMachineId: 'm1',
-        resolveWorkspaceRef: (id) => ({ machineId: 'm1', rootPath: `/${id}` }),
-        assertLegacyStateAvailable: () => { throw Object.assign(new Error('legacy workspace sync state'), { code }); },
-      });
-      const expectTyped = (run: Promise<unknown>) => expect(run).rejects.toMatchObject({ code });
-      await expectTyped(controller.get('r1'));
-      await expectTyped(controller.list());
-      await expectTyped(controller.ensure(definition));
-      await expectTyped(controller.copyOnce({
-        v: 1, operationId: 'op-1', controllerMachineId: 'm1', alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b',
-        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
-      }));
-      await expectTyped(controller.flush('r1'));
-      await expectTyped(controller.pause('r1'));
-      await expectTyped(controller.resume('r1'));
-      await expectTyped(controller.terminate('r1'));
-      await expectTyped(controller.listConflicts({ relationshipId: 'r1', limit: 100 }));
-      await expectTyped(controller.readFile({ relationshipId: 'r1', side: 'beta', path: 'src/x.ts', maxBytes: 64 }));
-      await expectTyped(controller.rehydrateFromSettings([definition]));
-      await expectTyped(controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId('r1', 'beta') }));
-      // No engine command, lifecycle start, or target RPC may have run.
-      expect(lifecycle.start).not.toHaveBeenCalled();
-      for (const method of ['rehydrate', 'ensure', 'copyOnce', 'get', 'list', 'flush', 'pause', 'resume', 'terminate', 'listConflicts'] as const) {
-        expect(adapter[method]).not.toHaveBeenCalled();
-      }
-    }
-  });
-
-  it('keeps current behavior when the availability assertion passes', async () => {
-    const ensure = vi.fn(async () => status);
-    const controller = new WorkspaceSyncController({
-      adapter: completeAdapter({ ensure }), lifecycle: lifecycle(), rootOwnershipManager: rootOwnership(),
-      localMachineId: 'm1', resolveWorkspaceRef: (id) => ({ machineId: 'm1', rootPath: `/${id}` }),
-      assertLegacyStateAvailable: () => undefined,
-    });
-    await controller.ensure(definition);
-    expect(ensure).toHaveBeenCalledOnce();
-    await controller.terminate('r1');
-  });
 });
 
 describe('WorkspaceSyncController copy_once restart recovery', () => {
@@ -3558,6 +3626,7 @@ describe('WorkspaceSyncController copy_once restart recovery', () => {
 
 function completeAdapter(overrides: Record<string, unknown> = {}) {
   return {
+    waitForChange: createMutagenChangeWaitBoundary().waitForChange,
     discoverCopyOnceRecoveries: vi.fn(async () => []), rehydrate: vi.fn(async () => [status]), ensure: vi.fn(async () => status), copyOnce: vi.fn(async () => status), get: vi.fn(async () => status),
     list: vi.fn(async () => [status]), flush: vi.fn(async () => status), pause: vi.fn(async () => status),
     resume: vi.fn(async () => status), terminate: vi.fn(async () => undefined),

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProjectNativeIo } from '../projectSetup/projectNativeIo';
-import { produceProjectNativeEnvironment } from './produceProjectNativeEnvironment';
+import { prepareProjectNativeToolchain } from './prepareProjectNativeToolchain';
 
 // Explicit installed-binary opt-in, like B3_NATIVE_MISE_PATH. These tests do
 // not install tools, qualify another OS, or substitute a native CLI fixture.
@@ -66,7 +66,7 @@ function activation(native: Installed, root: string, command: readonly string[])
     }
 }
 async function produce(native: Installed, f: Fixture, signal?: AbortSignal) {
-    return produceProjectNativeEnvironment({ selection: { kind: 'toolchain', tool: native.tool, configPath: native.config },
+    return prepareProjectNativeToolchain({ selection: { kind: 'toolchain', tool: native.tool, configPath: native.config },
         root: f.root, cwd: f.cwd, env: Object.fromEntries(Object.entries(f.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
         platform: process.platform, io: createProjectNativeIo().environmentIo, signal });
 }

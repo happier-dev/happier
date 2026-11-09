@@ -18,7 +18,7 @@ import { isPidAlive } from '@/testkit/process/spawn';
 import { getMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
 import { reviewProjectSetupEffect, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { executeProjectSetup, publishProjectFiniteAdmission } from '@/workspaces/projectSetup/projectSetupExecution';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 
 import { createProjectWorkerAdmission } from './projectWorkerAdmission';
 
@@ -132,7 +132,7 @@ describe.skipIf(process.platform === 'win32')('finite FIFO with real Project pro
             accountId: 'requester', credentials: preparation.requester.credentials,
             serverHttpBaseUrl: preparation.requester.serverHttpBaseUrl, workerAdmission: admission,
             nativeIo: preparation.nativeIo, resolveWorkspaceExecutionConfig: async () => null,
-            environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+            environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
           }; },
         },
       });
@@ -157,7 +157,7 @@ describe.skipIf(process.platform === 'win32')('finite FIFO with real Project pro
               const outcome = await executeProjectSetup({ preparation, requesterAccountId: 'requester', operation,
                 terminalCustody,
                 terminalSessions: installedSessions, platform: process.platform, hostEnvironment: process.env,
-                environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
               });
               return outcome;
             },

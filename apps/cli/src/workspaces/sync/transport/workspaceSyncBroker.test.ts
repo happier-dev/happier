@@ -14,7 +14,6 @@ import { withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import {
   BrokerControlFrameDecoder,
   BrokerProtocolError,
-  createBrokerHelloOkProof,
   createBrokerHelloProof,
   deriveWorkspaceSyncEndpointId,
   encodeBrokerControlFrame,
@@ -976,24 +975,6 @@ describe('workspace sync broker authentication and attach rules', () => {
     socket.destroy();
   });
 
-  it('verifies the expected sidecar pid when configured', async () => {
-    const fixture = await useFixture(await startBroker({ expectedSidecarPid: 424242 }));
-    const socket = await openRawControl(fixture.socketPath);
-    const wire = rawCollector(socket);
-    const hello = {
-      t: 'hello',
-      protocol: 1,
-      brokerInstanceId: fixture.broker.brokerInstanceId,
-      launchNonce: fixture.broker.launchNonce,
-      sidecarPid: process.pid,
-      proof: createBrokerHelloProof(fixture.secret, { protocol: 1, brokerInstanceId: fixture.broker.brokerInstanceId, launchNonce: fixture.broker.launchNonce, sidecarPid: process.pid }),
-    } as const;
-    socket.write(encodeBrokerControlFrame(hello));
-    const reply = await wire.waitFor((frame) => frame.t === 'error' || frame.t === 'hello_ok', 'pid mismatch reply');
-    expect(reply).toMatchObject({ t: 'error', code: 'unauthorized' });
-    socket.destroy();
-  });
-
   it('accepts only one ATTACH_DATA per pending stream and rejects duplicates or stale attaches', async () => {
     const fixture = await useFixture(await startBroker());
     const socket = await openRawControl(fixture.socketPath);
@@ -1223,31 +1204,4 @@ describe('workspace sync broker authentication and attach rules', () => {
     await client.close();
   });
 
-  it('rotates per-launch credentials so a restarted sidecar authenticates with the fresh secret', async () => {
-    const fixture = await useFixture(await startBroker());
-    const original = { launchNonce: fixture.broker.launchNonce };
-    const rotated = fixture.broker.rotateLaunchCredential();
-    expect(rotated.launchNonce).not.toBe(original.launchNonce);
-    expect(rotated.launchSecret.byteLength).toBe(32);
-    expect(rotated.launchSecret.every((byte) => byte === 0)).toBe(false);
-
-    // The stale credential can no longer authenticate; the fresh one can.
-    const staleSocket = await openRawControl(fixture.socketPath);
-    const staleWire = rawCollector(staleSocket);
-    staleSocket.write(encodeBrokerControlFrame({
-      t: 'hello',
-      protocol: 1,
-      brokerInstanceId: fixture.broker.brokerInstanceId,
-      launchNonce: original.launchNonce,
-      sidecarPid: process.pid,
-      proof: createBrokerHelloProof(fixture.secret, { protocol: 1, brokerInstanceId: fixture.broker.brokerInstanceId, launchNonce: original.launchNonce, sidecarPid: process.pid }),
-    }));
-    expect(await staleWire.waitFor((frame) => frame.t === 'error', 'stale credential reply')).toMatchObject({ code: 'unauthorized' });
-    staleSocket.destroy();
-
-    const freshClient = await connectClient(fixture, { launchNonce: rotated.launchNonce, launchSecret: rotated.launchSecret });
-    const okProof = createBrokerHelloOkProof(rotated.launchSecret, { protocol: 1, brokerInstanceId: fixture.broker.brokerInstanceId, launchNonce: rotated.launchNonce, sidecarPid: process.pid });
-    expect(freshClient.lastHelloOkProof).toBe(okProof);
-    await freshClient.close();
-  });
 });

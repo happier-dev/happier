@@ -2,12 +2,58 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   WorkspaceSyncSidecarLifecycle,
+  WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS,
   type SpawnWorkspaceSyncSidecar,
   type WorkspaceSyncSidecarLifecycleDependencies,
   type WorkspaceSyncSidecarProcess,
 } from './workspaceSyncSidecarLifecycle';
 
 describe('WorkspaceSyncSidecarLifecycle', () => {
+  it('settles pending artifact acquisition at the startup deadline and ignores its late result', async () => {
+    vi.useFakeTimers();
+    let releaseArtifact!: () => void;
+    let markAcquiring!: () => void;
+    const acquiring = new Promise<void>(resolve => { markAcquiring = resolve; });
+    const artifact = new Promise<void>(resolve => { releaseArtifact = resolve; });
+    const broker = vi.fn<WorkspaceSyncSidecarLifecycleDependencies['createBroker']>();
+    const spawn = vi.fn<SpawnWorkspaceSyncSidecar>();
+    const states: string[] = [];
+    const lifecycle = new WorkspaceSyncSidecarLifecycle({
+      resolveRuntime: async () => {
+        markAcquiring();
+        await artifact;
+        return { managerPath: '/verified/manager', agentPath: '/verified/agent',
+          dataDir: '/private/data', brokerDir: '/private/broker',
+          manifest: { engineVersion: '1', protocolEpoch: 'external-stream-v1' } };
+      },
+      createBroker: broker, spawn, ensurePrivateDirectory: async () => {},
+      openExternalStream: vi.fn(), randomBytes: () => new Uint8Array(32), randomId: () => 'id',
+      onRestartReady: async () => {}, onReadinessChanged: state => states.push(state.state),
+    });
+    let outcome: unknown = 'pending';
+    const starting = lifecycle.start().then(
+      () => { outcome = 'ready'; }, error => { outcome = error; },
+    );
+    try {
+      await acquiring;
+      await vi.advanceTimersByTimeAsync(WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS);
+      expect(outcome).toMatchObject({ code: 'engine_unavailable' });
+      expect(states).toEqual(['starting', 'unavailable']);
+      await lifecycle.stop();
+      releaseArtifact();
+      await starting;
+      await Promise.resolve();
+      expect(broker).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+      expect(lifecycle.readProcessRoots()).toEqual([]);
+    } finally {
+      releaseArtifact();
+      await starting;
+      await lifecycle.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('stops the exact pending-authentication root without publishing readiness or restarting it', async () => {
     let finishReadiness!: () => void;
     const readiness = new Promise<void>((resolve) => { finishReadiness = resolve; });

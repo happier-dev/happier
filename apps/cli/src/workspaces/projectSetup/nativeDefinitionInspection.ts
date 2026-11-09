@@ -1,8 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
-import type { ProjectDefinitionDetectionV1, ProjectEnvironmentSelectionV1, ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import type { ProjectDefinitionDetectionV1, ProjectToolchainSelectionV1, ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { collectNativePackageDirectories, isNativeDefinitionRecord, parseNativePackage } from './nativePackageScripts';
 import { readProjectDefinitionFile, type ProjectDefinitionFileRead } from './nativeDefinitionFiles';
+import { parseNativeComposeSource } from './nativeComposeSource';
 
 
 export const NATIVE_PROJECT_DEFINITION_FILES = [
@@ -40,7 +41,7 @@ export async function inspectProjectDefinitionFacts(root: string, files: readonl
 }
 
 async function inspectDefinitionReads(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer'; read: ProjectDefinitionFileRead }>[]): Promise<ProjectDefinitionDetectionV1> {
-    const detection: ProjectDefinitionDetectionV1 = { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+    const detection: ProjectDefinitionDetectionV1 = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
     const formatNames = { package_script: 'package.json', mise: 'mise.toml', make: 'Makefile', just: 'justfile', taskfile: 'Taskfile.yml', turbo: 'turbo.json', compose: 'compose.yml', procfile: 'Procfile', devbox: 'devbox.json', devenv: 'devenv.nix', flox: '.flox/env/manifest.toml', nix_flake: 'flake.nix', devcontainer: 'devcontainer.json' } as const;
     const diagnostic = (file: string, code: string) => {
         detection.coverage = 'partial';
@@ -49,8 +50,8 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
     const add = (file: string, tool: NativeTool, target: string, usage: 'script' | 'service' = 'script') => {
         if (literalName(target)) detection.entries.push({ source: { kind: 'native', tool, file, target }, usage });
     };
-    const environment = (file: string, tool: Extract<ProjectEnvironmentSelectionV1, { kind: 'toolchain' }>['tool']) => {
-        detection.environments.push({ kind: 'toolchain', tool, configPath: file });
+    const toolchain = (file: string, tool: Extract<ProjectToolchainSelectionV1, { kind: 'toolchain' }>['tool']) => {
+        detection.toolchains.push({ kind: 'toolchain', tool, configPath: file });
     };
     const named = (file: string, tool: NativeTool, value: unknown, usage: 'script' | 'service' = 'script') => {
         if (value === undefined) return;
@@ -76,7 +77,7 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
                 const value: unknown = (await import('smol-toml')).parse(content);
                 if (!isNativeDefinitionRecord(value)) throw new Error('invalid_definition');
                 named(file, 'mise', value.tasks);
-                environment(file, 'mise');
+                toolchain(file, 'mise');
                 if (isNativeDefinitionRecord(value.tools)) for (const [tool, selection] of Object.entries(value.tools)) {
                     const versions = Array.isArray(selection) ? selection : [selection];
                     for (const version of versions) {
@@ -103,8 +104,9 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
                     if (match) add(file, 'just', match[1]);
                 }
             } else if (/^Taskfile\.(?:dist\.)?ya?ml$/.test(format) || /^(?:docker-)?compose\.ya?ml$/.test(format)) {
-                const yaml = await import('yaml');
-                const value: unknown = { ...yaml.default, ...yaml }.parse(content);
+                const value: unknown = format.startsWith('Taskfile')
+                    ? await (async () => { const yaml = await import('yaml'); return { ...yaml.default, ...yaml }.parse(content); })()
+                    : await parseNativeComposeSource(content);
                 if (!isNativeDefinitionRecord(value)) throw new Error('invalid_definition');
                 if (format.startsWith('Taskfile')) {
                     named(file, 'taskfile', value.tasks);
@@ -129,19 +131,19 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
                     named(file, 'turbo', value.tasks ?? value.pipeline);
                     if (value.extends !== undefined) diagnostic(file, 'unresolved_include');
                 } else if (format === 'devbox.json') {
-                    environment(file, 'devbox');
+                    toolchain(file, 'devbox');
                     if (isNativeDefinitionRecord(value.shell)) named(file, 'devbox', value.shell.scripts);
                     if (value.include !== undefined) diagnostic(file, 'unresolved_include');
                 } else detection.devcontainers.push({ configPath: file });
             } else if (format === '.flox/env/manifest.toml') {
                 const value: unknown = (await import('smol-toml')).parse(content);
                 if (!isNativeDefinitionRecord(value)) throw new Error('invalid_definition');
-                environment(file, 'flox');
+                toolchain(file, 'flox');
                 named(file, 'flox', value.services, 'service');
                 named(file, 'flox', value.build);
                 if (value.include !== undefined) diagnostic(file, 'unresolved_include');
             } else if (format === 'devenv.nix' || format === 'flake.nix') {
-                environment(file, format === 'flake.nix' ? 'nix_flake' : 'devenv');
+                toolchain(file, format === 'flake.nix' ? 'nix_flake' : 'devenv');
                 if (format === 'devenv.nix') for (const target of staticDevenvScriptNames(content)) add(file, 'devenv', target);
                 diagnostic(file, 'unevaluated_nix');
             }

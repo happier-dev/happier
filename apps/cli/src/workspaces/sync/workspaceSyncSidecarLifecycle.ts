@@ -320,8 +320,18 @@ export class WorkspaceSyncSidecarLifecycle {
     this.publishReadiness({ state: 'starting' });
     let broker: WorkspaceSyncSidecarBroker | null = null;
     let process: WorkspaceSyncSidecarProcess | null = null;
+    let startupTimer: ReturnType<typeof setTimeout> | undefined;
+    const startupDeadline = new Promise<never>((_resolve, reject) => {
+      startupTimer = setTimeout(
+        () => reject(new Error('sidecar startup deadline exceeded')),
+        this.dependencies.startupDeadlineMs ?? WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS,
+      );
+      startupTimer.unref();
+    });
+    // Directory and broker preparation can be awaiting when the shared deadline fires.
+    void startupDeadline.catch(() => undefined);
     try {
-      const runtime = await this.dependencies.resolveRuntime();
+      const runtime = await Promise.race([this.dependencies.resolveRuntime(), startupDeadline]);
       this.assertNotStopping();
       await this.dependencies.ensurePrivateDirectory(runtime.dataDir);
       this.assertNotStopping();
@@ -337,50 +347,35 @@ export class WorkspaceSyncSidecarLifecycle {
         openExternalStream: this.dependencies.openExternalStream,
       });
       this.assertNotStopping();
-      const startupDeadlineMs = this.dependencies.startupDeadlineMs
-        ?? WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS;
-      let startupTimer: ReturnType<typeof setTimeout> | undefined;
-      const startupDeadline = new Promise<never>((_resolve, reject) => {
-        startupTimer = setTimeout(
-          () => reject(new Error('sidecar startup deadline exceeded')),
-          startupDeadlineMs,
-        );
-        startupTimer.unref();
+      const spawn = this.dependencies.spawn({
+        executablePath: runtime.managerPath,
+        args: ['--daemon', '--data-directory', runtime.dataDir, '--broker-descriptor', '3'],
+        inheritedBrokerDescriptor: broker.bootstrapDescriptor,
+        onSpawned: (pid) => broker?.setExpectedSidecarPid?.(pid),
       });
-      let termination!: Promise<TerminationEvent>;
       try {
-        const spawn = this.dependencies.spawn({
-          executablePath: runtime.managerPath,
-          args: ['--daemon', '--data-directory', runtime.dataDir, '--broker-descriptor', '3'],
-          inheritedBrokerDescriptor: broker.bootstrapDescriptor,
-          onSpawned: (pid) => broker?.setExpectedSidecarPid?.(pid),
-        });
-        try {
-          process = await Promise.race([spawn, startupDeadline]);
-        } catch (error) {
-          this.retainLateSpawn(spawn);
-          throw error;
-        }
-        this.assertNotStopping();
-        // Custody begins at spawn, not authentication. Processes must be able to
-        // request this supervisor's stop while the broker handshake is awaiting.
-        this.activeBroker = broker;
-        this.activeProcess = process;
-        termination = process.waitForTermination();
-        const startup = (async () => {
-          await broker.waitForReady(process.pid);
-          await broker.command({ t: 'list', requestId: this.dependencies.randomId(), limit: 100 });
-        })();
-        await Promise.race([
-          startup,
-          termination.then((event) => {
-            throw new Error(`sidecar terminated before readiness: ${JSON.stringify(event)}`);
-          }),
-          startupDeadline,
-        ]);
-      } finally {
-        if (startupTimer !== undefined) clearTimeout(startupTimer);
+        process = await Promise.race([spawn, startupDeadline]);
+      } catch (error) {
+        this.retainLateSpawn(spawn);
+        throw error;
       }
+      this.assertNotStopping();
+      // Custody begins at spawn, not authentication. Processes must be able to
+      // request this supervisor's stop while the broker handshake is awaiting.
+      this.activeBroker = broker;
+      this.activeProcess = process;
+      const termination = process.waitForTermination();
+      const startup = (async () => {
+        await broker.waitForReady(process.pid);
+        await broker.command({ t: 'list', requestId: this.dependencies.randomId(), limit: 100 });
+      })();
+      await Promise.race([
+        startup,
+        termination.then((event) => {
+          throw new Error(`sidecar terminated before readiness: ${JSON.stringify(event)}`);
+        }),
+        startupDeadline,
+      ]);
       this.assertNotStopping();
       this.authenticated = true;
       this.currentAuthenticatedReadiness?.resolve();
@@ -422,6 +417,8 @@ export class WorkspaceSyncSidecarLifecycle {
       this.currentReadiness = null;
       this.currentAuthenticatedReadiness = null;
       throw unavailable;
+    } finally {
+      if (startupTimer !== undefined) clearTimeout(startupTimer);
     }
   }
 

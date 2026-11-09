@@ -144,6 +144,58 @@ function request(overrides: Readonly<{
 }
 
 describe('createWorkspaceSyncRelationshipForProject', () => {
+  it('explicitly replaces immutable mode while preserving the endpoint refs and attached folder intent', async () => {
+    const h = createHarness();
+    const initial = await createWorkspaceSyncRelationshipForProject(h.dependencies, request());
+    const refs = h.readRefs();
+    const replacement = request({ operationId: 'replace_1', mode: 'keep_synced' });
+    const result = await createWorkspaceSyncRelationshipForProject(h.dependencies, {
+      ...replacement, actionInput: { ...replacement.actionInput, replaceRelationshipId: initial.relationshipId },
+    });
+    expect(result.relationshipId).toBe('relationship_replace_1');
+    expect(h.readRelationships()).toMatchObject([{ relationshipId: result.relationshipId, mode: 'keep_synced' }]);
+    expect(h.readRelationships()).toHaveLength(1);
+    expect(h.readRefs()).toEqual(refs);
+    expect(h.ensurePreparations.at(-1)).toMatchObject({ targetBootstrap: 'use_existing' });
+    const replay = await createWorkspaceSyncRelationshipForProject(h.dependencies, {
+      ...replacement, actionInput: { ...replacement.actionInput, replaceRelationshipId: initial.relationshipId },
+    });
+    expect(replay).toMatchObject({ relationshipId: result.relationshipId, created: false });
+  });
+
+  it('refuses replacement aimed at another endpoint before retiring the selected link', async () => {
+    const h = createHarness();
+    const initial = await createWorkspaceSyncRelationshipForProject(h.dependencies, request());
+    const replacement = request({ operationId: 'replace_wrong_target', mode: 'keep_synced' });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies, {
+      ...replacement, actionInput: { ...replacement.actionInput, targetPath: '/different', replaceRelationshipId: initial.relationshipId },
+    })).rejects.toMatchObject({ code: 'relationship_definition_conflict' });
+    expect(h.readRelationships()).toMatchObject([{ relationshipId: initial.relationshipId, mode: 'keep_both_in_sync' }]);
+    expect(h.readRelationships()).toHaveLength(1);
+  });
+  it('refuses replacement that reuses the selected link identity', async () => {
+    const h = createHarness();
+    const initial = await createWorkspaceSyncRelationshipForProject(h.dependencies, request());
+    const replacement = request({ mode: 'keep_synced' });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies, {
+      ...replacement, actionInput: { ...replacement.actionInput, replaceRelationshipId: initial.relationshipId },
+    })).rejects.toMatchObject({ code: 'relationship_definition_conflict' });
+    expect(h.readRelationships()).toMatchObject([{ relationshipId: initial.relationshipId, mode: 'keep_both_in_sync' }]);
+    expect(h.terminateRelationshipRuntime).not.toHaveBeenCalled();
+  });
+  it('keeps the selected worker link when its target no longer belongs to the source Project', async () => {
+    const previous: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'worker', controllerMachineId: 'machine_source',
+      alphaWorkspaceRefId: 'source_ref', betaWorkspaceRefId: 'target_ref', mode: 'keep_synced', contentPolicy: policy,
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'target_ref' },
+      committedAtMs: 1, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+    const h = createHarness({ existingRelationships: [previous] });
+    const raw = request({ operationId: 'replace_worker', mode: 'keep_synced' });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies, {
+      ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy', replaceRelationshipId: previous.relationshipId },
+    })).rejects.toMatchObject({ code: 'project_workspace_changed' });
+    expect(h.readRelationships()).toEqual([previous]);
+    expect(h.terminateRelationshipRuntime).not.toHaveBeenCalled();
+  });
   it('observes an interrupted admission without preparing another copy and distinguishes committed, absent and offline targets', async () => {
     const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
     const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' as const } };

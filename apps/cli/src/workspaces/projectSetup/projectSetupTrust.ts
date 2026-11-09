@@ -1,4 +1,5 @@
-import axios, { type AxiosResponse } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosResponse } from 'axios';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { randomBytes } from 'node:crypto';
 import {

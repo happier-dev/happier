@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceRefV1, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 
 import { prepareWorkspaceSyncBetween, resolveWorkspaceSyncWorkerTarget, assertWorkspaceSyncWorkerTargetCurrent,
   resolveWorkspaceSyncRelationshipDependencyMachines } from './workspaceSyncPreparation';
@@ -29,7 +30,20 @@ const status = (id: string): WorkspaceSyncStatusV1 => ({
 });
 
 describe('prepareWorkspaceSyncBetween', () => {
-  it('consumes the admitted initial route once and still refreshes before every flush', async () => {
+  it.each([
+    { cause: createRpcCallError({ error: 'Recovery refused', errorCode: 'agent_isolation_unavailable' }), code: 'agent_isolation_unavailable' },
+    { cause: Object.assign(new Error('Root changed'), { code: 'root_changed' }), code: 'root_changed' },
+    { cause: new Error('Unclassified transport failure'), code: 'workspace_sync_prepare_failed' },
+  ])('preserves the flush failure code $code at the route preparation boundary', async ({ cause, code }) => {
+    const initial = { workspaceRefs: refs, relationships: [relationship('ab', 'a', 'b')] };
+    await expect(prepareWorkspaceSyncBetween({ serverId: 's', sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'b', initial,
+      readCurrent: async () => initial,
+      // The flush port can fail on the remote recovery transport before producing a native status.
+      flush: async () => { throw cause; },
+    })).resolves.toEqual({ ok: false, errorCode: code, completed: [], blockedRelationshipId: 'ab' });
+  });
+
+  it('consumes the admitted initial route without another authority read', async () => {
     const initial = { workspaceRefs: refs, relationships: [relationship('ab', 'a', 'b')] };
     let reads = 0;
     const flushed: string[] = [];
@@ -37,13 +51,13 @@ describe('prepareWorkspaceSyncBetween', () => {
       readCurrent: async () => { reads += 1; return initial; },
       flush: async (id: string) => { flushed.push(id); return status(id); } };
     await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: true });
-    expect.soft(reads).toBe(1);
+    expect.soft(reads).toBe(0);
     expect(flushed).toEqual(['ab']);
-    // The supplied route is never permission to skip the final fresh boundary.
+    // Withdrawal belongs to the next admission, not an already admitted effect.
     await expect(prepareWorkspaceSyncBetween({ ...input,
       readCurrent: async () => ({ ...initial, relationships: [] }),
-    })).resolves.toMatchObject({ ok: false, errorCode: 'relationship_changed' });
-    expect(flushed).toEqual(['ab']);
+    })).resolves.toMatchObject({ ok: true });
+    expect(flushed).toEqual(['ab', 'ab']);
   });
 
   it('requires an admitted worker copy, ignores ordinary linked roots and retains copy custody at dequeue', () => {
@@ -231,16 +245,23 @@ describe('prepareWorkspaceSyncBetween', () => {
     expect(flush).toHaveBeenCalledTimes(2);
   });
 
-  it('stops when a traversed definition changes between links', async () => {
+  it('finishes the admitted two-link route after withdrawal and refuses the next admission', async () => {
     const relationships = [relationship('ca', 'a', 'c'), relationship('ab', 'a', 'b', 'keep_synced')];
-    let reads = 0;
-    const flush = vi.fn(async (id: string) => status(id));
-    const result = await prepareWorkspaceSyncBetween({
+    let current = relationships;
+    const flushed: string[] = [];
+    const input = {
       sourceWorkspaceRefId: 'c', targetWorkspaceRefId: 'b',
-      readCurrent: async () => ({ workspaceRefs: refs, relationships: ++reads < 3 ? relationships : [{ ...relationships[0]!, enabled: false }, relationships[1]!] }),
-      flush,
-    });
-    expect(result).toMatchObject({ ok: false, errorCode: 'relationship_changed', completed: [{ relationshipId: 'ca' }], blockedRelationshipId: 'ab' });
-    expect(flush).toHaveBeenCalledTimes(1);
+      readCurrent: async () => ({ workspaceRefs: refs, relationships: current }),
+      flush: async (id: string) => {
+        flushed.push(id);
+        current = [{ ...relationships[0]!, enabled: false }, relationships[1]!];
+        return status(id);
+      },
+    };
+    await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: true,
+      traversed: [{ relationshipId: 'ca' }, { relationshipId: 'ab' }] });
+    expect(flushed).toEqual(['ca', 'ab']);
+    await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: false });
+    expect(flushed).toEqual(['ca', 'ab']);
   });
 });

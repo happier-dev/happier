@@ -58,7 +58,6 @@ describe('workspace sync seed transfer', () => {
             previousTargetName: null,
             originalTargetIdentity: null,
             promotedTargetIdentity: null,
-            expectedBackupIdentity: null,
           },
           bindPromotedTarget: async () => undefined,
           commit: async () => undefined,

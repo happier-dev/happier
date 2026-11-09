@@ -1,9 +1,16 @@
-import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { ProjectToolchainSelectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { basename, dirname, resolve } from 'node:path';
 import { findBuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
+
+type PluginToolchainReady = Extract<Awaited<ReturnType<ProjectNativeAdapterProductionV1['prepareToolchain']>>, { kind: 'ready' }>;
+export type ProjectNativePluginAdapterInput = Readonly<{
+  lease: Pick<ProjectNativeAdapterProductionV1, 'prepareToolchain' | 'isCurrent'>;
+  files: Parameters<ProjectNativeAdapterProductionV1['prepareToolchain']>[0]['files'];
+  launch?: Readonly<{ command: string; args: readonly string[] }>;
+}>;
 
 export type ProjectNativeToolchainIo = Readonly<{
   /** Incumbent managedDependencies/systemTools resolution; never installs. */
@@ -17,18 +24,11 @@ export type ProjectNativeToolchainIo = Readonly<{
   }>) => Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string }>>;
 }>;
 
-type PluginToolchainReady = Extract<Awaited<ReturnType<ProjectNativeAdapterProductionV1['prepareToolchain']>>, { kind: 'ready' }>;
-
-export type ProjectNativePluginAdapterInput = Readonly<{
-  lease: Pick<ProjectNativeAdapterProductionV1, 'prepareToolchain' | 'isCurrent'>;
-  files: Parameters<ProjectNativeAdapterProductionV1['prepareToolchain']>[0]['files'];
-  launch?: Readonly<{ command: string; args: readonly string[] }>;
-}>;
-
 export type ProjectNativeToolchainResult =
   | Readonly<{ status: 'ready'; env: Readonly<Record<string, string>>; nativeLaunch?: NonNullable<PluginToolchainReady['launch']>; reviewInputs?: PluginToolchainReady['reviewInputs'] }>
   | Readonly<{ status: 'refused'; kind: 'unavailable' | 'unsupported' | 'native_failed' | 'cancelled'; code: string }>;
 
+/** Not a settled refusal: callers must retain the accepted process custody. */
 export class ProjectNativeToolchainUncertainError extends Error {
   readonly kind = 'outcome_uncertain';
   readonly code = 'native_toolchain_termination_incomplete';
@@ -68,6 +68,7 @@ export type ProjectNativeToolchainInput = Readonly<{
   pluginAdapter?: ProjectNativePluginAdapterInput;
 }>;
 
+/** Host-internal effect production, called only after current Project effect admission. */
 export async function prepareProjectNativeToolchain(input: ProjectNativeToolchainInput): Promise<ProjectNativeToolchainResult> {
   const cancelled = (): ProjectNativeToolchainResult => ({ status: 'refused', kind: 'cancelled', code: 'native_toolchain_cancelled' });
   if (input.signal?.aborted) return cancelled();

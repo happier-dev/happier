@@ -396,7 +396,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       if ('error' in settled) throw settled.error;
       if ('admitted' in settled.value) {
         const admitted = settled.value.admitted;
-        if (admitted.child) facts.push({ serverId: input.serverId, machineId,
+        if (admitted?.child) facts.push({ serverId: input.serverId, machineId,
           installationId: admitted.source.installationId, projection: admitted.child.projection,
           controller: { ...admitted.child.controller, available: true }, admittedRelationshipId: admitted.relationshipId });
         continue;

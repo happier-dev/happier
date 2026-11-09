@@ -49,7 +49,6 @@ export interface WorkspaceSyncBrokerConfig {
   brokerInstanceId?: string;
   launchNonce?: string;
   launchSecret: Uint8Array;
-  expectedSidecarPid?: number;
   maxStreams?: number;
   /** Test/composition override; production is capped by the protocol constant. */
   maxPreauthenticatedControls?: number;
@@ -219,8 +218,8 @@ export class WorkspaceSyncBroker {
   readonly socketPath: string;
   readonly whenReady: Promise<void>;
 
-  private launchNonceValue: string;
-  private launchSecret: Buffer;
+  private readonly launchNonceValue: string;
+  private readonly launchSecret: Buffer;
   private readonly server: Server;
   private readonly endpoint: WorkspaceSyncBrokerEndpoint;
   private readonly config: WorkspaceSyncBrokerConfig & {
@@ -231,7 +230,6 @@ export class WorkspaceSyncBroker {
   };
   private readonly pending = new Map<string, PendingStream>();
   private readonly attachRequestIds = new Map<string, string>();
-  private readonly activeRequestIds = new Set<string>();
   private readonly commands = new Map<string, PendingCommand>();
   private readonly controlSockets = new Set<Socket>();
   private readonly preauthenticatedControls = new Set<Socket>();
@@ -281,9 +279,6 @@ export class WorkspaceSyncBroker {
 
   static async listen(config: WorkspaceSyncBrokerConfig): Promise<WorkspaceSyncBroker> {
     if (!config.socketPath || config.launchSecret.byteLength !== 32) throw new Error('invalid broker configuration');
-    if (config.expectedSidecarPid !== undefined && (!Number.isSafeInteger(config.expectedSidecarPid) || config.expectedSidecarPid < 1)) {
-      throw new Error('invalid expected sidecar pid');
-    }
     if (process.platform !== 'win32') {
       await mkdir(dirname(config.socketPath), { recursive: true, mode: 0o700 });
       await chmod(dirname(config.socketPath), 0o700);
@@ -313,19 +308,6 @@ export class WorkspaceSyncBroker {
       throw new AggregateError([error, ...cleanupFailures], 'workspace sync broker listener setup failed');
     }
     return broker;
-  }
-
-  rotateLaunchCredential(): Readonly<{ launchNonce: string; launchSecret: Buffer }> {
-    this.launchNonceValue = randomUUID();
-    this.launchSecret.fill(0);
-    this.launchSecret = randomBytes(32);
-    const staleControl = this.authenticatedControl;
-    this.authenticatedControl = undefined;
-    this.authenticatedSidecarPidValue = undefined;
-    this.failCommands(new BrokerProtocolError('indeterminate', 'sidecar command outcome is unknown after launch credential rotation'));
-    for (const stream of [...this.pending.values()]) void this.closePending(stream);
-    staleControl?.destroy();
-    return { launchNonce: this.launchNonceValue, launchSecret: Buffer.from(this.launchSecret) };
   }
 
   hasInFlightCommands(): boolean { return this.commands.size > 0; }
@@ -492,7 +474,6 @@ export class WorkspaceSyncBroker {
               || this.authenticatedControl !== undefined
               || message.brokerInstanceId !== this.brokerInstanceId
               || message.launchNonce !== this.launchNonceValue
-              || this.config.expectedSidecarPid !== undefined && message.sidecarPid !== this.config.expectedSidecarPid
               || !await this.validatePeer('control', socket, message.sidecarPid)
               || !verifyBrokerProof(createBrokerHelloProof(this.launchSecret, message), message.proof)) {
               this.sendError(socket, undefined, 'unauthorized', 'hello authentication failed');
@@ -553,7 +534,7 @@ export class WorkspaceSyncBroker {
     if (this.pending.size >= this.config.maxStreams) {
       this.sendError(socket, message.requestId, 'stream_limit', 'stream limit reached'); return;
     }
-    if (this.activeRequestIds.has(message.requestId)) {
+    if (this.pending.has(message.requestId)) {
       this.sendError(socket, message.requestId, 'protocol_error', 'duplicate request id'); return;
     }
     if (message.expiresAtMs <= now || message.expiresAtMs > now + OPEN_REMOTE_DEADLINE_MS) {
@@ -562,7 +543,6 @@ export class WorkspaceSyncBroker {
     if (!/^ws1_[a-z2-7]{32}$/u.test(message.endpointId)) {
       this.sendError(socket, message.requestId, 'relationship_not_owned', 'unknown opaque endpoint'); return;
     }
-    this.activeRequestIds.add(message.requestId);
     let resolveDataReady!: (accepted: boolean) => void;
     const dataReady = new Promise<boolean>((resolve) => { resolveDataReady = resolve; });
     let resolveSetupDone!: () => void;
@@ -803,7 +783,6 @@ export class WorkspaceSyncBroker {
     }
     this.pending.delete(stream.requestId);
     this.attachRequestIds.delete(stream.streamId);
-    this.activeRequestIds.delete(stream.requestId);
   }
 
   private async finishPendingCleanup(stream: PendingStream): Promise<void> {

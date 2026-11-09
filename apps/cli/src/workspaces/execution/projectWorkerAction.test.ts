@@ -23,6 +23,10 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -361,7 +365,7 @@ describe('exact target worker status Action', () => {
     }
   });
 
-  it.each(['retired', 'confirmed', 'lost_ack'] as const)('emits registered retirement or truthful unknown settlement through the real graph owner (%s)', async settlement => {
+  it.each(['retired', 'confirmed', 'lost_ack', 'native_rpc', 'native_rpc_unknown', 'dependent_work'] as const)('emits registered retirement or truthful unknown settlement through the real graph owner (%s)', async settlement => {
     const credentials = { token: `worker-owner-token-${settlement}`, encryption: null, credentialProvenance: 'stored_session' as const };
     const ref = { id: 'worker-copy', serverId: 'home', machineId: 'target', rootPath: '/worker-copy', createdAtMs: 1 };
     const source = { ...ref, id: 'source', machineId: 'controller', rootPath: '/source' };
@@ -392,7 +396,7 @@ describe('exact target worker status Action', () => {
     let graphRetired = false;
     const readDemands: unknown[] = [];
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
-      if (graphRetired && settlement !== 'retired') return { status: 503, data: { status: 'unavailable' } };
+      if (graphRetired && (settlement === 'confirmed' || settlement === 'lost_ack')) return { status: 503, data: { status: 'unavailable' } };
       if (url.endsWith('/list') || url.endsWith('/read')) {
         const response = projectAccountRowsReadHttpResponse(networkRows, url, raw);
         readDemands.push(raw);
@@ -408,8 +412,19 @@ describe('exact target worker status Action', () => {
       return { status: 200, data: ProjectAccountRowMutationResponseV1Schema.parse({ status: 'updated', cursor: 1, rows: changed }) };
     });
     const admission = createProjectWorkerAdmission({ machineId: 'controller', admissionDrain: createDaemonAdmissionDrain(),
-      readPolicy: async () => ({ status: 'unavailable' }) });
+      readPolicy: async () => settlement === 'dependent_work'
+        ? { status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'stored', metadataVersion: 1 }
+        : { status: 'unavailable' },
+      readMemory: () => ({ totalBytes: 100, availableBytes: 0 }) });
     const unused = async (): Promise<never> => { throw new Error('Retirement must not launch or bootstrap'); };
+    const recoveryCause = projectActionFailureCauseV1(new TypeError('Remote recovery failed'), 'rpc.handler');
+    const nativeRpcCode = settlement === 'native_rpc_unknown' ? 'project_account_row_outcome_unknown' : 'agent_isolation_unavailable';
+    // The remote daemon is the boundary; its codec, exception envelope and receiver remain real.
+    const reconciliationRpc = createEncryptedRpcTestClient({ scopePrefix: 'target', registerHandlers(manager) {
+      manager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH, async () => {
+        throw new RpcError(nativeRpcCode, nativeRpcCode, recoveryCause);
+      });
+    } });
     const owner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'controller',
       mutateProjectSnapshot: createProjectAccountSnapshotMutation(credentials),
       readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home',
@@ -418,7 +433,13 @@ describe('exact target worker status Action', () => {
       ensureRelationship: unused, flushRelationship: unused, commitRelationshipTarget: unused,
       // The external Sync process has no running handle in this fixture.
       terminateRelationshipRuntime: async () => {},
-      waitForProjectReconciliation: async () => { await readProjectAccountRows({ credentials, serverId: 'home',
+      waitForProjectReconciliation: async () => {
+        if (settlement === 'native_rpc' || settlement === 'native_rpc_unknown') {
+          readMachineActionRpcResult(await reconciliationRpc.call(RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH,
+            { relationshipId: relationship.relationshipId }));
+          return;
+        }
+        await readProjectAccountRows({ credentials, serverId: 'home',
         selection: { kinds: ['workspace-ref', 'relationship-graph'] } }); } });
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: 'https://home.invalid', machineId: 'controller',
       pluginActionExecutionOwner: 'current_process', projectWorkerAction: createProjectWorkerAction({
@@ -431,10 +452,37 @@ describe('exact target worker status Action', () => {
       presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } });
     expect(result).toMatchObject({ ok: false, errorCode: 'workspace_unavailable' });
     expect(writes).toBe(0);
+    const queuedAbort = new AbortController();
+    let completion: Promise<unknown> | undefined;
+    if (settlement === 'dependent_work') {
+      let accepted!: () => void;
+      const acceptance = new Promise<void>(resolve => { accepted = resolve; });
+      completion = admission.execute({ operationId: 'retirement-dependent-work', workspaceRefId: ref.id,
+        memoryDemand: { bytes: 10, basis: { kind: 'declared' } }, signal: queuedAbort.signal, accept: accepted,
+        run: unused });
+      await acceptance;
+    }
     const settledDefinition = await executor.execute('projects.worker.copy.retire', {
       workspace: { serverId: 'home', refId: ref.id }, machineId: 'controller', expectedRelationship: relationship,
     }, { surface: 'cli', authority: 'present_user', serverId: 'home',
-      presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } });
+      presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } }).finally(async () => {
+        queuedAbort.abort();
+        await completion;
+      });
+    if (settlement === 'dependent_work') {
+      expect(graphRetired).toBe(false);
+      expect(writes).toBe(0);
+      expect(settledDefinition).toMatchObject({ ok: false, errorCode: 'workspace_sync_relationship_in_use',
+        details: { dependencies: [{ operationId: 'retirement-dependent-work', state: 'queued' }] } });
+      return;
+    }
+    if (settlement === 'native_rpc' || settlement === 'native_rpc_unknown') {
+      expect(graphRetired).toBe(true);
+      expect(writes).toBe(1);
+      expect(settledDefinition).toMatchObject({ ok: false, errorCode: nativeRpcCode,
+        failureCause: recoveryCause, details: { kind: 'outcomeUnknown' } });
+      return;
+    }
     expect(graphRetired).toBe(true);
     expect(writes).toBe(1);
     if (settlement === 'retired') {

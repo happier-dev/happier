@@ -30,7 +30,7 @@ export function createProjectWorkspaceRetirement(input: Readonly<{
   } };
   async function read() {
     await input.assertCurrentAuthority();
-    const snapshot = await readProjectAccountRows(authority);
+    const snapshot = await readProjectAccountRows({ ...authority, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
     await input.assertCurrentAuthority();
     return snapshot;
   }

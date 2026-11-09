@@ -7,6 +7,7 @@ import { deriveWorkspaceSyncConflictAsidePaths } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeWorkspaceSyncPolicyDigest } from './workspaceSyncTypes';
 import { WorkspaceSyncController } from './workspaceSyncController';
+import { createMutagenChangeWaitBoundary } from './transport/workspaceSyncBrokerClient.testkit';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 
 const LINUX_ONLY = process.platform !== 'linux';
@@ -34,6 +35,7 @@ const statusAC = { ...statusAB, relationshipId: 'rel-ac', betaPath: '/repo/c', c
 
 function completeAdapter(overrides: Record<string, unknown> = {}) {
   return {
+    waitForChange: createMutagenChangeWaitBoundary().waitForChange,
     discoverCopyOnceRecoveries: vi.fn(async () => []),
     rehydrate: vi.fn(async () => [statusAB]),
     ensure: vi.fn(async () => statusAB),

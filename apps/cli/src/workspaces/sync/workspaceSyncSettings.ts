@@ -34,7 +34,3 @@ export function validateWorkspaceSyncRelationships(value: unknown): readonly Wor
 export function parseWorkspaceSyncRelationships(value: unknown): readonly WorkspaceSyncRelationshipV1[] {
   return validateWorkspaceSyncRelationships(value ?? []);
 }
-
-export function serializeWorkspaceSyncRelationships(value: readonly WorkspaceSyncRelationshipV1[]): string {
-  return JSON.stringify(validateWorkspaceSyncRelationships(value));
-}
