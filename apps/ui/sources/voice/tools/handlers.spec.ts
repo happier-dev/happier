@@ -2342,6 +2342,19 @@ describe('voice tool handlers', () => {
     expect(pendingEnqueue.mock.calls.every(([request]) => request.sessionId === 's2')).toBe(true);
   });
 
+  it.each([
+    { complete: true, errorCode: 'session_not_found' },
+    { complete: false, errorCode: 'session_lookup_incomplete' },
+  ])('preserves Session lookup refusal before send admission ($errorCode)', async ({ complete, errorCode }) => {
+    retainVoiceSessionReferenceCorpus({ addresses: [{ serverId: homeA, sessionId: 's1' }], complete });
+    const tools = createVoiceToolHandlers({ currentServerId: homeA,
+      resolveSessionId: explicit => explicit ?? 's1' });
+    const result = JSON.parse(await tools.sendSessionMessage({ sessionId: 'cmw8g2fvf002nmcyaoup36tyj',
+      message: 'Reply CEDAR.', reply: 'none' }));
+    expect(result).toMatchObject({ ok: false, errorCode });
+    expect(pendingEnqueue).not.toHaveBeenCalled();
+  });
+
   it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');

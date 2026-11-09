@@ -74,7 +74,7 @@ import {
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
 import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
-import { resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
+import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -1179,8 +1179,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // Machine preparation consumes that exact Home, just as Session delivery does.
       const demand = request.machineRuntimeDemand;
       const targetSessionId = demand?.target.kind === 'session' ? demand.target.sessionId : undefined;
-      const serverId = demand?.serverId ?? (targetSessionId
+      let serverId = demand?.serverId ?? (targetSessionId
         ? resolveServerIdForSession(deps, request.context, targetSessionId) : request.context.serverId);
+      if (!serverId && targetSessionId && deps.resolveSessionReference) {
+        // A bare id without a known Home has not selected an Account. Resolve
+        // it through the incumbent corpus before Machine preparation, preserving
+        // unknown/ambiguous/incomplete targets instead of blaming admission.
+        const resolved = await deps.resolveSessionReference({ sessionId: targetSessionId,
+          context: request.context, actionId: request.actionId, signal: request.context.signal });
+        if (resolved.kind !== 'unique') return projectSessionReferenceFailure(resolved);
+        serverId = resolved.address.serverId;
+      }
       const ownedAccount = !accountContext && demand && serverId
         ? await captureLazyActionAccountContext(serverId, request.context.signal) : undefined;
       const account = accountContext ?? ownedAccount;

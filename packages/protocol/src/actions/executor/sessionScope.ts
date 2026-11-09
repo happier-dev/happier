@@ -1,4 +1,4 @@
-import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionMachineRuntimeDemandV1, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
+import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps, ActionMachineRuntimeDemandV1, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
 import { normalizeId } from './inputReading.js';
 import { readRecord, hasOwn } from '../../inputs/inputRecords.js';
 import { readWidgetDefinitionActionSessionV1 } from '../../widgets/definitionActionsV1.js';
@@ -51,7 +51,7 @@ export function withoutExecutionRunScope(input: unknown): Record<string, unknown
 
 export function projectSessionReferenceFailure(
   resolution: Exclude<ActionSessionReferenceResolution, Readonly<{ kind: 'unique'; address: ActionSessionAddress }>>,
-): ActionExecuteResult {
+): ActionExecuteFailure {
   if (resolution.kind === 'ambiguous') {
     return { ok: false, errorCode: 'session_id_ambiguous', error: 'session_id_ambiguous' };
   }

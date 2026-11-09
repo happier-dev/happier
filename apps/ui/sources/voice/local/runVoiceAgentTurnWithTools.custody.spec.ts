@@ -10,7 +10,7 @@ import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStart
   ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamCancelResponseSchema,
   type ExecutionRunTurnStreamEvent } from '@happier-dev/protocol/execution/runs/streaming';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -313,12 +313,32 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(replay.toolResultBatches[0]).toEqual(result.toolResultBatches[0]);
   });
 
+  it('keeps sending in one conversation after an invented target id is corrected', async () => {
+    await prepareSession();
+    queueSend('first-target-send', 'Reply MAPLE.', { sessionId: 's1', reply: 'none' }); queueFinal();
+    const first = await run('tell the other session to reply maple');
+    expect(first.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true, status: 'accepted' });
+    expect(targetPendingRequests()).toHaveLength(1);
+
+    // RUN98: the provider combined the real target's prefix with its carrier's
+    // suffix. This is an unknown Session, not an unavailable messaging Action.
+    queueSend('invented-target-send', 'Reply CEDAR.', { sessionId: 'cmw8g2fvf002nmcyaoup36tyj', reply: 'none' });
+    queueSend('corrected-target-send', 'Reply CEDAR.', { sessionId: 's1', reply: 'none' }); queueFinal();
+    const second = await run('tell that session to reply cedar');
+    // This headless fixture has no complete mounted Session corpus, so absence
+    // cannot be claimed. The target lookup remains incomplete, not unavailable.
+    expect(second.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: false, errorCode: 'session_lookup_incomplete' });
+    expect(second.toolResultBatches[1]?.[0]?.result).toMatchObject({ ok: true, status: 'accepted' });
+    expect(targetPendingRequests()).toHaveLength(2);
+    expect(new Set(wireTurns.map(turn => turn.runId)).size).toBe(1);
+  });
+
   it('preserves a known pre-dispatch failure instead of misreporting outcome_unknown', async () => {
     await prepareSession(); queueSend('effect-known-failure', 'Cannot dispatch', { sessionId: 'missing-session' }); queueFinal();
     const result = await run('send it');
     expect(targetPendingRequests()).toEqual([]);
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({ t: 'sendSessionMessage',
-      result: { ok: false, errorCode: 'admission_unavailable' } });
+      result: { ok: false, errorCode: 'session_lookup_incomplete' } });
   });
 
   it('speaks only the outcome-informed follow-up when a requested send fails before dispatch', async () => {
@@ -329,7 +349,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const result = await run('send it', { onAssistantTurn: async ({ assistantText }) => {
       // The non-streaming TTS consumer awaits this callback before continuing.
       expect(parseVoiceToolResultsFollowUp(wireTurns.at(-1)?.message)).toMatchObject({
-        toolResults: [expect.objectContaining({ t: 'sendSessionMessage', result: expect.objectContaining({ ok: false, errorCode: 'admission_unavailable' }) })],
+        toolResults: [expect.objectContaining({ t: 'sendSessionMessage', result: expect.objectContaining({ ok: false, errorCode: 'session_lookup_incomplete' }) })],
       });
       expect(targetPendingRequests()).toEqual([]);
       spoken.push(assistantText);
