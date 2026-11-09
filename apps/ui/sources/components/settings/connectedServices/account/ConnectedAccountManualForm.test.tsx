@@ -45,6 +45,24 @@ describe('ConnectedAccountManualForm', () => {
         clearActiveUnsavedChangesGuard();
     });
 
+    it.each([false, true])('shows provider key guidance before a key matches a pattern (pattern declared: %s)', async hasPattern => {
+        const hint = 'Use the provider account key shown in its dashboard.';
+        const keyFields = z.array(PluginSettingFieldV2Schema).parse([
+            { id: 'token', title: 'API key', schema: { type: 'string', minLength: 1,
+                ...(hasPattern ? { pattern: '^box_' } : {}) }, secret: true },
+        ]).map(field => ({ ...field, secret: Boolean(field.secret) }));
+        const screen = await renderScreen(<ConnectedAccountManualForm embedded title="API key" submitting={false}
+            fields={keyFields} guided={{ consoleUrl: 'https://provider.example/keys', steps: ['Create a key'], shapeHint: hint }}
+            onSubmit={vi.fn()} />);
+        const visibleHint = () => screen.tree.findAll(node => node.props.children === hint);
+        expect(visibleHint().length).toBeGreaterThan(0);
+        await act(async () => {
+            screen.tree.find(node => node.type === ('TextInput' as never)
+                && node.props.testID === 'connected-account-manual:token').props.onChangeText('wrong-kind');
+        });
+        expect(visibleHint().length).toBeGreaterThan(0);
+    });
+
     it('submits an optional account label separately from the descriptor secret fields in guided key setup', async () => {
         const onSubmit = vi.fn();
         const screen = await renderScreen(<ConnectedAccountManualForm embedded title="API key" submitting={false}

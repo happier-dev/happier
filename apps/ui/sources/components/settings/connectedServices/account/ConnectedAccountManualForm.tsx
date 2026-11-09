@@ -4,9 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { PluginSettingFieldV2 } from '@happier-dev/protocol/plugins/contributions/settings';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields';
+import { ConnectedAccountConfigurationSecretField } from './ConnectedAccountConfigurationSecretField';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from './ConnectedAccountGuide';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -18,6 +21,7 @@ import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFie
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 import { useConnectedAccountInvalidFieldFocus } from './useConnectedAccountInvalidFieldFocus';
@@ -63,6 +67,7 @@ type ConnectedAccountManualFormProps = Readonly<{
     embedded?: boolean;
     localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly ManualAuthenticationField[];
+    accountLifetime?: ActiveServerAccountScopeLifetime;
     configuration?: Omit<ConnectedAccountConfigurationFieldsProps, 'saving' | 'embedded' | 'localize'>;
     /**
      * The manual mode's `setup` guide to creating the credential, presentation only: the
@@ -78,6 +83,7 @@ type ConnectedAccountManualFormProps = Readonly<{
     onCancel?: () => void;
     onSubmit(input: Readonly<{
         fields: Readonly<Record<string, string>>;
+        selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>;
         displayName?: string;
         configuration?: ConnectedAccountConfigurationSubmission;
     }>): Promise<boolean | void> | boolean | void;
@@ -156,6 +162,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         initialDraft
     ));
     const [invalidFieldIds, setInvalidFieldIds] = React.useState<readonly string[]>([]);
+    const [selectedSecrets, setSelectedSecrets] = React.useState<Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>>({});
     const [displayName, setDisplayName] = React.useState('');
     const [revealed, setRevealed] = React.useState(false);
 
@@ -174,10 +181,10 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
     })), [fields]);
     const submit = React.useCallback(async () => {
         const values = Object.fromEntries(
-            props.fields.map((field) => [field.id, draft[field.id] ?? '']),
+            props.fields.filter(field => !selectedSecrets[field.id]).map((field) => [field.id, draft[field.id] ?? '']),
         );
         const invalid = fields
-            .filter((field) => !isValidPluginJsonSchemaValue(validators.get(field.id)!, values[field.id] ?? ''))
+            .filter((field) => !selectedSecrets[field.id] && !isValidPluginJsonSchemaValue(validators.get(field.id)!, values[field.id] ?? ''))
             .map((field) => field.id);
         if (invalid.length > 0) {
             setInvalidFieldIds(invalid);
@@ -186,19 +193,21 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         const configurationSubmission = props.configuration ? configuration.validate() : undefined;
         if (configurationSubmission === null) return false;
         const accepted = await props.onSubmit({ fields: values,
+            ...(Object.keys(selectedSecrets).length > 0 ? { selectedSecrets } : {}),
             ...(props.guided && displayName.trim() ? { displayName: displayName.trim() } : {}),
             ...(configurationSubmission ? { configuration: configurationSubmission } : {}),
         });
         return accepted !== false;
-    }, [configuration, displayName, draft, fields, props, validators]);
+    }, [configuration, displayName, draft, fields, props, selectedSecrets, validators]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
+        setSelectedSecrets({});
         setInvalidFieldIds([]);
         setDisplayName('');
         setRevealed(false);
         configuration.discardDraft();
     }, [configuration, initialDraft]);
-    const isDirty = configuration.isDirty || displayName.length > 0 || props.fields.some((field) => (
+    const isDirty = configuration.isDirty || displayName.length > 0 || Object.keys(selectedSecrets).length > 0 || props.fields.some((field) => (
         (draft[field.id] ?? '') !== (initialDraft[field.id] ?? '')
     ));
     useConnectedAccountDraftNavigationGuard({
@@ -252,35 +261,60 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
     };
     const guided = props.guided;
     // The primary waits for every field that must be filled; a filled value that misses its shape says so on press.
-    const missingRequired = fields.some((field) => !(draft[field.id] ?? '')
+    const missingRequired = fields.some((field) => !selectedSecrets[field.id] && !(draft[field.id] ?? '')
         && !isValidPluginJsonSchemaValue(validators.get(field.id)!, ''));
-    const keyShapeOk = fields.some((field) => field.schema.pattern && isValidPluginJsonSchemaValue(validators.get(field.id)!, draft[field.id] ?? ''));
     const basicFields = fields.filter((field) => field.presentation?.advanced !== true);
     const advancedFields = fields.filter((field) => field.presentation?.advanced === true);
     const renderFieldRow = (field: ManualAuthenticationField) => {
-        if (field.presentation?.control === 'select') {
+        if (field.presentation?.control === 'select' && field.secret !== true) {
             return <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>;
         }
         const title = resolveProjectedLocalizedText(field.title, props.localize);
         const description = resolveProjectedLocalizedText(field.description, props.localize);
         const multiline = field.presentation?.control === 'textarea';
         const guidedKey = guided && field.secret === true;
+        const selection = selectedSecrets[field.id];
         return (
-            <Item
-                key={field.id}
-                title={title}
-                subtitle={description || undefined}
-                subtitleLines={0}
-                mode="info"
-                showChevron={false}
-                accessoryLayout={multiline || guided || props.embedded ? 'stacked' : 'adaptive'}
-                rightElement={guidedKey ? (
-                    <View style={styles.field}>
-                        {fieldControl(field)}
-                        {keyShapeOk && guided.shapeHint ? <Text style={styles.note}>{guided.shapeHint}</Text> : null}
-                    </View>
-                ) : fieldControl(field)}
-            />
+            <React.Fragment key={field.id}>
+                {!selection ? <Item
+                    title={title}
+                    subtitle={description || undefined}
+                    subtitleLines={0}
+                    mode="info"
+                    showChevron={false}
+                    accessoryLayout={multiline || guided || props.embedded ? 'stacked' : 'adaptive'}
+                    rightElement={guidedKey ? (
+                        <View style={styles.field}>
+                            {fieldControl(field)}
+                            {guided.shapeHint ? <Text style={styles.note}>{guided.shapeHint}</Text> : null}
+                        </View>
+                    ) : fieldControl(field)}
+                /> : null}
+                {field.secret === true && props.accountLifetime ? (
+                    <ConnectedAccountConfigurationSecretField
+                        fieldId={field.id}
+                        testIDPrefix="connected-account-manual"
+                        title={selection ? title : t('connectedServicesSettings.manualUseSavedSecret')}
+                        description={selection ? description : ''}
+                        secretRef={selection?.ref ?? null}
+                        selection={selection}
+                        accountLifetime={props.accountLifetime}
+                        disabled={props.submitting}
+                        invalid={false}
+                        errorId={`connected-account-manual:${field.id}:error`}
+                        onChange={next => {
+                            setSelectedSecrets(current => {
+                                const result = { ...current };
+                                if (next) result[field.id] = next;
+                                else delete result[field.id];
+                                return result;
+                            });
+                            setDraft(current => current[field.id] ? { ...current, [field.id]: '' } : current);
+                            setInvalidFieldIds(current => current.filter(id => id !== field.id));
+                        }}
+                    />
+                ) : null}
+            </React.Fragment>
         );
     };
     return (
@@ -357,6 +391,6 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
 export const ConnectedAccountManualForm = React.memo(function ConnectedAccountManualForm(
     props: ConnectedAccountManualFormProps,
 ) {
-    const draftKey = React.useMemo(() => JSON.stringify(props.fields), [props.fields]);
+    const draftKey = React.useMemo(() => stableJsonStringify(props.fields), [props.fields]);
     return <ConnectedAccountManualFormBody key={draftKey} {...props} />;
 });

@@ -145,13 +145,14 @@ export type MachineProvisionerNativeExecResultV1 = (Omit<PluginProcessResult, 's
   | Readonly<{ kind: 'process-configured' }>;
 export type MachineProvisionerProcessConfigV1 = canonical.MachineProvisionerProcessConfigV1;
 export const MachineProvisionerNativeExecResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeExecResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeExecResultV1Schema);
+export type MachineProvisionerGuestHomeV1 = canonical.MachineProvisionerGuestHomeV1;
 export const defineMachineProvisionerSchemas: <LI, LO, RI, RO, C extends true | undefined = undefined>(schemas: Readonly<{ launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO>; continueAcquire?: C }>) => Readonly<{
   checkInput: typeof MachineProvisionerCheckInputV1Schema;
   nativeCredentialApplyInput: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyInputV1<RI>, MachineProvisionerNativeCredentialApplyInputV1<RO>>;
-  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RI }> : {}),
-    Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RO }> : {})>;
+  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string; guestHome?: MachineProvisionerGuestHomeV1 }> & (C extends true ? Readonly<{ resource?: RI }> : {}),
+    Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string; guestHome?: MachineProvisionerGuestHomeV1 }> & (C extends true ? Readonly<{ resource?: RO }> : {})>;
   acquireResult: ProtocolComposableSchema<Exclude<MachineProvisionerAcquireResultV1<RI>, { kind: 'pending' }>, Exclude<MachineProvisionerAcquireResultV1<RO>, { kind: 'pending' }>>;
-  rebuildInput: ProtocolComposableSchema<Readonly<{ resource: RI; reviewedEffectDigest: string }>, Readonly<{ resource: RO; reviewedEffectDigest: string }>>;
+  rebuildInput: ProtocolComposableSchema<Readonly<{ resource: RI; reviewedEffectDigest: string; guestHome?: MachineProvisionerGuestHomeV1 }>, Readonly<{ resource: RO; reviewedEffectDigest: string; guestHome?: MachineProvisionerGuestHomeV1 }>>;
   rebuildResult: ProtocolComposableSchema<MachineProvisionerRebuildResultV1<RI>, MachineProvisionerRebuildResultV1<RO>>;
   bootstrapInput: ProtocolComposableSchema<Readonly<{ resource: RI; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string; guestHostPublicKey?: string }>, Readonly<{ resource: RO; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string; guestHostPublicKey?: string }>>;
   resourceInput: ProtocolComposableSchema<Readonly<{ resource: RI }>, Readonly<{ resource: RO }>>;

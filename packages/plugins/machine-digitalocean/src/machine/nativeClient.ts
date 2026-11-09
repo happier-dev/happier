@@ -12,6 +12,11 @@ import {
 // native facts; no hourly-to-monthly conversion is performed here.
 const origin = 'https://api.digitalocean.com';
 const base = `${origin}/v2`;
+const accountResponseSchema = z.object({ account: z.object({ status: z.string() }) });
+export function readDigitalOceanAccountAccess(value: unknown): Readonly<{ kind: 'active' | 'inactive' }> | undefined {
+  const parsed = accountResponseSchema.safeParse(value);
+  return parsed.success ? { kind: parsed.data.account.status === 'active' ? 'active' : 'inactive' } : undefined;
+}
 // REST v2 official shared/responses/{bad_request,unauthorized,forbidden,
 // not_found,conflict,unprocessable_entity,too_many_requests,server_error}.yml,
 // https://github.com/digitalocean/openapi/tree/main/specification/shared/responses
@@ -144,7 +149,8 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
     inspect, observeAction, options: nativeOptions,
     async check() {
       const result = await request('/account');
-      return result.kind === 'response' && z.object({ account: z.object({ status: z.literal('active') }) }).safeParse(result.body).success
+      const account = result.kind === 'response' ? readDigitalOceanAccountAccess(result.body) : undefined;
+      return account?.kind === 'active'
         ? { available: true } as const : { available: false, code: result.kind === 'unavailable' ? result.reason : 'account-unavailable',
           ...(result.kind === 'unavailable' && result.nativeCause ? { nativeCause: result.nativeCause } : {}) } as const;
     },

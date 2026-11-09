@@ -1,72 +1,21 @@
-import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { PluginError, type PluginAccountApi } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountReadContext, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime, ConnectedAccountRuntime, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { isFreestyleVmList } from './machine/nativeClient.js';
+import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 
 export const ACCOUNT_ID = 'freestyle-account';
 export const ACCOUNT_PURPOSE = 'cloud-api';
 export const ORIGINS = ['https://api.freestyle.sh'] as const;
-const diagnostic = { code: 'credential_unavailable', severity: 'error' as const, message: 'Freestyle API access could not be confirmed.' };
-const validToken = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && !/\s/u.test(value);
-type HttpContext = Readonly<{ signal: AbortSignal; services: Readonly<{ http: Pick<HttpService, 'request'> }> }>;
 
-/** The host captures the selected Account purpose; no bearer enters role arguments or guest files. */
-export function nativeFetch(context: HttpContext, token?: string): typeof fetch {
-  return createMachineProvisionerFetch(context, {
-    purpose: ACCOUNT_PURPOSE, origins: ORIGINS, headerName: 'authorization',
-    credential: token === undefined ? undefined : { 'authorization': `Bearer ${token}` },
-  });
-}
-async function confirm(token: string, context: ConnectedAccountAuthenticationContext | ConnectedAccountReadContext, signal: AbortSignal) {
-  try {
-    const response = await nativeFetch(context, token)('https://api.freestyle.sh/v5/vms?limit=0', { signal });
-    if (response.status === 401 || response.status === 403) return { status: 'rejected' as const, diagnostic };
-    if (response.status !== 200) return { status: 'unavailable' as const, diagnostic };
-    const value: unknown = await response.json();
-    if (!value || typeof value !== 'object' || !('vms' in value) || !Array.isArray(value.vms)
-      || !('totalCount' in value) || typeof value.totalCount !== 'number') return { status: 'unavailable' as const, diagnostic };
-    return { status: 'connected' as const, displayName: 'Freestyle',
-      providerIdentity: { accountId: null, email: null, organizationId: null }, scopes: [] };
-  } catch (error) { signal.throwIfAborted(); return { status: 'unavailable' as const, diagnostic }; }
-}
-async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
-  const signal = options?.signal ? AbortSignal.any([context.signal, options.signal]) : context.signal;
-  signal.throwIfAborted();
-  try {
-    const token = await context.credentials.get('token', { signal });
-    if (!validToken(token)) return { status: 'reconnectRequired' as const, diagnostic };
-    const result = await confirm(token, context, signal);
-    return result.status === 'rejected' ? { status: 'reconnectRequired' as const, diagnostic } : result;
-  } catch { signal.throwIfAborted(); return { status: 'unavailable' as const, diagnostic }; }
-}
-async function materialize(request: Parameters<ConnectedAccountRuntime['materialize']>[0], context: ConnectedAccountPortableReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountMaterialization> {
-  const signal = options?.signal ? AbortSignal.any([context.signal, options.signal]) : context.signal;
-  signal.throwIfAborted();
-  if (request.kind !== 'httpHeaders' || !ORIGINS.some(origin => origin === request.origin)
-    || request.headerNames.some(name => name.toLowerCase() !== 'authorization')) throw new PluginError({ code: 'credential_unavailable' });
-  try {
-    const token = await context.credentials.get('token', { signal });
-    signal.throwIfAborted();
-    if (!validToken(token)) throw new PluginError({ code: 'credential_unavailable' });
-    return { kind: 'httpHeaders' as const, headers: request.headerNames.length ? { authorization: `Bearer ${token}` } : {} };
-  } catch { signal.throwIfAborted(); throw new PluginError({ code: 'credential_unavailable' }); }
-}
-export const connectedAccountRuntime: ConnectedAccountRuntime = {
-  authentication: { modes: { token: { kind: 'manual', async complete(input, context, options) {
-    const signal = options?.signal ? AbortSignal.any([context.signal, options.signal]) : context.signal;
-    signal.throwIfAborted();
-    const supplied = input.fields.token, token = supplied?.trim();
-    if (typeof supplied !== 'string' || /[\r\n]/u.test(supplied) || !validToken(token)) return { status: 'rejected', diagnostic };
-    const result = await confirm(token, context, signal);
-    if (result.status !== 'connected') return result;
-    signal.throwIfAborted();
-    try { await context.attemptCredentials.set('token', token, { signal }); }
-    catch { signal.throwIfAborted(); return { status: 'unavailable', diagnostic }; }
-    return result;
-  } } } },
-  status: health, refresh: health,
-  async revoke() { return { status: 'remoteUnsupported', diagnostic: { ...diagnostic, message: 'Revoke the Freestyle API key in the Freestyle dashboard.' } }; },
-  materialize,
-};
-export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = { authentication: connectedAccountRuntime.authentication, materialize };
-export function activate(api: PluginAccountApi): void { api.connectedAccounts.register(ACCOUNT_ID, connectedAccountPortableRuntime); }
+const account = createMachineProvisionerApiKeyAccount({
+  name: 'Freestyle', keyDescription: 'a Freestyle API key from the Freestyle dashboard', codePrefix: 'freestyle',
+  purpose: ACCOUNT_PURPOSE,
+  headers: ORIGINS.map(origin => ({ origin, headerName: 'authorization', scheme: 'bearer' as const })),
+  probe: {
+    request: { url: 'https://api.freestyle.sh/v5/vms?limit=0', method: 'GET' },
+    read: value => isFreestyleVmList(value) ? { status: 'connected', displayName: 'Freestyle', providerIdentity: { accountId: null, email: null, organizationId: null }, scopes: [] } : undefined,
+  },
+});
+export const connectedAccountRuntime = account.runtime;
+export const connectedAccountPortableRuntime = account.portableRuntime;
+export function activate(api: PluginAccountApi): void { api.connectedAccounts.register(ACCOUNT_ID, account.portableRuntime); }
+export const nativeFetch = account.nativeFetch;

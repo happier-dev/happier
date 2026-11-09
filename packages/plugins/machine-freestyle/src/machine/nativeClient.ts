@@ -4,6 +4,10 @@ import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOperationSchema,
 
 // Freestyle public v5 REST, OpenAPI 3.1.0 / info 0.1.0, observed 2026-11-01.
 export const FREESTYLE_API = 'https://api.freestyle.sh/v5';
+export function isFreestyleVmList(value: unknown): value is Readonly<{ vms: unknown[]; totalCount: number }> {
+  return value !== null && typeof value === 'object' && 'vms' in value && Array.isArray(value.vms)
+    && 'totalCount' in value && typeof value.totalCount === 'number';
+}
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const dtoSchema = defineProtocolObject({ id: text, slug: text, state: text,
@@ -49,8 +53,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
   async function check(): Promise<MachineProvisionerCheckResultV1> {
     try {
       const value = await http(FREESTYLE_API + '/vms?limit=0');
-      const valid = value !== null && typeof value === 'object' && 'vms' in value && Array.isArray(value.vms)
-        && 'totalCount' in value && typeof value.totalCount === 'number';
+      const valid = isFreestyleVmList(value);
       return valid ? { available: true } : { available: false, code: 'provider_unavailable' };
     } catch (error) { return { available: false, code: code(error) }; }
   }

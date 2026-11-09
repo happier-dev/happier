@@ -53,6 +53,13 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
 }
 
 describe('Maritime managed-machine REST leaf', () => {
+  it('recognizes the account limits response before reporting provider access', async () => {
+    let limits: unknown = {};
+    const client = createMaritimeNativeClient(async () => Response.json(limits), new AbortController().signal, 1000);
+    expect(await client.check()).toMatchObject({ available: false });
+    limits = { plan: 'growth', machines: 0, awakeMachines: 0 };
+    expect(await client.check()).toMatchObject({ available: true });
+  });
   it.each([boxResource, computerResource])('refuses a sleeping diagnostic exec without waking the guest (%j)', async resource => {
     const h = vendor({ asleep: true });
     const request = { resource, argv: ['true'], allowWake: false as const };

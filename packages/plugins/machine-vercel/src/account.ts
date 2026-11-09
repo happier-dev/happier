@@ -16,6 +16,10 @@ function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
 
+function unexpectedResponse() {
+  return { status: 'unavailable' as const, diagnostic: diagnostic('vercel_invalid_response', 'Vercel returned an unexpected response. Try connecting again; if it continues, check the Vercel service status.') };
+}
+
 function identifier(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0 && !/\s/u.test(value)
     && value !== '.' && value !== '..';
@@ -41,7 +45,7 @@ async function send(context: Context, token: string, url: string, method: 'GET' 
     headers: { authorization: `Bearer ${token}` }, redirect: 'error' }, { signal });
   signal.throwIfAborted();
   if (response.finalUrl !== url || (response.status >= 300 && response.status < 400)) {
-    throw new Error('vercel_unavailable');
+    throw new PluginError({ code: 'vercel_invalid_response' });
   }
   return response;
 }
@@ -75,8 +79,9 @@ async function probe(token: string, context: Context, signal: AbortSignal): Prom
   if (scope.projectId) url.searchParams.set('teamId', scope.teamId);
   let response: HttpResponse;
   try { response = await send(context, token, url.href, 'GET', signal); }
-  catch {
+  catch (error) {
     signal.throwIfAborted();
+    if (error instanceof PluginError && error.code === 'vercel_invalid_response') return unexpectedResponse();
     return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'Vercel could not be reached. Try the connection again.') };
   }
   const body = parseBody(response);
@@ -85,10 +90,11 @@ async function probe(token: string, context: Context, signal: AbortSignal): Prom
   }
   if (response.status === 403) return { status: 'rejected', diagnostic: diagnostic('vercel_missing_permission', 'The Vercel token cannot access the selected scope. Check its team and project access.') };
   if (response.status === 404) return { status: 'rejected', diagnostic: diagnostic('vercel_scope_unavailable', 'The selected Vercel team or project is unavailable to this token.') };
-  if (response.status !== 200) return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'Vercel could not verify the selected scope. Try the connection again.') };
+  if (response.status === 429 || response.status >= 500) return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'Vercel is temporarily unavailable. Try connecting again.') };
+  if (response.status !== 200) return unexpectedResponse();
   if (!object(body) || !identifier(body.id) || typeof body.name !== 'string' || !body.name.trim()
     || (scope.projectId && !identifier(body.accountId))) {
-    return { status: 'unavailable', diagnostic: diagnostic('vercel_invalid_response', 'Vercel returned an unrecognized account response.') };
+    return unexpectedResponse();
   }
   if (body.id !== (scope.projectId ?? scope.teamId) || (scope.projectId && body.accountId !== scope.teamId)) {
     return { status: 'rejected', diagnostic: diagnostic('vercel_scope_mismatch', 'Vercel returned a different team or project. Check the selected scope.') };

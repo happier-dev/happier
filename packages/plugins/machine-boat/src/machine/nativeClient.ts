@@ -24,7 +24,7 @@ const sandbox = mini.object({ id: sandboxId, name: mini.optional(text()), state:
   health: mini.optional(mini.enum(['ok', 'degraded'])),
   ttlSeconds: mini.optional(mini.nullable(mini.number().check(mini.int(), mini.positive()))),
   archiveAfter: nativeDate(), dataExpiredAt: nativeDate(), stoppedAt: nativeDate() });
-const limitsResponse = mini.object({ ...base, sandboxPlanKey: mini.optional(text()), sandboxPlanDollars: mini.optional(mini.number().check(mini.nonnegative())) });
+export const BoatLimitsResponseSchema = mini.object({ ...base, sandboxPlanKey: mini.optional(text()), sandboxPlanDollars: mini.optional(mini.number().check(mini.nonnegative())) });
 const snapshotsResponse = mini.object({ ...base, snapshots: mini.array(mini.object({
   name: mini.string().check(mini.regex(/^[a-z0-9][a-z0-9-]{0,62}$/)),
   status: mini.enum(['saving', 'ready', 'failed']), sourceSandboxId: sandboxId, createdAt: text(),
@@ -115,20 +115,20 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
   }
 
   async function accountTtlSeconds() {
-    const limits = parseBoatValue(limitsResponse, await request('/limits'));
+    const limits = parseBoatValue(BoatLimitsResponseSchema, await request('/limits'));
     if (limits.sandboxPlanKey === undefined) throw new BoatNativeError('native_response_invalid');
     return limits.sandboxPlanKey === 'trial' ? TRIAL_TTL_SECONDS : null;
   }
   return {
     async check() {
-      await request('/limits');
+      parseBoatValue(BoatLimitsResponseSchema, await request('/limits'));
       return { available: true as const };
     },
     async options(): Promise<BoatOptions> {
       const [limitsValue, snapshotsValue, sandboxesValue] = await Promise.all([
         request('/limits'), request('/saved-snapshots'), request('/sandboxes'),
       ]);
-      const limits = parseBoatValue(limitsResponse, limitsValue);
+      const limits = parseBoatValue(BoatLimitsResponseSchema, limitsValue);
       const snapshots = parseBoatValue(snapshotsResponse, snapshotsValue).snapshots
         .filter((value): value is typeof value & { status: 'ready' } => value.status === 'ready')
         .map(({ name, status }) => ({ name, status }));

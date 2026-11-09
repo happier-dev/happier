@@ -1,4 +1,5 @@
 import * as z from 'zod/mini';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { FLY_DEFAULT_IMAGE, FLY_ROLE_SCHEMAS, FlyAcquireOperationV1Schema, FlyAcquireRequestSchema, FlyExecRequestSchema, FlyExecResponseSchema, FlyGuestBootSchema, FlyLaunchV1Schema, FlyMachineSchema, FlyProcessConfigurationSchema, FlyPutFileOptionsSchema, FlyResourceV1Schema, FlyVolumeSchema, type FlyAcquireOperationV1, type FlyAcquireRequest, type FlyExecRequest, type FlyGuestBoot, type FlyLaunchV1, type FlyPutFileRequest, type FlyResourceV1 } from './schemas.js';
 
 // REST v1; fly-go v0.9.4 characterizes identity/rootfs. The current official
@@ -22,40 +23,54 @@ const appInventorySchema = z.object({ data: z.object({ app: z.nullable(z.object(
 })) }), errors: z.optional(z.array(z.unknown())) });
 const PLATFORM_QUERY = `query HappierMachineOptions { platform {
   regions { code name deprecated requiresPaidPlan }
-  vmSizes { name cpuCores memoryMb maxMemoryMb memoryIncrementsMb priceMonth priceSecond }
+  vmSizes { name cpuCores memoryMb maxMemoryMb memoryIncrementsMb }
 } }`;
 const platformSchema = z.object({ data: z.object({ platform: z.object({
   regions: z.array(z.object({ code: z.string(), name: z.string(), deprecated: z.boolean(), requiresPaidPlan: z.boolean() })),
   vmSizes: z.array(z.object({ name: z.string(), cpuCores: z.number(), memoryMb: z.int(), maxMemoryMb: z.int(),
-    memoryIncrementsMb: z.array(z.int()), priceMonth: z.number(), priceSecond: z.number() })),
+    memoryIncrementsMb: z.array(z.int()) })),
 }) }), errors: z.optional(z.array(z.unknown())) });
-const appsSchema = z.object({ total_apps: z.int().check(z.gte(0)), apps: z.array(z.object({
+export const FlyAppsResponseSchema = z.object({ total_apps: z.int().check(z.gte(0)), apps: z.array(z.object({
   id: z.string().check(z.minLength(1)), name: z.string().check(z.minLength(1)), machine_count: z.int().check(z.gte(0)), volume_count: z.int().check(z.gte(0)),
-})) });
+})) }).check(z.refine(value => value.total_apps === value.apps.length));
+// Fly's official fly-go tokens.Tokens.FlapsHeader keeps FlyV1 macaroons intact.
+export const formatFlyAuthorization = (token: string): string => token.startsWith('FlyV1 ') ? token : `Bearer ${token}`;
 const discoveryInputSchema = z.strictObject({ organizationSlug: z.string().check(z.trim(), z.minLength(1)), appName: z.optional(z.string().check(z.trim(), z.minLength(1))) });
-type Failure = Readonly<{ kind: 'unavailable' | 'unknown' | 'refused'; reason: 'authorization' | 'transport' | 'native-refusal' | 'native-error' | 'invalid-response'; status?: number }>;
-type HttpResult = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent' }> | Failure;
+type Failure = Readonly<{ kind: 'unavailable' | 'unknown' | 'refused'; reason: 'authorization' | 'transport' | 'native-refusal' | 'native-error' | 'invalid-response' | 'cleanup-unconfirmed'; status?: number; nativeCause?: MachineProvisionerNativeCauseV1 }>;
+type HttpResult = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent'; nativeCause?: MachineProvisionerNativeCauseV1 }> | Failure;
 export type FlyInspection = Readonly<{
-  kind: 'present'; machineId: string; instanceId?: string; state: string;
-  storage: 'retained' | 'lost' | 'unknown'; memory: 'not-guaranteed';
-  rootfsPersistence: string; rootfsAfterStop: 'reset' | 'unknown';
+  kind: 'present'; machineId: string; state: string;
+  storage: 'retained' | 'lost' | 'unknown';
   volumeMountPath?: string;
-  stoppedComputeBilling: 'not-billed'; autonomousPower: boolean;
+  autonomousPower: boolean;
 }> | Readonly<{ kind: 'absent' }> | Failure;
 export type FlyExecResult = Readonly<{ kind: 'completed'; exitCode: number; exitSignal?: number; stdout: string; stderr: string }> | Readonly<{ kind: 'absent' }> | Failure;
 export type FlyCleanup = Readonly<{
   machine: 'absent' | 'unknown'; volume: 'absent' | 'retained' | 'unknown';
   app: 'absent' | 'retained' | 'unknown'; complete: boolean; reason?: string; retryable?: boolean;
+  kind?: 'refused' | 'unknown' | 'pending'; nativeCause?: MachineProvisionerNativeCauseV1;
 }>;
 export type FlyAcquireResult = Readonly<{ kind: 'bound'; resource: FlyResourceV1 }>
-  | Readonly<{ kind: 'rejected'; reason: 'scope-mismatch' | 'launch-unavailable' | 'provider-unavailable' }>
-  | Readonly<{ kind: 'unknown' | 'refused'; reason: string; operation: FlyAcquireOperationV1 }>;
+  | Readonly<{ kind: 'rejected'; reason: 'scope-mismatch' | 'launch-unavailable' | 'provider-unavailable'; nativeCause?: MachineProvisionerNativeCauseV1 }>
+  | Readonly<{ kind: 'unknown' | 'refused'; reason: string; operation: FlyAcquireOperationV1; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 export type FlyOptionsInput = z.infer<typeof discoveryInputSchema>;
 export type FlyOptionsResult = Readonly<{ kind: 'available'; regions: z.infer<typeof platformSchema>['data']['platform']['regions'];
-  sizes: z.infer<typeof platformSchema>['data']['platform']['vmSizes']; apps: z.infer<typeof appsSchema>['apps']; volumes: z.infer<typeof FlyVolumeSchema>[]; prices: readonly [] }> | Failure;
+  sizes: z.infer<typeof platformSchema>['data']['platform']['vmSizes']; apps: z.infer<typeof FlyAppsResponseSchema>['apps']; volumes: z.infer<typeof FlyVolumeSchema>[]; prices: readonly [] }> | Failure;
 
 const invalid = (): Failure => ({ kind: 'unavailable', reason: 'invalid-response' });
+// Authorization proves that this requested effect was refused. A later failed
+// confirmation read does not establish whether an accepted effect completed.
+const effectFailure = (result: Exclude<HttpResult, { kind: 'ok' }>) => result.kind === 'unavailable' && result.reason === 'authorization'
+  ? { ...result, kind: 'refused' as const } : result;
+function cleanupFailure(cleanup: FlyCleanup, result: HttpResult, reason: string, effect = false): FlyCleanup {
+  const failure = effect && result.kind !== 'ok' ? effectFailure(result) : result;
+  return { ...cleanup, kind: effect && failure.kind === 'refused' ? 'refused' : 'unknown', reason,
+    ...('nativeCause' in failure && failure.nativeCause ? { nativeCause: failure.nativeCause } : {}) };
+}
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+// Official Machines OpenAPI ErrorResponse/main.statusCode, fetched 2026-10-25:
+// https://docs.fly.io/api/machines/openapi.json. error/details are content.
+const nativeStatusSchema = z.object({ status: z.enum(['unknown', 'insufficient_capacity', 'volume_placement_capacity', 'name_taken']) });
 
 export function createFlyNativeClient(token: string, request: typeof fetch = fetch, context: Readonly<{ signal?: AbortSignal; organizationSlug?: string }> = {}) {
   async function requestJson(url: string, method = 'GET', body?: unknown): Promise<HttpResult> {
@@ -64,15 +79,23 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     try {
       response = await request(url, {
         method, redirect: 'error', ...(context.signal ? { signal: context.signal } : {}),
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: formatFlyAuthorization(token), 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch { return { kind: method === 'GET' ? 'unavailable' : 'unknown', reason: 'transport' }; }
-    if (response.status === 404) return { kind: 'absent' };
-    if (response.status === 401 || response.status === 403) return { kind: 'unavailable', reason: 'authorization', status: response.status };
+    if (response.status === 404 && method === 'GET') return { kind: 'absent' };
     // Reflected native bodies may contain credentials or private input. They
     // never enter public errors, diagnostics or recovery state.
-    if (!response.ok) return { kind: method === 'GET' ? 'unavailable' : response.status < 500 ? 'refused' : 'unknown', reason: response.status < 500 ? 'native-refusal' : 'native-error', status: response.status };
+    if (!response.ok) {
+      const httpStatusClass = response.status >= 300 && response.status < 400 ? '3xx'
+        : response.status >= 400 && response.status < 500 ? '4xx'
+          : response.status >= 500 && response.status < 600 ? '5xx' : 'other';
+      const parsed = nativeStatusSchema.safeParse(await response.json().catch(() => undefined));
+      const nativeCause: MachineProvisionerNativeCauseV1 = { httpStatusClass, ...(parsed.success ? { code: parsed.data.status } : {}) };
+      if (response.status === 404) return { kind: 'absent', nativeCause };
+      if (response.status === 401 || response.status === 403) return { kind: 'unavailable', reason: 'authorization', status: response.status, nativeCause };
+      return { kind: method === 'GET' ? 'unavailable' : response.status < 500 ? 'refused' : 'unknown', reason: response.status < 500 ? 'native-refusal' : 'native-error', status: response.status, nativeCause };
+    }
     const text = await response.text().catch(() => null);
     if (text === null) return { kind: method === 'GET' ? 'unavailable' : 'unknown', reason: 'transport' };
     if (!text) return { kind: 'ok', value: null };
@@ -87,15 +110,16 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
   async function listApps(organizationSlug: string) {
     const result = await http(`/apps?${new URLSearchParams({ org_slug: organizationSlug }).toString()}`);
     if (result.kind !== 'ok') return result.kind === 'absent' ? invalid() : result;
-    const parsed = appsSchema.safeParse(result.value);
-    if (!parsed.success || parsed.data.total_apps !== parsed.data.apps.length) return invalid();
+    const parsed = FlyAppsResponseSchema.safeParse(result.value);
+    if (!parsed.success) return invalid();
     return { kind: 'available' as const, apps: parsed.data.apps };
   }
 
   async function check(input: Pick<FlyOptionsInput, 'organizationSlug'>) {
     const { organizationSlug } = discoveryInputSchema.parse(input);
     const result = await listApps(organizationSlug);
-    return result.kind === 'available' ? { available: true as const } : { available: false as const, code: result.reason };
+    return result.kind === 'available' ? { available: true as const } : { available: false as const, code: result.reason,
+      ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
   }
 
   async function options(input: FlyOptionsInput): Promise<FlyOptionsResult> {
@@ -115,8 +139,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
       if (!decoded.success) return invalid();
       volumes = decoded.data;
     }
-    // Native GraphQL rates expose their units but no currency. Preserve the
-    // actual facts without inventing a currency or normalized price receipt.
+    // Native GraphQL does not supply currency, so compute prices stay unknown.
     return { kind: 'available', regions: parsed.data.data.platform.regions, sizes: parsed.data.data.platform.vmSizes, apps: apps.apps, volumes, prices: [] };
   }
 
@@ -127,13 +150,15 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     }
     const current = await options({ organizationSlug: context.organizationSlug,
       ...(launch.app.ownership === 'existing' ? { appName: launch.app.name } : {}) });
-    if (current.kind !== 'available') return { kind: 'rejected', reason: current.kind === 'refused' ? 'launch-unavailable' : 'provider-unavailable' };
+    if (current.kind !== 'available') return { kind: 'rejected', reason: current.kind === 'refused' ? 'launch-unavailable' : 'provider-unavailable',
+      ...(current.nativeCause ? { nativeCause: current.nativeCause } : {}) };
     if (!isLaunchAvailable(launch, current, context.organizationSlug)) return { kind: 'rejected', reason: 'launch-unavailable' };
     let operation: FlyAcquireOperationV1 = {
       app: { name: launch.app.name, ownership: launch.app.ownership === 'created' ? 'unknown' : 'existing' },
       requestId, phase: launch.app.ownership === 'created' ? 'app' : 'volume',
     };
-    const failed = (result: HttpResult): FlyAcquireResult => ({ kind: result.kind === 'refused' || result.kind === 'absent' ? 'refused' : 'unknown', reason: result.kind === 'absent' ? 'native-absent' : result.kind === 'ok' ? 'invalid-response' : result.reason, operation });
+    const failed = (result: HttpResult): FlyAcquireResult => ({ kind: result.kind === 'refused' || result.kind === 'absent' ? 'refused' : 'unknown', reason: result.kind === 'absent' ? 'native-absent' : result.kind === 'ok' ? 'invalid-response' : result.reason, operation,
+      ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) });
     // Every successful stage's exact ids are returned even when a later stage
     // is ambiguous. The host retains this native operation value on its row;
     // this leaf has no private acquisition ledger or retry loop.
@@ -187,7 +212,8 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     if (operation.app.name !== launch.app.name || operation.app.ownership === 'unknown' || !operation.volume || operation.phase !== 'machine') return { kind: 'unknown', reason: 'unqualified-recovery', operation };
     const params = new URLSearchParams({ 'metadata.happier.request': operation.requestId });
     const listed = await http(`${appPath(operation.app.name)}/machines?${params.toString()}`);
-    if (listed.kind !== 'ok') return { kind: 'unknown', reason: listed.kind === 'absent' ? 'native-absent' : listed.reason, operation };
+    if (listed.kind !== 'ok') return { kind: 'unknown', reason: listed.kind === 'absent' ? 'native-absent' : listed.reason, operation,
+      ...('nativeCause' in listed && listed.nativeCause ? { nativeCause: listed.nativeCause } : {}) };
     const parsed = z.array(FlyMachineSchema).safeParse(listed.value);
     if (!parsed.success) return { kind: 'unknown', reason: 'invalid-response', operation };
     const candidates = parsed.data.filter(machine => machine.state !== 'destroyed'
@@ -202,32 +228,46 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     return { kind: 'bound', resource: { app: { name: operation.app.name, ownership: operation.app.ownership, ...(operation.app.id ? { id: operation.app.id } : {}) }, machineId: candidates[0].id, volume: operation.volume } };
   }
 
+  async function inspectVolume(appName: string, volumeId: string) {
+    const observed = await http(`${appPath(appName)}/volumes/${encodeURIComponent(volumeId)}`);
+    if (observed.kind !== 'ok') return observed;
+    const parsed = FlyVolumeSchema.safeParse(observed.value);
+    if (!parsed.success || parsed.data.id !== volumeId) return invalid();
+    return parsed.data.state === 'destroyed' ? { kind: 'absent' as const } : { kind: 'ok' as const, value: parsed.data };
+  }
   async function inspect(input: FlyResourceV1): Promise<FlyInspection> {
     const resource = FlyResourceV1Schema.parse(input);
     const result = await http(machinePath(resource));
+    const absent = async (): Promise<FlyInspection> => {
+      if (resource.volume.ownership === 'created') {
+        const volume = await inspectVolume(resource.app.name, resource.volume.id);
+        if (volume.kind !== 'absent') return volume.kind === 'ok'
+          ? { kind: 'unknown', reason: 'cleanup-unconfirmed' } : volume;
+      }
+      if (resource.app.ownership === 'created') {
+        const app = await http(appPath(resource.app.name));
+        if (app.kind !== 'absent') return app.kind === 'ok'
+          ? { kind: 'unknown', reason: 'cleanup-unconfirmed' } : app;
+      }
+      return { kind: 'absent' };
+    };
+    if (result.kind === 'absent') return absent();
     if (result.kind !== 'ok') return result;
     const machine = FlyMachineSchema.safeParse(result.value);
     if (!machine.success || machine.data.id !== resource.machineId) return invalid();
-    if (machine.data.state === 'destroyed') return { kind: 'absent' };
-    const volume = await http(volumePath(resource));
+    if (machine.data.state === 'destroyed') return absent();
+    const volume = await inspectVolume(resource.app.name, resource.volume.id);
     let storage: 'retained' | 'lost' | 'unknown' = 'unknown';
     if (volume.kind === 'absent') storage = 'lost';
     if (volume.kind === 'ok') {
-      const parsed = FlyVolumeSchema.safeParse(volume.value);
-      if (parsed.success && parsed.data.id === resource.volume.id) {
-        storage = parsed.data.state === 'destroyed' ? 'lost'
-          : machine.data.config.mounts.some(mount => mount.volume === resource.volume.id)
-            && parsed.data.attached_machine_id === resource.machineId ? 'retained' : 'unknown';
-      }
+      storage = machine.data.config.mounts.some(mount => mount.volume === resource.volume.id)
+        && volume.value.attached_machine_id === resource.machineId ? 'retained' : 'unknown';
     }
-    const rootfsPersistence = machine.data.config.rootfs?.persist || 'never';
     const volumeMountPath = machine.data.config.mounts.find(mount => mount.volume === resource.volume.id)?.path;
     return {
-      kind: 'present', machineId: machine.data.id, ...(machine.data.instance_id ? { instanceId: machine.data.instance_id } : {}),
-      state: machine.data.state, storage, memory: 'not-guaranteed', rootfsPersistence,
+      kind: 'present', machineId: machine.data.id,
+      state: machine.data.state, storage,
       ...(volumeMountPath ? { volumeMountPath } : {}),
-      rootfsAfterStop: rootfsPersistence === 'never' || rootfsPersistence === 'none' ? 'reset' : 'unknown',
-      stoppedComputeBilling: 'not-billed',
       autonomousPower: machine.data.config.services.some(service => service.autostart === true || service.autostop === true || service.autostop === 'stop' || service.autostop === 'suspend'),
     };
   }
@@ -236,7 +276,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     const resource = FlyResourceV1Schema.parse(input);
     if (!['start', 'resume', 'stop', 'suspend'].includes(operation)) return { kind: 'refused', reason: 'native-refusal' };
     const result = await http(`${machinePath(resource)}/${operation === 'resume' ? 'start' : operation}`, 'POST', {});
-    if (result.kind !== 'ok') return result;
+    if (result.kind !== 'ok') return effectFailure(result);
     return inspect(resource);
   }
 
@@ -244,7 +284,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     const resource = FlyResourceV1Schema.parse(input);
     const args = FlyExecRequestSchema.parse(inputRequest);
     const result = await http(`${machinePath(resource)}/exec`, 'POST', args);
-    if (result.kind !== 'ok') return result;
+    if (result.kind !== 'ok') return effectFailure(result);
     const parsed = FlyExecResponseSchema.safeParse(result.value);
     if (!parsed.success) return { kind: 'unknown', reason: 'invalid-response' };
     return { kind: 'completed', exitCode: parsed.data.exit_code, ...(parsed.data.exit_signal === undefined ? {} : { exitSignal: parsed.data.exit_signal }), stdout: parsed.data.stdout, stderr: parsed.data.stderr };
@@ -279,6 +319,13 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     if (!machine.data.config.mounts.some(mount => mount.volume === resource.volume.id && mount.path === process.environment.HOME)) {
       return { kind: 'refused' as const, reason: 'native-refusal' as const };
     }
+    // A successful native update reboots a running Machine even for equal
+    // settings. A stopped Machine still needs the update's startup effect.
+    if (machine.data.state === 'started'
+      && JSON.stringify(machine.data.config.init?.exec) === JSON.stringify(process.command)
+      && Object.entries(process.environment).every(([key, value]) => machine.data.config.env?.[key] === value)) {
+      return { kind: 'configured' as const };
+    }
     const config = { ...machine.data.config, env: { ...machine.data.config.env, ...process.environment }, init: { ...machine.data.config.init, exec: process.command } };
     const updated = await http(machinePath(resource), 'POST', { config });
     if (updated.kind !== 'ok') return updated;
@@ -300,14 +347,11 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     let ownedVolumePresent = false;
     if (resource.volume?.ownership === 'created') {
       const path = `${appPath(resource.app.name)}/volumes/${encodeURIComponent(resource.volume.id)}`;
-      const observed = await http(path);
+      const observed = await inspectVolume(resource.app.name, resource.volume.id);
       if (observed.kind === 'absent') cleanup.volume = 'absent';
       else if (observed.kind === 'ok') {
-        const volume = FlyVolumeSchema.safeParse(observed.value);
-        if (!volume.success || volume.data.id !== resource.volume.id) return { ...cleanup, reason: 'volume-observation-unavailable' };
-        if (volume.data.state === 'destroyed') cleanup.volume = 'absent';
-        else if (volume.data.attached_machine_id !== null
-          && (!resource.machineId || volume.data.attached_machine_id !== resource.machineId)) return { ...cleanup, volume: 'retained', reason: 'volume-attachment-unavailable' };
+        if (observed.value.attached_machine_id !== null
+          && (!resource.machineId || observed.value.attached_machine_id !== resource.machineId)) return { ...cleanup, volume: 'retained', reason: 'volume-attachment-unavailable' };
         else {
           if (observeOnly) {
             // Machines REST v1 Volume_delete addresses the immutable volume id.
@@ -318,19 +362,20 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
             ownedVolumePresent = true;
           } else {
             const deleted = await http(path, 'DELETE');
-            if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return { ...cleanup, reason: deleted.reason };
-            const confirmation = await http(path);
-            const parsed = confirmation.kind === 'ok' ? FlyVolumeSchema.safeParse(confirmation.value) : undefined;
-            if (confirmation.kind === 'absent' || (parsed?.success && parsed.data.id === resource.volume.id && parsed.data.state === 'destroyed')) cleanup.volume = 'absent';
-            else return { ...cleanup, reason: 'volume-deletion-unconfirmed' };
+            if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return cleanupFailure(cleanup, deleted, deleted.reason, true);
+            const confirmation = await inspectVolume(resource.app.name, resource.volume.id);
+            if (confirmation.kind === 'absent') cleanup.volume = 'absent';
+            else if (confirmation.kind === 'ok') return { ...cleanup, kind: 'pending' };
+            else return cleanupFailure(cleanup, confirmation, 'volume-deletion-unconfirmed');
           }
         }
-      } else return { ...cleanup, reason: 'volume-observation-unavailable' };
+      } else return cleanupFailure(cleanup, observed, 'volume-observation-unavailable');
     }
     if (resource.app.ownership === 'created') {
       const observedIdentity = observeOnly ? await http(appPath(resource.app.name)) : undefined;
       if (observedIdentity?.kind === 'absent') return ownedVolumePresent ? { ...cleanup, reason: 'volume-deletion-unconfirmed' }
         : { ...cleanup, app: 'absent', complete: true };
+      if (observedIdentity && observedIdentity.kind !== 'ok') return cleanupFailure(cleanup, observedIdentity, 'app-inventory-unavailable');
       const machines = await http(`${appPath(resource.app.name)}/machines`);
       const volumes = await http(`${appPath(resource.app.name)}/volumes`);
       const machineList = machines.kind === 'ok' ? z.array(FlyMachineSchema).safeParse(machines.value) : undefined;
@@ -340,40 +385,56 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
         if (observeOnly) return { ...cleanup, reason: 'app-inventory-unavailable' };
         cleanup.app = 'absent';
       }
-      else if (!machineList?.success || !volumeList?.success) return { ...cleanup, app: 'retained', reason: 'app-inventory-unavailable' };
+      else if (!machineList?.success || !volumeList?.success) return cleanupFailure({ ...cleanup, app: 'retained' },
+        machines.kind !== 'ok' && machines.kind !== 'absent' ? machines : volumes, 'app-inventory-unavailable');
       else if (machineList.data.some(value => value.state !== 'destroyed') || volumeList.data.some(value => value.state !== 'destroyed'
         && !(observeOnly && ownedVolumePresent && value.id === resource.volume?.id && value.attached_machine_id === null))) return { ...cleanup, app: 'retained', reason: 'app-not-empty' };
       else {
         const identity = observedIdentity ?? await http(appPath(resource.app.name));
-        const parsedIdentity = identity.kind === 'ok' ? z.object({ id: z.string(), name: z.string() }).safeParse(identity.value) : undefined;
+        const appIdentitySchema = z.object({ id: z.string(), name: z.string() });
+        const parsedIdentity = identity.kind === 'ok' ? appIdentitySchema.safeParse(identity.value) : undefined;
         if (identity.kind === 'absent') return ownedVolumePresent ? { ...cleanup, reason: 'volume-deletion-unconfirmed' }
           : { ...cleanup, app: 'absent', complete: true };
-        if (!parsedIdentity?.success || !resource.app.id || parsedIdentity.data.id !== resource.app.id || parsedIdentity.data.name !== resource.app.name) return { ...cleanup, app: 'retained', reason: parsedIdentity?.success ? 'app-identity-unavailable' : 'app-inventory-unavailable' };
+        if (!parsedIdentity?.success || !resource.app.id || parsedIdentity.data.id !== resource.app.id || parsedIdentity.data.name !== resource.app.name) return cleanupFailure({ ...cleanup, app: 'retained' }, identity,
+          parsedIdentity?.success ? 'app-identity-unavailable' : 'app-inventory-unavailable');
         const inventory = await requestJson(FLY_GRAPHQL_API, 'POST', { query: APP_INVENTORY_QUERY, variables: { name: resource.app.name } });
         const parsedInventory = inventory.kind === 'ok' ? appInventorySchema.safeParse(inventory.value) : undefined;
-        if (!parsedInventory?.success || parsedInventory.data.errors?.length || !parsedInventory.data.data.app || parsedInventory.data.data.app.name !== resource.app.name) return { ...cleanup, app: 'retained', reason: 'app-inventory-unavailable' };
+        if (!parsedInventory?.success || parsedInventory.data.errors?.length || !parsedInventory.data.data.app || parsedInventory.data.data.app.name !== resource.app.name) return cleanupFailure({ ...cleanup, app: 'retained' }, inventory, 'app-inventory-unavailable');
         const app = parsedInventory.data.data.app;
         if (app.certificates.totalCount || app.ipAddresses.totalCount || app.egressIpAddresses.totalCount || app.addOns.totalCount || app.secrets.length || app.services.length || app.allocations.length || app.hasDeploymentSource) return { ...cleanup, app: 'retained', reason: 'app-not-empty' };
         if (observeOnly) return { ...cleanup, app: 'retained', reason: 'app-deletion-unconfirmed', retryable: true };
         const deleted = await http(appPath(resource.app.name), 'DELETE');
-        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return { ...cleanup, app: 'retained', reason: 'app-deletion-unconfirmed' };
+        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return cleanupFailure({ ...cleanup, app: 'retained' }, deleted, 'app-deletion-unconfirmed', true);
         const confirmed = await http(appPath(resource.app.name));
         if (confirmed.kind === 'absent') cleanup.app = 'absent';
-        else return { ...cleanup, app: 'retained', reason: 'app-deletion-unconfirmed' };
+        else {
+          const retained = confirmed.kind === 'ok' ? appIdentitySchema.safeParse(confirmed.value) : undefined;
+          if (retained?.success && retained.data.id === resource.app.id && retained.data.name === resource.app.name) {
+            return { ...cleanup, app: 'retained', kind: 'pending' };
+          }
+          return cleanupFailure({ ...cleanup, app: 'retained' }, confirmed,
+            confirmed.kind === 'ok' ? 'invalid-response' : 'app-deletion-unconfirmed');
+        }
       }
     }
     return { ...cleanup, complete: true };
   }
-  async function destroy(input: FlyResourceV1): Promise<FlyCleanup> {
+  async function destroy(input: FlyResourceV1, continuing = false): Promise<FlyCleanup> {
     const resource = FlyResourceV1Schema.parse(input);
     const unknown: FlyCleanup = { machine: 'unknown', volume: resource.volume.ownership === 'attached' ? 'retained' : 'unknown',
       app: resource.app.ownership === 'existing' ? 'retained' : 'unknown', complete: false };
-    const deletion = await http(machinePath(resource), 'DELETE');
-    if (deletion.kind !== 'ok' && deletion.kind !== 'absent') return { ...unknown, reason: deletion.reason };
+    // Machines REST v1 DELETE requires a stopped Machine unless force=true.
+    // Managed Delete authorizes this exact resource's native stop-and-delete;
+    // keep the existing exact absence check before attachment cleanup.
+    if (!continuing) {
+      const deletion = await http(`${machinePath(resource)}?force=true`, 'DELETE');
+      if (deletion.kind !== 'ok' && deletion.kind !== 'absent') return cleanupFailure(unknown, deletion, deletion.reason, true);
+    }
     const machine = await http(machinePath(resource));
     const observed = machine.kind === 'ok' ? FlyMachineSchema.safeParse(machine.value) : undefined;
     if (machine.kind !== 'absent' && !(observed?.success && observed.data.id === resource.machineId && observed.data.state === 'destroyed')) {
-      return { ...unknown, reason: 'machine-deletion-unconfirmed' };
+      if (observed?.success && observed.data.id === resource.machineId) return { ...unknown, kind: 'pending' };
+      return cleanupFailure(unknown, machine, machine.kind === 'ok' ? 'invalid-response' : machine.reason);
     }
     return destroyAttachments(resource);
   }
@@ -391,7 +452,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
       const parsed = listed.kind === 'ok' ? z.array(FlyMachineSchema).safeParse(listed.value) : undefined;
       if (!parsed?.success) return observeOnly && listed.kind === 'absent'
         ? destroyAttachments({ app, volume: operation.volume }, true)
-        : { ...unknown, reason: 'machine-observation-unavailable' };
+        : cleanupFailure(unknown, listed, 'machine-observation-unavailable');
       const candidates = parsed.data.filter(machine => machine.state !== 'destroyed'
         && (machine.config.metadata?.['happier.request'] === operation.requestId
           || machine.config.mounts.some(mount => mount.volume === operation.volume?.id)));

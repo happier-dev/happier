@@ -1,85 +1,20 @@
-import { PluginError, type PluginAccountApi } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountAuthCompletionResult, ConnectedAccountHealthResult,
-  ConnectedAccountPortableReadContext, ConnectedAccountRuntime, ConnectedAccountPortableRuntime,
-  ConnectedAccountReadContext, ConnectedAccountMaterializationRequest, ConnectedAccountMaterialization,
-} from '@happier-dev/plugin-sdk/connected-accounts';
+import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 
 export const ACCOUNT_ID = 'e2b-account';
 export const ACCOUNT_PURPOSE = 'cloud-api';
-const origin = 'https://api.e2b.app';
-const diagnostic = (code: string, message: string) => ({ code, severity: 'error' as const, message });
-const validToken = (token: unknown): token is string => typeof token === 'string' && token.length > 0 && !/\s/u.test(token);
-const operationSignal = (context: { signal: AbortSignal }, signal?: AbortSignal) => signal ? AbortSignal.any([context.signal, signal]) : context.signal;
-type ProbeContext = Pick<ConnectedAccountAuthenticationContext, 'signal' | 'services'>;
 
-/** A read proves key access, without inventing write scopes or allocating a sandbox. */
-async function probe(token: string, context: ProbeContext, signal: AbortSignal): Promise<Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' | 'rejected' | 'unavailable' }>> {
-  signal.throwIfAborted();
-  const url = origin + '/v2/sandboxes';
-  try {
-    const response = await context.services.http.request({ url, method: 'GET', headers: { 'x-api-key': token }, redirect: 'error' }, { signal });
-    signal.throwIfAborted();
-    if (response.finalUrl !== url || response.status >= 300 && response.status < 400) throw new Error('e2b_unavailable');
-    if (response.status === 401 || response.status === 403) return { status: 'rejected', diagnostic: diagnostic('e2b_invalid_token', 'The E2B API key is invalid or cannot access this team. Reconnect with an API key from the E2B dashboard.') };
-    if (response.status !== 200 || !Array.isArray(JSON.parse(new TextDecoder().decode(response.body)))) throw new Error('e2b_unavailable');
-    return { status: 'connected', displayName: 'E2B', scopes: [] };
-  } catch {
-    signal.throwIfAborted();
-    return { status: 'unavailable', diagnostic: diagnostic('e2b_unavailable', 'E2B could not verify the API key. Try again.') };
-  }
-}
-
-async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountHealthResult> {
-  const signal = operationSignal(context, options?.signal);
-  signal.throwIfAborted();
-  try {
-    const token = await context.credentials.get('token', { signal });
-    signal.throwIfAborted();
-    if (!validToken(token)) return { status: 'reconnectRequired', diagnostic: diagnostic('e2b_invalid_token', 'Reconnect E2B with an API key.') };
-    const result = await probe(token, context, signal);
-    return result.status === 'rejected' ? { status: 'reconnectRequired', diagnostic: result.diagnostic } : result;
-  } catch {
-    signal.throwIfAborted();
-    return { status: 'unavailable', diagnostic: diagnostic('e2b_unavailable', 'The E2B connection could not be checked.') };
-  }
-}
-
-async function materialize(request: ConnectedAccountMaterializationRequest, context: ConnectedAccountPortableReadContext,
-  options?: { signal?: AbortSignal }): Promise<ConnectedAccountMaterialization> {
-  const signal = operationSignal(context, options?.signal);
-  signal.throwIfAborted();
-  if (request.kind !== 'httpHeaders' || request.origin !== origin || request.headerNames.some(name => name.toLowerCase() !== 'x-api-key')) throw new PluginError({ code: 'credential_unavailable' });
-  if (!request.headerNames.length) return { kind: 'httpHeaders', headers: {} };
-  try {
-    const token = await context.credentials.get('token', { signal });
-    signal.throwIfAborted();
-    if (!validToken(token)) throw new PluginError({ code: 'credential_unavailable' });
-    return { kind: 'httpHeaders', headers: { 'x-api-key': token } };
-  } catch { signal.throwIfAborted(); throw new PluginError({ code: 'credential_unavailable' }); }
-}
-
-export const connectedAccountRuntime: ConnectedAccountRuntime = {
-  authentication: { modes: { token: { kind: 'manual', async complete(input, context, options) {
-    const signal = operationSignal(context, options?.signal);
-    signal.throwIfAborted();
-    const supplied = input.fields.token;
-    const token = supplied?.trim();
-    if (typeof supplied !== 'string' || /[\r\n]/u.test(supplied) || !validToken(token)) return { status: 'rejected', diagnostic: diagnostic('e2b_invalid_token', 'Enter an E2B API key.') };
-    const result = await probe(token, context, signal);
-    if (result.status !== 'connected') return result;
-    signal.throwIfAborted();
-    try { await context.attemptCredentials.set('token', token, { signal }); }
-    catch { signal.throwIfAborted(); return { status: 'unavailable', diagnostic: diagnostic('e2b_credential_storage_unavailable', 'The verified E2B key could not be saved. Try again.') }; }
-    signal.throwIfAborted();
-    return result;
-  } } } },
-  status: health,
-  refresh: health,
-  async revoke(context, options) {
-    operationSignal(context, options?.signal).throwIfAborted();
-    return { status: 'remoteUnsupported', diagnostic: diagnostic('e2b_manual_revoke_required', 'Revoke the API key in the E2B dashboard.') };
+const account = createMachineProvisionerApiKeyAccount({
+  name: 'E2B', keyDescription: 'an E2B team API key from the E2B dashboard', codePrefix: 'e2b',
+  purpose: ACCOUNT_PURPOSE,
+  headers: [
+    { origin: 'https://api.e2b.app', headerName: 'x-api-key', scheme: 'raw' },
+  ],
+  probe: {
+    request: { url: 'https://api.e2b.app/v2/sandboxes', method: 'GET' },
+    read: value => Array.isArray(value) ? { status: 'connected', displayName: 'E2B', scopes: [] } : undefined,
   },
-  materialize,
-};
-export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = { authentication: connectedAccountRuntime.authentication, materialize: connectedAccountRuntime.materialize };
-export function activate(api: PluginAccountApi) { api.connectedAccounts.register(ACCOUNT_ID, connectedAccountPortableRuntime); }
+});
+export const connectedAccountRuntime = account.runtime;
+export const connectedAccountPortableRuntime = account.portableRuntime;
+export function activate(api: PluginAccountApi): void { api.connectedAccounts.register(ACCOUNT_ID, account.portableRuntime); }

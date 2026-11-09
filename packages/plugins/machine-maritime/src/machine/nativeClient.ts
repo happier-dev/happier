@@ -6,6 +6,10 @@ import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION,
 
 // Maritime OpenAPI 0.1.0 and public SDK/API docs, inspected 2026-11-05.
 const origin = 'https://api.maritime.sh';
+export function isMaritimeAccountLimits(value: unknown): value is Readonly<{ plan: string }> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && 'plan' in value && typeof value.plan === 'string' && value.plan.trim().length > 0;
+}
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const identitySchema = defineProtocolObject({ id: text, status: text, externalId: text.nullable().optional(),
@@ -199,7 +203,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     async check(): Promise<MachineProvisionerCheckResultV1> {
       try {
         const value = await json(await http('/api/v1/account/limits'));
-        if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalid();
+        if (!isMaritimeAccountLimits(value)) throw invalid();
         return { available: true };
       } catch (error) { signal.throwIfAborted(); return { available: false, code: safeCode(error), status: 'Maritime unavailable' }; }
     },

@@ -17,6 +17,13 @@ function withPaidAccount(fetch: typeof globalThis.fetch) {
 }
 
 describe('Boat native HTTP boundary', () => {
+  it('does not report access when the limits endpoint returns an unrelated object', async () => {
+    const client = createBoatNativeClient({ fetch: async () => json({}) });
+    await expect(client.check()).rejects.toMatchObject({ code: 'native_response_invalid' });
+    const valid = createBoatNativeClient({ fetch: async () => json({ ok: true, type: 'limits.info' }) });
+    expect(await valid.check()).toEqual({ available: true });
+  });
+
   it('keeps mandatory trial TTL renewable across create, renewal and resume, and observes native lapse as stopped', async () => {
     let state = 'ready';
     let ttlSeconds: number | null = 7200;
