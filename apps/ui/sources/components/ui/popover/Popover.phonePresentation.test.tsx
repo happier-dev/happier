@@ -234,6 +234,30 @@ describe('Popover phone presentation', () => {
         expect(modalSheets(screen)).toHaveLength(0);
     });
 
+    it('stops presenting the sheet while its page is withdrawn even when the opener cannot commit its close yet', async () => {
+        // Live READY161 (390): the composer's retained page is frozen behind the opened detail, so its close never
+        // commits; the sheet stayed over the detail with a dead Close, Escape and backdrop (TL-C phone glance).
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const closes = vi.fn();
+        let present: (presented: boolean) => void = () => {};
+        function Page() {
+            const [presented, setPresented] = React.useState(true);
+            present = setPresented;
+            return <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <Popover open phonePresentation="sheet" accessibilityLabel="Pull request" onRequestClose={closes}>
+                    {() => <Text>glance</Text>}
+                </Popover>
+            </PluginSurfaceFocusEligibilityProvider>;
+        }
+        const modalSheets = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+            screen.findAll((node) => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true);
+        const screen = await renderScreen(<Page />);
+        expect(modalSheets(screen).length).toBeGreaterThan(0);
+        await act(async () => { present(false); });
+        expect(closes).toHaveBeenCalled();
+        expect(modalSheets(screen)).toHaveLength(0);
+    });
+
     it('keeps the anchored presentation on a wide viewport when phone sheets are requested', async () => {
         viewport.width = 1200;
         viewport.height = 900;

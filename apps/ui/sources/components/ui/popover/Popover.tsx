@@ -22,7 +22,7 @@ import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOve
 import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
-import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type {
     PopoverAnchor,
@@ -391,9 +391,14 @@ function useCloseWhenPageWithdrawn(open: boolean, onRequestClose: (() => void) |
     React.useEffect(() => presentation.subscribe(closeIfOpen), [closeIfOpen, presentation]);
 }
 
-export function Popover(props: PopoverProps) {
+export function Popover(requested: PopoverProps) {
     const deviceType = useDeviceType();
-    useCloseWhenPageWithdrawn(props.open, props.onRequestClose);
+    useCloseWhenPageWithdrawn(requested.open, requested.onRequestClose);
+    // A withdrawn page presents nothing, whether or not its opener has committed the close yet: a retained
+    // page is frozen behind the content that replaced it, so its close may only land when it is shown again
+    // (TL-C phone glance, READY161).
+    const presented = useLayoutPresentationActive();
+    const props = presented || !requested.open ? requested : { ...requested, open: false };
     // A sheet-presented popover opened from inside a phone sheet pushes into that sheet (with a Back)
     // instead of opening a second sheet over it.
     const pushStack = React.useContext(PhoneSheetPushContext);
