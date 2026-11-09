@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
   MachineProcessesStopInputV1Schema,
   MachineProcessesKillInputV1Schema,

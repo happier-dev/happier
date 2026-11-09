@@ -8,6 +8,8 @@ import {
   type HappierDecisionButtonProps,
 } from '@happier-dev/plugin-ui/presentation';
 
+import type { HappierHitReach } from '@happier-dev/plugin-ui/environment';
+
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -19,6 +21,8 @@ export type ApprovalDecisionBarProps = Omit<HappierDecisionBarProps, 'Button' | 
   irreversible?: boolean;
   /** Where the surface has no room under the buttons (an Inbox row), it carries the sentence itself. */
   hideIrreversibleNote?: boolean;
+  /** A bar inside a pressable row keeps its buttons' hit areas to the row's gaps; the row owns the rest. */
+  hitReach?: HappierHitReach;
   /**
    * A row in a long list of requests (the Inbox): the one-shot answer is a bordered button and Deny is plain text, so a
    * page of requests doesn't shout with a filled button on every row (lab P4). A single request keeps the filled primary.
@@ -60,13 +64,14 @@ function QuietIrreversibleApprovalDecisionButton(props: HappierDecisionButtonPro
 }
 
 /** Localized host defaults; request-specific consequence labels remain with their existing owners. */
-export function ApprovalDecisionBar({ approve, reject, dismiss, irreversible, hideIrreversibleNote, quiet, ...props }: ApprovalDecisionBarProps) {
-  const bar = <HappierDecisionBar {...props} Button={quiet
+export function ApprovalDecisionBar({ approve, reject, dismiss, irreversible, hideIrreversibleNote, hitReach, quiet, ...props }: ApprovalDecisionBarProps) {
+  const decisionBar = <HappierDecisionBar {...props} Button={quiet
       ? (irreversible ? QuietIrreversibleApprovalDecisionButton : QuietApprovalDecisionButton)
       : (irreversible ? IrreversibleApprovalDecisionButton : ApprovalDecisionButton)}
     approve={approve ? { ...approve, label: approve.label ?? t('approvals.approve') } : undefined}
     reject={reject ? { ...reject, label: reject.label ?? t('approvals.reject') } : undefined}
     dismiss={dismiss ? { ...dismiss, label: dismiss.label ?? t('approvals.dismiss') } : undefined} />;
+  const bar = hitReach === undefined ? decisionBar : <RoundButtonSizeScope size={props.size ?? 'normal'} hitReach={hitReach}>{decisionBar}</RoundButtonSizeScope>;
   if (!irreversible || !approve || hideIrreversibleNote) return bar;
   return <View style={styles.withNote}>
     <Text variant="meta" style={styles.note} testID="approvals.irreversible-note">{t('approvals.irreversibleNote')}</Text>

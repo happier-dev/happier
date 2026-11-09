@@ -2,7 +2,7 @@ import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadat
 import type { ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
@@ -41,7 +41,7 @@ export function readApprovalSessionEndpointLabels(input: Readonly<{
         : '';
 
     return {
-        machineLabel: getMachineDisplayName(input.machine) ?? input.machineId ?? null,
+        machineLabel: getSettledMachineDisplayName(input.machine) ?? input.machineId ?? null,
         pathLabel: displayPath ? formatSessionPath(displayPath, ownerMetadata?.homeDir) : null,
     };
 }
@@ -57,7 +57,7 @@ export function readApprovalTargetEndpointLabels(input: Readonly<{
     canonicalRoot: string;
 }>): ApprovalEndpointLabels {
     return {
-        machineLabel: getMachineDisplayName(input.machine) ?? input.machineId,
+        machineLabel: getSettledMachineDisplayName(input.machine) ?? input.machineId,
         pathLabel: formatPathRelativeToHome(input.canonicalRoot, input.machine?.metadata?.homeDir ?? undefined),
     };
 }

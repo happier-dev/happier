@@ -11,6 +11,8 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 
 /**
  * The requesting session's name as every approval surface (page, Inbox row, title) reads it: the
@@ -22,6 +24,7 @@ export function readApprovalSessionName(
     serverId: string | null,
     nowMs: number = Date.now(),
 ): string | null {
+    if (!readSessionRecordingVisibility()({ sessionId: session.id, serverId })) return null;
     const encryption = projectUiSessionAwareness(session, nowMs).encryption;
     return encryption !== 'unknown' && isSessionAwarenessContentReadableV1(encryption)
         ? getSessionName(session, serverId)
@@ -46,17 +49,22 @@ export type ApprovalSessionReading = Readonly<{
  */
 export function useApprovalSessionReading(serverId: string | null, value: string,
     resolution?: ServerCredentialAccountScopeResolution,
-    options?: Readonly<{ exactRead?: boolean }>): ApprovalSessionReading {
+    options?: Readonly<{
+        exactRead?: boolean;
+        /** The detail already knows its Home cannot be reached: a requester it has not read cannot be read now. */
+        homeUnavailable?: boolean;
+    }>): ApprovalSessionReading {
     // An unresolved approval Home must not borrow the active Home's session names.
     const candidate = serverId?.trim() ? value : '';
     const row = useSessionListRenderableWithServerScope(serverId, candidate);
+    const isRecordingVisible = useSessionRecordingVisibility();
     // The detail already captures a credential resolution for its decisions.
     // Fence retained rows while that authority is resolving or has retired;
     // list references keep their existing authorized-cache path without a new
     // credential read for every Inbox row.
     const session = resolution && resolution.kind !== 'bound' ? null : row;
     const scopeServerId = serverId ? resolveServerProfileScopeIdForIdentifier(serverId) : null;
-    const needsExactRead = options?.exactRead === true && Boolean(candidate && serverId) && !row
+    const needsExactRead = options?.exactRead === true && options.homeUnavailable !== true && Boolean(candidate && serverId) && !row
         && (!resolution || resolution.kind === 'bound') && Boolean(serverId && getServerProfileById(serverId));
     const exactRead = useHydrateSession(needsExactRead ? value : '', 'approvals.requesterSession',
         { ...(serverId ? { serverId } : {}), hydrateMessages: false });
@@ -68,6 +76,8 @@ export function useApprovalSessionReading(serverId: string | null, value: string
     const status: ApprovalSessionReadingStatus = !value ? 'none'
         : !candidate || !serverId ? 'unavailable'
         : session ? 'ready'
+        // An unreachable Home settles the reading: waiting on it would hold a skeleton for good.
+        : options?.homeUnavailable === true ? 'unavailable'
         : resolution?.kind === 'resolving' ? 'resolving'
         : (resolution && resolution.kind !== 'bound') || !getServerProfileById(serverId) ? 'unavailable'
         // A first read in flight is still resolving. One that failed and is retrying has settled for now:
@@ -80,7 +90,7 @@ export function useApprovalSessionReading(serverId: string | null, value: string
     if (!session) return { ...context, name: null, machineId: '' };
     return {
         ...context,
-        name: readApprovalSessionName(session, serverId),
+        name: isRecordingVisible({ sessionId: session.id, serverId }) ? readApprovalSessionName(session, serverId) : null,
         machineId: readDisplayMachineIdForSession({
             serverId,
             sessionId: session.id,

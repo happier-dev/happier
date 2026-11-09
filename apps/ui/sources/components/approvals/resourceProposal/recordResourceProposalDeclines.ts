@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { MachineStorageSuggestionsDeclineInputV1 } from '@happier-dev/protocol/storage/storageV1';
 
 import { declineMachineStorageSuggestionsViaAction } from '@/sync/domains/machines/storage/machineRpc';

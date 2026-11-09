@@ -86,7 +86,11 @@ export function resolveConfidentialSecretSaveName(approval: ConfidentialSecretAp
 export function readConfidentialFillSettlement(approval: ApprovalRequest): SecretFillSettlementV1 | null {
     if (!isConfidentialSecretApprovalAction(approval.actionId) || approval.v !== 2) return null;
     const settlement = SecretFillSettlementV1Schema.safeParse(approval.execution?.result);
-    return settlement.success ? settlement.data : null;
+    if (settlement.success) return settlement.data;
+    // The approval executor also records known native refusals as code-only failures.
+    const refusal = approval.execution?.ok === false
+        ? SecretFillSettlementV1Schema.safeParse({ status: 'refused', code: approval.execution.errorCode }) : null;
+    return refusal?.success ? refusal.data : null;
 }
 
 export type ConfidentialFillOutcome = Readonly<{ title: string; detail: string | null; warning: boolean }>;

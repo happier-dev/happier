@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineGuardLadderV1 } from '@happier-dev/protocol/machines/guard/guardViewV1';
 import { MachineGuardActivityListV1Schema } from '@happier-dev/protocol/machines/guard/activityV1';
-import { PileApplyResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
+import { PileApplyResultV1Schema, TrashEntryV1Schema } from '@happier-dev/protocol/storage/storageV1';
 
-import { buildResourceProposalNarrowedInput, describeResourceProposalRows, deriveResourceProposalDisplay, initialResourceProposalSelection, resourceProposalApprovedKeys, resolveResourceProposalOutcomes, selectGuardKeptForProposal, deriveResourceProposalTrashReceipt, resourceProposalDisplayWithTrashReceipt } from './resourceProposalPresentation';
+import { buildResourceProposalNarrowedInput, describeResourceProposalRows, deriveResourceProposalDisplay, initialResourceProposalSelection, resourceProposalApprovedKeys, resolveResourceProposalOutcomes, selectGuardKeptForProposal, deriveResourceProposalTrashReceipt, resourceProposalDisplayWithTrashReceipt, resourceProposalTrashBytes } from './resourceProposalPresentation';
 import { readResourceProposalApproval } from './readResourceProposalApproval';
-import { getActionSpec, type ApprovalRequest } from '@happier-dev/protocol';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 type Excluded = MachineGuardLadderV1['excluded'][number];
 const kept = (ref: string, processRef: string, reason: Excluded['reason'] = 'working'): Excluded => ({
@@ -13,6 +14,18 @@ const kept = (ref: string, processRef: string, reason: Excluded['reason'] = 'wor
 });
 
 describe('correlated Trash receipts', () => {
+    it('withholds an unmeasured partial allocation union and preserves both mixed settled outcomes', () => {
+        const result = PileApplyResultV1Schema.parse({ batchId: 'batch', mode: 'trash', inTrashBytes: 30, freedBytes: 0,
+            outcomes: [{ itemId: 'first', status: 'moved' }, { itemId: 'second', status: 'moved' }], trashEntryIds: ['first', 'second'] });
+        const entry = TrashEntryV1Schema.parse({ entryId: 'second', batchId: 'batch', volumeId: 'disk', title: 'Second', originalPath: '/second',
+            size: { allocatedBytes: 20, freesBytes: 0, sharedBytes: 20, sharedExtentsUnmeasured: false, atLeast: false },
+            movedAt: 1, movedBy: { accountId: 'account', kind: 'person' }, emptiesAt: null, restorable: true });
+        const receipt = { kind: 'ready' as const, remaining: [entry], deletedCount: 1, restoredCount: 0, unknownCount: 0, freedBytes: 10 };
+        expect(resourceProposalTrashBytes(result, receipt)).toBeNull();
+        expect(resourceProposalDisplayWithTrashReceipt(result, { ...receipt, remaining: [], restoredCount: 1 }))
+            .toMatchObject({ kind: 'trashed', receipt: { remaining: [], deletedCount: 1, restoredCount: 1, freedBytes: 10 } });
+    });
+
     it('adds later measured emptying to settled partial emptyAfter without requiring expired original Activity', () => {
         const result = PileApplyResultV1Schema.parse({ batchId: 'batch', mode: 'trash', inTrashBytes: 2, freedBytes: 8,
             outcomes: [{ itemId: 'first', status: 'moved' }, { itemId: 'second', status: 'moved' }], trashEntryIds: ['remaining'] });

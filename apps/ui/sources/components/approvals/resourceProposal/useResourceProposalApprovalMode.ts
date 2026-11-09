@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { getActionTargetApprovalRequired } from '@/components/settings/actions/actionSettingsTargetApproval';
 import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';

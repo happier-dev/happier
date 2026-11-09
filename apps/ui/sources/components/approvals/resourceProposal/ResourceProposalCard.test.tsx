@@ -1,24 +1,34 @@
 import {
   renderWithSessionTranscriptSource,
   createTestSessionTranscriptSource,
+  findAllHostTestInstances,
+  pressTestInstanceAsync,
+  renderHook,
+  flushHookEffects,
 } from '@/dev/testkit';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
-  API_TOKEN_FULL_GRANT_V1,
+  API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import {
   ApprovalRequestSchema,
   ApprovalRequestV2Schema,
-  ARTIFACT_PLAIN_DATA_KEY_MARKER,
-  StrictJsonValueSchema,
-  buildApprovalRequestArtifactHeaderV1,
-  computeExternalActionRequestEnvelopeDigestV1,
-  encodePlainArtifactStoredContent,
-  ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema,
-  signExternalActionApprovalInputV1,
   type ApprovalRequestV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
+  encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+  StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+  computeExternalActionRequestEnvelopeDigestV1,
+  signExternalActionApprovalInputV1} from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import {
+  ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionResponseEnvelopeV1Schema} from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type {
   MachineStorageTrashMoveInputV1,
@@ -99,9 +109,11 @@ vi.mock('@/modal', async () => {
 await loadSyncSingletonForTests();
 const { Modal } = await import('@/modal');
 const { t } = await import('@/text');
+const { formatMachineBytes } = await import('@/components/machines/vitals/machineVitalsPresentation');
 const { ApprovalPromptCard } =
   await import('@/components/tools/shell/approvals/ApprovalPromptCard');
 const { storage } = await import('@/sync/domains/state/storage');
+const { useResourceProposalCheck } = await import('./useResourceProposalCheck');
 const { createSessionFixture } =
   await import('@/dev/testkit/fixtures/sessionFixtures');
 const initialState = storage.getState();
@@ -149,7 +161,7 @@ let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 let checkExpect: (itemId: string) => string;
 let uiMovedItems: string[];
 
-function signed(request: ApprovalRequestV2): ApprovalRequestV2 {
+function signed(request: ApprovalRequestV2, installationId = 'installation-exact'): ApprovalRequestV2 {
   const origin = request.executionOriginV1;
   if (
     !origin.machineId ||
@@ -168,7 +180,7 @@ function signed(request: ApprovalRequestV2): ApprovalRequestV2 {
       serverIdentityId: origin.serverIdentityId,
       accountId: origin.accountId,
       custodianAccountId: origin.accountId,
-      installationId: 'installation-exact',
+      installationId,
       principalId: origin.principalId,
       credentialId: origin.credentialId,
       grant: API_TOKEN_FULL_GRANT_V1,
@@ -236,11 +248,11 @@ function proposal(
     : signed(base);
 }
 
-async function seed(request: ApprovalRequestV2) {
+async function seed(request: ApprovalRequestV2, artifactId = 'approval-1') {
   const response = await home.artifacts(homeId).handle('/v1/artifacts', {
     method: 'POST',
     body: JSON.stringify({
-      id: 'approval-1',
+      id: artifactId,
       header: encodePlainArtifactStoredContent(
         buildApprovalRequestArtifactHeaderV1(request),
       ),
@@ -260,11 +272,11 @@ const calls = (method: string) =>
     .map(([call]) => call)
     .filter((call) => call.method === method);
 
-async function render(request: ApprovalRequestV2, seedFirst = true) {
-  if (seedFirst) await seed(request);
+async function render(request: ApprovalRequestV2, seedFirst = true, artifactId = 'approval-1') {
+  if (seedFirst) await seed(request, artifactId);
   return renderWithSessionTranscriptSource(
     <ApprovalPromptCard
-      artifact={{ id: 'approval-1', header: { title: null, serverId: homeId } }}
+      artifact={{ id: artifactId, header: { title: null, serverId: homeId } }}
       approval={request}
       sessionId="session-1"
       canApprove
@@ -287,6 +299,8 @@ describe('resource proposal card', () => {
     vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
     webLocks = installWebLockManagerMock();
     await home.reset();
+    (await import('@/sync/domains/machines/storage/machineStorageStore')).machineStorageStore.reset();
+    (await import('@/sync/domains/machines/guard/machineGuardStore')).machineGuardStore.reset();
     homeId = await home.addHome({
       name: 'Home A',
       serverUrl: 'https://proposal-home.example',
@@ -373,6 +387,11 @@ describe('resource proposal card', () => {
           return createMachineGuardViewFixture();
         case RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST:
           return MachineGuardActivityListV1Schema.parse({ entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1 });
+        case RPC_METHODS.DAEMON_GUARD_ACTIVITY_WATCH:
+          return new Promise(resolve => {
+            if (call.signal?.aborted) resolve({ changed: false });
+            else call.signal?.addEventListener('abort', () => resolve({ changed: false }), { once: true });
+          });
         case RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST:
           return MachineStorageCategoryListResultV1Schema.parse({ revision: 1, sizedAt: 1, categoryId: 'trash', items: [],
             trashEntries: [...ids.slice(0, 5).map(itemId => ({ entryId: `entry-${itemId}`, batchId: 'batch-1', volumeId: 'disk',
@@ -404,10 +423,23 @@ describe('resource proposal card', () => {
   });
   afterEach(async () => {
     standardCleanup();
+    (await import('@/sync/domains/machines/storage/machineStorageStore')).machineStorageStore.reset();
+    (await import('@/sync/domains/machines/guard/machineGuardStore')).machineGuardStore.reset();
     await home.reset();
     storage.setState(initialState, true);
     webLocks?.restore();
     webLocks = undefined;
+  });
+
+  it('withholds a storage check when the captured Home is unknown instead of borrowing the focused Home', async () => {
+    const base = proposal();
+    const request = signed({ ...base,
+      executionOriginV1: { ...base.executionOriginV1, serverIdentityId: 'srv_unknown-home' },
+    });
+    const screen = await render(request);
+    await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-check-unavailable')).toBeTruthy());
+    expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(true);
+    expect(calls(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK)).toHaveLength(0);
   });
 
   it('checks an agent Delete-now Artifact and executes only the selected subset through the canonical decision and storage front doors', async () => {
@@ -494,6 +526,28 @@ describe('resource proposal card', () => {
     await screen.unmount();
   });
 
+  it('keeps the tick the person removed while the current-facts check was still running', async () => {
+    const previousRpc = daemonRpc.getMockImplementation()!;
+    let releaseCheck: () => void = () => {};
+    const held = new Promise<void>((resolve) => { releaseCheck = resolve; });
+    daemonRpc.mockImplementation(async call => {
+      const result = await previousRpc(call);
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK) await held;
+      return result;
+    });
+    const screen = await render(proposal());
+    await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK)).toHaveLength(1));
+    await screen.pressByTestIdAsync('resource-proposal-item-wt-merged');
+    await act(async () => { releaseCheck(); });
+    await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('approval-prompt-approve');
+    await vi.waitFor(() => expect(readApproval()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } }));
+    const decision = readApproval().v === 2 ? (readApproval() as ApprovalRequestV2).decision : undefined;
+    const kept = (decision?.narrowedInput as { items: Array<{ ref: { itemId: string } }> }).items;
+    expect(kept.map((item) => item.ref.itemId)).toEqual(ids.slice(1));
+    await screen.unmount();
+  });
+
   it('approves 5 of 6 with refreshed expectations, then remembers the sixth as declined', async () => {
     checkExpect = (itemId) => `fresh-${itemId}`;
     const screen = await render(proposal());
@@ -505,6 +559,7 @@ describe('resource proposal card', () => {
     await vi.waitFor(() =>
       expect(screen.findByTestId('resource-proposal-stale')).toBeNull(),
     );
+    await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('resource-proposal-item-old-wt');
     await screen.pressByTestIdAsync('approval-prompt-approve');
     await vi.waitFor(() =>
@@ -615,7 +670,7 @@ describe('resource proposal card', () => {
     expect(screen.findByTestId('resource-proposal-item-old-wt')).toBeTruthy();
     vi.mocked(Modal.confirm).mockClear().mockResolvedValueOnce(false);
     await screen.pressByTestIdAsync('machine-storage-pile-empty');
-    expect(Modal.confirm).toHaveBeenCalled();
+    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
     expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY)).toHaveLength(0);
     expect(screen.getTextContent()).not.toContain('machineStorage.pile.freed');
     await screen.pressByTestIdAsync('machine-storage-pile-empty');
@@ -650,6 +705,9 @@ describe('resource proposal card', () => {
     });
     const screen = await render(request);
     await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-receipt-unavailable')).toBeTruthy());
+    // Unavailable must be the settled failed read, not the credential owner's
+    // initial resolving phase; otherwise reopening races the first real read.
+    expect(calls(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)).toHaveLength(1);
     activityAvailable = true;
     const reopen = () => act(async () => screen.update(<ApprovalPromptCard
         artifact={{ id: 'approval-1', header: { title: null, serverId: homeId } }}
@@ -720,7 +778,7 @@ describe('resource proposal card', () => {
         expect(screen.getTextContent()).toContain('resourceProposal.receiptRestored(count=1)');
         expect(screen.getTextContent()).toContain('resourceProposal.receiptUnknown(count=1)');
         await screen.pressByTestIdAsync('machine-storage-pile-undo');
-        expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: [entryIds[4]] });
+        await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: [entryIds[4]] }));
         expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).not.toHaveProperty('batchId');
       } else if (state === 'mixed_closed') {
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('resourceProposal.receiptFreed(count=3,amount=1.5 GB)'));
@@ -739,6 +797,71 @@ describe('resource proposal card', () => {
       expect(calls(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)[0]?.payload).toMatchObject({ range: '30d', filter: 'all' });
     },
   );
+
+  it('retains an occupied Undo refusal per entry and retries only that entry beside the occupant', async () => {
+    const result = PileApplyResultV1Schema.parse({ batchId: 'batch-1', mode: 'trash', inTrashBytes: GB, freedBytes: 0,
+      trashEntryIds: ids.slice(0, 2).map(itemId => `entry-${itemId}`),
+      outcomes: ids.slice(0, 2).map(itemId => ({ itemId, status: 'moved' })) });
+    const request = proposal({ status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+      execution: { executedAtMs: 3, ok: true, result } });
+    const boundary = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => {
+      if (call.method !== RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE) return boundary(call);
+      const payload = call.payload as { entryIds: string[]; beside?: true };
+      return { outcomes: payload.entryIds.map(entryId => entryId === 'entry-wt-merged' && !payload.beside
+        ? { entryId, status: 'refused', reason: { code: 'destination_occupied' } }
+        : { entryId, status: 'restored', path: `/cache/${entryId}${payload.beside ? ' (restored)' : ''}` }) };
+    });
+    const hook = await renderHook(() => useResourceProposalCheck(request, homeId));
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(hook.getCurrent()?.undo).toBeTypeOf('function');
+    });
+    await act(async () => { expect(await hook.getCurrent()!.undo!()).toBe(false); });
+    expect(hook.getCurrent()!.restoreOutcomes['entry-wt-merged']).toMatchObject({ status: 'refused', reason: { code: 'destination_occupied' } });
+    expect(hook.getCurrent()!.restoreEntries).toEqual([
+      expect.objectContaining({ entryId: 'entry-wt-merged', originalPath: ref('wt-merged').path }),
+    ]);
+    expect(hook.getCurrent()!.display).toMatchObject({ kind: 'trashed' });
+    const callsBefore = calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE).length;
+    await act(async () => { expect(await hook.getCurrent()!.putBackBeside!('entry-node-modules')).toBe(false); });
+    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)).toHaveLength(callsBefore);
+    await act(async () => { expect(await hook.getCurrent()!.putBackBeside!('entry-wt-merged')).toBe(true); });
+    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE).at(-1)?.payload).toMatchObject({ entryIds: ['entry-wt-merged'], beside: true });
+    expect(hook.getCurrent()!.restoreOutcomes['entry-wt-merged']).toMatchObject({ status: 'restored', path: '/cache/entry-wt-merged (restored)' });
+    expect(hook.getCurrent()!.display).toMatchObject({ kind: 'restored' });
+  });
+
+  it('names the refused item on the receipt with its reason, offers Put back beside it, and shows where it went', async () => {
+    const result = PileApplyResultV1Schema.parse({ batchId: 'batch-1', mode: 'trash', inTrashBytes: GB, freedBytes: 0,
+      trashEntryIds: ids.slice(0, 2).map(itemId => `entry-${itemId}`),
+      outcomes: ids.slice(0, 2).map(itemId => ({ itemId, status: 'moved' })) });
+    const request = proposal({ status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+      execution: { executedAtMs: 3, ok: true, result } });
+    const boundary = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => {
+      if (call.method !== RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE) return boundary(call);
+      const payload = call.payload as { entryIds: string[]; beside?: true };
+      return { outcomes: payload.entryIds.map(entryId => entryId === 'entry-wt-merged' && !payload.beside
+        ? { entryId, status: 'refused', reason: { code: 'destination_occupied' } }
+        : { entryId, status: 'restored', path: `/cache/${entryId}${payload.beside ? ' (restored)' : ''}` }) };
+    });
+    const screen = await render(request);
+    await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile-undo')).toBeTruthy());
+    expect(screen.findByTestId('resource-proposal-restore')).toBeNull();
+    await screen.pressByTestIdAsync('machine-storage-pile-undo');
+    await vi.waitFor(() => expect(screen.findByTestId('machine-storage-restore-recovery-entry-wt-merged-beside')).toBeTruthy());
+    // Joined by entry id: only the refused entry is named, and the restored one is not.
+    expect(screen.getTextContent()).toContain('wt-merged');
+    expect(screen.getTextContent()).toContain('machineStorage.page.putBackOccupied');
+    expect(screen.findByTestId('machine-storage-restore-recovery-entry-node-modules')).toBeNull();
+    await screen.pressByTestIdAsync('machine-storage-restore-recovery-entry-wt-merged-beside');
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('machineStorage.page.putBackAs(path=/cache/entry-wt-merged (restored))'));
+    expect(screen.findByTestId('machine-storage-restore-recovery-entry-wt-merged-beside')).toBeNull();
+    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE).at(-1)?.payload).toMatchObject({ entryIds: ['entry-wt-merged'], beside: true });
+  });
 
   it('keeps partial Empty and Restore outcomes scoped to the remaining entries with only real freed bytes', async () => {
     const entryIds = ['first', 'second', 'third'];
@@ -766,11 +889,110 @@ describe('resource proposal card', () => {
     expect(screen.getTextContent()).not.toContain('2 GB');
     expect(screen.getTextContent()).toContain('resourceProposal.receiptFreed(count=1,amount=500 MB)');
     await screen.pressByTestIdAsync('machine-storage-pile-undo');
-    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['second', 'third'] });
+    await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['second', 'third'] }));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)'));
     expect(screen.findByTestId('resource-proposal-restored')).toBeNull();
     expect(screen.getTextContent()).toContain('resourceProposal.receiptRestored(count=1)');
     expect(screen.getTextContent()).toContain('resourceProposal.receiptFreed(count=1,amount=500 MB)');
+  });
+
+  it('acquires two receipts for A and one for B once per scope across partial effects and remount', async () => {
+    const otherMachine = 'receipt-machine-b';
+    const rows = [
+      { ...createPlainMachineRowFixture({ id: MACHINE, accountId: 'account-1' }), installationId: 'installation-exact' },
+      { ...createPlainMachineRowFixture({ id: otherMachine, accountId: 'account-1' }), installationId: 'installation-b' },
+    ];
+    home.answer(homeId, 'GET /v1/machines', { body: rows });
+    home.answer(homeId, `GET /v1/machines/${otherMachine}`, { body: { machine: rows[1] } });
+    storage.setState({ machineListByServerId: { [homeId]: [
+      ...(storage.getState().machineListByServerId[homeId] ?? []),
+      createMachineFixture({ id: otherMachine, activeAt: Date.now(), storageMode: 'plain', isShared: false }),
+    ] } });
+    const entries = ['first', 'second', 'third', 'other-a', 'other-b'];
+    const remaining = new Set(entries);
+    const activity: Array<Record<string, unknown>> = [];
+    const result = (batchId: string, entryIds: string[]) => PileApplyResultV1Schema.parse({
+      batchId, mode: 'trash', inTrashBytes: GB, freedBytes: 0, trashEntryIds: entryIds,
+      outcomes: entryIds.map((_, index) => ({ itemId: ids[index]!, status: 'moved' })),
+    });
+    const executed = (value: PileApplyResultV1) => proposal({ status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+      execution: { executedAtMs: 3, ok: true, result: value } });
+    const first = executed(result('partial-a', entries.slice(0, 3)));
+    const secondBase = executed(result('other-a', ['other-a']));
+    const second = signed({ ...secondBase, executionOriginV1: { ...secondBase.executionOriginV1, requestId: 'receipt-request-2' } });
+    const thirdBase = executed(result('other-b', ['other-b']));
+    const third = signed({ ...thirdBase, actionArgs: { ...proposalArgs, machineId: otherMachine },
+      executionOriginV1: { ...thirdBase.executionOriginV1, machineId: otherMachine, requestId: 'receipt-request-b' } }, 'installation-b');
+    const original = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => {
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST) {
+        const forMachine = call.machineId === otherMachine ? ['other-b'] : entries.slice(0, 4);
+        return MachineStorageCategoryListResultV1Schema.parse({ revision: activity.length + 1, sizedAt: 1,
+          categoryId: 'trash', items: [], trashEntries: forMachine.filter(entryId => remaining.has(entryId)).map(entryId => ({
+            entryId, batchId: entryId === 'other-a' || entryId === 'other-b' ? entryId : 'partial-a', volumeId: 'disk',
+            originalPath: `/cache/${entryId}`, title: entryId, size: size(GB), movedAt: 1,
+            movedBy: { accountId: 'account-1', kind: 'agent' }, emptiesAt: null, restorable: true,
+          })) });
+      }
+      if (call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST) return MachineGuardActivityListV1Schema.parse({
+        entries: call.machineId === otherMachine ? [] : activity,
+        counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: activity.length + 1,
+      });
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY) {
+        remaining.delete('first');
+        activity.push({ v: 1, id: 'first-trash_emptied', kind: 'trash_emptied', at: 4,
+          rule: 'approved_proposal', outcome: 'done', attribution: { kind: 'unknown' }, freedBytes: GB / 2 });
+        return { freedBytes: GB / 2, outcomes: [
+          { entryId: 'first', status: 'deleted' }, { entryId: 'second', status: 'failed' }, { entryId: 'third', status: 'refused' },
+        ] };
+      }
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE) {
+        remaining.delete('second');
+        activity.push({ v: 1, id: 'second-trash_moved', kind: 'trash_moved', at: 1, undoneAt: 5,
+          rule: 'approved_proposal', outcome: 'done', attribution: { kind: 'unknown' } });
+        return { outcomes: [{ entryId: 'second', status: 'restored' }, { entryId: 'third', status: 'failed' }] };
+      }
+      return original(call);
+    });
+    const reads = (method: string, machineId: string) => calls(method).filter(call => call.machineId === machineId).length;
+    const a = await render(first);
+    const a2 = await render(second, true, 'approval-2');
+    const b = await render(third, true, 'approval-b');
+    await vi.waitFor(() => {
+      expect(a.getTextContent()).toContain('machineStorage.pile.inTrash(count=3)');
+      expect(a2.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)');
+      expect(b.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)');
+    });
+    for (const method of [RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST]) {
+      expect(reads(method, MACHINE)).toBe(1);
+      expect(reads(method, otherMachine)).toBe(1);
+    }
+    const otherReads = [reads(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, otherMachine), reads(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST, otherMachine)];
+    await a.pressByTestIdAsync('machine-storage-pile-empty');
+    await vi.waitFor(() => expect(a.getTextContent()).toContain('machineStorage.pile.inTrash(count=2)'));
+    await a.pressByTestIdAsync('machine-storage-pile-undo');
+    await vi.waitFor(() => expect(a.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)'));
+    expect([reads(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, otherMachine), reads(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST, otherMachine)]).toEqual(otherReads);
+    await a.unmount();
+    await a2.unmount();
+    await b.unmount();
+    const before = [reads(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, MACHINE), reads(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST, MACHINE)];
+    const reopened = await render(first, false);
+    const reopened2 = await render(second, false, 'approval-2');
+    const reopenedB = await render(third, false, 'approval-b');
+    await vi.waitFor(() => {
+      expect(reopened.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)');
+      expect(reopened.getTextContent()).toContain('resourceProposal.receiptRestored(count=1)');
+      expect(reopened.getTextContent()).toContain('resourceProposal.receiptFreed(count=1,amount=500 MB)');
+      expect(reopened2.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)');
+      expect(reopenedB.getTextContent()).toContain('machineStorage.pile.inTrash(count=1)');
+    });
+    expect(reads(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, MACHINE) - before[0]!).toBe(1);
+    expect(reads(RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST, MACHINE) - before[1]!).toBe(1);
+    await reopened.unmount();
+    await reopened2.unmount();
+    await reopenedB.unmount();
   });
 
   it('keeps a declined proposal as one line; Reopen runs the same Action from the UI and the request stays rejected', async () => {
@@ -810,8 +1032,13 @@ describe('resource proposal card', () => {
     await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-retry-old-wt')).toBeNull());
     // The retry has its own receipt, from its own settled result and batch.
     await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-retry-receipt-batch-ui')).toBeTruthy());
-    const undoButtons = screen.findAll((node) => node.props.testID === 'machine-storage-pile-undo' && typeof node.props.onPress === 'function');
-    await act(async () => { await undoButtons[undoButtons.length - 1]!.props.onPress(); });
+    await vi.waitFor(() => expect(findAllHostTestInstances(
+      screen.findByTestId('resource-proposal-retry-receipt-batch-ui')!,
+      node => node.props.testID === 'machine-storage-pile-undo',
+    )).toHaveLength(1));
+    const retryReceipt = screen.findByTestId('resource-proposal-retry-receipt-batch-ui')!;
+    const undoButton = findAllHostTestInstances(retryReceipt, node => node.props.testID === 'machine-storage-pile-undo')[0];
+    await pressTestInstanceAsync(undoButton, 'retry batch Undo');
     await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)).toHaveLength(1));
     expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]!.payload).toMatchObject({ entryIds: ['entry-ui-old-wt'] });
   });
@@ -939,7 +1166,7 @@ describe('resource proposal card', () => {
     await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-retry-receipt-batch-retry')).toBeTruthy());
     await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile-undo')).toBeTruthy());
     await screen.pressByTestIdAsync('machine-storage-pile-undo');
-    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['entry-retry'] });
+    await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['entry-retry'] }));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('resourceProposal.restored'));
     await act(async () => screen.unmount());
     const stored = ApprovalRequestV2Schema.parse(readApproval());
@@ -950,6 +1177,57 @@ describe('resource proposal card', () => {
     expect(reopened.findByTestId('resource-proposal-retry-old-wt')).toBeNull();
     expect(reopened.findByTestId('machine-storage-pile-undo')).toBeNull();
     expect(reopened.findByTestId('resource-proposal-retry-receipt-batch-retry')).toBeTruthy();
+  });
+
+  it('keeps the retry receipt and the unresolved rows when Undo puts the original batch back (RV-A2-F2)', async () => {
+    const result = PileApplyResultV1Schema.parse({ batchId: 'batch-1', mode: 'trash', inTrashBytes: GB, freedBytes: 0,
+      trashEntryIds: ['entry-wt-merged'],
+      outcomes: [{ itemId: 'wt-merged', status: 'moved' },
+        { itemId: 'playwright', status: 'skipped', reason: { code: 'in_use' } },
+        { itemId: 'old-wt', status: 'skipped', reason: { code: 'in_use' } }] });
+    const request = proposal({ status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', narrowedInput: StrictJsonValueSchema.parse(proposalArgs) },
+      execution: { executedAtMs: 3, ok: true, result } });
+    const restored = new Set<string>();
+    const boundary = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => {
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE) {
+        for (const entryId of (call.payload as { entryIds: string[] }).entryIds) restored.add(entryId);
+      }
+      if (call.method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST) {
+        const held = [{ entryId: 'entry-wt-merged', batchId: 'batch-1', itemId: 'wt-merged' },
+          ...uiMovedItems.map(itemId => ({ entryId: `entry-ui-${itemId}`, batchId: 'batch-ui', itemId }))]
+          .filter(entry => !restored.has(entry.entryId));
+        return MachineStorageCategoryListResultV1Schema.parse({ revision: 1, sizedAt: 1, categoryId: 'trash', items: [],
+          trashEntries: held.map(entry => ({ entryId: entry.entryId, batchId: entry.batchId, volumeId: 'disk',
+            originalPath: ref(entry.itemId).path, title: entry.itemId, size: size(GB), movedAt: 1,
+            movedBy: { accountId: 'account-1', kind: 'person' }, emptiesAt: null, restorable: true })) });
+      }
+      if (call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST) {
+        return MachineGuardActivityListV1Schema.parse({ entries: [...restored].map(entryId => ({ v: 1,
+          id: `${entryId}-trash_moved`, kind: 'trash_moved', at: 1, rule: 'approved_proposal', outcome: 'done',
+          inTrashBytes: GB, freedBytes: 0, attribution: { kind: 'unknown' }, undoneAt: 5 })),
+          counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 5 });
+      }
+      return boundary(call);
+    });
+    const screen = await render(request);
+    await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-retry-old-wt')).toBeTruthy());
+    await screen.pressByTestIdAsync('resource-proposal-retry-old-wt');
+    await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-retry-receipt-batch-ui')).toBeTruthy());
+    // Undo the original batch: the card's own receipt, not the retry's.
+    const original = () => screen.findByTestId('resource-proposal-pile')!;
+    await vi.waitFor(() => expect(findAllHostTestInstances(original(), node => node.props.testID === 'machine-storage-pile-undo')).toHaveLength(1));
+    await pressTestInstanceAsync(findAllHostTestInstances(original(), node => node.props.testID === 'machine-storage-pile-undo')[0], 'original Undo');
+    await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-restored')).toBeTruthy());
+    // The retry batch is still in the Trash and still actionable, and the operand nobody retried is still there to try again.
+    const retryReceipt = screen.findByTestId('resource-proposal-retry-receipt-batch-ui');
+    expect(retryReceipt).toBeTruthy();
+    expect(findAllHostTestInstances(retryReceipt!, node => node.props.testID === 'machine-storage-pile-undo')).toHaveLength(1);
+    expect(screen.findByTestId('resource-proposal-retry-playwright')).toBeTruthy();
+    // What Undo put back is not listed as work again.
+    expect(screen.findByTestId('resource-proposal-retry-wt-merged')).toBeNull();
+    await screen.unmount();
   });
 
   it('keeps the real retry receipt and Undo when the history compare-and-set is refused', async () => {
@@ -967,7 +1245,7 @@ describe('resource proposal card', () => {
     expect(Modal.alert).toHaveBeenCalled();
     expect(readApproval()).toEqual(request);
     await screen.pressByTestIdAsync('machine-storage-pile-undo');
-    expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['entry-ui-old-wt'] });
+    await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE)[0]?.payload).toMatchObject({ entryIds: ['entry-ui-old-wt'] }));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('resourceProposal.restored'));
   });
 
@@ -1006,6 +1284,7 @@ describe('resource proposal card', () => {
     const screen = await render(request);
     await vi.waitFor(() => expect(calls(RPC_METHODS.MACHINES_PROCESSES_CHECK)).toHaveLength(1));
     await vi.waitFor(() => expect(screen.findByTestId('resource-proposal-item-cHJvYzoy')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('resource-proposal-item-cHJvYzoy');
     await screen.pressByTestIdAsync('approval-prompt-approve');
     await vi.waitFor(() => expect(readApproval()).toMatchObject({ status: 'approved' }));
@@ -1035,6 +1314,9 @@ describe('resource proposal card', () => {
     const screen = await render(request);
     await vi.waitFor(() => expect(calls(RPC_METHODS.MACHINES_PROCESSES_CHECK)).toHaveLength(1));
     await vi.waitFor(() => expect(screen.findByTestId(`resource-proposal-item-${ref}`)).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(`machineGuard.reasons.${reason}`));
+    // Current facts and the asynchronous approval admission must both reach the actionable row.
+    await vi.waitFor(() => expect(screen.findHostByTestId(`resource-proposal-item-${ref}`)?.props.role).toBe('checkbox'));
     await vi.waitFor(() => expect(screen.findByTestId(`resource-proposal-item-${ref}`)?.props.accessibilityState?.checked).toBe(false));
     expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync(`resource-proposal-item-${ref}`);
@@ -1075,6 +1357,58 @@ describe('resource proposal card', () => {
     unavailable = false;
     await screen.pressByTestIdAsync('resource-proposal-check-again');
     await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(false));
+  });
+
+  describe('process rows name the work, never its opaque reference', () => {
+    const REF = 'MzY1ODQyMToyMDc1OTQxMg';
+    const owner = { kind: 'terminal' as const, terminalId: 'terminal-1' };
+    const row = (extra: Record<string, unknown> = {}) => ({
+      rowId: 'row-1', ref: REF, name: 'node', displayName: 'Vite', command: 'node vite --port 5173',
+      pid: 4321, startedAtMs: 1, memoryBytes: GB, memoryKind: 'rss', level: 'left_behind', ...extra,
+    });
+    async function renderCleanup(check: Record<string, unknown>) {
+      const actionId = 'machines.processes.leftBehind.cleanUp';
+      const boundary = daemonRpc.getMockImplementation()!;
+      daemonRpc.mockImplementation(async (call) => call.method === RPC_METHODS.MACHINES_PROCESSES_CHECK
+        ? { checks: [{ ref: REF, present: true, identityEqual: true, level: 'left_behind', memoryBytes: GB, ...check }] }
+        : boundary(call));
+      const base = proposal();
+      const request = signed(ApprovalRequestV2Schema.parse({ ...base, actionId, actionArgs: { machineId: MACHINE, refs: [REF] },
+        executionOriginV1: { ...base.executionOriginV1, actionId } }));
+      const screen = await render(request);
+      await vi.waitFor(() => expect(calls(RPC_METHODS.MACHINES_PROCESSES_CHECK)).toHaveLength(1));
+      await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(false));
+      return screen;
+    }
+
+    it('titles the row by the checked process and says what it was left behind by, with its command beneath', async () => {
+      const screen = await renderCleanup({ row: row(), owner });
+      const text = screen.getTextContent();
+      expect(text).toContain('Vite');
+      expect(text).toContain('machineProcesses.endedOwner.terminal');
+      expect(text).toContain('node vite --port 5173');
+      expect(text).not.toContain(REF);
+      await screen.pressByTestIdAsync('approval-prompt-approve');
+      await vi.waitFor(() => expect(readApproval()).toMatchObject({ status: 'approved' }));
+      expect((readApproval() as ApprovalRequestV2).decision?.narrowedInput).toEqual({ machineId: MACHINE, refs: [REF] });
+    });
+
+    it('shows the same binary memory amount on the Left behind row, summary and approval button', async () => {
+      const bytes = 1024 ** 2;
+      const screen = await renderCleanup({ row: row({ memoryBytes: bytes }), owner, memoryBytes: bytes });
+      const amount = formatMachineBytes(bytes, 'memory');
+      expect(screen.findByTestId('resource-proposal-pile')?.props.accessibilityLabel).toContain(
+        t('machineStorage.pile.frees', { amount }),
+      );
+      expect(screen.getTextContent()).toContain(t('machineProcesses.cleanUp', { count: 1, amount }));
+      expect(screen.getTextContent()).not.toContain(formatMachineBytes(bytes, 'storage'));
+    });
+
+    it('keeps the generic title and shows no reference when an older daemon sends no row', async () => {
+      const screen = await renderCleanup({});
+      expect(screen.findByTestId(`resource-proposal-item-${REF}`)).toBeTruthy();
+      expect(screen.getTextContent()).not.toContain(REF);
+    });
   });
 
   it('renders cleanup ended/skipped receipts without offering Start again for left-behind work', async () => {

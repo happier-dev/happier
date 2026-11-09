@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -10,7 +11,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createAgentApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
@@ -28,7 +29,7 @@ vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testk
 /**
  * The shared result-custody owner, over the real approval lifecycle.
  *
- * Every approval here is one the product writes: a present-user Team rename
+ * Every approval here is one the product writes: an agent's explicit Team rename proposal
  * creates it through the shared Action front door, the Inbox decides it through
  * the generic executor, and the hook observes the outcome through the real
  * `useApprovalArtifact` reading the Home's stateful Artifact store. Only the
@@ -51,6 +52,7 @@ const { createIdentityAdministrationClient } = await import('@/components/settin
 const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
 const { createUsageCoachController } = await import('@/components/settings/usage/widgets/usageCoachController');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { normalizeUsageQuery } = await import('@happier-dev/protocol/inputs/usageQuery');
 const { resolveUsagePageAggregation } = await import('@happier-dev/protocol/usage/resolveUsagePageAggregation');
@@ -100,12 +102,11 @@ async function addApprovalHome(): Promise<string> {
     installHomeGovernanceBoundaries(harness);
     const { storage } = await import('@/sync/domains/state/storage');
     await waitForHomeGovernance(() => expect(storage.getState().settingsScope).toEqual({ serverId, accountId: ACCOUNT_ID }));
-    await harness.requireUiApproval(serverId, 'teams.update');
     return serverId;
 }
 
 async function openRenameApproval(serverId: string, requestId: string, name = 'Renamed'): Promise<string> {
-    return await createUiApprovalRequest({
+    return await createAgentApprovalRequest({
         serverId,
         actionId: 'teams.update',
         actionInput: { v: 1, teamId: 'team-1', name },
@@ -142,6 +143,32 @@ describe('useActionApprovalContinuation', () => {
         connection = null;
     });
 
+    it('answers a collection approval through the exact existing review owner and never reads a closed peek', async () => {
+        const serverId = await addApprovalHome();
+        answerRename(serverId);
+        const artifactId = await openRenameApproval(serverId, 'collection-approval');
+        const { CollectionRequestPeekBody } = await import('@/components/ui/lists/collection/CollectionRequestPeekBody');
+        const { ApprovalDecisionBar } = await import('./ApprovalDecisionBar');
+        const path = `/v1/artifacts/${artifactId}`;
+        const priorReads = harness.requestsFor(path).length;
+        const body = (open: boolean) => <CollectionRequestPeekBody request={{ kind: 'approval', serverId, artifactId }}
+            open={open} onDismiss={() => {}} renderState={() => null} />;
+        const screen = await renderScreen(body(false));
+        expect(harness.requestsFor(path)).toHaveLength(priorReads);
+        expect(screen.findAllByType(ApprovalDecisionBar)).toHaveLength(0);
+        await screen.update(body(true));
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ApprovalDecisionBar)).toHaveLength(1));
+        expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('"status":"open"');
+        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
+        await screen.pressByTestIdAsync('approvals.approve');
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('"status":"executed"'));
+        expect(harness.requestsFor(TEAM_UPDATE_PATH).map(request => request.input)).toEqual([
+            { v: 1, teamId: 'team-1', name: 'Renamed' },
+        ]);
+        await screen.update(body(false));
+        expect(screen.findAllByType(ApprovalDecisionBar)).toHaveLength(0);
+    });
+
     it('releases a mounted observers native abort subscription without aborting an externally owned signal or its durable approval', async () => {
         const serverId = await addApprovalHome();
         const artifactId = await openRenameApproval(serverId, 'external-interest');
@@ -151,7 +178,7 @@ describe('useActionApprovalContinuation', () => {
         const hook = await renderContinuation(serverId);
         await act(async () => hook.getCurrent().requestApproval(createActionApprovalContinuation({ artifactId,
             actionId: 'teams.update', scope: { serverId, accountId: ACCOUNT_ID }, signal: controller.signal,
-            expectedInput: { v: 1, teamId: 'team-1', name: 'Renamed' }, onSucceeded: vi.fn() })));
+            expectedInput: { v: 1, teamId: 'team-1', name: 'Renamed' }, onSucceeded: vi.fn(), onFailed: vi.fn() })));
         const listener = added.mock.calls.find(call => call[0] === 'abort')?.[1];
         expect(listener).toBeDefined();
         await hook.unmount();
@@ -464,8 +491,15 @@ describe('useActionApprovalContinuation', () => {
             await expect(decideApprovalAsInbox(serverId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
             await waitForHomeGovernance(() => expect(save().props.disabled).toBe(false));
             expect(screen.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
+            const { NoticeLine } = await import('@/components/ui/lists/NoticeLine');
+            const { t } = await import('@/text');
+            const notice = () => screen.findAllByType(NoticeLine).find(node => node.props.testID === 'price.failed');
+            expect(notice()?.props.title).toBe(t('usage.board.plans.approvalDeclined'));
+            expect(record.entries).toEqual([]);
+            expect(refreshed).not.toHaveBeenCalled();
             await screen.pressByTestIdAsync('price.save');
             await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
+            expect(notice()).toBeUndefined();
             const acceptedId = harness.artifacts(serverId).list().at(-1)!.id;
             const accepted = await decideApprovalAsInbox(serverId, acceptedId, 'approve');
             expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, result: { status: 'executed' } });
@@ -659,6 +693,7 @@ describe('useActionApprovalContinuation', () => {
             expectedInput: { v: 1, teamId: 'team-1', name: 'Renamed' },
             refreshAfterExecution: false,
             onSucceeded: (value: unknown) => { received.push(value); },
+            onFailed: vi.fn(),
         });
 
         act(() => hook.getCurrent().requestApproval(continuation));
@@ -765,6 +800,27 @@ describe('useActionApprovalContinuation', () => {
         expect(onExecuted).not.toHaveBeenCalled();
         expect(hook.getCurrent().approvalId).toBeNull();
         expect(hook.getCurrent().approvalPending).toBe(false);
+    });
+
+    it('removes Inbox decision controls as soon as a recorded approval settles failed', async () => {
+        const serverId = await addApprovalHome();
+        harness.answer(serverId, TEAM_UPDATE_PATH, { status: 409, body: { error: 'team_archived' } });
+        const artifactId = await openRenameApproval(serverId, 'inbox-failed-effect');
+        const context = await captureActionAccountContext(serverId);
+        try {
+            const artifact = await context.fetchArtifact(artifactId);
+            if (!artifact || typeof artifact.body !== 'string') throw new Error('Expected pending approval');
+            const { ApprovalInboxCard } = await import('@/components/inbox/cards/ApprovalInboxCard');
+            const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} inlineActionLabel="Review" onPress={() => {}} />);
+            expect(screen.findHostByTestId(`inbox.approval.${artifactId}.allow_once`)).toBeTruthy();
+
+            await screen.pressByTestIdAsync(`inbox.approval.${artifactId}.allow_once`);
+            await waitForHomeGovernance(() => expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null'))
+                .toMatchObject({ status: 'failed', decision: { kind: 'approve' },
+                    execution: { ok: false, errorCode: 'team_archived' } }));
+            expect(screen.findHostByTestId(`inbox.approval.${artifactId}.allow_once`)).toBeFalsy();
+            expect(screen.findHostByTestId(`inbox.approval.${artifactId}.deny`)).toBeFalsy();
+        } finally { context.dispose(); }
     });
 
     it('consumes an Inbox rejection while its retained split-canvas origin is hidden on another Home', async () => {

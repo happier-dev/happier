@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
@@ -65,6 +65,21 @@ export function readApprovalRequesterSurface(
   return approval.executionOriginV1.caller.kind === 'workflowRun'
     ? 'workflow_run'
     : approval.executionOriginV1.surface;
+}
+
+/**
+ * Happier Guard asked: its Left behind Ask is created by the daemon's host on the system surface (no plugin, no
+ * agent). It may still name the Session whose work it concerns; that Session did not ask.
+ */
+export function isHappierGuardApproval(
+  request: ApprovalRequest | Readonly<{ createdBy: Readonly<{ surface?: string }> }> | null,
+  builtIn: boolean,
+): boolean {
+  if (!request || !builtIn) return false;
+  const approval = request as ApprovalRequest;
+  return approval.v === 2 && approval.createdBy.surface === 'system' && !approval.createdBy.pluginId
+    && approval.actionId === 'machines.processes.leftBehind.cleanUp'
+    && approval.executionOriginV1.caller.kind === 'host';
 }
 
 /**

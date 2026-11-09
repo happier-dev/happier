@@ -1,22 +1,23 @@
 import * as React from 'react';
-import { ApprovalRequestV2Schema, approvalArtifactBodyMatchesHeaderV1, type ApprovalRequest, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { approvalArtifactBodyMatchesHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { MachineStorageDeleteNowInputV1Schema, MachineStorageTrashMoveInputV1Schema, type PileApplyResultV1, type TrashEntryV1 } from '@happier-dev/protocol/storage/storageV1';
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { resolveApprovalReplayRoute } from '@/sync/ops/actions/approvalReplayRoute';
+import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { writeApprovalRequestArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { executeMachineProcessesActionV1, executeMachineProcessesStartAgainV1 } from '@/sync/domains/machines/processes/machineProcessesActions';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { fetchMachineGuardActivityViaAction, fetchMachineGuardViewViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
+import { fetchMachineGuardViewViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
+import { machineStorageStore } from '@/sync/domains/machines/storage/machineStorageStore';
+import { useTrashReceiptSources } from '@/sync/domains/machines/storage/useTrashReceiptSources';
 import type { StoragePileBar } from '@/components/machines/storage/storagePileModel';
 import {
   checkMachineStorageItemsViaAction,
   deleteMachineStorageNowViaAction,
-  fetchMachineStorageCategoryViaAction,
-  emptyMachineStorageTrashViaAction,
-  moveMachineStorageToTrashViaAction,
-  restoreMachineStorageTrashViaAction,
 } from '@/sync/domains/machines/storage/machineRpc';
 import {
   MachineProcessesCheckResultV1Schema,
@@ -29,6 +30,7 @@ import {
   readResourceProposalApproval,
   type ResourceProposalModel,
 } from './readResourceProposalApproval';
+import { useResourceProposalTrashActions, type ResourceProposalRestoreOutcomes } from './useResourceProposalTrashActions';
 import {
   buildResourceProposalNarrowedInput,
   resourceProposalApprovedKeys,
@@ -82,6 +84,10 @@ export type ResourceProposalController = Readonly<{
   ) => ResourceProposalDecisionOptions;
   emptyNow: (() => Promise<boolean>) | null;
   undo: (() => Promise<boolean>) | null;
+  /** Already checked remaining Trash entries, for naming a refused restore without another read. */
+  restoreEntries: readonly TrashEntryV1[];
+  restoreOutcomes: ResourceProposalRestoreOutcomes;
+  putBackBeside: ((entryId: string) => Promise<boolean>) | null;
   /** The declined request is shown again for a UI run; the request itself stays rejected. */
   reopened: boolean;
   /** Declined: show the items again (re-checked), without changing the rejected request. */
@@ -102,23 +108,6 @@ type CheckClients = Readonly<{
   serverId: string | null;
   signal: AbortSignal;
 }>;
-
-async function readProposalTrashEntries(scope: Readonly<{ machineId: string; serverId: string; expectedAccountId: string; signal: AbortSignal }>): Promise<readonly TrashEntryV1[] | null> {
-  const entries: TrashEntryV1[] = [];
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  let revision: number | undefined;
-  do {
-    const page = await fetchMachineStorageCategoryViaAction({ ...scope, categoryId: 'trash', ...(cursor ? { cursor } : {}) });
-    if (!page.ok || page.value.trashEntries === undefined || (revision !== undefined && revision !== page.value.revision)) return null;
-    revision = page.value.revision;
-    entries.push(...page.value.trashEntries);
-    cursor = page.value.nextCursor;
-    if (cursor && cursors.has(cursor)) return null;
-    if (cursor) cursors.add(cursor);
-  } while (cursor && !scope.signal.aborted);
-  return scope.signal.aborted ? null : entries;
-}
 
 async function checkStorage(
   model: ResourceProposalModel,
@@ -253,6 +242,7 @@ async function checkProcesses(
         onDiskBytes: null,
         loses: [],
         ...(keptByGuard ? { keptByGuard } : {}),
+        ...(check && present ? { process: { row: check.row, owner: check.owner, level: check.level } } : {}),
         changed: !present || check?.level !== claimedLevel,
       });
     }
@@ -276,7 +266,13 @@ export function useResourceProposalCheck(
     () => (approval ? readResourceProposalApproval(approval) : null),
     [approval],
   );
-  const serverId = model?.serverId ?? serverIdHint;
+  const serverProfilesGeneration = useServerProfilesGeneration();
+  // The creator's local profile id is immutable history, not this client's
+  // route. Checks and decisions share the approval's captured Home authority.
+  const serverId = React.useMemo(() => approval?.v === 2
+    ? resolveApprovalReplayRoute(approval)?.serverId ?? null
+    : model?.serverId ?? serverIdHint,
+  [approval, model?.serverId, serverIdHint, serverProfilesGeneration]);
   const isOpen = approval?.status === 'open';
   const [check, setCheck] = React.useState<ResourceProposalCheck>(
     () =>
@@ -287,6 +283,25 @@ export function useResourceProposalCheck(
   );
   const [selection, setSelection] = React.useState<ReadonlySet<string>>(() =>
     model ? initialResourceProposalSelection(model) : new Set(),
+  );
+  // The person's own ticks, by item key. Current facts and approval refreshes re-derive the defaults;
+  // they never overwrite what the person chose (an untick made while the check ran survives it).
+  const explicitRef = React.useRef<{ approvalId: string | null; choices: Map<string, boolean> }>({
+    approvalId: artifactId ?? null,
+    choices: new Map(),
+  });
+  const withExplicitChoices = React.useCallback(
+    (defaults: ReadonlySet<string>): ReadonlySet<string> => {
+      if (!model) return defaults;
+      const selected = new Set(defaults);
+      for (const item of model.items) {
+        const choice = explicitRef.current.choices.get(item.key);
+        if (choice === true) selected.add(item.key);
+        else if (choice === false) selected.delete(item.key);
+      }
+      return selected;
+    },
+    [model],
   );
   const [confirmedKeep, setConfirmedKeep] = React.useState<ReadonlySet<string>>(
     () => new Set(),
@@ -319,7 +334,13 @@ export function useResourceProposalCheck(
     ...(localRun?.kind === 'trashed' ? [localRun.result] : pileResult ? [pileResult] : []),
     ...retryReceipts.map(receipt => receipt.result),
   ].filter(result => result.mode === 'trash'), [localRun, pileResult, retryReceipts]);
+  const receiptScope = React.useMemo(() => model?.kind === 'storage' && receiptResults.length > 0 && serverId
+    ? { machineId: model.machineId, serverId,
+      expectedAccountId: approval?.v === 2 ? approval.executionOriginV1.accountId : undefined } : null,
+  [model?.kind, model?.machineId, receiptResults.length, serverId, approval?.v, approval?.v === 2 ? approval.executionOriginV1.accountId : null]);
+  const receiptSources = useTrashReceiptSources(receiptScope, approval);
   const [trashReceipts, setTrashReceipts] = React.useState<ReadonlyMap<string, ResourceProposalTrashReceipt>>(() => new Map());
+  const trashActions = useResourceProposalTrashActions(receiptSources.scope, trashReceipts, setTrashReceipts);
   React.useEffect(() => {
     if (!model || receiptResults.length === 0) return;
     // Reopening refreshes the approval snapshot: retry failed reads, not settled outcomes.
@@ -328,37 +349,19 @@ export function useResourceProposalCheck(
       || trashReceipts.get(result.batchId)?.kind === 'checking'
       || trashReceipts.get(result.batchId)?.kind === 'unavailable');
     if (pendingResults.length === 0) return;
-    const controller = new AbortController();
-    setTrashReceipts(current => new Map([...current, ...pendingResults.filter(result => !current.has(result.batchId))
-      .map(result => [result.batchId, { kind: 'checking' } as ResourceProposalTrashReceipt] as const)]));
-    const read = async () => {
-      if (!serverId) throw new Error('Proposal Home unavailable');
-      const account = await captureLazyActionAccountContext(serverId, controller.signal);
-      try {
-        account.assertCurrent();
-        const scope = { machineId: model.machineId, serverId: account.serverId,
-          expectedAccountId: account.accountId, signal: account.invocationSignal ?? controller.signal };
-        const values = await Promise.all([
-          readProposalTrashEntries(scope),
-          fetchMachineGuardActivityViaAction({ ...scope, range: '30d', filter: 'all' }),
-        ]);
-        account.assertCurrent();
-        return values;
-      } finally {
-        account.dispose();
-      }
-    };
-    void read().then(([entries, activity]) => {
-      if (controller.signal.aborted) return;
-      setTrashReceipts(current => new Map([...current, ...pendingResults.map(result => [result.batchId,
-        entries && activity.ok ? deriveResourceProposalTrashReceipt(result, entries, activity.value.entries)
-          : { kind: 'unavailable' } as ResourceProposalTrashReceipt] as const)]));
-    }, () => {
-      if (!controller.signal.aborted) setTrashReceipts(current => new Map([...current,
-        ...pendingResults.map(result => [result.batchId, { kind: 'unavailable' } as ResourceProposalTrashReceipt] as const)]));
-    });
-    return () => controller.abort();
-  }, [model?.machineId, serverId, receiptResults]);
+    if (receiptScope && !receiptSources.unavailable && !receiptSources.ready) {
+      const missing = pendingResults.filter(result => !trashReceipts.has(result.batchId));
+      if (missing.length) setTrashReceipts(current => new Map([...current,
+        ...missing.map(result => [result.batchId, { kind: 'checking' } as ResourceProposalTrashReceipt] as const)]));
+      return;
+    }
+    const { entries, activity } = receiptSources;
+    setTrashReceipts(current => new Map([...current, ...pendingResults.map(result => [result.batchId,
+      receiptScope && !receiptSources.unavailable && entries && activity
+        ? deriveResourceProposalTrashReceipt(result, entries, activity)
+        : { kind: 'unavailable' } as ResourceProposalTrashReceipt] as const)]));
+  }, [model?.machineId, serverId, receiptResults, receiptScope, receiptSources.ready,
+    receiptSources.unavailable, receiptSources.entries, receiptSources.activity]);
 
   const runCheck = React.useCallback(
     (acknowledged: boolean) => {
@@ -405,7 +408,7 @@ export function useResourceProposalCheck(
                 // Current facts own the first defaults, including when an agent's Safe
                 // claim became Caution. Explicit rechecks preserve the person's choices.
                 const selected = !acknowledged
-                  ? [...initialResourceProposalSelection(model, facts)]
+                  ? [...withExplicitChoices(initialResourceProposalSelection(model, facts))]
                   : [...current];
                 return new Set(
                   selected.filter((key) => {
@@ -427,17 +430,19 @@ export function useResourceProposalCheck(
         },
       );
     },
-    [model, serverId],
+    [model, serverId, withExplicitChoices],
   );
 
   React.useEffect(() => {
     if (isOpen) {
-      setSelection(model ? initialResourceProposalSelection(model) : new Set());
+      const approvalId = artifactId ?? null;
+      if (explicitRef.current.approvalId !== approvalId) explicitRef.current = { approvalId, choices: new Map() };
+      setSelection(model ? withExplicitChoices(initialResourceProposalSelection(model)) : new Set());
       setConfirmedKeep(new Set());
       runCheck(false);
     }
     return () => runRef.current?.abort();
-  }, [isOpen, model, runCheck]);
+  }, [isOpen, artifactId, model, runCheck, withExplicitChoices]);
 
   const rows = React.useMemo(
     () =>
@@ -446,27 +451,37 @@ export function useResourceProposalCheck(
         : [],
     [check, confirmedKeep, model, selection],
   );
-  const toggle = React.useCallback((key: string) => {
-    setSelection((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-  const confirmKeep = React.useCallback((key: string) => {
-    setConfirmedKeep((current) => new Set(current).add(key));
-    setSelection((current) => new Set(current).add(key));
-  }, []);
+  const selectionRef = React.useRef(selection);
+  selectionRef.current = selection;
   const rowsRef = React.useRef(rows);
   rowsRef.current = rows;
+  /** Every selection the person makes goes through here, so each row's explicit choice is remembered. */
+  const chooseSelection = React.useCallback((next: ReadonlySet<string>, keys: readonly string[]) => {
+    for (const key of keys) explicitRef.current.choices.set(key, next.has(key));
+    setSelection(next);
+  }, []);
+  const toggle = React.useCallback((key: string) => {
+    const next = new Set(selectionRef.current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    selectionRef.current = next;
+    chooseSelection(next, [key]);
+  }, [chooseSelection]);
+  const confirmKeep = React.useCallback((key: string) => {
+    setConfirmedKeep((current) => new Set(current).add(key));
+    const next = new Set(selectionRef.current).add(key);
+    selectionRef.current = next;
+    chooseSelection(next, [key]);
+  }, [chooseSelection]);
   const toggleAll = React.useCallback(
-    () => setSelection(toggleResourceProposalSelectAll(rowsRef.current)),
-    [],
+    () => chooseSelection(toggleResourceProposalSelectAll(rowsRef.current),
+      rowsRef.current.filter((row) => row.selectable && !row.needsConfirm).map((row) => row.item.key)),
+    [chooseSelection],
   );
   const selectAllSafe = React.useCallback(
-    () => setSelection(selectAllSafeResourceProposal(rowsRef.current)),
-    [],
+    () => chooseSelection(selectAllSafeResourceProposal(rowsRef.current),
+      rowsRef.current.filter((row) => row.selectable).map((row) => row.item.key)),
+    [chooseSelection],
   );
   const checkAgain = React.useCallback(() => runCheck(true), [runCheck]);
   const decisionOptions = React.useCallback(
@@ -509,44 +524,6 @@ export function useResourceProposalCheck(
     .filter(([key, outcome]) => (retriedOutcomes.get(key) ?? outcome).status === 'skipped')
     .map(([key]) => key));
   const stale = display.kind === 'ask' && display.stale;
-  const scope = {
-    machineId: model.machineId,
-    ...(serverId ? { serverId } : {}),
-  };
-  const trashActions = (result: PileApplyResultV1) => {
-    const receipt = trashReceipts.get(result.batchId);
-    const entries = receipt?.kind === 'ready' ? receipt.remaining : [];
-    const update = (entryIds: ReadonlySet<string>, kind: 'deleted' | 'restored', freedBytes: number) => {
-      setTrashReceipts(current => {
-        const prior = current.get(result.batchId);
-        if (prior?.kind !== 'ready') return current;
-        const acted = prior.remaining.filter(entry => entryIds.has(entry.entryId)).length;
-        return new Map(current).set(result.batchId, { ...prior,
-          remaining: prior.remaining.filter(entry => !entryIds.has(entry.entryId)),
-          deletedCount: prior.deletedCount + (kind === 'deleted' ? acted : 0),
-          restoredCount: prior.restoredCount + (kind === 'restored' ? acted : 0),
-          freedBytes: prior.freedBytes + freedBytes });
-      });
-    };
-    const restoreIds = entries.filter(entry => entry.restorable).map(entry => entry.entryId);
-    return {
-      undo: restoreIds.length ? async () => {
-        const outcome = await restoreMachineStorageTrashViaAction({ ...scope, entryIds: restoreIds });
-        if (!outcome.ok) return false;
-        const restored = new Set(outcome.value.outcomes.filter(value => value.status === 'restored' && restoreIds.includes(value.entryId)).map(value => value.entryId));
-        update(restored, 'restored', 0);
-        return restored.size === restoreIds.length;
-      } : null,
-      emptyNow: entries.length ? async () => {
-        const entryIds = entries.map(entry => entry.entryId);
-        const outcome = await emptyMachineStorageTrashViaAction({ ...scope, entryIds });
-        if (!outcome.ok) return false;
-        const deleted = new Set(outcome.value.outcomes.filter(value => value.status === 'deleted' && entryIds.includes(value.entryId)).map(value => value.entryId));
-        update(deleted, 'deleted', outcome.value.freedBytes);
-        return deleted.size === entryIds.length;
-      } : null,
-    };
-  };
   const approveWithheld = selectedCount === 0 || stale || check.kind !== 'ready';
   const runFromUi = async (keys: ReadonlySet<string> | null): Promise<boolean> => {
     let selectedRows = rowsRef.current.filter((row) => row.selected);
@@ -626,10 +603,11 @@ export function useResourceProposalCheck(
             inTrashBytes: resourceProposalTrashBytes(receipt.result, current),
             notActed: receipt.result.outcomes.length - acted, emptiesAt: null }
           : { kind: 'hidden' },
-        ...trashActions(receipt.result),
+        ...trashActions.forResult(receipt.result),
       };
     }),
-    ...(display.kind === 'trashed' ? trashActions(display.result) : { undo: null, emptyNow: null }),
+    ...(display.kind === 'trashed' ? trashActions.forResult(display.result) : { undo: null, emptyNow: null, putBackBeside: null, restoreEntries: [] }),
+    restoreOutcomes: trashActions.restoreOutcomes,
   };
 }
 
@@ -651,7 +629,7 @@ async function runResourceProposalFromUi(
       const result = model.storageMode === 'delete'
         ? await deleteMachineStorageNowViaAction({ ...MachineStorageDeleteNowInputV1Schema.parse(input),
           serverId: account.serverId, expectedAccountId: account.accountId })
-        : await moveMachineStorageToTrashViaAction({ ...MachineStorageTrashMoveInputV1Schema.parse(input),
+        : await machineStorageStore.moveToTrash({ ...MachineStorageTrashMoveInputV1Schema.parse(input),
           serverId: account.serverId, expectedAccountId: account.accountId });
       if (!result.ok) return null;
       if (retryReceipt && result.value.mode === 'trash') {
@@ -733,5 +711,8 @@ export type ResourceProposalRetryReceipt = Readonly<{
   restored: boolean;
   bar: StoragePileBar;
   undo: (() => Promise<boolean>) | null;
+  restoreEntries: readonly TrashEntryV1[];
+  restoreOutcomes: ResourceProposalRestoreOutcomes;
+  putBackBeside: ((entryId: string) => Promise<boolean>) | null;
   emptyNow: (() => Promise<boolean>) | null;
 }>;

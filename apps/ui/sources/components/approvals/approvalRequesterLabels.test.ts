@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
     describeApprovalOrigin,
     describeUnnamedApprovalSession,
+    isHappierGuardApproval,
     readApprovalRequesterSurface,
     resolveApprovalHomeSentenceName,
 } from './approvalRequesterLabels';
@@ -45,5 +46,21 @@ describe('how a built-in request says who asked', () => {
     it('keeps the stamped surface for a session agent caller', () => {
         const surface = readApprovalRequesterSurface(requestFrom('agent', { kind: 'session' }), true);
         expect(describeApprovalOrigin(surface)).toBe(t('detailPages.approval.origin.agent'));
+    });
+});
+
+describe('which requests Happier Guard asked', () => {
+    const request = (surface: string, caller: Readonly<{ kind: string }>, actionId = 'machines.processes.leftBehind.cleanUp', pluginId?: string) =>
+        ({ v: 2, actionId, createdBy: { surface, sessionId: 'session-1', ...(pluginId ? { pluginId } : {}) },
+            executionOriginV1: { surface: 'api', caller } }) as unknown as ApprovalRequest;
+
+    it('is the daemon host\'s Left behind Ask on the system surface, even when it names the Session whose work it concerns', () => {
+        expect(isHappierGuardApproval(request('system', { kind: 'host' }), true)).toBe(true);
+        expect(isHappierGuardApproval(request('agent', { kind: 'host' }), true)).toBe(false);
+        expect(isHappierGuardApproval(request('system', { kind: 'session' }), true)).toBe(false);
+        expect(isHappierGuardApproval(request('system', { kind: 'host' }, 'session.title.set'), true)).toBe(false);
+        expect(isHappierGuardApproval(request('system', { kind: 'host' }, undefined, 'example.observer'), true)).toBe(false);
+        expect(isHappierGuardApproval(request('system', { kind: 'host' }), false)).toBe(false);
+        expect(isHappierGuardApproval(null, true)).toBe(false);
     });
 });

@@ -17,6 +17,7 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import {
     SHARED_SAVED_SECRET_ACTION_PATHS_V1,
     SharedSavedSecretCreateInputV1Schema,
+    SharedSavedSecretListOutputV1Schema,
     type SharedSavedSecretCreateInputV1,
 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -34,8 +35,6 @@ import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 import { createInboxAttentionFixture } from '@/dev/testkit/fixtures/inboxFixtures';
 import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
-import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -137,7 +136,9 @@ describe('confidential approval human continuation', () => {
                 if (path === '/v1/machines' && (init?.method ?? 'GET') === 'GET') {
                     return Response.json([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' })]);
                 }
-                const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
+                // The catalog below is populated; the empty-Account adapter is only a fallback.
+                const bootstrap = path.startsWith('/v1/account/saved-secrets/resources')
+                    ? null : createEmptyAccountBootstrapHttpResponse(path, init);
                 if (bootstrap) return bootstrap;
                 if (init?.method && init.method !== 'GET') {
                     writes.push(path);
@@ -166,7 +167,8 @@ describe('confidential approval human continuation', () => {
                         actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'secrets.shared.create': ['ui'] } } } }, version: 1,
                 }));
                 if (path === '/v1/account/saved-secrets/resources/materials' && rememberOutcomeUnknown && rememberedResource) return new Response('{}', { status: 503 });
-                if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: rememberedResource ? [{
+                if (path === '/v1/account/saved-secrets/resources' || path === '/v1/account/saved-secrets/resources/materials') {
+                    const material = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: rememberedResource ? [{
                     resourceId: rememberedResource.resourceId, encryptionMode: 'plain', recipientEnvelope: null,
                     entry: { ref: formatSharedSavedSecretRefV1(rememberedResource.resourceId), source: 'shared_resource', relationship: 'owner',
                         name: rememberedResource.displayName, kind: rememberedResource.kind, encryptionMode: 'plain', revision: 1,
@@ -178,7 +180,11 @@ describe('confidential approval human continuation', () => {
                         name: personal[0].name, kind: personal[0].kind, encryptionMode: 'plain', revision: 1,
                         materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
                     storedContent: { t: 'plain', v: { v: 1, name: personal[0].name, kind: personal[0].kind, value: personal[0].encryptedValue.value } },
-                }] : [] }));
+                    }] : [] });
+                    return Response.json(path === '/v1/account/saved-secrets/resources'
+                        ? SharedSavedSecretListOutputV1Schema.parse({ resources: material.resources.map(resource => resource.entry) })
+                        : material);
+                }
                 return new Response('{}', { status: 404 });
             }) });
         const { sync } = await import('@/sync/sync');
@@ -212,6 +218,40 @@ describe('confidential approval human continuation', () => {
             isDecrypted: true, storageMode: 'plain', ownerAccountId: 'account-a', access: 'owner' }]);
     });
     afterEach(async () => { await standardCleanup(); await connection?.dispose(); connection = undefined; });
+
+    it('presents a recorded code-only confidential refusal immediately without a live continuation reply', async () => {
+        rememberSucceeds = true;
+        refusal = 'target_changed';
+        let releaseReply!: () => void;
+        let pending: Promise<void> | undefined;
+        holdPrivateReply = new Promise<void>(resolve => { releaseReply = resolve; });
+        try {
+            const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+            const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
+            await enterOnceValue(screen);
+            await act(async () => { screen.findByTestId('approvals.secret-remember')?.props.onValueChange(true); });
+            await act(async () => {
+                pending = screen.findByTestId('approvals.secret-continue')?.props.onPress();
+                await vi.waitFor(() => expect(deliveries).toHaveLength(1));
+            });
+            const artifact = storage.getState().artifacts['approval-1'];
+            if (typeof artifact?.body !== 'string') throw new Error('missing_test_approval');
+            const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 3,
+                decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+                execution: { executedAtMs: 3, ok: false, errorCode: 'target_changed', error: 'target_changed' } });
+            await act(async () => { storage.getState().applyArtifacts([{ ...artifact, bodyVersion: 2, headerVersion: 2,
+                header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) }]); });
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.confidential.targetChanged'));
+            expect(screen.getTextContent()).toContain('approvals.confidential.nothingEntered');
+            expect(screen.getTextContent()).not.toContain('approvals.failureNoReason');
+            expect(writes).toEqual([]);
+            expect(rememberedResource).toBeNull();
+            await act(async () => { releaseReply(); await pending; });
+            expect(writes).toEqual([]);
+            expect(rememberedResource).toBeNull();
+            expect(deliveries).toHaveLength(1);
+        } finally { releaseReply(); }
+    });
 
     it('masks the one-time choice, keeps Remember off, privately delivers once and clears the human input', async () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
@@ -466,8 +506,8 @@ describe('confidential approval human continuation', () => {
         const access = AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'plain-custodian', displayName: 'Custodian' },
             role: 'use', resourceMode: 'plain', accessState: 'ready' });
         const machine = createMachineFixture({ storageMode: 'plain' });
-        const publishedMachine = MachinePublishedRowV1Schema.parse({ ...machine, access,
-            metadata: encodePlainMachineStoredContent(machine.metadata), daemonState: null });
+        const publishedMachine = createPlainMachineRowFixture({ id: machine.id, accountId: 'plain-custodian',
+            machine: { ...machine, access } });
         const secret = new Uint8Array(32).fill(9);
         const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://confidential-approval.example.test',
@@ -476,6 +516,7 @@ describe('confidential approval human continuation', () => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                     id => id === publishedMachine.id ? publishedMachine : null);
+                if (path === '/v1/machines' && (init?.method ?? 'GET') === 'GET') return Response.json([publishedMachine]);
                 const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
                 if (bootstrap) return bootstrap;
                 if (init?.method && init.method !== 'GET') { writes.push(path); return new Response('{}', { status: 503 }); }
@@ -490,6 +531,7 @@ describe('confidential approval human continuation', () => {
                 if (path === '/v1/machines/machine-1') return Response.json({ machine: publishedMachine });
                 return new Response('{}', { status: 404 });
             }) });
+        await vi.waitFor(() => expect(storage.getState().machines['machine-1']?.access?.custodian.accountId).toBe('plain-custodian'));
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(connection.home.id);
         const serverId = account.serverId;
@@ -554,6 +596,8 @@ describe('confidential approval human continuation', () => {
 
     it('saves only an explicitly requested Remember through the strict Saved Secret Resource Action and reloads it', async () => {
         rememberSucceeds = true;
+        let releaseReply!: () => void;
+        holdPrivateReply = new Promise<void>(resolve => { releaseReply = resolve; });
         const logged: unknown[][] = [];
         const logSpies = (['log', 'warn', 'error'] as const).map(method => vi.spyOn(console, method).mockImplementation((...args) => { logged.push(args); }));
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
@@ -563,7 +607,15 @@ describe('confidential approval human continuation', () => {
         await act(async () => { screen.findByTestId('approvals.secret-remember')?.props.onValueChange(true); });
         // Save for next time names the secret after the reviewed site; the person may rename it.
         expect(screen.findByTestId('approvals.secret-name')?.props.value).toBe('example.com');
-        await continueChoice(screen);
+        try {
+            await act(async () => {
+                screen.findByTestId('approvals.secret-continue')?.props.onPress();
+                await vi.waitFor(() => expect(deliveries).toHaveLength(1));
+            });
+            expect(rememberedResource).toBeNull();
+            expect(writes).toEqual([]);
+        } finally { await act(async () => { releaseReply(); }); }
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.confidential.rememberSaved'));
         expect(deliveries).toHaveLength(1);
         expect(screen.getTextContent()).toContain('approvals.confidential.rememberSaved');
         expect(writes.filter(path => path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'])).toHaveLength(1);
@@ -824,5 +876,4 @@ describe('confidential approval human continuation', () => {
         expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');
         expect(screen.findByTestId('approvals.secret-value')?.props.value ?? '').toBe('');
     });
-
 });

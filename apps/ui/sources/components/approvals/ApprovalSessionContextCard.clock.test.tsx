@@ -38,7 +38,7 @@ describe('Approval context age leaf', () => {
         const paints = vi.fn();
         function Parent() {
             paints();
-            return <ApprovalSessionContextCard session={null} sessionName={null} machine={null} serverId="home"
+            return <ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
                 context={context} contextFacts={facts} homeName="Home" requesterAgentId={null} requesterSurface="" />;
         }
         const screen = await renderScreen(<Parent />);
@@ -50,7 +50,7 @@ describe('Approval context age leaf', () => {
         expect(clockFires).toBe(1);
         expect(screen.getTextContent()).toContain('session.homeFreshness.offline');
         expect(paints.mock.calls.length).toBe(before);
-        await screen.update(<ApprovalSessionContextCard session={null} sessionName={null} machine={null} serverId="home"
+        await screen.update(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
             context={context} homeName="Home" requesterAgentId={null} requesterSurface="" />);
         expect(vi.getTimerCount()).toBe(0);
     });
@@ -58,7 +58,7 @@ describe('Approval context age leaf', () => {
 
 describe('Requested by main line', () => {
     it('leads with the asking Home when no session asked', async () => {
-        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machine={null} serverId="home"
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
             context={null} homeName="Studio Mac" requesterSessionId={null} requesterAgentId={null} requesterSurface="cli" />);
         const title = screen.findByTestId('approvals.requester-title');
         expect(title?.props.children).toBe('Studio Mac');
@@ -70,7 +70,7 @@ describe('Requested by main line', () => {
 describe('Requested by a session titled by its whole first prompt', () => {
     it('stops the title at two lines and keeps the whole prompt as its text', async () => {
         const prompt = 'Use Happier Action tools only: action_options_resolve and action_execute with {"controllerMachineId":"58f6e63a-cd69-4302-83f1-325d10da7ec3"}';
-        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={prompt} machine={null} serverId="home"
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={prompt} machineLabel={null} serverId="home"
             context={null} homeName="Studio Mac" requesterSessionId="session-1" requesterAgentId={null} requesterSurface="cli" />);
         const title = screen.findByTestId('approvals.requester-title');
         expect(title?.props.numberOfLines).toBe(2);
@@ -80,7 +80,7 @@ describe('Requested by a session titled by its whole first prompt', () => {
 
 describe('Requested by while the asking session resolves', () => {
     it('holds the session line as a neutral placeholder, never claiming the session is elsewhere or promoting the Home', async () => {
-        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machine={null} serverId="home"
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
             context={null} homeName="Studio Mac" requesterSessionId="session-1" requesterStatus="resolving"
             requesterAgentId={null} requesterSurface="cli" />);
         expect(screen.findByTestId('approvals.requester-title-resolving')).toBeTruthy();
@@ -95,7 +95,7 @@ describe('Requested by a session the Home no longer lists', () => {
         // A saved Home known only by its address: the person is signed in to it, so "not on this device" would be false.
         const profile = await upsertServerProfile({ serverUrl: 'https://unnamed-home.example.test', name: 'unnamed-home.example.test' });
         try {
-            const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machine={null} serverId={profile.id}
+            const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId={profile.id}
                 context={null} homeName={null} homeDisplayId="settingsAccount.thisHomeTitle" requesterSessionId="session-1"
                 requesterStatus="unavailable" requesterAgentId={null} requesterSurface="cli" />);
             const text = screen.getTextContent();
@@ -106,5 +106,21 @@ describe('Requested by a session the Home no longer lists', () => {
         } finally {
             await removeServerProfile(profile.id);
         }
+    });
+});
+
+describe('Requested by Happier Guard', () => {
+    it('names Guard, not the Session or Home its work concerns, and says so in its own description', async () => {
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName="Upgrade the editor" machineLabel={null} serverId="home"
+            context={null} homeName="Studio Mac" homeDisplayId="settingsAccount.thisHomeTitle" requesterSessionId="session-1"
+            requesterAgentId={null} requesterSurface="system" requestedByGuard />);
+        expect(screen.findByTestId('approvals.requester-title')?.props.children).toBe('detailPages.approval.requesterGuard');
+        const text = screen.getTextContent();
+        expect(text).toContain('detailPages.approval.requesterGuardDescription');
+        expect(text).not.toContain('detailPages.approval.contextDescription');
+        expect(text).not.toContain('Upgrade the editor');
+        expect(text).not.toContain('Studio Mac');
+        expect(text).not.toContain('actionConfirmations.homeTarget');
+        expect(text).not.toContain('detailPages.approval.origin.system');
     });
 });

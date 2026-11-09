@@ -4,10 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Icon } from '@/components/ui/icons/Icon';
-import {
-  ExpandableItem,
-  ExpandableItemCaret,
-} from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { t } from '@/text';
@@ -77,7 +75,7 @@ function OperationActorUse(
           <Text variant="meta" style={styles.fact} numberOfLines={1}>
             {usingText(use)}
           </Text>
-          <ExpandableItemCaret expanded={expanded} />
+          <DisclosureCaret expanded={expanded} />
         </Pressable>
       )}
     >

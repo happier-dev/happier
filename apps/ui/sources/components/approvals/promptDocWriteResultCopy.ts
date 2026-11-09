@@ -14,9 +14,10 @@ export const PROMPT_DOC_WRITE_RESULT_KEY = {
   canceled: 'sessionInstructions.saveDenied',
   conflict: 'sessionInstructions.saveConflict',
   failed: 'sessionInstructions.setFailed',
+  outcome_unknown: 'automations.detail.runMeta.dispatchState.outcomeUnknown',
 } as const satisfies Record<PromptDocWriteStatus, string>;
 
 /** Outcomes that need the person (waiting, or something did not land); the rest are settled facts. */
 export function promptDocWriteNeedsAttention(status: PromptDocWriteStatus): boolean {
-  return status === 'pending' || status === 'conflict' || status === 'failed';
+  return status === 'pending' || status === 'conflict' || status === 'failed' || status === 'outcome_unknown';
 }

@@ -166,6 +166,15 @@ describe('approval session reference resolution', () => {
             expect(hook.getCurrent()).toMatchObject({ status: 'resolving', name: null });
         });
 
+        it('settles as unavailable, never resolving, once the detail knows its Home is unavailable', async () => {
+            const home = await addLoadingHome();
+            exactRead.mockReturnValue(new Promise(() => {}));
+            const hook = await renderHook(() => useApprovalSessionReading(home, 'requester', bound, { exactRead: true, homeUnavailable: true }));
+            await act(async () => {});
+            expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', name: null });
+            expect(exactRead).not.toHaveBeenCalled();
+        });
+
         it('leaves list rows to the list: a row never starts an exact read', async () => {
             const home = await addLoadingHome();
             await renderHook(() => useApprovalSessionReading(home, 'requester', bound));

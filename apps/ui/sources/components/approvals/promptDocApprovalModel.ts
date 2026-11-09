@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ArtifactSavedByV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { readPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
@@ -6,7 +6,7 @@ import type { readPromptDocInLibrary } from '@happier-dev/protocol/prompts/libra
 type InstructionsDocument = Extract<Awaited<ReturnType<typeof readPromptDocInLibrary>>, { ok: true }>;
 export type PromptDocInstructionWriteFacts = Readonly<{
     provenance: Readonly<{ changedBy?: ArtifactSavedByV1; approvedBy?: Readonly<{ kind: 'person'; accountId: string; decidedVia?: 'voice' }> }>;
-    agentWriteResult: Readonly<{ status: 'pending' | 'updated' | 'denied' | 'conflict' | 'failed' | 'canceled' }> | null;
+    agentWriteResult: Readonly<{ status: 'pending' | 'updated' | 'denied' | 'conflict' | 'failed' | 'outcome_unknown' | 'canceled' }> | null;
     /** Latest executed receipt for this exact document, used to refresh its display once after settlement. */
     acceptedRevision?: InstructionsDocument['revision'];
 }>;
@@ -43,6 +43,7 @@ function readPromptDocWriteOutcome(request: ApprovalRequest): NonNullable<Prompt
     return request.status === 'executed' && request.execution?.ok === true ? { status: 'updated' }
         : request.status === 'rejected' ? { status: 'denied' }
         : request.status === 'canceled' ? { status: 'canceled' }
+        : request.status === 'outcome_unknown' ? { status: 'outcome_unknown' }
         : request.status === 'failed' ? { status: request.execution?.errorCode === 'version_mismatch' ? 'conflict' : 'failed' }
         : { status: 'pending' };
 }

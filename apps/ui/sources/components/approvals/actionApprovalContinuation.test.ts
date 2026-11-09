@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-    buildApprovalRequestArtifactHeaderV1,
-    encodePasswordCredentialFieldV1,
-    type AcpCatalogSettingsV1,
+    buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+    encodePasswordCredentialFieldV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
+import {
+    type AcpCatalogSettingsV1} from '@happier-dev/protocol/acp/catalog/settingsV1';
+import {
     type ApprovalRequest,
     type ApprovalRequestV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -17,6 +20,8 @@ import {
 import { AcpCatalogSettingsV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import {
+    awaitActionApprovalResult,
+    type ActionApprovalResultCallbacks,
     createActionApprovalContinuation,
     createHomeActionApprovalContinuation,
 } from './actionApprovalContinuation';
@@ -24,10 +29,52 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { SessionBoardItemUpsertInputV1Schema, SessionBoardMutationActionResultV1Schema } from '@happier-dev/protocol/sessions/board/actions';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createActionApprovalContinuationObserver } from './actionApprovalContinuation';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { ManagedMachineBirthResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 await initializeRealAppRuntimeForTests();
+
+describe('awaitActionApprovalResult', () => {
+    it('rejects a pending read with its typed cancellation when the Account scope retires', async () => {
+        const controller = new AbortController();
+        const cancellation = Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        const started = createDeferred<void>();
+        const rejected = vi.fn();
+        const settlement = awaitActionApprovalResult<unknown, object | null>({
+            signal: controller.signal,
+            execute: async () => { started.resolve(); return { approvalPending: true }; },
+            succeeded: () => null,
+            failed: code => { throw Object.assign(new Error(code), { code }); },
+            aborted: () => { throw cancellation; },
+        }).catch(rejected);
+        await started.promise;
+        controller.abort();
+        await Promise.resolve();
+        expect(rejected).toHaveBeenCalledWith(cancellation);
+        await settlement;
+    });
+
+    it.each(['immediate', 'approved'] as const)('settles a legal null managed birth source from %s execution', async mode => {
+        const birth = ManagedMachineBirthResultV1Schema.parse({ source: null });
+        const executed = createDeferred<ActionApprovalResultCallbacks<typeof birth>>();
+        const settlement = awaitActionApprovalResult<typeof birth, typeof birth.source>({
+            execute: async callbacks => {
+                executed.resolve(callbacks);
+                return mode === 'immediate' ? birth.source : { approvalPending: true };
+            },
+            succeeded: value => value.source,
+            failed: code => { throw new Error(code); },
+            aborted: () => { throw new Error('unexpected_abort'); },
+        });
+        const callbacks = await executed.promise;
+        if (mode === 'approved') callbacks.onApprovalSucceeded(birth);
+        await expect(settlement).resolves.toBeNull();
+    });
+});
 
 const actionId = 'teams.identity.connections.test.start' as const;
 const actionInput = {
@@ -100,6 +147,7 @@ function executedArtifact(overrides?: Readonly<{
 }
 
 function failedArtifact(overrides?: Readonly<{
+    status?: 'failed' | 'outcome_unknown';
     actionId?: ApprovalRequestV2['actionId'];
     actionArgs?: unknown;
     accountId?: string;
@@ -111,7 +159,7 @@ function failedArtifact(overrides?: Readonly<{
     const requestActionId = overrides?.actionId ?? actionId;
     const request: ApprovalRequestV2 = {
         v: 2,
-        status: 'failed',
+        status: overrides?.status ?? 'failed',
         createdAtMs: 1,
         updatedAtMs: 2,
         createdBy: { surface: 'system' },
@@ -133,6 +181,7 @@ function failedArtifact(overrides?: Readonly<{
         execution: {
             executedAtMs: 2,
             ok: false,
+            ...(overrides?.status === 'outcome_unknown' ? { effectAttempted: true } : {}),
             errorCode: overrides?.errorCode ?? 'identity_provider_unavailable',
             error: overrides?.error ?? overrides?.errorCode ?? 'identity_provider_unavailable',
             ...(overrides && 'details' in overrides ? { details: overrides.details } : {}),
@@ -171,7 +220,7 @@ describe('createHomeActionApprovalContinuation', () => {
         });
         expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         const admitted = SessionBoardItemUpsertInputV1Schema.parse(recordedInput);
-        expect(admitted.reviewedVisual).toBeDefined();
+        expect(admitted).toMatchObject(input);
         const result = SessionBoardMutationActionResultV1Schema.parse({ v: 1, serverId: 'home-1', sessionId: 'session-1',
             result: { operation: 'upsert_item', itemId: 'note-1', outcome: 'created',
                 itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', layoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' },
@@ -193,10 +242,9 @@ describe('createHomeActionApprovalContinuation', () => {
             { ...input, item: { ...input.item, source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Other body' } } } } },
             { ...input, expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' },
             { ...input, placement: { ...input.placement, width: 'wide' } },
-            { ...admitted, reviewedVisual: { ...admitted.reviewedVisual, recordRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' } },
-            { ...admitted, reviewedVisual: { ...admitted.reviewedVisual, copySource: {
+            { ...admitted, copySource: {
                 serverId: 'home-1', sessionId: 'source-session', itemId: 'source', expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
-            } } },
+            } },
         ]) {
             const onSucceeded = vi.fn();
             const onFailed = vi.fn();
@@ -317,7 +365,12 @@ describe('createHomeActionApprovalContinuation', () => {
                     actions: { 'agents.acp.backends.upsert': { approvalRequiredSurfaces: ['ui'] } },
                 }),
             };
-            await expect(executor.execute('agents.acp.backends.upsert', input, context)).resolves.toMatchObject({
+            expect(computeActionInputApprovalDigestV1('agents.acp.backends.upsert', input)).toBe(
+                computeActionInputApprovalDigestV1('agents.acp.backends.upsert', JSON.parse(JSON.stringify(input))),
+            );
+            const created = await executor.execute('agents.acp.backends.upsert', input, context);
+            expect(created.ok, created.ok ? undefined : created.errorCode).toBe(true);
+            expect(created).toMatchObject({
                 ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-1' },
             });
             expect(catalog.backends).toEqual([]);
@@ -558,6 +611,23 @@ describe('createHomeActionApprovalContinuation', () => {
         expect(onFailed).toHaveBeenCalledWith('invalid_action_output');
     });
 
+    it('releases an unknown approval outcome through the mounted continuation without rerunning the Action', () => {
+        const onFailed = vi.fn();
+        const onSucceeded = vi.fn();
+        const continuation = createHomeActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, onSucceeded, onFailed });
+        const observer = createActionApprovalContinuationObserver({ onExecuted: vi.fn() });
+        observer.requestApproval(continuation);
+        observer.observeArtifact(failedArtifact({ status: 'outcome_unknown', errorCode: 'approval_execution_outcome_unknown' }));
+        observer.deliverSettlement();
+        expect(observer.getSnapshot().approval).toBeNull();
+        expect(onFailed).toHaveBeenCalledWith('approval_execution_outcome_unknown', {
+            ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
+        });
+        expect(onSucceeded).not.toHaveBeenCalled();
+        observer.dispose();
+    });
+
     it('preserves the exact failed execution code after validating the same Action binding', () => {
         const onFailed = vi.fn();
         const continuation = createHomeActionApprovalContinuation({
@@ -582,6 +652,65 @@ describe('createHomeActionApprovalContinuation', () => {
 });
 
 describe('createActionApprovalContinuation', () => {
+    it('binds the producer private Profile review even without a separate review schema', async () => {
+        const actionId = 'launch_profiles.save';
+        const input = { id: 'profile-a', expectedRevision: 4, profile: {
+            v: 2, id: 'profile-a', name: 'Reviewed draft', createdAt: 1, updatedAt: 2,
+        } };
+        let recorded: ApprovalRequest | undefined;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            approvalsCreate: async ({ request }) => { recorded = request; return { artifactId: 'approval-1' }; },
+        }));
+        expect(await executor.execute(actionId, input, {
+            surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
+            actionRequestId: 'request-1', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+        })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        if (!recorded) throw new Error('Expected the real executor to produce an approval');
+        const result = { status: 'updated', id: input.id, revision: 5 };
+        const artifact = executedArtifact({ actionId, actionArgs: recorded.actionArgs, preview: recorded.preview, result });
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        await createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedInput: input, onSucceeded, onFailed }).onExecuted(artifact);
+        expect(onFailed).not.toHaveBeenCalled();
+        expect(onSucceeded).toHaveBeenCalledWith(result);
+        for (const expectedInput of [
+            { ...input, expectedRevision: 3 },
+            { ...input, profile: { ...input.profile, name: 'Unreviewed draft' } },
+        ]) {
+            onSucceeded.mockClear(); onFailed.mockClear();
+            await createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+                scope: { serverId: 'home-1', accountId: 'account-1' }, expectedInput, onSucceeded, onFailed }).onExecuted(artifact);
+            expect(onSucceeded).not.toHaveBeenCalled();
+            expect(onFailed).toHaveBeenCalledWith('approval_binding_mismatch');
+        }
+    });
+    it.each(['legacy', 'dimensions'] as const)('reads a strict %s options approval through the same controller response reader', async format => {
+        const actionId = 'machines.provisioners.options';
+        const actionArgs = { homeId: 'home-1', controller: { machineId: 'host', installationId: 'installation' },
+            contribution: { pluginId: 'custom.compute', localId: 'vm' }, selectors: {} };
+        const dimensions = { size: [{ id: 'native', title: 'Native guest', assignments: [] }], image: [], location: [], network: [], duration: [] };
+        const result = format === 'legacy' ? { choices: [{ id: 'native', title: 'Native guest', launch: { cpu: 2 } }] }
+            : { base: { launch: { cpu: 2 } }, dimensions };
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        const continuation = createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedInput: actionArgs, onSucceeded, onFailed });
+        expect(await continuation.onExecuted(executedArtifact({ actionId, actionArgs, result }))).toBe('consumed');
+        expect(onFailed).not.toHaveBeenCalled();
+        expect(onSucceeded).toHaveBeenCalledWith({ base: { launch: { cpu: 2 } }, dimensions });
+    });
+    it('refuses malformed legacy options in deferred approval instead of weakening output admission', async () => {
+        const actionId = 'machines.provisioners.options';
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        const continuation = createActionApprovalContinuation({ artifactId: 'approval-1', actionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, onSucceeded, onFailed });
+        await continuation.onExecuted(executedArtifact({ actionId, result: { choices: [{ id: 'native', title: 'Guest', launch: { cpu: 2 }, unexpected: true }] } }));
+        expect(onSucceeded).not.toHaveBeenCalled();
+        expect(onFailed).toHaveBeenCalledWith('invalid_action_output', { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+    });
     it('does not report success for an executed worker policy conflict', async () => {
         const actionId = 'machines.worker.policy.set';
         const actionArgs = { serverId: 'home-1', machineId: 'worker', expectedMetadataVersion: 3,

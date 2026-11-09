@@ -4,12 +4,10 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createActionApprovalContinuationObserver, type ActionApprovalRegistration } from './actionApprovalContinuation';
 import { useApprovalArtifact } from './useApprovalArtifact';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
+import { isApprovalRequestV2InFlightStatus, isApprovalRequestV2TerminalStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { buildApprovalHref } from './approvalNavigation';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
-
-const PENDING_STATUSES = new Set(['open', 'approved', 'executing']);
-const TERMINAL_STATUSES = new Set(['executed', 'rejected', 'failed', 'canceled']);
 
 /** React projection of the canonical process-local Action result-custody observer. */
 export function useActionApprovalContinuation(input: Readonly<{
@@ -51,9 +49,9 @@ export function useActionApprovalContinuation(input: Readonly<{
         observeWhileUnfocused: approvalId !== null });
     const approvalStatus = artifactBinding.artifact?.header?.approvalStatus;
     const awaitingTypedBody = Boolean(approval?.continuation)
-        && TERMINAL_STATUSES.has(String(approvalStatus)) && typeof artifactBinding.artifact?.body !== 'string';
+        && isApprovalRequestV2TerminalStatus(approvalStatus) && typeof artifactBinding.artifact?.body !== 'string';
     const approvalPending = approvalId !== null
-        && (approvalStatus === undefined || PENDING_STATUSES.has(String(approvalStatus)) || awaitingTypedBody);
+        && (approvalStatus === undefined || isApprovalRequestV2InFlightStatus(approvalStatus) || awaitingTypedBody);
     React.useEffect(() => {
         observer.observeArtifact(artifactBinding.artifact, artifactBinding.invalidArtifact);
     }, [observer, artifactBinding.artifact, artifactBinding.invalidArtifact]);

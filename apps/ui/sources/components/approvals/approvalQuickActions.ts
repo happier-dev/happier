@@ -1,6 +1,4 @@
-import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { OpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { readActionApprovalReview } from './actionApprovalReview';
 
 export type ApprovalQuickActions = Readonly<{
@@ -10,14 +8,16 @@ export type ApprovalQuickActions = Readonly<{
     decisions: readonly ['reject', 'approve'];
 }>;
 
-/** Full private input is required; an index header or a tolerant stored projection cannot authorize a shortcut. */
-export function readApprovalQuickActions(artifact: DecryptedArtifact, serverId: string): ApprovalQuickActions | null {
-    if (!artifact.isDecrypted || !serverId || typeof artifact.body !== 'string') return null;
-    const matched = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
-    if (matched?.family !== 'built_in') return null;
-    let raw: unknown;
-    try { raw = JSON.parse(artifact.body); } catch { return null; }
-    const request = ApprovalRequestV2Schema.safeParse(raw);
-    if (!request.success || !readActionApprovalReview(request.data).simple) return null;
-    return { artifactId: artifact.id, serverId, actionId: 'approval.request.decide', decisions: ['reject', 'approve'] };
+/** Full private input and requester authority are required; a stored projection cannot authorize a shortcut. */
+export function readApprovalQuickActions(
+    entry: OpenApprovalInboxEntry | null,
+    serverId: string,
+    requesterMayDecide?: boolean,
+): ApprovalQuickActions | null {
+    if (!entry?.artifact.isDecrypted || !serverId || entry.parsed.family !== 'built_in' || entry.parsed.request.v !== 2) return null;
+    const request = entry.strictReviewRequest;
+    if (!request) return null;
+    if (!readActionApprovalReview(request).simple) return null;
+    if (request.requesterConfirmation && requesterMayDecide !== true) return null;
+    return { artifactId: entry.artifact.id, serverId, actionId: 'approval.request.decide', decisions: ['reject', 'approve'] };
 }

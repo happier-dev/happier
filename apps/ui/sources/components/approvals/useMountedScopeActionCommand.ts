@@ -11,7 +11,7 @@ import { t } from '@/text';
 /** View controls share mounted Action admission, approval retention and refusal presentation. */
 export function useMountedScopeActionCommand(scope: Parameters<typeof useMountedActionExecution>[0]) {
     const { execute, isCurrent } = useMountedActionExecution(scope);
-    return React.useCallback(async <TAction extends 'shell.column.set'>(
+    return React.useCallback(async <TAction extends 'shell.column.set' | 'file.view.set'>(
         actionId: TAction, input: ScopeActionInputById[TAction], owner: MountedScopeActionOwner,
     ): Promise<boolean> => {
         try {

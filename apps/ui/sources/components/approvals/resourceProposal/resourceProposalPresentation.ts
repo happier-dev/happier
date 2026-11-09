@@ -1,9 +1,10 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { MachineGuardLadderV1 } from '@happier-dev/protocol/machines/guard/guardViewV1';
 import {
   MachineProcessesActionResultV1Schema,
   MachineProcessesCleanUpResultV1Schema,
   type MachineProcessesActionResultV1,
+  type MachineProcessesCheckResultV1,
 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import {
   PileApplyResultStoredV1Schema,
@@ -13,6 +14,7 @@ import {
 } from '@happier-dev/protocol/storage/storageV1';
 import type { MachineGuardActivityRowV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import { storageVerdictStartsTicked } from '@/sync/domains/machines/storage/storageVerdictSelection';
+import { isStorageTrashReceiptSettled, storageTrashReceiptBytes, type StorageTrashReceipt } from '@/sync/domains/machines/storage/trashReceipt';
 
 import type {
   ResourceProposalItem,
@@ -35,6 +37,11 @@ export type ResourceProposalItemFacts = Readonly<{
   loses: readonly StorageReasonV1[];
   /** The canonical planner's reason this proposed session is kept, not a proposal-side heuristic. */
   keptByGuard?: MachineGuardLadderV1['excluded'][number];
+  /**
+   * Processes: what the same check saw of the work and its owner, for naming the row. Display only;
+   * the key, operand and approval never read it. Absent for an older daemon or a gone/refused target.
+   */
+  process?: Readonly<Pick<MachineProcessesCheckResultV1['checks'][number], 'row' | 'owner' | 'level'>>;
   /** Reviewed identity/ownership facts changed, or the item is gone/refused; verdict alone is guidance. */
   changed: boolean;
 }>;
@@ -280,8 +287,8 @@ export type ResourceProposalDisplay =
   | Readonly<{ kind: 'emptied'; count: number; freedBytes: number; result?: PileApplyResultV1 }>
   | Readonly<{ kind: 'stopped'; result: MachineProcessesActionResultV1 }>
   | Readonly<{ kind: 'declined' }>
-  /** Undo put every moved item back; nothing was removed. */
-  | Readonly<{ kind: 'restored' }>
+  /** Undo put every moved item back; nothing was removed. The settled result stays: skipped operands are still unresolved work. */
+  | Readonly<{ kind: 'restored'; result: PileApplyResultV1 }>
   | Readonly<{ kind: 'failed'; error: string | null }>;
 
 function readExecutionResult<T>(
@@ -304,8 +311,7 @@ export function readResourceProposalPileResult(raw: unknown): PileApplyResultV1 
 export type ResourceProposalTrashReceipt =
   | Readonly<{ kind: 'checking' }>
   | Readonly<{ kind: 'unavailable' }>
-  | Readonly<{ kind: 'ready'; remaining: readonly TrashEntryV1[]; deletedCount: number;
-      restoredCount: number; unknownCount: number; freedBytes: number }>;
+  | (Readonly<{ kind: 'ready' }> & StorageTrashReceipt<TrashEntryV1>);
 
 /** Missing manifests are not proof of deletion: only the Trash owner's settled Activity receipts are. */
 export function deriveResourceProposalTrashReceipt(result: PileApplyResultV1, entries: readonly TrashEntryV1[],
@@ -333,11 +339,11 @@ export function deriveResourceProposalTrashReceipt(result: PileApplyResultV1, en
 
 export function resourceProposalDisplayWithTrashReceipt(result: PileApplyResultV1,
   receipt: ResourceProposalTrashReceipt): ResourceProposalDisplay {
-  if (receipt.kind === 'ready' && receipt.remaining.length === 0 && receipt.unknownCount === 0) {
+  if (receipt.kind === 'ready' && isStorageTrashReceiptSettled(receipt)) {
     if (receipt.deletedCount > 0 && receipt.restoredCount === 0) return {
       kind: 'emptied', count: receipt.deletedCount, freedBytes: receipt.freedBytes, result,
     };
-    if (receipt.restoredCount > 0 && receipt.deletedCount === 0) return { kind: 'restored' };
+    if (receipt.restoredCount > 0 && receipt.deletedCount === 0) return { kind: 'restored', result };
   }
   return { kind: 'trashed', result, receipt };
 }
@@ -345,9 +351,7 @@ export function resourceProposalDisplayWithTrashReceipt(result: PileApplyResultV
 /** Per-entry allocations can overlap; only the unchanged full receipt proves their union. */
 export function resourceProposalTrashBytes(result: PileApplyResultV1,
   receipt: Extract<ResourceProposalTrashReceipt, { kind: 'ready' }>): number | null {
-  const originalCount = result.trashEntryIds?.length ?? result.outcomes.filter(outcome => outcome.status === 'moved').length;
-  if (receipt.remaining.length === originalCount) return result.inTrashBytes;
-  return receipt.remaining.length === 1 ? receipt.remaining[0]!.size.allocatedBytes : null;
+  return storageTrashReceiptBytes(result, receipt);
 }
 
 /** Items the approval actually carried into execution: the person's narrowed set, else the request. */
@@ -465,7 +469,7 @@ export function resolveResourceProposalOutcomes(
   display: ResourceProposalDisplay,
   approvedKeys: ReadonlySet<string>,
 ): ReadonlyMap<string, ResourceProposalOutcome> | null {
-  const storageResult = display.kind === 'trashed' || display.kind === 'emptied' ? display.result : null;
+  const storageResult = display.kind === 'trashed' || display.kind === 'emptied' || display.kind === 'restored' ? display.result : null;
   if (storageResult) {
     return new Map(
       storageResult.outcomes.map((outcome) => [

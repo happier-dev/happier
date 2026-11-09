@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { readPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
-import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
+import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
@@ -11,6 +11,8 @@ import { t } from '@/text';
 import type { PromptDocUpdateApproval } from './promptDocApprovalModel';
 import { PROMPT_DOC_WRITE_RESULT_KEY } from './promptDocWriteResultCopy';
 export { readPromptDocUpdateApproval, type PromptDocUpdateApproval } from './promptDocApprovalModel';
+
+const PROSE_INLINE = { inline: true } as const;
 
 type CurrentDocument =
   | Readonly<{ status: 'loading' }>
@@ -23,7 +25,8 @@ type CurrentDocument =
 
 /**
  * The Agent's proposed instructions edit as a diff against the document as it is now (plan 61, lab
- * `b-work P`): context lines quiet, the change marked. When the document changed after the edit was
+ * `b-work P`): instructions are read, not code, so it is the diff viewer's prose face in one column —
+ * context lines quiet, the change marked where it happens. When the document changed after the edit was
  * reviewed, the card says so — approving would be refused by the reviewed-revision check, never
  * silently rebased. When it applies is said once beneath.
  */
@@ -31,7 +34,6 @@ export const PromptDocApprovalDiff = React.memo(function PromptDocApprovalDiff(
   props: Readonly<{
     request: PromptDocUpdateApproval;
     serverId: string | null;
-    sessionId?: string | null;
     testID?: string;
   }>,
 ): React.ReactElement {
@@ -97,18 +99,22 @@ export const PromptDocApprovalDiff = React.memo(function PromptDocApprovalDiff(
         </Text>
       ) : null}
       {current.status === 'ready' ? (
-        <ToolDiffView
-          sessionId={props.sessionId ?? null}
-          serverId={props.serverId}
+        <DiffViewer
+          mode="text"
+          face="prose"
+          prose={PROSE_INLINE}
+          testID={`${testID}.lines`}
           oldText={current.markdown}
           newText={props.request.markdown}
         />
       ) : current.status === 'loading' ? (
         <Text style={styles.quiet}>{t('sessionInstructions.loading')}</Text>
       ) : (
-        <ToolDiffView
-          sessionId={props.sessionId ?? null}
-          serverId={props.serverId}
+        <DiffViewer
+          mode="text"
+          face="prose"
+          prose={PROSE_INLINE}
+          testID={`${testID}.lines`}
           oldText=""
           newText={props.request.markdown}
         />

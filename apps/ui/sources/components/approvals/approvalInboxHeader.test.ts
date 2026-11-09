@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ApprovalRequestV1Schema,
-  ExecutionRunHostActionApprovalRequestV1Schema,
-  TargetActionApprovalRequestV1Schema,
+  ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+  ExecutionRunHostActionApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import {
+  TargetActionApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import {
   buildApprovalRequestArtifactHeaderV1,
   buildExecutionRunHostActionApprovalArtifactHeaderV1,
   buildTargetActionApprovalArtifactHeaderV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 import { isOpenApprovalInboxArtifact } from './approvalInboxHeader';
 

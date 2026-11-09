@@ -1,7 +1,7 @@
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
-import { resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectApprovalReviewInput, resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -12,12 +12,12 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { SessionBoardActionIdV1Schema } from '@happier-dev/protocol/sessions/board/actionIds';
 import { isSessionBoardActionInputCorrespondingV1 } from '@happier-dev/protocol/sessions/board/actions';
 
-import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 
-export type ActionApprovalTerminalStatus = 'rejected' | 'failed' | 'canceled' | 'invalid';
+export type ActionApprovalTerminalStatus = 'rejected' | 'failed' | 'outcome_unknown' | 'canceled' | 'invalid';
 
 /**
  * Process-local custody for one result-bearing Action approval.
@@ -51,8 +51,9 @@ export type ActionApprovalResultCallbacks<TValue> = Readonly<{
  * Keep a mounted read pending until its existing continuation delivers a result.
  * Domain clients retain their own result envelopes; this owner only joins the
  * immediate and deferred paths and releases local interest on cancellation.
+ * A domain lookup may settle with null when no record exists.
  */
-export function awaitActionApprovalResult<TValue, TResult extends object>(input: Readonly<{
+export function awaitActionApprovalResult<TValue, TResult extends object | null>(input: Readonly<{
     execute: (callbacks: ActionApprovalResultCallbacks<TValue>) => Promise<TResult | Readonly<{ approvalPending: true }>>;
     succeeded: (value: TValue) => TResult;
     failed: (code: string, failure?: ActionExecuteFailure) => TResult;
@@ -67,7 +68,16 @@ export function awaitActionApprovalResult<TValue, TResult extends object>(input:
             input.signal?.removeEventListener('abort', abort);
             resolve(result);
         };
-        const abort = () => finish(input.aborted());
+        const fail = (error: unknown) => {
+            if (settled) return;
+            settled = true;
+            input.signal?.removeEventListener('abort', abort);
+            reject(error);
+        };
+        const abort = () => {
+            try { finish(input.aborted()); }
+            catch (error) { fail(error); }
+        };
         if (input.signal?.aborted) { abort(); return; }
         input.signal?.addEventListener('abort', abort, { once: true });
         void (async () => await input.execute({
@@ -75,13 +85,8 @@ export function awaitActionApprovalResult<TValue, TResult extends object>(input:
             onApprovalSucceeded: (value) => finish(input.succeeded(value)),
             onApprovalFailed: (code, failure) => finish(input.failed(code, failure)),
         }))().then((result) => {
-            if (!('approvalPending' in result)) finish(result);
-        }, (error: unknown) => {
-            if (settled) return;
-            settled = true;
-            input.signal?.removeEventListener('abort', abort);
-            reject(error);
-        });
+            if (result === null || !('approvalPending' in result)) finish(result);
+        }, fail);
     });
 }
 
@@ -178,7 +183,7 @@ export function createActionApprovalContinuationObserver(input: Readonly<{ onExe
             if (disposed || settlement || !approval || (artifact && artifact.id !== approval.artifactId)) return;
             const headerStatus = artifact?.header?.approvalStatus;
             const status = invalidArtifact ? 'invalid' : headerStatus === 'executed' ? 'executed'
-                : headerStatus === 'rejected' || headerStatus === 'failed' || headerStatus === 'canceled' ? headerStatus : null;
+                : headerStatus === 'rejected' || headerStatus === 'failed' || headerStatus === 'outcome_unknown' || headerStatus === 'canceled' ? headerStatus : null;
             if (!status || (approval.continuation && status !== 'invalid' && (!artifact || typeof artifact.body !== 'string'))) return;
             // Claim before invoking callbacks; a callback may synchronously enqueue another Action.
             remove(approval);
@@ -260,11 +265,7 @@ function canonicalObservedApprovalInput(actionId: ActionId, input: unknown): str
     const parsed = spec.inputSchema.safeParse(input);
     if (!parsed.success) return null;
     try {
-        const review = spec.approvalPresentation;
-        // Use the producer's same declared, validated private review when present.
-        const projected = review?.inputSchema && review.projectInput
-            ? review.inputSchema.parse(review.projectInput(parsed.data))
-            : resolveApprovalPresentationInput({ actionId, actionArgs: parsed.data });
+        const projected = projectApprovalReviewInput(spec, parsed.data);
         // Compare the schema-admitted native operand as the Artifact transport records it.
         // Unsupported carriers still refuse; only optional undefined object members disappear.
         return canonicalApprovalInputIdentity(projectNativeJsonValueForTransport(projected));
@@ -273,10 +274,10 @@ function canonicalObservedApprovalInput(actionId: ActionId, input: unknown): str
     }
 }
 
-function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonly<{
+function inspectActionApprovalRequest(input: Readonly<{
     artifact: DecryptedArtifact;
     artifactId: string;
-    actionId: TActionId;
+    actionId: ActionId;
     scope: ServerAccountScope;
     expectedInputCanonical?: string | null;
     expectedRequestId?: string;
@@ -287,7 +288,9 @@ function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonl
     const parsed = approvalArtifactBodyMatchesHeaderV1(input.artifact.header ?? {}, input.artifact.body);
     if (!parsed || parsed.family !== 'built_in' || parsed.request.v !== 2) return { kind: 'invalid_artifact' };
     const request = parsed.request;
+    if (request.actionId !== input.actionId) return { kind: 'binding_mismatch' };
     const origin = request.executionOriginV1;
+    if (origin.actionId !== input.actionId) return { kind: 'binding_mismatch' };
     const binding = origin.externalActionExecutionAuthorization?.binding;
     // An Account UI request can retain its admitted automation ceiling on the
     // daemon. Observing its exact receipt neither grants nor changes authority.
@@ -298,9 +301,7 @@ function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonl
     // portable Home identity is already bound to the signed originating root.
     const originHomeId = origin.serverIdentityId ?? origin.serverId;
     if (
-        request.actionId !== input.actionId
-        || request.executionOriginV1.actionId !== input.actionId
-        || (input.expectedExecutionOriginCanonical === undefined && (
+        (input.expectedExecutionOriginCanonical === undefined && (
             (origin.authority !== 'present_user' && !signedAccountUiOrigin)
             || request.executionOriginV1.surface !== 'ui'
             || request.requestedSurface !== 'ui'
@@ -368,7 +369,7 @@ type CreateActionApprovalContinuationInput<TValue, TActionId extends ActionId> =
      */
     expectedInput?: unknown;
     onSucceeded: (value: TValue) => void | Promise<void>;
-    onFailed?: (code: string, failure?: ActionExecuteFailure) => void;
+    onFailed: (code: string, failure?: ActionExecuteFailure) => void;
 }>;
 
 /**
@@ -405,61 +406,64 @@ export function createActionApprovalContinuation(
             const inspection = inspect(artifact);
             if (inspection.kind === 'different_artifact') return 'ignored';
             if (inspection.kind === 'invalid_artifact') {
-                input.onFailed?.('approval_invalid');
+                input.onFailed('approval_invalid');
                 return 'consumed';
             }
             if (inspection.kind === 'binding_mismatch' || inspection.request.status !== 'executed') {
-                input.onFailed?.('approval_binding_mismatch');
+                input.onFailed('approval_binding_mismatch');
                 return 'consumed';
             }
 
             const execution = inspection.request.execution;
             const nativeOptions = input.actionId === 'machines.provisioners.options' && execution?.ok === true
                 ? readManagedMachineActionOutputV1(input.actionId, execution.result) : null;
-            const request = nativeOptions?.success && execution
-                ? { ...inspection.request, execution: { ...execution, result: nativeOptions.data } } : inspection.request;
+            // The shared failure reader also validates successful native outputs.
+            // Translate the development wire shape before that strict admission,
+            // after the original Artifact and invocation binding were verified.
+            const request = nativeOptions?.success && execution ? { ...inspection.request,
+                execution: { ...execution, result: nativeOptions.data } } : inspection.request;
             const failure = readApprovalExecutionFailure(request);
             if (failure) {
-                input.onFailed?.(failure.errorCode, failure);
+                input.onFailed(failure.errorCode, failure);
                 return 'consumed';
             }
 
             const outputSchema = getActionSpec(input.actionId).outputSchema;
             const output = nativeOptions ?? outputSchema?.safeParse(execution?.result);
             if (!output?.success) {
-                input.onFailed?.('invalid_action_output');
+                input.onFailed('invalid_action_output');
                 return 'consumed';
             }
             try {
                 await input.onSucceeded(output.data);
             } catch {
-                input.onFailed?.('operation_failed');
+                input.onFailed('operation_failed');
             }
             return 'consumed';
         },
         onTerminal: (status, artifact) => {
             if (status === 'invalid') {
-                input.onFailed?.('approval_invalid');
+                input.onFailed('approval_invalid');
                 return;
             }
             if (!artifact) {
-                input.onFailed?.(`approval_${status}`);
+                input.onFailed(`approval_${status}`);
                 return;
             }
             const inspection = inspect(artifact);
             if (inspection.kind === 'different_artifact') return;
             if (inspection.kind === 'invalid_artifact') {
-                input.onFailed?.('approval_invalid');
+                input.onFailed('approval_invalid');
                 return;
             }
             if (inspection.kind === 'binding_mismatch' || inspection.request.status !== status) {
-                input.onFailed?.('approval_binding_mismatch');
+                input.onFailed('approval_binding_mismatch');
                 return;
             }
-            const failure = status === 'failed'
+            const failure = status === 'failed' || status === 'outcome_unknown'
                 ? readApprovalExecutionFailure(inspection.request)
                 : null;
-            input.onFailed?.(failure?.errorCode ?? `approval_${status}`, failure ?? undefined);
+            input.onFailed(failure?.errorCode ?? `approval_${status}`, failure ?? undefined);
         },
     });
 }

@@ -10,6 +10,8 @@ import {
   PROCESSES_FIXTURE_BYTES,
 } from '@/components/machines/processes/testkit/processesAnswerFixture';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PileBar } from '@/components/machines/storage/PileBar';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { MachineResourcesToolBody } from '@/components/tools/renderers/system/MachineResourcesToolBody';
 
 import { ResourceProposalProcessesContextView } from './ResourceProposalProcessesContext';
@@ -18,6 +20,22 @@ const { GB } = PROCESSES_FIXTURE_BYTES;
 afterEach(() => standardCleanup());
 
 describe('A3 · what is using memory', () => {
+  it('uses the memory byte quantity for a process proposal total, while storage keeps its decimal quantity', async () => {
+    const bytes = 1024 ** 2;
+    const screen = await renderScreen(<>
+      <PileBar testID="process-pile" bar={{ kind: 'ready', count: 1, freesBytes: bytes }}
+        quantityKind="memory" note={null} compact={false} placement="card" />
+      <PileBar testID="storage-pile" bar={{ kind: 'ready', count: 1, freesBytes: bytes }}
+        note={null} compact={false} placement="card" />
+    </>);
+    expect(screen.findByTestId('process-pile')?.props.accessibilityLabel).toContain(
+      t('machineStorage.pile.frees', { amount: formatMachineBytes(bytes, 'memory') }),
+    );
+    expect(screen.findByTestId('storage-pile')?.props.accessibilityLabel).toContain(
+      t('machineStorage.pile.frees', { amount: formatMachineBytes(bytes, 'storage') }),
+    );
+  });
+
   it('draws the census as the Processes tab’s own rows, read-only', async () => {
     const answer = createProcessesAnswer();
     const screen = await renderScreen(
@@ -65,6 +83,8 @@ describe('A3 · what is using memory', () => {
             reason: 'working',
             footprintBytes: 1.6 * GB,
           },
+          { ref: 'session:31:1:', processRef: 'MzE6MTo', kind: 'session', label: null,
+            reason: 'unsent_draft', footprintBytes: null },
         ]}
         usedBytes={3.8 * GB}
         totalBytes={4 * GB}
@@ -76,6 +96,7 @@ describe('A3 · what is using memory', () => {
       screen.findByTestId('resource-proposal-kept-session:30:1:'),
     ).toBeTruthy();
     expect(text).toContain('Upgrade Next to 16');
+    expect(text).toContain(t('session.untitled'));
     expect(text).toContain('working');
     // The ghost: what is left once the selected stops give their memory back.
     const meters = screen.findAll(

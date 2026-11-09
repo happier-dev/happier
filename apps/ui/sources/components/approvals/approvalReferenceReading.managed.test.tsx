@@ -45,14 +45,14 @@ describe('managed approval references', () => {
         if (!row || row.kind !== 'value' || !row.reference) throw new Error('Missing managed reference producer');
         const hook = await renderHook(() => useApprovalReferenceReading(row.reference, machine.id, home), { flushOptions: { cycles: 25 } });
         await flushHookEffects({ cycles: 25 });
-        expect(hook.getCurrent()).toMatchObject({ subject: 'managedMachine', named: true });
+        expect(hook.getCurrent()).toMatchObject({ subject: 'managedMachine', named: readable });
         expect(hook.getCurrent().text).not.toContain(machine.id);
         const expectedName = enrolled ? 'lima-happier-studio' : 'Studio guest';
         if (readable) expect(hook.getCurrent().text).toBe(expectedName);
         const account = await captureLazyActionAccountContext(home);
         try {
             const confirmation = await readApprovalReferenceForConfirmation(row.reference, account);
-            expect(confirmation).toMatchObject({ subject: 'managedMachine', named: true });
+            expect(confirmation).toMatchObject({ subject: 'managedMachine', named: readable });
             if (readable) expect(confirmation.text).toBe(expectedName);
             else expect(confirmation.text).not.toContain(machine.id);
         } finally { account.dispose(); }

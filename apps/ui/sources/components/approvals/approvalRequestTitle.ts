@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WidgetLayoutFragmentActionIdV1Schema, readWidgetLayoutFragmentApprovalNameV1 } from '@happier-dev/protocol/widgets';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
@@ -9,7 +10,7 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary } from './actionApprovalPresentation';
-import { readPluginInstallSourceName } from './pluginInstallApprovalFacts';
+import { readPluginInstallApprovalChange, readPluginInstallSourceName } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 
 export type ApprovalRequestTitleInput = Readonly<{
@@ -19,6 +20,7 @@ export type ApprovalRequestTitleInput = Readonly<{
     actionId?: string | null;
     qualifiedActionId?: string | null;
     actionArgs?: unknown;
+    status?: ApprovalRequest['status'];
     preview?: unknown;
     subject?: string | null;
     /** Session ids the request carries; a legacy " — <id>" suffix naming one of them is dropped. */
@@ -42,7 +44,9 @@ export function resolveApprovalRequestTitle(
 }> {
   const actionId = input.actionId?.trim() ?? '';
   const qualifiedActionId = input.qualifiedActionId?.trim() ?? '';
-  const actionTitle = readApprovalActionTitle(actionId);
+  // A plugin Update travels as `plugins.install`; its evaluated review says it updates the installed plugin.
+  const actionTitle = actionId === 'plugins.install' && readPluginInstallApprovalChange(input.preview) === 'update'
+    ? t('settingsPlugins.updatePluginTitle') : readApprovalActionTitle(actionId);
   const presentation = presentActionApproval({ ...input, actionId, subject: input.subject });
   const [firstLineRaw, ...rest] = String(input.storedTitle ?? '').split('\n');
   let firstLine = (firstLineRaw ?? '').trim();
@@ -111,6 +115,7 @@ export function readApprovalArtifactTitleInput(
     previewSummary: readApprovalPreviewSummary(parsed.request.preview, parsed.request),
     actionId,
     actionArgs: parsed.request.actionArgs,
+    status: parsed.request.status,
     preview: parsed.request.preview,
     sessionIds,
   };

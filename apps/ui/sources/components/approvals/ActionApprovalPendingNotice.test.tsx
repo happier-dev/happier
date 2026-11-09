@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { hitAreaClippingAncestors } from '@/dev/testkit/harness/hitFrameReach';
 
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -36,5 +37,12 @@ describe('ActionApprovalPendingNotice', () => {
         expect(inline.getTextContent()).toContain('Write docs/getting-started.md in d-dc-hello-world');
         await inline.pressByTestIdAsync('inline-notice');
         expect(open).toHaveBeenCalledOnce();
+    });
+
+    it('lets a finger reach the inline pill past its drawn edge (its words truncate without clipping the press target)', async () => {
+        const { ActionApprovalPendingNotice } = await import('./ActionApprovalPendingNotice');
+        const inline = await renderScreen(<ActionApprovalPendingNotice presentation="inline" message="approvals.status.open"
+            testID="inline-notice" summary="Write docs/getting-started.md in d-dc-hello-world." onOpenApproval={() => {}} />);
+        expect(hitAreaClippingAncestors(inline.findHostByTestId('inline-notice')!).map((node) => String(node.props.testID ?? node.type))).toEqual([]);
     });
 });

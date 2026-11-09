@@ -74,7 +74,7 @@ export const ResourceProposalProcessesContextView = React.memo(
               <Item
                 key={entry.ref}
                 testID={`resource-proposal-kept-${entry.ref}`}
-                title={entry.label}
+                title={entry.label ?? t('session.untitled')}
                 subtitle={t(`machineGuard.reasons.${entry.reason}`)}
                 mode="info"
                 showDivider={index < kept.length - 1}

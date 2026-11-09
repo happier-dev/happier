@@ -1,9 +1,77 @@
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it } from 'vitest';
 
-import { describeApprovalActionFields, projectApprovalStructuredAnswers } from './approvalFieldValues';
+import { describeApprovalActionFields, projectApprovalStructuredAnswers, readAcknowledgedActionResult } from './approvalFieldValues';
+import { resolveAcknowledgedActionInverse } from './actionResultFacts';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
+import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+
+it('does not repeat a retained installation title through its historical preview summary', () => {
+    const spec = getActionSpec('machines.managed.bootstrap.respond');
+    const actionArgs = spec.approvalPresentation?.projectInput?.(spec.inputSchema.parse({
+        serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'operation', taskId: 'task',
+        purpose: 'approve', approved: true, prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?',
+            host: 'guest.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null },
+    }));
+    expect(readApprovalPreviewSummary({ summary: 'Answer the installation question for this machine.' },
+        { actionId: spec.id, actionArgs })).toBeNull();
+});
+
+it('reads a ceiling request as binary memory, available room and the consequence, keeping raw bytes technical', () => {
+    const input = { actionId: 'machines.guard.sessionCeiling.set',
+        actionArgs: { machineId: 'machine', sessionId: 'session', bytes: 1073741824 },
+        context: { formatDataBytes: formatHappierDataBytes,
+            machineMemory: { machineId: 'machine', availableBytes: 2 ** 31, totalBytes: 2 ** 33 } } };
+    const presentation = describeApprovalActionFields(input);
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GB' }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'room', value: '2 GB free of 8 GB' }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ifReached', value: expect.stringMatching(/stop.*resume/i) }));
+    expect(presentation.rows.find(row => row.path === 'bytes')).toMatchObject({ technical: true });
+    const withoutRoom = describeApprovalActionFields({ ...input, context: { formatDataBytes: formatHappierDataBytes } });
+    expect(withoutRoom.rows.find(row => row.path === 'room')).toMatchObject({ value: 'Not reported' });
+    const unlimited = describeApprovalActionFields({ ...input, actionArgs: { ...input.actionArgs, bytes: null } });
+    expect(unlimited.rows.find(row => row.path === 'ceiling')).toMatchObject({ value: 'No ceiling' });
+    expect(unlimited.rows.find(row => row.path === 'ifReached')).toMatchObject({ value: expect.stringMatching(/no.*ceiling/i) });
+});
+
+describe('acknowledged Action result facts', () => {
+    it('offers the exact captured inverse only for a committed section assignment', () => {
+        expect(readAcknowledgedActionResult({ actionId: 'session.section.set', result: {
+            sessionId: 'session-a', sectionId: 'launch', previousSectionId: 'planning',
+        } })).toEqual({
+            kind: 'session_section_changed', sessionId: 'session-a', sectionId: 'launch', previousSectionId: 'planning',
+            inverse: { actionId: 'session.section.set', input: { sessionId: 'session-a', sectionId: 'planning' } },
+        });
+        expect(readAcknowledgedActionResult({ actionId: 'session.section.set', result: {
+            sessionId: 'session-a', sectionId: null, previousSectionId: 'planning',
+        } })).toMatchObject({ inverse: { input: { sectionId: 'planning' } } });
+    });
+
+    it('offers no inverse for unknown, failed, malformed or tool-supplied instructions', () => {
+        for (const result of [
+            { ok: false, errorCode: 'outcome_unknown' },
+            { status: 'unknown', sessionId: 'session-a', sectionId: 'launch', previousSectionId: null },
+            { sessionId: 'session-a', sectionId: 'launch' },
+            { sessionId: 'session-a', sectionId: 'launch', previousSectionId: null, inverse: { command: 'arbitrary' } },
+        ]) expect(readAcknowledgedActionResult({ actionId: 'session.section.set', result })).toBeNull();
+        expect(readAcknowledgedActionResult({ actionId: 'other.tool', result: {
+            sessionId: 'session-a', sectionId: 'launch', previousSectionId: null,
+        } })).toBeNull();
+    });
+
+    it('does not undo an intervening membership change, including a return to the Project', () => {
+        const fact = readAcknowledgedActionResult({ actionId: 'session.section.set', result: {
+            sessionId: 'session-a', sectionId: 'launch', previousSectionId: null,
+        } })!;
+        expect(resolveAcknowledgedActionInverse(fact, 'launch')).toEqual({
+            actionId: 'session.section.set', input: { sessionId: 'session-a', sectionId: null },
+        });
+        expect(resolveAcknowledgedActionInverse(fact, 'another-section')).toBeNull();
+        expect(resolveAcknowledgedActionInverse(fact, null)).toBeNull();
+    });
+});
 
 it('reads the declared request effect instead of a stored generic Action description', () => {
     const anchor = 'delegation.workDepthLimit';
@@ -186,6 +254,23 @@ describe('describeApprovalActionFields', () => {
         }).unrepresentable).toEqual({ path: 'expectedItemRevision', reason: 'missing_required_context' });
     });
 
+    it('keeps managed-resource responsibility visible in an Account deletion review', () => {
+        const presentation = describeApprovalActionFields({
+            actionId: 'home.accounts.delete',
+            actionArgs: { accountId: 'account', managedResourceDispositions: [{
+                managedId: 'retained', expectedIntentRevision: 2,
+                expectedAllocation: 'may-exist', responsibility: 'manual',
+            }] },
+        });
+        expect(presentation.unrepresentable).toBeNull();
+        expect(presentation.rows).toContainEqual(expect.objectContaining({
+            kind: 'value', path: 'managedResourceDispositions',
+            value: expect.stringContaining('retained'),
+        }));
+        expect(presentation.rows.find(row => row.path === 'managedResourceDispositions'))
+            .toMatchObject({ value: expect.stringContaining('manual') });
+    });
+
     it('shows the exact Team and member targets for deferred governance approvals', () => {
         expect(describeApprovalActionFields({
             actionId: 'teams.members.remove',
@@ -309,15 +394,4 @@ describe('describeApprovalActionFields', () => {
         expect(JSON.stringify(reissuePresentation)).not.toContain('another-private-retry-key');
         expect(JSON.stringify(reissuePresentation)).not.toContain('joinUrl');
     });
-});
-
-it('does not repeat a retained installation title through its historical preview summary', () => {
-    const spec = getActionSpec('machines.managed.bootstrap.respond');
-    const actionArgs = spec.approvalPresentation?.projectInput?.(spec.inputSchema.parse({
-        serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'operation', taskId: 'task',
-        purpose: 'approve', approved: true, prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?',
-            host: 'guest.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null },
-    }));
-    expect(readApprovalPreviewSummary({ summary: 'Answer the installation question for this machine.' },
-        { actionId: spec.id, actionArgs })).toBeNull();
 });

@@ -6,7 +6,7 @@ import { HappierSkeletonBlock, joinHappierFacts } from '@happier-dev/plugin-ui/p
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     resolveSessionContextLine,
@@ -25,6 +25,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { readApprovalSessionEndpointLabels } from './approvalEndpointLabels';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import type { ApprovalSessionReadingStatus } from './useApprovalSessionReading';
 import {
     describeApprovalAgent,
@@ -56,7 +57,8 @@ const ApprovalContextLine = React.memo(function ApprovalContextLine(props: Reado
  */
 export const ApprovalSessionContextCard = React.memo(function ApprovalSessionContextCard(props: Readonly<{
     session: Session | SessionListRenderableSession | null;
-    machine: Machine | null;
+    /** The asking machine's settled name (`useServerScopedMachineLabel`). */
+    machineLabel: string | null;
     serverId: string | null;
     context: SessionContextPresentation | null;
     /** Source facts let the context-line leaf date an unavailable Home without repainting this card. */
@@ -75,39 +77,46 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     requesterStatus?: ApprovalSessionReadingStatus;
     requesterAgentId: string | null;
     requesterSurface: string;
+    /** Happier's own host asked (Guard's Asks); a Session it names is the work's owner, not the requester. */
+    requestedByGuard?: boolean;
 }>) {
     const router = useRouter();
     const { theme } = useUnistyles();
     const homeName = props.homeName?.trim() || null;
-    const namedSession = props.sessionName?.trim() || null;
+    const guard = props.requestedByGuard === true;
+    const isRecordingVisible = useSessionRecordingVisibility();
+    const requesterId = props.requesterSessionId ?? props.session?.id;
+    const recordingVisible = !requesterId || isRecordingVisible({ sessionId: requesterId,
+        serverId: props.serverId ?? props.session?.serverId });
+    const namedSession = guard || !recordingVisible ? null : props.sessionName?.trim() || null;
     // A session this device cannot name is never shown by its id: it reads by where it lives.
     const sentenceHome = homeName ?? resolveApprovalHomeSentenceName(props.serverId);
     const sessionTitle = namedSession
-        ?? (props.requesterSessionId?.trim() && props.requesterStatus !== 'resolving' ? describeUnnamedApprovalRequester(props.requesterSurface, sentenceHome) : null);
-    const agentLabel = describeApprovalAgent(props.requesterAgentId);
-    const originLabel = describeApprovalOrigin(props.requesterSurface);
+        ?? (!guard && props.requesterSessionId?.trim() && props.requesterStatus !== 'resolving' ? describeUnnamedApprovalRequester(props.requesterSurface, sentenceHome) : null);
+    const agentLabel = recordingVisible ? describeApprovalAgent(props.requesterAgentId) : null;
+    const originLabel = guard ? null : describeApprovalOrigin(props.requesterSurface);
     const endpointLabels = readApprovalSessionEndpointLabels({
-        session: props.session,
-        machine: props.machine,
+        session: recordingVisible ? props.session : null,
+        machine: null,
     });
-    const machineLabel = endpointLabels.machineLabel;
-    const pathLabel = props.serverId ? props.context?.workspace?.label ?? null : endpointLabels.pathLabel;
+    const machineLabel = recordingVisible ? props.machineLabel : null;
+    const pathLabel = !recordingVisible ? null : props.serverId ? props.context?.workspace?.label ?? null : endpointLabels.pathLabel;
     // Each fact once: the chips carry the machine and the folder, so the context line leaves the
     // folder out. The Home is named by this section's own Home line (the app's name for it, not the address the
     // session context falls back to), so the context line carries only what else is known.
-    const contextLine = resolveSessionContextLine(
+    const contextLine = guard || !recordingVisible ? null : resolveSessionContextLine(
         props.context ? { segments: props.context.segments.filter((segment) => segment.kind !== 'home') } : null,
         { showWorkspace: !pathLabel },
     );
     // While the asking session is read, its line is held by a neutral placeholder: nothing claims it is
     // elsewhere, and nothing else takes the lead only to be replaced when the name lands.
-    const sessionResolving = !namedSession && props.requesterStatus === 'resolving' && Boolean(props.requesterSessionId?.trim());
-    const homeLabel = namedSession || (!sessionTitle && !sessionResolving)
+    const sessionResolving = !guard && !namedSession && props.requesterStatus === 'resolving' && Boolean(props.requesterSessionId?.trim());
+    const homeLabel = guard ? null : namedSession || (!sessionTitle && !sessionResolving)
         ? homeName ?? props.homeDisplayId?.trim() ?? null
         // "A session on <Home>" already names the Home.
         : sentenceHome ? null : props.homeDisplayId?.trim() ?? null;
 
-    if (!sessionTitle && !sessionResolving && !pathLabel && !machineLabel && !agentLabel && !originLabel && !homeLabel) {
+    if (!guard && !sessionTitle && !sessionResolving && !pathLabel && !machineLabel && !agentLabel && !originLabel && !homeLabel) {
         return null;
     }
     // The section always leads with one main line: the session, else the Home that asked (by its
@@ -115,12 +124,12 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     const homeLeads = !sessionTitle && !sessionResolving && Boolean(homeLabel);
     const requesterFacts = agentLabel || originLabel ? joinHappierFacts(agentLabel, originLabel) : null;
     const factsLead = !sessionTitle && !sessionResolving && !homeLeads;
-    const mainLine = sessionTitle ?? (homeLeads ? homeLabel : requesterFacts);
+    const mainLine = guard ? t('detailPages.approval.requesterGuard') : sessionTitle ?? (homeLeads ? homeLabel : requesterFacts);
 
     return (
         <ItemGroup
             title={t('detailPages.approval.contextTitle')}
-            description={t('detailPages.approval.contextDescription')}
+            description={t(guard ? 'detailPages.approval.requesterGuardDescription' : 'detailPages.approval.contextDescription')}
         >
         <SectionContentRow>
         <View style={styles.card}>
@@ -135,14 +144,14 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
                             <SessionContextChips machineLabel={machineLabel} pathLabel={pathLabel} />
                         </View>
                     ) : null}
-                    {contextLine || props.contextFacts ? <ApprovalContextLine context={props.context}
+                    {recordingVisible && (contextLine || (!guard && props.contextFacts)) ? <ApprovalContextLine context={props.context}
                         facts={props.contextFacts} showWorkspace={!pathLabel} /> : null}
                     {homeLabel && !homeLeads ? (
                         <Text style={styles.homeLabel}>{t('actionConfirmations.homeTarget', { serverId: homeLabel })}</Text>
                     ) : null}
                 </View>
 
-                {props.session?.id ? (
+                {!guard && props.session?.id ? (
                     <Pressable
                         testID="approvals.open-session"
                         accessibilityRole="button"

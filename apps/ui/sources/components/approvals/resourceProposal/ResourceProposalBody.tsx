@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { Animated, Easing, Platform, Pressable, View } from 'react-native';
+import { Animated, Easing, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import type { ProcessOwnerRefV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import type {
   StorageItemV1,
   StorageReasonV1,
@@ -10,6 +11,7 @@ import type {
 import { useMotionPreferences } from '@/components/instrument/motion/useMotionPreferences';
 import { useMachineTabCompactLayout } from '@/components/machines/page/useMachineTabCompactLayout';
 import { PileBar } from '@/components/machines/storage/PileBar';
+import { StorageRestoreRecovery, useTrackedRestoreRefusals } from '@/components/machines/storage/StorageRestoreRecovery';
 import { StorageVerdictPill } from '@/components/machines/storage/StorageItemRow';
 import { StorageVolumeRow } from '@/components/machines/storage/StorageVolumes';
 import {
@@ -30,9 +32,9 @@ import { Typography } from '@/constants/Typography';
 import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { describeEndedOwner, describeProcessTitle } from '@/components/machines/processes/processOwnerIdentity';
 
 import type {
-  ResourceProposalItem,
   ResourceProposalVerdict,
   ResourceProposalModel,
 } from './readResourceProposalApproval';
@@ -47,25 +49,49 @@ import {
 import { resolveResourceProposalLabels } from './resourceProposalLabels';
 import { ResourceProposalProcessesContext } from './ResourceProposalProcessesContext';
 import type { ResourceProposalController } from './useResourceProposalCheck';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 function lastSegment(path: string): string {
   const parts = path.replace(/[\\/]+$/u, '').split(/[\\/]/u);
   return parts[parts.length - 1] || path;
 }
 
-function ownerTitle(item: ResourceProposalItem): string {
-  const kind = item.owner?.kind;
-  switch (kind) {
+function ownerKindTitle(owner: ProcessOwnerRefV1 | null | undefined): string | null {
+  switch (owner?.kind) {
     case 'session':
     case 'terminal':
     case 'service':
     case 'run':
     case 'browser_sidecar':
     case 'workspace_sync':
-      return t(`resourceProposal.owner.${kind}`);
+      return t(`resourceProposal.owner.${owner.kind}`);
     default:
-      return t('resourceProposal.owner.other');
+      return null;
   }
+}
+
+/**
+ * A process row in words: the checked process by name, what it belongs to (or, for Left behind, what ended)
+ * and its command. The identity-pinned ref is never shown; without the checked row (an older daemon, or a
+ * gone/refused target) the title falls back to the owner kind.
+ */
+function describeProcessItem(
+  row: ResourceProposalRow,
+  actionId: ResourceProposalModel['actionId'],
+): Readonly<{ title: string; details: readonly string[] }> {
+  const process = row.facts?.process;
+  const checked = process?.row;
+  const owner = process?.owner ?? row.item.owner;
+  const named = checked
+    ? 'appGroup' in checked ? checked.name : describeProcessTitle(checked)
+    : null;
+  const leftBehind = actionId === 'machines.processes.leftBehind.cleanUp' || process?.level === 'left_behind';
+  const caption = leftBehind && owner ? describeEndedOwner(owner) : named ? ownerKindTitle(owner) : null;
+  const command = checked && 'command' in checked ? checked.command?.trim() : null;
+  return {
+    title: row.facts?.keptByGuard?.label ?? named ?? ownerKindTitle(owner) ?? t('resourceProposal.owner.other'),
+    details: [caption, command].filter((line): line is string => Boolean(line)),
+  };
 }
 
 function verdictChip(
@@ -149,14 +175,11 @@ const ProposalRow = React.memo(function ProposalRow(
     // Once per mount: the arrival is not replayed when facts or ticks change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const title =
-    props.kind === 'storage'
-      ? lastSegment(row.item.path)
-      : row.facts?.keptByGuard?.label ?? ownerTitle(row.item);
-  const path =
-    props.kind === 'storage'
-      ? formatPathRelativeToHome(row.item.path)
-      : row.item.path;
+  const processItem = props.kind === 'processes' ? describeProcessItem(row, props.actionId) : null;
+  const title = processItem?.title ?? lastSegment(row.item.path);
+  const path = processItem
+    ? processItem.details.join('\n')
+    : formatPathRelativeToHome(row.item.path);
   const gone = row.facts?.status === 'gone';
   const bytes = row.facts?.bytes ?? null;
   const size = gone
@@ -216,16 +239,16 @@ const ProposalRow = React.memo(function ProposalRow(
     lead = <Icon name="lock" size={14} color={theme.colors.text.tertiary} />;
   }
   const rowAction = skipped && props.onRetry ? (
-    <Pressable testID={`resource-proposal-retry-${row.item.key}`} accessibilityRole="button" hitSlop={8}
+    <HappierPressable testID={`resource-proposal-retry-${row.item.key}`} accessibilityRole="button" 
       onPress={() => { void props.onRetry?.(row.item.key); }}>
       <Text style={styles.link}>{t('resourceProposal.tryAgain')}</Text>
-    </Pressable>
+    </HappierPressable>
   ) : props.outcome?.status === 'done' && props.onStartAgain ? (
     props.startedAgain ? <Text style={styles.onDisk}>{t('resourceProposal.startedAgain')}</Text> : (
-      <Pressable testID={`resource-proposal-start-again-${row.item.key}`} accessibilityRole="button" hitSlop={8}
+      <HappierPressable testID={`resource-proposal-start-again-${row.item.key}`} accessibilityRole="button" 
         onPress={() => { void props.onStartAgain?.(row.item.key); }}>
         <Text style={styles.link}>{t('resourceProposal.startAgain')}</Text>
-      </Pressable>
+      </HappierPressable>
     )
   ) : null;
   const subtitle = [path, skippedReason ?? reasonText]
@@ -259,7 +282,7 @@ const ProposalRow = React.memo(function ProposalRow(
           ) : undefined
         }
         subtitle={subtitle}
-        subtitleLines={props.compact ? 3 : 2}
+        subtitleLines={props.compact || processItem ? 3 : 2}
         mode={props.interactive && row.selectable ? 'interactive' : 'info'}
         onPress={props.interactive && row.selectable ? press : undefined}
         accessibilityRole={
@@ -301,6 +324,9 @@ const ProposalRow = React.memo(function ProposalRow(
             </View>
           </View>
         }
+        bottomElementOutsidePressable={Boolean(rowAction)}
+        // Try again / Start again belong to the row's words: they start under its title, not under its glyph.
+        bottomElementInset="text"
         bottomElement={
           props.compact || (revealLoss && row.needsConfirm) || rowAction ? (
             <View style={styles.bottom}>
@@ -447,7 +473,7 @@ function pileBarFor(
         return { kind: 'held', batchId: display.result.batchId, count: display.receipt.remaining.length,
           inTrashBytes: resourceProposalTrashBytes(display.result, display.receipt),
           notActed: display.result.outcomes.filter(outcome => outcome.status !== 'moved' && outcome.status !== 'deleted').length,
-          emptiesAt: null };
+          emptiesAt: null, trash: display.receipt };
       }
       const acted = display.result.outcomes.filter(
         (outcome) => outcome.status === 'moved' || outcome.status === 'deleted',
@@ -517,6 +543,10 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
   const layout = useMachineTabCompactLayout();
   const compact = layout.compact;
   const { model, display, rows } = controller;
+  // Kept here, above the early returns: the receipt changes shape when everything is back, and a refused item's success must outlive that.
+  const refusals = useTrackedRestoreRefusals(controller.restoreOutcomes, {
+    entries: [controller, ...controller.retryReceipts].flatMap((holder) => holder.restoreEntries),
+  });
   const interactive = display.kind === 'ask' && props.decisionsAvailable;
   if (display.kind === 'declined') {
     return (
@@ -533,27 +563,14 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
           {` · ${t('resourceProposal.declinedFacts', { count: model.items.length })}`}
         </Text>
         {controller.reopen ? (
-          <Pressable
+          <HappierPressable
             testID="resource-proposal-reopen"
             accessibilityRole="button"
             onPress={controller.reopen}
-            hitSlop={8}
           >
             <Text style={styles.link}>{t('resourceProposal.reopen')}</Text>
-          </Pressable>
+          </HappierPressable>
         ) : null}
-      </View>
-    );
-  }
-  if (display.kind === 'restored') {
-    return (
-      <View testID="resource-proposal-restored" style={styles.quiet}>
-        <Icon
-          name="arrow-arc-left"
-          size={16}
-          color={theme.colors.text.tertiary}
-        />
-        <Text style={styles.quietText}>{t('resourceProposal.restored')}</Text>
       </View>
     );
   }
@@ -561,8 +578,11 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
     display,
     controller.approvedKeys,
   );
+  // Once Undo has put the original batch back, only what it left unresolved (skipped operands) stays a row.
   const visibleRows = outcomes
-    ? rows.filter((row) => outcomes.has(row.item.key))
+    ? rows.filter((row) => display.kind === 'restored'
+      ? outcomes.get(row.item.key)?.status === 'skipped'
+      : outcomes.has(row.item.key))
     : rows;
   const selectAll = resourceProposalSelectAllState(rows);
   const openCount = rows.filter(
@@ -579,6 +599,16 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
       : null;
   return (
     <View testID={props.testID ?? 'resource-proposal-body'} style={styles.body} onLayout={layout.onLayout}>
+      {display.kind === 'restored' ? (
+        <View testID="resource-proposal-restored" style={styles.quiet}>
+          <Icon
+            name="arrow-arc-left"
+            size={16}
+            color={theme.colors.text.tertiary}
+          />
+          <Text style={styles.quietText}>{t('resourceProposal.restored')}</Text>
+        </View>
+      ) : null}
       {display.kind === 'ask' && display.stale ? (
         <View
           testID="resource-proposal-stale"
@@ -616,16 +646,12 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
       ) : null}
       {interactive && openCount > 0 ? (
         <View style={styles.allRow}>
-          <Pressable
+          <HappierPressable
             testID="resource-proposal-select-all"
             accessibilityRole="checkbox"
-            accessibilityState={{
-              checked:
-                selectAll === 'mixed' ? 'mixed' : selectAll === 'checked',
-            }}
+            checked={selectAll === 'mixed' ? 'mixed' : selectAll === 'checked'}
             accessibilityLabel={t('resourceProposal.selectAll')}
             onPress={controller.toggleAll}
-            hitSlop={8}
             style={styles.allBox}
           >
             <SelectionCheckGlyph state={selectAll} />
@@ -635,19 +661,18 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
                 total: openCount,
               })}
             </Text>
-          </Pressable>
+          </HappierPressable>
           <View style={styles.grow} />
           {model.kind === 'storage' && !model.emptyAfter ? (
-            <Pressable
+            <HappierPressable
               testID="resource-proposal-select-safe"
               accessibilityRole="button"
               onPress={controller.selectAllSafe}
-              hitSlop={8}
             >
               <Text style={styles.link}>
                 {t('resourceProposal.selectAllSafe')}
               </Text>
-            </Pressable>
+            </HappierPressable>
           ) : null}
           {compact ? null : (
             <Text style={styles.columnHead}>
@@ -781,6 +806,7 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
         <PileBar
           testID="resource-proposal-pile"
           bar={pile}
+          quantityKind={model.kind === 'processes' ? 'memory' : 'storage'}
           note={pileNote(controller)}
           compact={compact}
           placement="card"
@@ -796,6 +822,7 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
           }
         />
       ) : null}
+      <ProposalRestoreRecovery controller={controller} refusals={refusals} compact={compact} />
       {controller.retryReceipts.map((receipt) => receipt.restored ? (
         <View key={receipt.batchId} testID={`resource-proposal-retry-receipt-${receipt.batchId}`} style={styles.quiet}>
           <Text style={styles.quietText}>{t('resourceProposal.restored')}</Text>
@@ -815,6 +842,44 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
     </View>
   );
 });
+
+/**
+ * A refused Put back on this card, named with its reason and the one recovery. The card's own receipt and
+ * each retry's receipt keep their entries; the owner's outcomes are joined to them by entry id, never by order.
+ */
+function ProposalRestoreRecovery(
+  props: Readonly<{ controller: ResourceProposalController; refusals: ReturnType<typeof useTrackedRestoreRefusals>; compact: boolean }>,
+) {
+  const { controller, refusals } = props;
+  const holders = [controller, ...controller.retryReceipts];
+  const latest = React.useRef(holders);
+  latest.current = holders;
+  const putBackBeside = React.useCallback(
+    (entryId: string) => latest.current.find((holder) => holder.restoreEntries.some((entry) => entry.entryId === entryId))?.putBackBeside?.(entryId),
+    [],
+  );
+  if (refusals.ids.length === 0) return null;
+  return (
+    <PileBar
+      testID="resource-proposal-restore"
+      bar={{ kind: 'hidden' }}
+      note={null}
+      compact={props.compact}
+      placement="card"
+      recovery={
+        <StorageRestoreRecovery
+          ids={refusals.ids}
+          entries={refusals.entries}
+          outcomes={controller.restoreOutcomes}
+          homeDir={undefined}
+          compact={props.compact}
+          onPutBackBeside={putBackBeside}
+          onDone={refusals.dismiss}
+        />
+      }
+    />
+  );
+}
 
 /** Stopping frees memory at once (R25): the receipt says so with the real amount. */
 function StoppedSummary(
