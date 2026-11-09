@@ -28,6 +28,42 @@
   ],
   "overrides": [
     {
+      "files": ["apps/ui/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "paths": [{
+            "name": "@happier-dev/protocol",
+            "message": "Import from an existing published protocol subpath to avoid loading the root barrel."
+          }, {
+            "name": "expo-router",
+            "importNames": ["usePathname", "useGlobalSearchParams"],
+            "message": "Expo's route is the hosted workspace's URL mirror and may name the previous instance of the same route pattern. Read the current route with useCurrentRoutePathname/useCurrentRouteParams (appShell/workspace/currentRouteLocation), or a destination's own params through destinationRoute."
+          }]
+        }]
+      }
+    },
+    {
+      "files": [
+        "apps/ui/sources/components/appShell/workspace/currentRouteLocation.tsx",
+        "apps/ui/sources/components/appShell/workspace/WorkspaceProvider.tsx",
+        "apps/ui/sources/components/appShell/workspace/DestinationInstanceHost.tsx",
+        "apps/ui/sources/components/appShell/workspace/createWorkspaceRouteEntry.tsx",
+        "apps/ui/sources/components/appShell/workspace/destinationRoute.tsx",
+        "apps/ui/sources/components/appShell/workspace/destinationInstanceContext.ts",
+        "apps/ui/sources/embed/**/*.{ts,tsx}",
+        "apps/ui/sources/**/*.test.{ts,tsx}",
+        "apps/ui/sources/dev/testkit/**/*.{ts,tsx}"
+      ],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "paths": [{
+            "name": "@happier-dev/protocol",
+            "message": "Import from an existing published protocol subpath to avoid loading the root barrel."
+          }]
+        }]
+      }
+    },
+    {
       "files": [
         "apps/ui/sources/**/*.{ts,tsx}",
         "packages/plugins/*/src/ui/**/*.{ts,tsx}"

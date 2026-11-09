@@ -305,6 +305,9 @@ _.env.pipeline.production.local
 !/apps/ui/src-tauri/vendor/wry/
 !/apps/ui/src-tauri/vendor/wry/**
 /apps/ui/src-tauri/vendor/wry/target/
+!/apps/ui/src-tauri/vendor/windows-capture/
+!/apps/ui/src-tauri/vendor/windows-capture/**
+/apps/ui/src-tauri/vendor/windows-capture/target/
 
 /cli/.dist*
 /packages/cli-common/.dist*
