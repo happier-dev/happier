@@ -22,7 +22,7 @@ import type { TriageEntryRefV1, TriageLinkedSessionProjectionV1 } from '@happier
 
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 import { readTriageSessionTitle } from './sessionTitle.js';
-import { TRIAGE_DETAIL_PAGE_KIND_V1, type TriageDetailTabSelectionV1 } from './body.js';
+import { TRIAGE_DETAIL_PAGE_KIND_V1, useTriageDetailAvailableTabs, type TriageDetailTabSelectionV1 } from './body.js';
 import { useTriageUnlinkLinkedEntry } from '../../sessions/cockpit/useUnlinkLinkedEntry.js';
 import { TRIAGE_ENTRY_SESSION_COMPANION_V1 } from '../../composer/openEntryDetails.js';
 
@@ -176,6 +176,10 @@ export function TriageDetailWholeBody(props: Readonly<{
   const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<'details' | 'session'>('details');
   const value = props.tabSelection === undefined ? selected : props.tabSelection.value === 'session' ? 'session' : 'details';
+  const tabs = useTriageDetailAvailableTabs([
+    { value: 'details', title: text('plugins.triage.surface.detail.tab.overview', 'Overview') },
+    ...(props.sessions.length === 0 ? [] : [{ value: 'session', title: text('plugins.triage.surface.detail.tab.session', 'Session') }]),
+  ], props.tabSelection?.onAvailableTabsChange);
   return (
     <Tabs
       presentation="page"
@@ -190,10 +194,10 @@ export function TriageDetailWholeBody(props: Readonly<{
       // The Session tab hosts the live chat, which needs the detail's remaining height.
       layout="fill"
     >
-      <Tabs.Item value="details" title={text('plugins.triage.surface.detail.tab.overview', 'Overview')} glyph="info" retention="retain">
+      <Tabs.Item value="details" title={tabs[0]!.title} glyph="info" retention="retain">
         {props.children}
       </Tabs.Item>
-      {props.sessions.length === 0 ? null : <Tabs.Item value="session" title={text('plugins.triage.surface.detail.tab.session', 'Session')} glyph="conversations" retention="discard"
+      {props.sessions.length === 0 ? null : <Tabs.Item value="session" title={tabs[1]!.title} glyph="conversations" retention="discard"
         kind="both" companion={TRIAGE_ENTRY_SESSION_COMPANION_V1}>
         <TriageSessionPanel sessions={props.sessions} entryRef={props.entryRef} onUnlinked={props.onUnlinked}
           selectedSessionId={props.selectedSessionId} onSelectSession={props.onSelectSession} />

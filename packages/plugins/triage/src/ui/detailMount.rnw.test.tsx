@@ -371,14 +371,14 @@ const OTHER_ADMITTED_MOUNT = Object.freeze({
     },
 });
 
-function surfaceContext(options: Readonly<{ contributesDetail?: boolean; tabbedDetail?: boolean; sourceSessionTab?: boolean; securityAlert?: boolean;
+function surfaceContext(options: Readonly<{ contributesDetail?: boolean; tabbedDetail?: boolean; sourceSessionTab?: boolean; securityAlert?: boolean; localNavigation?: boolean;
     fixPullRequestState?: 'unprojected' | 'unreachable'; taskEdit?: boolean }> = {}) {
     const contributesDetail = options.contributesDetail !== false;
     return createSurfaceContextFixture({
         mount: {
             kind: 'destination',
             destination: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: options.taskEdit ? 'tasks' : 'triage' },
-            container: 'appPage',
+            container: options.localNavigation ? 'detailsTab' : 'appPage',
         },
         targetedContributions: {
             target: {
@@ -896,6 +896,7 @@ async function mountShell(
     options: Readonly<{
         contributesDetail?: boolean;
         resource?: boolean;
+        localNavigation?: boolean;
         sourcePanelProbe?: boolean;
         subPath?: string;
         launchInput?: JsonValue;
@@ -1044,13 +1045,13 @@ async function mountShell(
                 },
             }),
             handlers: {
-                setPageNavigation: async ({ navigation }) => {
+                ...(options.localNavigation ? {} : { setPageNavigation: async ({ navigation }: { navigation: PluginUiPageNavigationV1 | null }) => {
                     pageNavigation = navigation;
                     options.onPageNavigation?.(navigation);
                     if (!fixture) return;
                     const current = await fixture.context.hostApi.context();
                     await fixture.updateSurface({ ...current, page: projectPage() });
-                },
+                } }),
                 readSession: ({ sessionId }) => ({
                     sessionId, title: options.sessionTitle ?? harness.readSessionTitle(sessionId),
                     lifecycle: 'active', runtime: 'waiting', operational: 'ready',
@@ -1274,10 +1275,10 @@ function ResourceSourcePanelProbe() {
     return <Text value={loaded ? 'Resource source page loaded' : 'Resource source first page'} />;
 }
 
-it('publishes and dispatches real detail controls from a resource preview', async () => {
+it.each([false, true])('publishes and dispatches real detail controls from a resource preview (local navigation: %s)', async localNavigation => {
     const published: (PluginUiContextEnrichmentV1 | null)[] = [];
     let aggregateReads = 0;
-    const page = await mountShell({ resource: true, automaticDemandOnly: true, tabbedDetail: true,
+    const page = await mountShell({ resource: true, localNavigation, automaticDemandOnly: true, tabbedDetail: true,
         sourcePanelProbe: true, linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1, activeSurface: true,
         onAggregateRead: () => { aggregateReads += 1; },
         publishCurrentUiContext: context => { published.push(context); } });
@@ -1314,6 +1315,17 @@ it('publishes and dispatches real detail controls from a resource preview', asyn
     await invoke(moreSessions);
     expect(published.at(-1)?.detail).toMatchObject({ linkedSessionIds: expect.arrayContaining(['session-linked-201']) });
     expect(aggregateReads).toBe(0);
+});
+
+it.each([false, true])('switches rendered resource tabs without an app-page navigation host (source tabs: %s)', async tabbedDetail => {
+    const page = await mountShell({ resource: true, localNavigation: true, automaticDemandOnly: true, tabbedDetail,
+        linkedSessionCount: 1, activeSurface: true });
+    await expect(page.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+    const nextTab = tabbedDetail ? 'Files' : 'Session';
+    await page.press(await page.getByRole('tab', { name: nextTab }));
+    await expect(page.getByRole('tab', { name: nextTab, state: { selected: true } })).resolves.toBeDefined();
+    await page.press(await page.getByRole('tab', { name: 'Overview' }));
+    await expect(page.getByRole('tab', { name: 'Overview', state: { selected: true } })).resolves.toBeDefined();
 });
 
 it('recovers failed fix PR links in a resource preview through its mounted Retry', async () => {

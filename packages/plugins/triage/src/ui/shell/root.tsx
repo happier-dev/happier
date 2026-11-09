@@ -71,7 +71,7 @@ import { useTriageSourcePanelActionsV1 } from '../useSourcePanelActions.js';
 import { triageSourcePanelActionIdV1 } from '@happier-dev/triage-sources/ui';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
 import { planTriageDetailTabsV1 } from '../detail/tabs.js';
-import { TRIAGE_DETAIL_PAGE_KIND_V1 } from '../detail/body.js';
+import type { TriageDetailAvailableTabV1 } from '../detail/body.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
 import {
@@ -1509,9 +1509,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Tabs not represented by the canonical route stay mount-local. The same
   // controlled value is consumed by source Tabs and the mounted Action.
   const [detailTab, setDetailTab] = React.useState<Readonly<{ key: string; tab: string; sessionId?: string }> | null>(null);
-  const pageNavigation = surfaceContext.page?.navigation;
-  const detailTabs = pageNavigation?.pageKind.pluginId === TRIAGE_DETAIL_PAGE_KIND_V1.pluginId
-    && pageNavigation.pageKind.localId === TRIAGE_DETAIL_PAGE_KIND_V1.localId ? pageNavigation.items : undefined;
+  const [availableDetailTabs, setAvailableDetailTabs] = React.useState<Readonly<{ key: string; tabs: readonly TriageDetailAvailableTabV1[] }> | null>(null);
+  const detailTabs = availableDetailTabs?.key === selectedKey ? availableDetailTabs.tabs : undefined;
+  const reportDetailTabs = React.useCallback((tabs: readonly TriageDetailAvailableTabV1[] | null) => {
+    setAvailableDetailTabs(tabs === null || selectedKey === null ? null : { key: selectedKey, tabs });
+  }, [selectedKey]);
   const [detailSessions, setDetailSessions] = React.useState<Readonly<{ key: string; sessions: readonly TriageLinkedSessionProjectionV1[]; loadMore: (() => void) | null }> | null>(null);
   const [detailFixRetry, setDetailFixRetry] = React.useState<Readonly<{ key: string; retry: () => void }> | null>(null);
   const reportDetailFixRetry = React.useCallback((retry: (() => void) | null) => {
@@ -1673,7 +1675,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         // Attachment intents address a mounted picker, never this list page.
         return { status: 'unavailable' };
       case 'selectDetailTab':
-        if (selectedKey === null || !detailTabs?.some((tab) => tab.value === operation.tab && !tab.disabled)) return { status: 'unavailable' };
+        if (selectedKey === null || !detailTabs?.some((tab) => tab.value === operation.tab)) return { status: 'unavailable' };
         chooseDetailTab(operation.tab);
         break;
       case 'selectLinkedSession':
@@ -2410,7 +2412,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         sourcePanelActions={sourcePanel.actions}
         onFixPullRequestsRetryChange={reportDetailFixRetry}
         onRetryFixPullRequests={retryDetailFixPullRequests}
-        tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab }}
+        tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
         sessionSelection={{ value: detailTab?.key === selectedKey ? detailTab.sessionId ?? null : null,
           onChange: chooseLinkedSession, onAvailableSessionsChange: reportDetailSessions, onLoadMore: loadMoreLinkedSessions }}
         headerHosted={headerHosted}

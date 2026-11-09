@@ -22,7 +22,7 @@ import { bindTriageMountedUiActions, executeTriageMountedUiAction } from './moun
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { useTriageCurrentUiContextPublication } from './currentContextPublication.js';
 import { projectTriageEntryDisplay } from './window/entryDisplay.js';
-import { TRIAGE_DETAIL_PAGE_KIND_V1 } from './detail/body.js';
+import type { TriageDetailAvailableTabV1 } from './detail/body.js';
 import { openTriageActionEditorV1 } from './actions/openActionEditor.js';
 
 const EMPTY_LANES: readonly TriageListLaneV1[] = Object.freeze([]);
@@ -73,9 +73,8 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const [refreshGeneration, setRefreshGeneration] = React.useState(0);
   // Where the list page stops splitting, the entry opened on its own page is the pushed detail, as from the list.
   const paneMinimumWidths = useTriagePaneMinimumWidthsV1();
-  const navigation = context.page?.navigation;
-  const tabs = navigation?.pageKind.pluginId === TRIAGE_DETAIL_PAGE_KIND_V1.pluginId
-    && navigation.pageKind.localId === TRIAGE_DETAIL_PAGE_KIND_V1.localId ? navigation.items : undefined;
+  // The mounted detail owns its available tabs; page chrome is an optional consumer.
+  const [tabs, reportTabs] = React.useState<readonly TriageDetailAvailableTabV1[] | null>(null);
   const unavailable = (result?.resource === resource && result.launch === null) || readFailed;
   const runOperation = React.useCallback(async (operation: TriageMountedUiOperationV1, signal: AbortSignal): Promise<TriageMountedUiResultV1> => {
     if (signal.aborted) return { status: 'unavailable' };
@@ -92,7 +91,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
     if (row === null || unavailable) return { status: 'unavailable' };
     switch (operation.kind) {
       case 'selectDetailTab':
-        if (!tabs?.some(item => item.value === operation.tab && !item.disabled)) return { status: 'unavailable' };
+        if (!tabs?.some(item => item.value === operation.tab)) return { status: 'unavailable' };
         setTab(operation.tab);
         break;
       case 'selectLinkedSession':
@@ -136,7 +135,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
       commands: [
         command(unavailable ? text('plugins.triage.surface.actions.retry', 'Retry') : text('plugins.triage.surface.actions.refresh', 'Refresh'), { kind: 'refresh' }),
         ...(visibleRow === null ? [] : [
-          ...(tabs ?? []).filter(item => !item.disabled).map(item => command(item.title, { kind: 'selectDetailTab', tab: item.value })),
+          ...(tabs ?? []).map(item => command(item.title, { kind: 'selectDetailTab', tab: item.value })),
           ...sessions.map(session => command(session.displayTitle ?? text('session.untitled', 'Untitled session'), { kind: 'selectLinkedSession', sessionId: session.sessionId })),
           ...(loadMore === null ? [] : [command(text('plugins.triage.surface.loadMore', 'Load more'), { kind: 'loadMore', section: 'linkedSessions' })]),
           ...(fixRetry === null ? [] : [command(text('plugins.triage.surface.detail.fixPr.retry', 'Retry: Fix pull request'), { kind: 'retryFixPullRequests' })]),
@@ -168,7 +167,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
     {({ pushed, headerHosted }) => <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
       pushed={pushed} headerHosted={headerHosted}
       refreshGeneration={refreshGeneration} onFixPullRequestsRetryChange={reportFixRetry} onRetryFixPullRequests={() => execute({ kind: 'retryFixPullRequests' })}
-      tabSelection={{ value: tab, onChange: value => execute({ kind: 'selectDetailTab', tab: value }) }}
+      tabSelection={{ value: tab, onChange: value => execute({ kind: 'selectDetailTab', tab: value }), onAvailableTabsChange: reportTabs }}
       sessionSelection={{ value: sessionId, onChange: id => execute({ kind: 'selectLinkedSession', sessionId: id }),
         onAvailableSessionsChange: reportSessions, onLoadMore: () => execute({ kind: 'loadMore', section: 'linkedSessions' }) }}
       lanes={EMPTY_LANES} rows={[row]} connectionLabel={null} target={resolveTriageActionTargetV1({ selection })}

@@ -49,7 +49,24 @@ export function TriageDetailPageLeadProvider(props: Readonly<{ lead: React.React
 export type TriageDetailTabSelectionV1 = Readonly<{
   value: string;
   onChange(tab: string): void;
+  onAvailableTabsChange?(tabs: readonly TriageDetailAvailableTabV1[] | null): void;
 }>;
+
+export type TriageDetailAvailableTabV1 = Readonly<{ value: string; title: string }>;
+
+/** Publish changes from the rendered tab owner, independently of optional host chrome. */
+export function useTriageDetailAvailableTabs(
+  candidate: readonly TriageDetailAvailableTabV1[],
+  report: TriageDetailTabSelectionV1['onAvailableTabsChange'],
+): readonly TriageDetailAvailableTabV1[] {
+  const current = React.useRef(candidate);
+  if (current.current.length !== candidate.length || candidate.some((tab, index) =>
+    tab.value !== current.current[index]?.value || tab.title !== current.current[index]?.title)) current.current = candidate;
+  const tabs = current.current;
+  React.useLayoutEffect(() => { report?.(tabs); }, [report, tabs]);
+  React.useLayoutEffect(() => () => { report?.(null); }, [report]);
+  return tabs;
+}
 
 /** Actions are an inline section beside the tabs, selected through the same source navigation seam. */
 export type TriageDetailActionsNavigationV1 = Readonly<{
@@ -185,6 +202,13 @@ export function TriageDetailTabbedBody(props: Readonly<{
   }), [props.tabs, entryPanels, entryKey, fixPanels, fixKey]);
   const selected = tabs.some((tab) => tab.frameId === requested) || requested === 'session' && hasSession
     ? requested : tabs[0]?.frameId ?? 'overview';
+  const candidateAvailableTabs = React.useMemo(() => [
+    ...tabs.map(tab => ({ value: tab.frameId, title: tab.kind === 'shared'
+      ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
+      : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title) })),
+    ...(hasSession ? [{ value: 'session', title: text('plugins.triage.surface.detail.tab.session', 'Session') }] : []),
+  ], [tabs, hasSession, text]);
+  const availableTabs = useTriageDetailAvailableTabs(candidateAvailableTabs, props.tabSelection?.onAvailableTabsChange);
   React.useEffect(() => { if (selected !== requested) setSelected(selected); }, [requested, selected, setSelected]);
   // A source control that points at a sibling panel selects it through this one owner.
   const navigation = React.useMemo<TriageDetailPanelNavigationV1>(
@@ -275,7 +299,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
           </TriageDetailPanelNavigationProvider>
         )}
       >
-        {tabs.map((tab) => {
+        {tabs.map((tab, index) => {
           // The declaring source's own fact, said beside the title ("Checks 2 failing"); absent says nothing.
           const summary = tab.summary === undefined ? null : readTriageDetailTabSummaryV1(tab.summary, locale);
           return (
@@ -283,9 +307,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
               key={tab.frameId}
               value={tab.frameId}
               glyph={tab.kind === 'shared' ? SHARED_TAB_COPY[tab.id].glyph : 'file'}
-              title={tab.kind === 'shared'
-                ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
-                : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title)}
+              title={availableTabs[index]!.title}
               {...(summary === null ? {} : { badge: summary.value, badgeTone: summary.tone })}
             />
           );
@@ -298,7 +320,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
             kind="both"
             companion={TRIAGE_ENTRY_SESSION_COMPANION_V1}
             glyph="conversations"
-            title={text('plugins.triage.surface.detail.tab.session', 'Session')}
+            title={availableTabs[availableTabs.length - 1]!.title}
           />
         )}
       </Tabs>
