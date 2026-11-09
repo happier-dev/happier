@@ -5,20 +5,12 @@ import { join } from 'node:path';
  * Port of `apps/ui/src-tauri/src/desktop_boot_credentials.rs`.
  *
  * When the desktop app is launched by a Happier stack, the stack exports its CLI home through the
- * environment and the host hands the already-issued access key to the renderer so the user is not
- * asked to sign in again. Outside a stack launch there is nothing to read and the command answers
- * `null`, which is exactly what the Tauri implementation does.
+ * environment and the host hands that Home's already-issued access key to the renderer so the user
+ * is not asked to sign in again. The host reads exactly `servers/<id>/access.key` for the selected
+ * server and passes its JSON through unread: the UI's `parseDesktopBootCredentials` is the only
+ * decoder. Outside a stack launch, or without a selected server or readable key, the answer is `null`
+ * and the renderer falls back to ordinary sign-in.
  */
-
-export type DesktopBootEncryption = Readonly<{
-    publicKey: string;
-    machineKey: string;
-}>;
-
-export type DesktopBootCredentials = Readonly<{
-    token: string;
-    encryption: DesktopBootEncryption | null;
-}>;
 
 export type EnvironmentReader = (key: string) => string | undefined;
 
@@ -42,33 +34,6 @@ function resolveCliHome(readEnv: EnvironmentReader): string | null {
     );
 }
 
-export function parseBootCredentials(raw: string): DesktopBootCredentials | null {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return null;
-    }
-    if (!parsed || typeof parsed !== 'object') return null;
-
-    const record = parsed as Record<string, unknown>;
-    const token = typeof record.token === 'string' ? record.token : '';
-    if (token.trim().length === 0) return null;
-
-    const encryption = record.encryption;
-    if (encryption === undefined || encryption === null) {
-        return { token, encryption: null };
-    }
-    if (typeof encryption !== 'object') return null;
-
-    const encryptionRecord = encryption as Record<string, unknown>;
-    const publicKey = typeof encryptionRecord.publicKey === 'string' ? encryptionRecord.publicKey : '';
-    const machineKey = typeof encryptionRecord.machineKey === 'string' ? encryptionRecord.machineKey : '';
-    if (publicKey.trim().length === 0 || machineKey.trim().length === 0) return null;
-
-    return { token, encryption: { publicKey, machineKey } };
-}
-
 async function readSettingsActiveServerId(cliHome: string): Promise<string | null> {
     try {
         const raw = await readFile(join(cliHome, 'settings.json'), 'utf8');
@@ -81,19 +46,9 @@ async function readSettingsActiveServerId(cliHome: string): Promise<string | nul
     }
 }
 
-export function buildCandidatePaths(cliHome: string, activeServerId: string | null): string[] {
-    const paths: string[] = [];
-    const trimmed = activeServerId?.trim() ?? '';
-    if (trimmed) {
-        paths.push(join(cliHome, 'servers', trimmed, 'access.key'));
-    }
-    paths.push(join(cliHome, 'access.key'));
-    return paths;
-}
-
 export async function readStackBootCredentials(
     readEnv: EnvironmentReader = (key) => process.env[key],
-): Promise<DesktopBootCredentials | null> {
+): Promise<unknown> {
     if (!hasStackContext(readEnv)) return null;
 
     const cliHome = resolveCliHome(readEnv);
@@ -102,15 +57,12 @@ export async function readStackBootCredentials(
     const activeServerId =
         readNonEmptyEnv(readEnv, 'HAPPIER_ACTIVE_SERVER_ID')
         ?? (await readSettingsActiveServerId(cliHome));
+    if (activeServerId === null) return null;
 
-    for (const candidate of buildCandidatePaths(cliHome, activeServerId)) {
-        try {
-            const credentials = parseBootCredentials(await readFile(candidate, 'utf8'));
-            if (credentials !== null) return credentials;
-        } catch {
-            // A missing or unreadable candidate simply means the next one is tried.
-        }
+    try {
+        return JSON.parse(await readFile(join(cliHome, 'servers', activeServerId, 'access.key'), 'utf8'));
+    } catch {
+        // A missing, unreadable or unparseable key means ordinary sign-in.
+        return null;
     }
-
-    return null;
 }

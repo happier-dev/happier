@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
-const MAX_STDOUT_LINE_BYTES = 16 * 1024;
 const MAX_STDERR_PREVIEW_BYTES = 4 * 1024;
 const MAX_EVENTS_PER_TASK = 200;
 const MAX_COMPLETED_TASKS = 64;
@@ -36,7 +35,6 @@ type TaskRecord = {
     result: SystemTaskResult | null;
     stderrPreview: Buffer;
     stdoutBuffer: Buffer;
-    outputLimitExceeded: boolean;
 };
 
 export type ElectronSystemTasksDependencies = Readonly<{
@@ -109,7 +107,6 @@ export class ElectronSystemTasks {
             result: null,
             stderrPreview: Buffer.alloc(0),
             stdoutBuffer: Buffer.alloc(0),
-            outputLimitExceeded: false,
         };
         this.tasks.set(taskId, record);
 
@@ -137,14 +134,6 @@ export class ElectronSystemTasks {
         child.once('close', () => {
             record.child = null;
             if (record.result !== null) return;
-            if (record.outputLimitExceeded) {
-                this.complete(taskId, record, failureResult(
-                    taskId,
-                    'output_limit_exceeded',
-                    'System task executor exceeded the output limit.',
-                ));
-                return;
-            }
             if (record.cancelRequested) {
                 this.complete(taskId, record, failureResult(taskId, 'cancelled', 'Task cancelled.'));
                 return;
@@ -184,24 +173,15 @@ export class ElectronSystemTasks {
     }
 
     private consumeStdout(taskId: string, record: TaskRecord, chunk: Buffer): void {
-        if (record.result !== null || record.outputLimitExceeded) return;
+        if (record.result !== null) return;
         record.stdoutBuffer = Buffer.concat([record.stdoutBuffer, chunk]);
         while (true) {
             const newlineIndex = record.stdoutBuffer.indexOf(0x0a);
             if (newlineIndex < 0) {
-                if (record.stdoutBuffer.length > MAX_STDOUT_LINE_BYTES) {
-                    record.outputLimitExceeded = true;
-                    record.child?.kill('SIGTERM');
-                }
                 return;
             }
             const line = record.stdoutBuffer.subarray(0, newlineIndex);
             record.stdoutBuffer = record.stdoutBuffer.subarray(newlineIndex + 1);
-            if (line.length > MAX_STDOUT_LINE_BYTES) {
-                record.outputLimitExceeded = true;
-                record.child?.kill('SIGTERM');
-                return;
-            }
             this.consumeOutputLine(taskId, record, line.toString('utf8').trim());
             if (record.result !== null) return;
         }

@@ -33,6 +33,7 @@ export const TAURI_DESKTOP_COMMANDS = [
     'system_tasks_reveal_output_path',
     'respond_system_task_prompt',
     'desktop_get_window_chrome_policy',
+    'desktop_set_native_title_bar',
     'desktop_get_window_state',
     'desktop_set_window_title',
     'desktop_minimize_window',

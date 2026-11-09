@@ -21,6 +21,10 @@ Command names, event delivery, and the `@tauri-apps/api` channel protocol are al
 `plugin:event|listen` returns the callback id as the event id, which is what lets the renderer's
 `unregisterListener` release the right slot.
 
+Only the main frame of the app's own window can invoke native commands. The window stays on its
+selected renderer origin (`happier://localhost`, or `http://localhost:8081` in dev mode). New windows
+are denied; HTTP and HTTPS links requested in a new window open in the system browser.
+
 ## Running it
 
 ```bash
@@ -38,7 +42,6 @@ Environment:
 | `HAPPIER_DESKTOP_MODE=dev` | Load `http://localhost:8081` (the Expo dev server) instead of the exported bundle. |
 | `HAPPIER_DESKTOP_SERVER_URL` | Relay the app should start against, published as `window.__HAPPIER_WEB_RUNTIME_CONFIG__`. |
 | `HAPPIER_DESKTOP_SERVER_CONTEXT` | Companion to the above; set to `stack` for a stack launch. |
-| `HAPPIER_DESKTOP_INVOKE_LOG` | Append one JSON line per `invoke` to this path. Every invoke is logged to stdout regardless. |
 | `HAPPIER_HSETUP_PATH` | Override the bundled `hsetup` executable used by system tasks. An invalid override fails closed. |
 
 Production mode serves `apps/ui/dist`. Rebuild that bundle from the repository root with
@@ -70,8 +73,8 @@ Implemented for real:
 - `desktop_get_window_chrome_policy`, `desktop_get_window_state`
 - `desktop_minimize_window`, `desktop_toggle_window_maximize`, `desktop_close_window`
 - `desktop_set_tray_state` applies the shared service login mode (no Electron tray); `desktop_finish_shutdown` answers the shared Quit handoff
-- `desktop_read_stack_boot_credentials` — a port of the Tauri implementation, same env vars and
-  same candidate key paths
+- `desktop_read_stack_boot_credentials` — a port of the Tauri implementation: same env vars, reads only
+  the selected server's `servers/<id>/access.key` and passes its JSON through for the UI to decode
 - `start_system_task`, `cancel_system_task`, `get_system_task_snapshot`,
   `respond_system_task_prompt` — the same bundled `hsetup system-tasks run` owner and event/result
   contract as Tauri

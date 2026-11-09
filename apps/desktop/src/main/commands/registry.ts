@@ -2,10 +2,13 @@ import { formatNotImplementedError } from '../../shared/bridge';
 import type { DesktopEventBus } from '../ipc/eventBus';
 import type { DesktopQuitLifecycle } from '../quitLifecycle';
 import { readDesktopWindowState } from '../windowState';
+import type { DesktopWindowChrome } from '../windowChrome';
 import { readStackBootCredentials } from './bootCredentials';
 import { HttpPluginState, registerHttpPluginCommands } from './httpPlugin';
 import { EVENT_PLUGIN_COMMANDS, isKnownTauriDesktopCommand } from './inventory';
 import type { CommandArgs, CommandContext, CommandHandler, CommandRegistry } from './types';
+
+export { resolveWindowChromeStrategy, type DesktopWindowChromeStrategy } from '../windowChrome';
 
 /**
  * Only the commands the app actually reaches during boot are implemented here. Every other name in
@@ -18,13 +21,6 @@ import type { CommandArgs, CommandContext, CommandHandler, CommandRegistry } fro
  * renderer can still send — onto `main`, so there is exactly one mode to record.
  */
 export type WindowMode = 'main';
-
-export type DesktopWindowChromeStrategy = 'none' | 'native-macos-traffic-lights' | 'custom-controls';
-
-/** Mirrors `resolve_desktop_window_chrome_runtime_policy` for the main window. */
-export function resolveWindowChromeStrategy(platform: NodeJS.Platform): DesktopWindowChromeStrategy {
-    return platform === 'darwin' ? 'native-macos-traffic-lights' : 'custom-controls';
-}
 
 export function normalizeWindowMode(_requestedMode: unknown): WindowMode {
     return 'main';
@@ -86,11 +82,10 @@ export type RegistryDependencies = Readonly<{
         openSystemTaskLogPath: (path: string) => Promise<void>;
         revealSystemTaskOutputPath: (path: string) => void;
     }>;
-    platform?: NodeJS.Platform;
+    windowChrome: DesktopWindowChrome;
 }>;
 
 export function createCommandRegistry(dependencies: RegistryDependencies): CommandRegistry {
-    const platform = dependencies.platform ?? process.platform;
     const registry = new Map<string, CommandHandler>();
 
     registry.set('plugin:app|version', () => dependencies.getAppVersion());
@@ -265,9 +260,14 @@ export function createCommandRegistry(dependencies: RegistryDependencies): Comma
         return null;
     });
 
-    registry.set('desktop_get_window_chrome_policy', () => ({
-        strategy: resolveWindowChromeStrategy(platform),
-    }));
+    registry.set('desktop_get_window_chrome_policy', () => dependencies.windowChrome.readPolicy());
+
+    registry.set('desktop_set_native_title_bar', (args) => {
+        if (typeof args.useNativeTitleBar !== 'boolean') {
+            throw new Error('desktop_set_native_title_bar requires useNativeTitleBar');
+        }
+        return dependencies.windowChrome.setNativeTitleBar(args.useNativeTitleBar);
+    });
 
     registry.set('desktop_get_window_state', (_args, context: CommandContext) => (
         readDesktopWindowState(context.window)

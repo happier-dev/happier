@@ -3,11 +3,9 @@ import { join } from 'node:path';
 
 import {
     BRIDGE_CHANNELS,
-    isNotImplementedError,
     type BridgeCallbackMessage,
     type BridgeInvokeRequest,
 } from '../shared/bridge';
-import { describeRequestTarget } from './commands/httpPlugin';
 import { ElectronDesktopFiles } from './commands/desktopFiles';
 import { resolveHsetupPath } from './commands/hsetupPath';
 import { ElectronIrohTunnelService } from './commands/irohTunnel';
@@ -16,11 +14,11 @@ import { ElectronSecureStorage } from './commands/secureStorage';
 import { ElectronSystemTasks } from './commands/systemTasks';
 import type { CommandArgs, CommandContext } from './commands/types';
 import { DesktopEventBus } from './ipc/eventBus';
-import { InvokeLog } from './ipc/invokeLog';
 import { createLoginItemWriter } from './loginItem';
 import { createMainWindow, presentMainWindow } from './mainWindow';
 import { UI_WEB_BUNDLE_DIR } from './paths';
 import { DesktopQuitLifecycle } from './quitLifecycle';
+import { DesktopWindowChrome } from './windowChrome';
 import {
     BUNDLE_ORIGIN,
     BUNDLE_SCHEME,
@@ -28,6 +26,7 @@ import {
     createBundleResponder,
 } from './renderer/bundleProtocol';
 import { encodeRuntimeConfigArgument, readRuntimeConfigFromEnvironment } from './renderer/runtimeConfig';
+import { assertRendererSender } from './renderer/security';
 
 /** Dev serves the renderer from the Expo dev server; production serves the exported web bundle. */
 const DEV_RENDERER_URL = 'http://localhost:8081';
@@ -36,8 +35,10 @@ function isDevMode(): boolean {
     return (process.env.HAPPIER_DESKTOP_MODE ?? '').trim().toLowerCase() === 'dev';
 }
 
+const rendererUrl = resolveRendererUrl();
+
 const eventBus = new DesktopEventBus();
-const invokeLog = InvokeLog.fromEnvironment();
+const windowChrome = new DesktopWindowChrome({ userDataPath: () => app.getPath('userData') });
 
 let mainWindow: BrowserWindow | null = null;
 let windowMode: WindowMode = 'main';
@@ -82,6 +83,7 @@ const desktopFiles = new ElectronDesktopFiles({
 const registry = createCommandRegistry({
     eventBus,
     getAppVersion: () => app.getVersion(),
+    windowChrome,
     quitLifecycle: {
         finishShutdown: (outcome) => quitLifecycle?.finishShutdown(outcome),
         rendererListening: (eventName) => quitLifecycle?.rendererListening(eventName),
@@ -125,26 +127,17 @@ function buildCommandContext(event: IpcMainInvokeEvent): CommandContext {
 }
 
 ipcMain.handle(BRIDGE_CHANNELS.invoke, async (event, request: BridgeInvokeRequest) => {
+    assertRendererSender(event, mainWindow, rendererUrl);
     const command = String(request?.command ?? '');
     const args: CommandArgs = request?.args ?? {};
-    const at = new Date().toISOString();
-    const argKeys = Object.keys(args);
-    const target = describeRequestTarget(args);
-    const base = { at, command, argKeys, ...(target ? { target } : {}) };
-
     try {
         const outcome = await runCommand(registry, command, args, buildCommandContext(event));
         if (outcome.kind === 'not-implemented') {
-            invokeLog.record({ ...base, outcome: 'not-implemented', knownToTauriTarget: outcome.known });
             throw new Error(describeNotImplemented(outcome));
         }
-        invokeLog.record({ ...base, outcome: 'implemented' });
         return outcome.value;
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!isNotImplementedError(message)) {
-            invokeLog.record({ ...base, outcome: 'failed', error: message });
-        }
         // The Tauri seam surfaces command errors as string rejections; keep that shape.
         throw new Error(message);
     }
@@ -155,13 +148,15 @@ function resolveRendererUrl(): string {
 }
 
 async function openMainWindow(): Promise<void> {
-    const url = resolveRendererUrl();
+    const url = rendererUrl;
     const runtimeConfig = readRuntimeConfigFromEnvironment();
     if (runtimeConfig !== null) {
         console.log(`[boot] runtime config ${JSON.stringify(runtimeConfig)}`);
     }
     const window = createMainWindow({
         eventBus,
+        windowChrome,
+        rendererUrl,
         preloadArguments: runtimeConfig === null ? [] : [encodeRuntimeConfigArgument(runtimeConfig)],
     });
     mainWindow = window;

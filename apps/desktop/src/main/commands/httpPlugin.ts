@@ -55,18 +55,6 @@ type ClientConfig = Readonly<{
     connectTimeout?: number;
 }>;
 
-/** Origin and path of an http-plugin request, with query and credentials stripped. */
-export function describeRequestTarget(args: CommandArgs): string | null {
-    const url = (args.clientConfig as { url?: unknown } | undefined)?.url;
-    if (typeof url !== 'string') return null;
-    try {
-        const parsed = new URL(url);
-        return `${parsed.origin}${parsed.pathname}`;
-    } catch {
-        return null;
-    }
-}
-
 export function parseClientConfig(value: unknown): ClientConfig | null {
     if (!value || typeof value !== 'object') return null;
     const record = value as Record<string, unknown>;

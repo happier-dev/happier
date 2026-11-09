@@ -6,9 +6,10 @@ import { test } from 'node:test';
 
 import { ElectronSystemTasks } from './systemTasks';
 
-test('runs hsetup over stdin and projects events, prompt responses, and results through the shared bridge contract', async () => {
+test('runs hsetup and projects prompts and valid results larger than the former stdout-line cap', async (t) => {
     if (process.platform === 'win32') return;
     const root = mkdtempSync(join(tmpdir(), 'happier-electron-system-task-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
     const executable = join(root, 'hsetup');
     writeFileSync(executable, `#!/bin/sh
 test "$1" = "system-tasks" || exit 10
@@ -35,8 +36,10 @@ printf '{"protocolVersion":1,"taskId":"child","ok":true,"data":{"spec":%s,"answe
     const specJson = '{"protocolVersion":1,"kind":"system.ping.v1","params":{}}';
 
     const { taskId } = await tasks.start(specJson);
+    t.after(() => tasks.cancel(taskId));
     assert.equal(taskId, 'system_task_1');
-    await tasks.respondToPrompt(taskId, '{"confirmed":true}');
+    const answer = { confirmed: true, detail: 'x'.repeat(16 * 1024) };
+    await tasks.respondToPrompt(taskId, JSON.stringify(answer));
     const result = await new Promise<unknown>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('timed out waiting for system task result')), 10_000);
         void resultPromise.then((payload) => {
@@ -45,13 +48,15 @@ printf '{"protocolVersion":1,"taskId":"child","ok":true,"data":{"spec":%s,"answe
         });
     });
 
+    assert.deepEqual(result && typeof result === 'object' && 'error' in result ? result.error : null, null,
+        'valid first-party task results must survive the stdout transport regardless of line size');
     assert.deepEqual(result, {
         protocolVersion: 1,
         taskId,
         ok: true,
         data: {
             spec: JSON.parse(specJson),
-            answer: { confirmed: true },
+            answer,
         },
     });
     assert.equal(emitted[0]?.[0], `systemTasks://task/${taskId}/event`);
@@ -67,7 +72,6 @@ printf '{"protocolVersion":1,"taskId":"child","ok":true,"data":{"spec":%s,"answe
         result,
     });
 
-    rmSync(root, { recursive: true, force: true });
 });
 
 test('rejects malformed task specifications before starting hsetup', async () => {

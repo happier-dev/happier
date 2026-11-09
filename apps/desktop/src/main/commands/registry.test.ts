@@ -340,3 +340,9 @@ test('iroh commands share the exact Tauri names and route through the shared lif
         /requires a leaseId/u,
     );
 });
+
+test('the native title bar choice command is available through the renderer registry', async () => {
+    const { registry, context } = createHarness({ platform: 'win32' });
+    const outcome = await runCommand(registry, 'desktop_set_native_title_bar', { useNativeTitleBar: true }, context);
+    assert.equal(outcome.kind, 'implemented');
+});

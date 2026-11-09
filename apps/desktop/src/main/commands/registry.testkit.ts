@@ -1,4 +1,9 @@
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after } from 'node:test';
+import { DesktopWindowChrome } from '../windowChrome';
 import type { App } from 'electron';
 
 import { DesktopEventBus } from '../ipc/eventBus';
@@ -29,9 +34,15 @@ export function createHarness(options: Readonly<{
     isPackaged?: boolean;
     development?: boolean;
     rejectLoginItemWrite?: boolean;
+    windowChrome?: DesktopWindowChrome;
     appVersion?: string;
 }> = {}) {
     const eventBus = new DesktopEventBus();
+    const userData = mkdtempSync(join(tmpdir(), 'happier-window-chrome-registry-'));
+    after(() => rmSync(userData, { recursive: true, force: true }));
+    const windowChrome = options.windowChrome ?? new DesktopWindowChrome({
+        platform: options.platform ?? 'darwin', userDataPath: () => userData,
+    });
     const shown: number[] = [];
     let autostartEnabled = false;
     const loginItemWrites: Array<Readonly<{ openAtLogin: boolean }>> = [];
@@ -137,7 +148,7 @@ export function createHarness(options: Readonly<{
                 desktopFileCalls.push(['reveal', path]);
             },
         },
-        platform: 'darwin',
+        windowChrome,
     });
     const sender = createFakeSender();
     const context = {
