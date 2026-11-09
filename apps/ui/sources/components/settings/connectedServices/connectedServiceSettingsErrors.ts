@@ -1,5 +1,6 @@
 import { t } from '@/text';
 import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 type ErrorLike = Readonly<{
     code?: unknown;
@@ -45,7 +46,8 @@ export function readConnectedServiceSettingsErrorCode(error: unknown): string | 
 }
 
 export function resolveConnectedServiceSettingsErrorRecovery(error: unknown): 'edit' | 'retry' {
-    return asErrorLike(error).status === 'rejected' ? 'edit' : 'retry';
+    const status = asErrorLike(error).status;
+    return status === 'rejected' || status === 'reconnectRequired' ? 'edit' : 'retry';
 }
 
 export function isConnectedServiceRuntimeCooldownError(error: unknown): boolean {
@@ -70,7 +72,8 @@ export type ConnectedServiceSettingsErrorContext = Readonly<{ phase: 'load'; ser
 
 export function resolveConnectedServiceSettingsErrorMessage(error: unknown, context?: ConnectedServiceSettingsErrorContext): string {
     const errorLike = asErrorLike(error);
-    const code = readConnectedServiceSettingsErrorCode(error);
+    const rawCode = readConnectedServiceSettingsErrorCode(error);
+    const code = rawCode === null ? null : normalizeLegacyConnectedServiceUxDiagnosticCode(rawCode);
     const unexplained = context?.phase === 'load'
         ? t('connectedServices.errors.signInLoadFailed', { service: context.serviceName })
         : t('connectedServices.errors.generic');
@@ -125,7 +128,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_control_unavailable':
         case 'connected_account_authentication_mode_unavailable':
         case 'connected_account_authentication_operation_unavailable':
-        case 'connected_account_authentication_unavailable':
         case 'connected_account_attempt_internal_unavailable':
         case 'connected_account_attempt_unavailable':
         case 'connected_account_attempt_discovery_unavailable':
@@ -175,7 +177,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             return t('connectedServices.errors.accountConfigurationChanged');
         case 'outcome_unknown':
         case 'connected_account_authentication_outcome_unknown':
-        case 'claude_subscription_oauth_outcome_unknown':
         case 'connected_account_settlement_outcome_unknown':
         case 'connected_account_configuration_settings_outcome_unknown':
         case 'connected_account_revoke_outcome_unknown':
@@ -207,7 +208,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_oauth_transaction_unavailable':
         case 'connected_account_attempt_transaction_not_found':
         case 'connected_account_configuration_settings_cancelled':
-        case 'claude_subscription_refresh_token_unavailable':
             return t('connectedServices.errors.accountAuthenticationRestartRequired');
         case 'connected_account_attempt_in_progress':
         case 'connected_account_attempt_capacity_exhausted':
@@ -223,15 +223,10 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_oauth_completion_invalid':
         case 'connected_account_provider_result_invalid':
         case 'connected_account_identity_unavailable':
-        case 'claude_subscription_oauth_rejected':
             return t('connectedServices.errors.accountAuthenticationRejected');
-        case 'claude_subscription_oauth_response_invalid':
-        case 'claude_subscription_oauth_unavailable':
-        case 'claude_subscription_profile_context_unavailable':
+        case 'connected_account_authentication_unavailable':
             return t('connectedServices.errors.accountAuthenticationUnavailable');
         case 'connect_reconnect_provider_identity_mismatch':
-        case 'claude_subscription_oauth_identity_mismatch':
-        case 'claude_subscription_profile_identity_mismatch':
         case 'connected_account_reconnect_identity_mismatch':
         case 'connected_account_reconnect_provider_identity_mismatch':
         case 'connected_account_settlement_identity_mismatch':
@@ -368,6 +363,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         default: {
             const catalogHttpStatus = /^connected_account_catalog_http_(\d{3})$/.exec(code ?? '')?.[1];
             if (catalogHttpStatus) return t('connectedServices.errors.requestFailedWithStatus', { status: Number(catalogHttpStatus) });
+            if (errorLike.status === 'reconnectRequired') return t('connectedServices.errors.accountAuthenticationRestartRequired');
+            if (errorLike.status === 'outcomeUnknown') return t('connectedServices.errors.accountStateUncertain');
             // The authentication owner redacts these structured probe messages.
             // Transport Error.message remains outside this display contract.
             if ((errorLike.status === 'rejected' || errorLike.status === 'unavailable')
@@ -375,7 +372,11 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
                 && 'message' in errorLike.diagnostic && typeof errorLike.diagnostic.message === 'string'
                 && errorLike.diagnostic.message.trim()) return errorLike.diagnostic.message;
             if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
-            if (errorLike.status === 'unavailable') return t('connectedServices.errors.accountServiceUnavailable');
+            if (errorLike.status === 'unavailable') {
+                return code === null && readConnectedServiceSettingsErrorDetailsCode(error) !== null
+                    ? t('connectedServices.errors.accountAuthenticationUnavailable')
+                    : t('connectedServices.errors.accountServiceUnavailable');
+            }
             if (code) return unexplained;
         }
     }

@@ -12,6 +12,14 @@ import {
 
 describe('connected-service settings errors', () => {
   it.each([
+    ['reconnectRequired', 'accountAuthenticationRestartRequired'],
+    ['outcomeUnknown', 'accountStateUncertain'],
+  ] as const)('uses the authentication owner’s %s disposition for any service', (status, copy) => {
+    const error = { status, code: 'example_service_diagnostic' };
+    expect(resolveConnectedServiceSettingsErrorMessage(error)).toBe(t(`connectedServices.errors.${copy}`));
+    expect(resolveConnectedServiceSettingsErrorRecovery(error)).toBe(status === 'reconnectRequired' ? 'edit' : 'retry');
+  });
+  it.each([
     ['unauthorized', 'catalogSignInRequired'],
     ['forbidden', 'accountAccessUnavailable'],
     ['unsupported', 'accountOperationUnsupported'],
@@ -61,7 +69,7 @@ describe('connected-service settings errors', () => {
       code: 'connected_account_authentication_outcome_unknown', diagnostic: { message: 'private prose' } }))
       .toBe('connected_account_authentication_outcome_unknown');
   });
-  it.each(['claude_subscription_oauth_identity_mismatch', 'claude_subscription_profile_identity_mismatch'])(
+  it.each(['connected_account_reconnect_provider_identity_mismatch'])(
     'explains the established credential identity mismatch (%s)', code => {
       expect(resolveConnectedServiceSettingsErrorMessage({ status: 'rejected', code }))
         .toBe(t('connectedServices.errors.accountIdentityMismatch'));
@@ -76,13 +84,11 @@ describe('connected-service settings errors', () => {
       .toBe(t('connectedServices.errors.browserSignInMachineUpdateRequired'));
   });
   it.each([
-    ['claude_subscription_oauth_outcome_unknown', 'accountStateUncertain'],
-    ['claude_subscription_oauth_rejected', 'accountAuthenticationRejected'],
-    ['claude_subscription_oauth_response_invalid', 'accountAuthenticationUnavailable'],
-    ['claude_subscription_oauth_unavailable', 'accountAuthenticationUnavailable'],
-    ['claude_subscription_profile_context_unavailable', 'accountAuthenticationUnavailable'],
-    ['claude_subscription_refresh_token_unavailable', 'accountAuthenticationRestartRequired'],
-  ] as const)('gives a recovery message for the specific Claude cause (%s)', (code, copy) => {
+    ['connected_account_authentication_outcome_unknown', 'accountStateUncertain'],
+    ['connected_account_authentication_rejected', 'accountAuthenticationRejected'],
+    ['connected_account_authentication_unavailable', 'accountAuthenticationUnavailable'],
+    ['connect_reconnect_required', 'accountAuthenticationRestartRequired'],
+  ] as const)('gives a recovery message for the authentication owner’s public cause (%s)', (code, copy) => {
     expect(resolveConnectedServiceSettingsErrorMessage({ code })).toBe(t(`connectedServices.errors.${copy}`));
   });
   it('keeps pre-dispatch discovery failure retryable while an issued effect stays uncertain', () => {
