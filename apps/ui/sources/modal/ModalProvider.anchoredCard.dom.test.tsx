@@ -28,15 +28,20 @@ vi.mock('react-native-keyboard-controller', async () => {
 const { ModalProvider } = await import('./ModalProvider');
 const { Modal } = await import('./ModalManager');
 
-it('keeps an anchored Account sheet presented while its nested picker owns input', async () => {
+it.each(['picker', 'confirm'] as const)('keeps an anchored sheet presented while its nested %s owns input', async kind => {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
     const dismissed = vi.fn();
+    const lifetime = new AbortController();
+    let confirmation: Promise<boolean> | undefined;
     function Picker() { return <button data-testid="account-choice">Previous account</button>; }
     function AccountSheet() {
-        return <button data-testid="purpose-trigger" onClick={() => Modal.show({ component: Picker,
-            chrome: { kind: 'card', title: 'GitLab account' } })}>Choose account</button>;
+        React.useEffect(() => () => lifetime.abort(), []);
+        return <button data-testid="purpose-trigger" onClick={() => {
+            if (kind === 'picker') Modal.show({ component: Picker, chrome: { kind: 'card', title: 'GitLab account' } });
+            else confirmation = Modal.confirm('Share a machine', 'QA B · Can manage', { signal: lifetime.signal });
+        }}>Choose account</button>;
     }
     try {
         await act(async () => root.render(<ModalProvider><div /></ModalProvider>));
@@ -45,9 +50,15 @@ it('keeps an anchored Account sheet presented while its nested picker owns input
                 kind: 'rect', rect: { left: 100, top: 100, width: 150, height: 30 },
             } } }); });
         await act(async () => document.querySelector<HTMLElement>('[data-testid="purpose-trigger"]')!.click());
-        expect(document.querySelector('[data-testid="account-choice"]')).not.toBeNull();
+        expect(document.querySelector(kind === 'picker' ? '[data-testid="account-choice"]' : '[data-testid="web-modal-confirm"]')).not.toBeNull();
         expect(dismissed).not.toHaveBeenCalled();
         expect(document.querySelector('[data-testid="purpose-trigger"]')).not.toBeNull();
+        expect(lifetime.signal.aborted).toBe(false);
+        if (kind === 'confirm') {
+            await act(async () => document.querySelector<HTMLElement>('[data-testid="web-modal-confirm"]')!.click());
+            expect(await confirmation).toBe(true);
+            expect(lifetime.signal.aborted).toBe(false);
+        }
     } finally {
         await act(async () => root.unmount());
         container.remove();
