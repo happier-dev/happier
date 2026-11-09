@@ -275,6 +275,20 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     return { eligible: true, agentId, attachStrategy: 'managed_provider_attach', attachScope: 'local',
       terminal: selectedTerminal, metadata };
   }
+  // A synced host terminal is sufficient for this client, just like the local
+  // attachment record above. Its owner needs no executable plugin registry in
+  // the attaching process; managed restoration still goes through Switch.
+  const terminalEligibility = hasLocalTerminalEvidence
+    || (hasSyncedTerminalMetadata && sessionMachineId && (sameMachineIdentity || sameHostAsCurrentMachine))
+    ? buildTerminalAttachEligibility({
+      metadata,
+      localAttachmentInfo: params.localAttachmentInfo,
+      insideTmux: params.insideTmux,
+      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
+    })
+    : null;
+  if (terminalEligibility?.eligible) return terminalEligibility;
+
   const backendId = resolveCliSessionAttachBackendId(metadata);
   const backendExecutionSurfaces = backendId
     ? await params.resolveExecutionSurfaces(backendId)
@@ -329,14 +343,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
 
   const terminalRuntimeOps = backendExecutionSurfaces?.terminalRuntime ?? null;
 
-  if (hasLocalTerminalEvidence || (hasSyncedTerminalMetadata && sessionMachineId && (sameMachineIdentity || sameHostAsCurrentMachine))) {
-    return buildTerminalAttachEligibility({
-      metadata,
-      localAttachmentInfo: params.localAttachmentInfo,
-      insideTmux: params.insideTmux,
-      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
-    });
-  }
+  if (terminalEligibility) return terminalEligibility;
 
   if (!params.currentMachineId && !params.localAttachmentInfo) {
     return {
