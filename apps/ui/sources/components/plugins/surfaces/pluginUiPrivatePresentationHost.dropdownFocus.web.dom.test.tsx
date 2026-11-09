@@ -253,53 +253,64 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         const onSelect = vi.fn();
         const trigger = await renderDropdown(<SubmenuHarness component={component} onSelect={onSelect} />, 'plugin-submenu');
         await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
-        const parent = document.querySelector<HTMLElement>('[role="menuitem"][aria-haspopup="menu"]');
-        expect(parent).not.toBeNull();
+        // Core DropdownMenu uses actionable button rows, including submenu parents.
+        await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Move to"]')).not.toBeNull());
+        const parent = document.querySelector<HTMLElement>('[role="button"][aria-label="Move to"]')!;
         await act(async () => {
-            parent!.focus();
-            parent!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+            parent.focus();
+            parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
         });
-        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).not.toBeNull());
-        expect(document.querySelector('[role="menuitem"][aria-label="Work"] [data-testid="menu-item-face"]')).not.toBeNull();
+        await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Work"]')).not.toBeNull());
+        expect(document.querySelector('[role="button"][aria-label="Work"] [data-testid="menu-item-face"]')).not.toBeNull();
         expect(onSelect).not.toHaveBeenCalled();
         await act(async () => {
-            const leaf = document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!;
+            const leaf = document.querySelector<HTMLElement>('[role="button"][aria-label="Work"]')!;
             leaf.focus();
             leaf.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
         });
-        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).toBeNull());
+        await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Work"]')).toBeNull());
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
-        await act(async () => { dispatchPointerPress(parent!); });
-        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).not.toBeNull());
-        await act(async () => { document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!.click(); });
+        await act(async () => { dispatchPointerPress(parent); });
+        await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Work"]')).not.toBeNull());
+        await act(async () => { document.querySelector<HTMLElement>('[role="button"][aria-label="Work"]')!.click(); });
         await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('work', expect.anything()));
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
     });
 
-    it('pushes public submenu choices inside one phone sheet and Back returns to the parent', async () => {
+    it('pushes public submenu choices inside one phone menu and Back returns to the parent', async () => {
         const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         try {
             const onSelect = vi.fn();
             const trigger = await renderDropdown(<SubmenuHarness onSelect={onSelect} />, 'plugin-submenu');
             await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
-            const sheet = document.querySelector('[role="dialog"][aria-label="More actions"]');
-            expect(sheet).not.toBeNull();
+            await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Move to"]')).not.toBeNull());
+            // Ordinary menus use the core phone panel; the public `sheet` option
+            // instead applies choices in place and deliberately keeps them open.
+            expect(document.querySelectorAll('[data-testid="popover-push.root"]')).toHaveLength(1);
             const openChild = async () => { await act(async () => {
-                document.querySelector<HTMLElement>('[role="menuitem"][aria-haspopup="menu"]')!.click();
+                document.querySelector<HTMLElement>('[role="button"][aria-label="Move to"]')!.click();
             }); };
             await openChild();
-            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-sheet.back"]')).not.toBeNull());
-            expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-            expect(sheet?.textContent).toContain('Choose folder');
-            expect(sheet?.textContent).toContain('Work');
+            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-push.back"]')).not.toBeNull());
+            expect(document.querySelectorAll('[data-testid="popover-push.root"]')).toHaveLength(1);
+            expect(document.querySelectorAll('[data-testid="popover-push.view"]')).toHaveLength(1);
+            expect(document.querySelector('[data-testid="popover-push.view"]')?.textContent).toContain('Choose folder');
+            expect(document.querySelector('[data-testid="popover-push.view"]')?.textContent).toContain('Work');
             expect(onSelect).not.toHaveBeenCalled();
-            await act(async () => { document.querySelector<HTMLElement>('[data-testid="popover-sheet.back"]')!.click(); });
-            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-sheet.back"]')).toBeNull());
+            await act(async () => { document.querySelector<HTMLElement>('[data-testid="popover-push.back"]')!.click(); });
+            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-push.view"]')).toBeNull());
             expect(trigger.getAttribute('aria-expanded')).toBe('true');
             await openChild();
-            await act(async () => { document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!.click(); });
-            await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('work', expect.anything()));
-            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            await vi.waitFor(() => expect(document.querySelector('[role="button"][aria-label="Work"]')).not.toBeNull());
+            expect(document.querySelector('[role="button"][aria-label="Work"] [data-testid="menu-item-face"]')).not.toBeNull();
+            await act(async () => { document.querySelector<HTMLElement>('[role="button"][aria-label="Work"]')!.click(); });
+            // Submenu selection is deferred through the core menu's frame scheduler;
+            // flush its parent close before observing the controlled trigger state.
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(onSelect).toHaveBeenCalledWith('work', expect.anything());
+                expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            });
         } finally { dimensions.mockRestore(); }
     });
 
