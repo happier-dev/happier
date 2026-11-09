@@ -734,8 +734,11 @@ the next message exactly like an Agent switch (D15): the session's pending model
 selection is the arm, `resolveArmedSubmitPresentation` names it on the send control
 ("Continue via <source>"), and `resolveSessionComposerSendDestination` returns
 `armedRouteContinuation`. The transition owner retains live model picks as intent
-without applying them, including their metadata echoes. Send asks that same owner
-to apply the selection; only a restart-required result enters the existing
+without applying them, including their metadata echoes. Ordinary queued input
+reads that arm from the transition owner when it has no explicit message-level
+model selection. An arm also keeps ordinary mid-turn input in the queue until
+the next prompt rather than steering the active turn through the previous model.
+Send asks that same owner to apply the selection; only a restart-required result enters the existing
 provider-binding restart, then sends through the ordinary path. A replacement
 runner alone does not arm an unchanged model selection: the disposition owner
 compares intent with coherent applied history while the replacement's metadata
@@ -983,11 +986,15 @@ retains its explicit model when only unproven inventory exists, and explicit
 model selection still reaches the upstream authority. The current runtime model
 snapshot has no typed catalog-reason presentation field; its existing diagnostic
 warning carries that limitation without expanding the SDK contract.
+An observed native inventory refusal replaces stale cached rows even when the
+native account changes within the same probe scope; an unavailable transport
+retains the previous usable observation through the existing failed-refresh path.
 
 Copilot writes a private temporary providers file, Droid writes private temporary
 custom-model settings referencing a child-only access-token environment value,
 and CodeBuddy supplies its native process configuration through environment
-values. None receives a refresh token or adds a refresher, request proxy, or
+values plus private temporary settings that override saved account headers.
+None receives a refresh token or adds a refresher, request proxy, or
 shared authentication file. Renewed access takes effect on a new process.
 Resume reachability is reported by each Agent's continuity hook; an unproven
 native home produces an unavailable result rather than claiming continuity.
