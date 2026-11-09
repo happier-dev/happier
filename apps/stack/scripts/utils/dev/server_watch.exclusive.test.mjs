@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -13,12 +13,22 @@ import {
 } from './server.mjs';
 import { getSpawnedProcessPlannedExitReason } from '../proc/proc.mjs';
 import { listListenPids } from '../net/ports.mjs';
+import { proveSpawnedServerOwnership } from '../server/listener_ownership.mjs';
 import { startDevReloadCoordinator } from './devReloadCoordinator.mjs';
 import {
   readStackRuntimeStateFile,
   recordStackRuntimeServerActivation,
   recordStackRuntimeStart,
+  recordStackRuntimeUpdate,
 } from '../stack/runtime_state.mjs';
+
+import {
+  createWindowsOwnershipBoundary,
+  expectedLegacyVerifiedInstances,
+  legacyServerOwnershipBoundary,
+  expectedWindowsVerifiedInstances,
+  writeArmedServerReceipt,
+} from '../../testkit/core/server_ownership_proof.mjs';
 
 async function withTempServerDir(t, fn) {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-dev-server-proxy-'));
@@ -220,6 +230,7 @@ test('inconclusive post-stop release evidence requests a bounded same-coordinato
           allocationCount += 1;
           return 5102;
         },
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => {
           spawnCount += 1;
           throw new Error('unsafe spawn reached');
@@ -349,6 +360,7 @@ test('direct reload preserves typed listener evidence before destructive mutatio
             calls.push('kill');
             return { killed: true };
           },
+          ownershipBoundary: legacyServerOwnershipBoundary,
           pmSpawnScriptImpl: async () => {
             calls.push('spawn');
             return { pid: 201, exitCode: null };
@@ -458,6 +470,7 @@ test('direct reload preserves typed listener evidence before destructive mutatio
           },
           waitForTcpPortFreeImpl: async () => ({ status: 'occupied', reason: 'address-in-use' }),
           isPidAliveImpl: () => false,
+          ownershipBoundary: legacyServerOwnershipBoundary,
           pmSpawnScriptImpl: async () => { throw new Error('spawn reached'); },
           logger: { log() {}, warn() {}, error() {} },
         },
@@ -498,6 +511,7 @@ test('direct reload consumes one canonical plan and projects completed mode and 
         preflightDevServerRestartImpl: async () => {},
         isTcpPortFreeImpl: async () => true,
         waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env, options }) => {
           spawnEnvs.push(env);
           options?.onLine?.({ line: '{"happierStackTransition":"migration_started"}' });
@@ -552,6 +566,7 @@ test('direct exclusive reload surfaces unconfirmed provisional cleanup before an
         preflightDevServerRestartImpl: async () => {},
         isTcpPortFreeImpl: async () => true,
         waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => ({ pid: 201 + (++spawnCount), exitCode: null }),
         waitForServerReadyImpl: async () => { throw new Error('replacement not ready'); },
         listListenPidsImpl: async () => (++listenerObservation === 1 ? [101] : []),
@@ -590,6 +605,7 @@ test('direct exclusive reload reports runtime projection failure after the repla
       preflightDevServerRestartImpl: async () => {},
       isTcpPortFreeImpl: async () => true,
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => ({ pid: 202, exitCode: null }),
       waitForServerReadyImpl: async () => {},
       listListenPidsImpl: async () => (++listenerObservation === 1 ? [101] : [202]),
@@ -748,6 +764,7 @@ test('proxy exclusiveDb restart enters maintenance, replaces backend on an ephem
           return { status: 'free' };
         },
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           spawnCount += 1;
           calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
@@ -860,6 +877,7 @@ test('proxy exclusiveDb restart enters maintenance, replaces backend on an ephem
             generation: 7,
           },
         },
+        verifiedProcessInstances: expectedLegacyVerifiedInstances({ listenerPid: 302, wrapperPid: 202 }),
       },
     ]);
   });
@@ -919,6 +937,7 @@ test('proxy reload stops the proven listener when its wrapper already exited', a
           : { status: 'free' }
       ),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => ({ pid: replacementWrapperPid, exitCode: null, signalCode: null }),
       waitForServerReadyImpl: async () => {},
       recordStackRuntimeServerActivationImpl: async () => {},
@@ -958,6 +977,7 @@ test('maintenance lifecycle publication failure restores the incumbent before an
       listListenPidsImpl: async () => [101],
       getProcessGroupIdImpl: async (pid) => Number(pid),
       killProcessGroupOwnedByStackImpl: async () => { kills += 1; return { killed: true }; },
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => { spawns += 1; return { pid: 202, exitCode: null }; },
       recordStackRuntimeServerLifecycleImpl: async (_path, transition) => {
         if (transition.phase === 'maintenance') throw new Error('maintenance publication unavailable');
@@ -1012,6 +1032,7 @@ test('a ready replacement is activated after incumbent shutdown even when a newe
       killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => replacement,
       waitForServerReadyImpl: async () => {},
       terminateSpawnedChildImpl: async () => true,
@@ -1050,6 +1071,7 @@ test('a ready direct replacement remains active after incumbent shutdown when a 
       getProcessGroupIdImpl: async (pid) => Number(pid),
       killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => replacement,
       waitForServerReadyImpl: async () => {},
       terminateSpawnedChildImpl: async () => true,
@@ -1102,6 +1124,7 @@ test('proxy exclusiveDb restart starts current-code recovery when replacement re
           return { status: 'free' };
         },
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env, options }) => {
           spawnCount += 1;
           calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
@@ -1204,6 +1227,7 @@ test('confirmed replacement and recovery failure publishes terminal unavailable 
         preflightDevServerRestartImpl: async () => {},
         waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => {
           spawnCount += 1;
           return { pid: spawnCount === 1 ? 202 : 203, exitCode: null };
@@ -1272,6 +1296,7 @@ test('proxy exclusiveDb restart recovers when the incumbent already exited befor
         isPidAliveImpl: () => false,
         waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           spawnCount += 1;
           spawnPorts.push(Number(env.PORT));
@@ -1321,6 +1346,7 @@ test('proxy exclusiveDb restart keeps current-code recovery authoritative when i
       preflightDevServerRestartImpl: async () => {},
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async ({ env }) => {
         spawnCount += 1;
         calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
@@ -1386,6 +1412,7 @@ test('proxy exclusiveDb restart retains current-code recovery when its flip ackn
       preflightDevServerRestartImpl: async () => {},
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => ({ pid: ++spawnCount === 1 ? 202 : 203, exitCode: null }),
       waitForServerReadyImpl: async (url) => {
         if (url.endsWith(':5102')) throw new Error('replacement not ready');
@@ -1419,6 +1446,7 @@ test('proxy exclusiveDb restart retains current-code recovery when its flip ackn
     assert.equal(spawnCount, 2);
     assert.equal(options.serverProcRef.current.pid, 203);
     assert.equal(updates.at(-1).processes.serverDrainingPid, 303);
+    assert.equal(updates.at(-1).verifiedProcessInstances?.serverPid?.pid, 303);
     assert.equal(logs.some((line) => /activation outcome is unresolved/.test(line)), true);
   });
 });
@@ -1439,6 +1467,7 @@ test('proxy exclusiveDb restart records an unconfirmed current-code recovery chi
       {
         preflightDevServerRestartImpl: async () => {}, waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => ({ pid: ++spawnCount === 1 ? 202 : 203, exitCode: null }),
         waitForServerReadyImpl: async () => { throw new Error('not ready'); },
         listListenPidsImpl: async () => [101], getProcessGroupIdImpl: async (pid) => Number(pid),
@@ -1484,6 +1513,7 @@ test('proxy exclusiveDb restart does not spawn while the old backend port remain
           calls.push(['wait-free', port]);
           return { status: 'occupied', reason: 'address-in-use' };
         },
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
           return { pid: 203, exitCode: null };
@@ -1648,6 +1678,7 @@ test('planned incumbent exit is ignored while a later activated replacement exit
       preflightDevServerRestartImpl: async () => {},
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => replacement,
       waitForServerReadyImpl: async () => {},
       listListenPidsImpl: async (port) => Number(port) === 5101 ? [101] : [302],
@@ -1695,6 +1726,7 @@ test('proxy exclusiveDb restart never starts recovery while failed replacement c
         preflightDevServerRestartImpl: async () => {},
         waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
         pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
           return { pid: 202, exitCode: null };
@@ -1762,6 +1794,7 @@ test('proxy exclusiveDb restart never starts recovery after replacement transpor
       preflightDevServerRestartImpl: async () => {},
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async ({ env }) => {
         spawnCount += 1;
         calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
@@ -1816,6 +1849,7 @@ test('proxy exclusiveDb restart recovers when failed flip observation proves the
     const executor = createDevServerReloadExecutor(options, {
       preflightDevServerRestartImpl: async () => {}, waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async ({ env }) => {
         spawnCount += 1;
         calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
@@ -1851,6 +1885,7 @@ test('proxy exclusiveDb restart preserves replacement when flip committed before
     const executor = createDevServerReloadExecutor(options, {
       preflightDevServerRestartImpl: async () => {}, waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => ({ pid: 202 + spawnCount++, exitCode: null, signalCode: null }),
       waitForServerReadyImpl: async () => {}, listListenPidsImpl: async (port) => Number(port) === 5101 ? [101] : [302],
       getProcessGroupIdImpl: async (pid) => Number(pid) === 101 ? 7 : 44,
@@ -1867,6 +1902,7 @@ test('proxy exclusiveDb restart preserves replacement when flip committed before
 
 test('proxy exclusiveDb restart preserves the ambiguity fence when authoritative upstream observation fails', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
+    const updates = [];
     let spawnCount = 0;
     const maintenanceCalls = [];
     const logs = [];
@@ -1880,11 +1916,12 @@ test('proxy exclusiveDb restart preserves the ambiguity fence when authoritative
     const executor = createDevServerReloadExecutor(options, {
       preflightDevServerRestartImpl: async () => {}, waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
       pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async () => ({ pid: 202 + spawnCount++, exitCode: null, signalCode: null }),
       waitForServerReadyImpl: async () => {}, listListenPidsImpl: async (port) => Number(port) === 5101 ? [101] : [302],
       getProcessGroupIdImpl: async (pid) => Number(pid) === 101 ? 7 : 44,
       killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
-      recordStackRuntimeUpdateImpl: async () => {}, logger: { log() {}, error(message) { logs.push(String(message)); } },
+      recordStackRuntimeUpdateImpl: async (_path, patch) => updates.push(patch), logger: { log() {}, error(message) { logs.push(String(message)); } },
     });
     await assert.rejects(() => executor.restart({ generation: 32, changedDescriptors: ['server:prisma'] }), (error) => {
       assert.equal(error.serverRestartFailure?.activationCommitUnknown, true);
@@ -1897,6 +1934,8 @@ test('proxy exclusiveDb restart preserves the ambiguity fence when authoritative
     assert.equal(options.serverProcRef.current.pid, 101);
     assert.equal(maintenanceCalls.length, 1);
     assert.equal(logs.some((line) => /activation outcome is unresolved/.test(line)), true);
+    const fenced = updates.find((patch) => Number(patch.processes?.serverDrainingPid) === 302);
+    assert.equal(fenced?.verifiedProcessInstances?.serverPid?.pid, 302);
   });
 });
 
@@ -1982,5 +2021,360 @@ test('proxy exclusiveDb restart retries transient inconclusive ownership within 
       ['flip', 5101],
       ['drain', 6101],
     ]);
+  });
+});
+
+async function listStartupAttempts(serverDir) {
+  return await readdir(join(serverDir, 'runtime-receipts')).catch(() => []);
+}
+
+function createDirectReloadExecutor(serverDir, {
+  boundary,
+  activations = [],
+  kills = [],
+  spawnEnvs = [],
+  budgets = [],
+  dependencies = {},
+}) {
+  const replacement = Object.assign(new EventEmitter(), { pid: 202, exitCode: null, signalCode: null });
+  let listenerObservation = 0;
+  return createDevServerReloadExecutor(
+    createExecutorOptions(serverDir, {
+      proxyController: null,
+      serverPort: 4101,
+      serverBindPort: 4101,
+      internalServerUrl: 'http://127.0.0.1:4101',
+    }),
+    {
+      preflightDevServerRestartImpl: async () => {},
+      isTcpPortFreeImpl: async () => true,
+      waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      ownershipBoundary: boundary,
+      pmSpawnScriptImpl: async ({ env }) => {
+        spawnEnvs.push(env);
+        await writeArmedServerReceipt(env, { port: 4101 });
+        return replacement;
+      },
+      waitForServerReadyImpl: async () => {},
+      listListenPidsImpl: async () => (++listenerObservation === 1 ? [101] : []),
+      getProcessGroupIdImpl: async (pid) => Number(pid),
+      killProcessGroupOwnedByStackImpl: async (pid) => {
+        kills.push(Number(pid));
+        return { killed: true };
+      },
+      proveSpawnedServerOwnershipImpl: (request, dependencies) => {
+        budgets.push(request.spawned.observationScope.remainingMs());
+        return proveSpawnedServerOwnership(request, dependencies);
+      },
+      recordStackRuntimeServerActivationImpl: async (_path, activation) => activations.push(activation),
+      recordStackRuntimeUpdateImpl: async () => {},
+      logger: { log() {}, warn() {}, error() {} },
+      ...dependencies,
+    },
+  );
+}
+
+test('direct reload proves the replacement by API identity and records the verified identity', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const activations = [];
+    const spawnEnvs = [];
+    const budgets = [];
+    const executor = createDirectReloadExecutor(serverDir, {
+      boundary: createWindowsOwnershipBoundary({ wrapperPid: 202 }),
+      activations,
+      spawnEnvs,
+      budgets,
+    });
+
+    await executor.restart({ generation: 31, changedDescriptors: ['server:app'] });
+
+    assert.ok(budgets[0] > 30_000, `expected the owner budget, got ${budgets[0]}ms`);
+    assert.equal(activations.at(-1).listenerPid, process.pid);
+    assert.deepEqual(activations.at(-1).verifiedProcessInstances, expectedWindowsVerifiedInstances({ wrapperPid: 202 }));
+    assert.equal(typeof spawnEnvs[0].HAPPIER_SERVER_STARTUP_RECEIPT_NONCE, 'string');
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('direct reload cleans up a replacement whose identity another server answers for', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const activations = [];
+    const kills = [];
+    const executor = createDirectReloadExecutor(serverDir, {
+      boundary: createWindowsOwnershipBoundary({ wrapperPid: 202, readyInstanceId: 'foreign' }),
+      activations,
+      kills,
+    });
+
+    await assert.rejects(executor.restart({ generation: 32, changedDescriptors: ['server:app'] }));
+
+    assert.equal(activations.some((activation) => activation.verifiedProcessInstances), false);
+    assert.equal(kills.includes(202), true);
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('proxy reload proves the replacement on its backend port and records the verified identity', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const activations = [];
+    const proofEndpoints = [];
+    const budgets = [];
+    let spawnCount = 0;
+    const executor = createDevServerReloadExecutor(
+      createExecutorOptions(serverDir, {
+        proxyController: {
+          pid: process.pid,
+          enterMaintenance: () => ({ targetHost: '127.0.0.1', targetPort: 6101 }),
+          flipUpstream: async () => {},
+          drainConnections() {},
+        },
+        serverProcRef: { current: { pid: 101, exitCode: null } },
+      }),
+      {
+        preflightDevServerRestartImpl: async () => {},
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: createWindowsOwnershipBoundary({ wrapperPid: 202 }),
+        pmSpawnScriptImpl: async ({ env }) => {
+          spawnCount += 1;
+          await writeArmedServerReceipt(env, { port: 5102 });
+          return { pid: 202, exitCode: null };
+        },
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async () => (spawnCount === 0 ? [101] : []),
+        getProcessGroupIdImpl: async (pid) => Number(pid),
+        proveSpawnedServerOwnershipImpl: (request, dependencies) => {
+          proofEndpoints.push(request.endpoint);
+          budgets.push(request.spawned.observationScope.remainingMs());
+          return proveSpawnedServerOwnership(request, dependencies);
+        },
+        recordStackRuntimeServerActivationImpl: async (_path, activation) => activations.push(activation),
+        recordStackRuntimeUpdateImpl: async () => {},
+        logger: { log() {}, error() {} },
+      },
+    );
+
+    await executor.build({ generation: 33, changedDescriptors: ['server:app'] });
+    await executor.restart({ generation: 33, changedDescriptors: ['server:app'] });
+
+    assert.deepEqual(proofEndpoints, [{ host: '127.0.0.1', port: 5102 }]);
+    assert.ok(budgets[0] > 30_000, `expected the owner budget, got ${budgets[0]}ms`);
+    assert.equal(activations.at(-1).listenerPid, process.pid);
+    assert.deepEqual(activations.at(-1).verifiedProcessInstances, expectedWindowsVerifiedInstances({ wrapperPid: 202 }));
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('direct reload keeps the proof budget through a readiness wait longer than the budget', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const activations = [];
+    const executor = createDirectReloadExecutor(serverDir, {
+      boundary: createWindowsOwnershipBoundary({ wrapperPid: 202 }),
+      activations,
+      dependencies: {
+        listenerOwnershipTimeoutMs: 100,
+        waitForServerReadyImpl: () => new Promise((resolve) => setTimeout(resolve, 150)),
+      },
+    });
+
+    await executor.restart({ generation: 35, changedDescriptors: ['server:app'] });
+
+    assert.equal(activations.at(-1).listenerPid, process.pid);
+  });
+});
+
+test('proxy reload keeps the attempt of a proven legacy replacement that wrote no receipt', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    let spawnCount = 0;
+    const executor = createDevServerReloadExecutor(
+      createExecutorOptions(serverDir, {
+        proxyController: {
+          pid: process.pid,
+          enterMaintenance: () => ({ targetHost: '127.0.0.1', targetPort: 6101 }),
+          flipUpstream: async () => {},
+          drainConnections() {},
+        },
+        serverProcRef: { current: { pid: 101, exitCode: null } },
+      }),
+      {
+        preflightDevServerRestartImpl: async () => {},
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
+        pmSpawnScriptImpl: async () => {
+          spawnCount += 1;
+          return { pid: 202, exitCode: null };
+        },
+        // Longer than the proof budget below: the wait must not consume it.
+        waitForServerReadyImpl: () => new Promise((resolve) => setTimeout(resolve, 150)),
+        listenerOwnershipTimeoutMs: 100,
+        listListenPidsImpl: async () => [spawnCount === 0 ? 101 : 202],
+        getProcessGroupIdImpl: async (pid) => Number(pid),
+        recordStackRuntimeServerActivationImpl: async () => {},
+        recordStackRuntimeUpdateImpl: async () => {},
+        logger: { log() {}, error() {} },
+      },
+    );
+
+    await executor.build({ generation: 34, changedDescriptors: ['server:app'] });
+    await executor.restart({ generation: 34, changedDescriptors: ['server:app'] });
+
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+// The stuck child has this process's live PID, so a recapture by the state writer would record a
+// real identity instead of the fixture captured at spawn, and an unverified entry would gain one.
+const STUCK_PID = process.pid;
+const CAPTURED_FINGERPRINT = 'win32-cim:captured-at-spawn';
+
+function createCaptureBoundary({ stuckIdentityAvailable }) {
+  return {
+    platform: 'win32',
+    fetchReadyIdentityImpl: async () => ({ status: 'legacy' }),
+    runCaptureImpl: async (_command, args) => {
+      if (String(args.at(-1)).includes(`ProcessId=${STUCK_PID}"`) && !stuckIdentityAvailable) {
+        throw new Error('cim unavailable');
+      }
+      return 'captured-at-spawn';
+    },
+  };
+}
+
+const realFailureRecording = {
+  recordStackRuntimeUpdateImpl: recordStackRuntimeUpdate,
+  recordStackRuntimeServerActivationImpl: recordStackRuntimeServerActivation,
+  killProcessGroupOwnedByStackImpl: async (pid) => (Number(pid) === STUCK_PID ? { killed: false } : { killed: true }),
+  terminateSpawnedChildImpl: async (child) => Number(child?.pid) !== STUCK_PID,
+  killSpawnedChildImpl: async () => assert.fail('the stuck child must not reach a real kill'),
+  waitForServerReadyImpl: async () => {
+    throw new Error('not ready');
+  },
+  logger: { log() {}, warn() {}, error() {} },
+};
+
+function createProxyFailureExecutor(serverDir, { spawnPids, boundary }) {
+  let spawnCount = 0;
+  return createDevServerReloadExecutor(
+    createExecutorOptions(serverDir, {
+      proxyController: {
+        pid: process.pid,
+        enterMaintenance: () => ({ targetHost: '127.0.0.1', targetPort: 6101 }),
+        flipUpstream() {},
+        drainConnections() {},
+      },
+    }),
+    {
+      ...realFailureRecording,
+      preflightDevServerRestartImpl: async () => {},
+      waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      pickNextFreeTcpPortImpl: async () => 5102,
+      ownershipBoundary: boundary,
+      pmSpawnScriptImpl: async () => ({ pid: spawnPids[spawnCount++], exitCode: null }),
+      listListenPidsImpl: async () => [101],
+      getProcessGroupIdImpl: async (pid) => Number(pid),
+    },
+  );
+}
+
+const failureRecordingPaths = [
+  ['proxy replacement', (serverDir, boundary) => createProxyFailureExecutor(serverDir, { spawnPids: [STUCK_PID], boundary })],
+  ['recovery', (serverDir, boundary) => createProxyFailureExecutor(serverDir, { spawnPids: [202, STUCK_PID], boundary })],
+  ['direct reload', (serverDir, boundary) => createDirectReloadExecutor(serverDir, {
+    boundary,
+    dependencies: {
+      ...realFailureRecording,
+      pmSpawnScriptImpl: async () => ({ pid: STUCK_PID, exitCode: null }),
+    },
+  })],
+];
+
+for (const [path, createExecutor] of failureRecordingPaths) {
+  test(`${path} cleanup failure records the identity captured at spawn, with no recapture`, async (t) => {
+    await withTempServerDir(t, async (serverDir) => {
+      const executor = createExecutor(serverDir, createCaptureBoundary({ stuckIdentityAvailable: true }));
+      await assert.rejects(
+        executor.restart({ generation: 40, changedDescriptors: ['server:prisma'] }),
+        /termination.*not.*confirmed/i,
+      );
+      const state = await readStackRuntimeStateFile(join(serverDir, 'stack.runtime.json'));
+      assert.equal(state.processes.serverDrainingPid, STUCK_PID);
+      assert.deepEqual(state.processInstances.processes.serverDrainingPid, {
+        pid: STUCK_PID,
+        fingerprint: CAPTURED_FINGERPRINT,
+      });
+    });
+  });
+
+  test(`${path} cleanup failure without a captured identity stays explicitly unverified`, async (t) => {
+    await withTempServerDir(t, async (serverDir) => {
+      const executor = createExecutor(serverDir, createCaptureBoundary({ stuckIdentityAvailable: false }));
+      await assert.rejects(
+        executor.restart({ generation: 41, changedDescriptors: ['server:prisma'] }),
+        /termination.*not.*confirmed/i,
+      );
+      const state = await readStackRuntimeStateFile(join(serverDir, 'stack.runtime.json'));
+      assert.deepEqual(state.processInstances.processes.serverDrainingPid, {
+        pid: STUCK_PID,
+        fingerprint: null,
+        unverified: true,
+      });
+    });
+  });
+}
+
+test('direct and proxy reload hand their attempt lifetime to the readiness wait', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const signals = [];
+    const executor = createDirectReloadExecutor(serverDir, {
+      boundary: createWindowsOwnershipBoundary({ wrapperPid: 202 }),
+      dependencies: {
+        waitForServerReadyImpl: async (_url, options) => {
+          signals.push(options.signal);
+        },
+      },
+    });
+    await executor.restart({ generation: 42, changedDescriptors: ['server:app'] });
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0] instanceof AbortSignal, true);
+  });
+  await withTempServerDir(t, async (serverDir) => {
+    const signals = [];
+    let spawnCount = 0;
+    const executor = createDevServerReloadExecutor(
+      createExecutorOptions(serverDir, {
+        proxyController: {
+          pid: process.pid,
+          enterMaintenance: () => ({ targetHost: '127.0.0.1', targetPort: 6101 }),
+          flipUpstream: async () => {},
+          drainConnections() {},
+        },
+      }),
+      {
+        preflightDevServerRestartImpl: async () => {},
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        ownershipBoundary: legacyServerOwnershipBoundary,
+        pmSpawnScriptImpl: async () => {
+          spawnCount += 1;
+          return { pid: 202, exitCode: null };
+        },
+        waitForServerReadyImpl: async (_url, options) => {
+          signals.push(options.signal);
+        },
+        listListenPidsImpl: async () => [spawnCount === 0 ? 101 : 202],
+        getProcessGroupIdImpl: async (pid) => Number(pid),
+        recordStackRuntimeServerActivationImpl: async () => {},
+        recordStackRuntimeUpdateImpl: async () => {},
+        logger: { log() {}, error() {} },
+      },
+    );
+    await executor.build({ generation: 43, changedDescriptors: ['server:app'] });
+    await executor.restart({ generation: 43, changedDescriptors: ['server:app'] });
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0] instanceof AbortSignal, true);
   });
 });

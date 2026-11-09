@@ -9,6 +9,7 @@ import {
     createSessionOrganizationSnapshot,
     mapSessionAttentionStanding,
     mapSessionAppearance,
+    mapSessionAppearancePresentation,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationOrderEntry,
@@ -34,6 +35,21 @@ export async function fetchSessionOrganizationPinnedSessionIds(accountId: string
         select: { sessionId: true, sortKey: true, pinnedAt: true },
     });
     return pins.map((pin) => pin.sessionId);
+}
+
+export async function fetchSessionAppearancePresentations(accountId: string) {
+    const rows = await db.sessionAppearance.findMany({
+        where: {
+            accountId,
+            presentationDbValue: { not: null },
+            session: createVisibleUnarchivedOrganizationSessionWhere(accountId),
+        },
+        orderBy: { sessionId: "asc" },
+        select: { sessionId: true, displayDbValue: true, presentationDbValue: true, updatedAt: true },
+    });
+    return rows.flatMap((row) => row.presentationDbValue
+        ? [mapSessionAppearancePresentation({ ...row, presentationDbValue: row.presentationDbValue })]
+        : []);
 }
 
 export async function fetchSessionFolderAssignmentsForSessions(params: Readonly<{
@@ -229,6 +245,7 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
             ? db.sessionAppearance.findMany({
                 where: {
                     accountId: params.accountId,
+                    displayCleared: false,
                     session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId),
                 },
                 orderBy: { sessionId: "asc" },

@@ -3,7 +3,7 @@ import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pend
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { SessionModelDiscoveryContext } from '@/components/sessions/agentInput/components/AgentInputModelDiscoveryDetail';
 import Color from 'color';
-import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
+import { isRecoveredHistoryTranscriptObservationProvenance, readSessionRoleAssignmentV1 } from '@happier-dev/protocol';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput, type AgentInputSendOptions } from '@/components/sessions/agentInput';
@@ -50,6 +50,7 @@ import {
 import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { resolveSessionRoleDisplayColor, resolveSessionRoleDisplayName } from '@/components/sessions/roles/sessionRoleLabels';
 import { recordTranscriptBlank } from '@/components/sessions/transcript/viewport/driver/transcriptViewportWriteDiagnostics';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { resolveSessionHeaderActionTargetPx, SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
@@ -171,7 +172,17 @@ import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
-import { getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldReadTranscriptForPendingRequests, shouldShowAbortButtonForSessionState, useSessionStatus, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { getSessionAvatarId, getSessionName, getSessionStatus, listPendingPermissionRequests, shouldReadTranscriptForPendingRequests, shouldShowAbortButtonForSessionState, useSessionStatus, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import {
+    readExecutionRunLinkPresentationSource,
+    resolveExecutionRunDeliveryState,
+    resolveExecutionRunTurnState,
+    shouldShowExecutionRunLinkPresentation,
+} from '@/sync/domains/session/executionRunLinkPresentation';
+import {
+    formatExecutionRunDeliveryState,
+    formatExecutionRunTurnState,
+} from '@/components/sessions/runs/executionRunLinkStatusLabels';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
@@ -1568,6 +1579,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     const routeHydrationTerminalMissing = !session && routeHydrationState?.kind === 'missing';
     const stableSessionForLoadedView = session;
     const stableSessionForHeader = session;
+    const headerPending = useSessionPendingMessages(sessionId);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
     const explicitRouteServerId = (routeHydrationState?.serverId ?? props.routeServerId ?? '').trim();
@@ -1660,6 +1672,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     }), [currentSessionRouteServerId, sessionOrganizationProjection]);
     const workspaceLabelsV1 = organizationListViewState.workspaceLabelsV1;
     const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
+    const sessionRoleProfilesV1 = useSetting('sessionRoleProfilesV1');
     const sessionWorkspacePresentation = React.useMemo(() => {
         if (!stableSessionForHeader) return null;
         return resolveSessionWorkspacePresentation({
@@ -1796,6 +1809,42 @@ export const SessionView = React.memo((props: SessionViewProps) => {
                     : directSessionLink.machineId,
             ].join(' · ')
             : null;
+        const roleAssignment = readSessionRoleAssignmentV1(headerSession.metadata);
+        const roleBadge = roleAssignment ? {
+            key: 'session-role',
+            label: resolveSessionRoleDisplayName({
+                role: roleAssignment.role,
+                snapshotName: roleAssignment.name,
+                sessionRoleProfilesV1,
+            }),
+            color: resolveSessionRoleDisplayColor({
+                role: roleAssignment.role,
+                snapshotColor: roleAssignment.color,
+                sessionRoleProfilesV1,
+            }),
+        } : null;
+        const executionRunBadges = (() => {
+            if (!shouldShowExecutionRunLinkPresentation(headerSession.metadata)) return [];
+            const status = getSessionStatus(headerSession, Date.now(), { workingTextMode: 'static' });
+            const pendingCount = headerPending.isLoaded
+                ? headerPending.messages.length
+                : Math.max(0, headerSession.pendingCount ?? 0);
+            const pendingFlags = derivePendingRequestFlagsFromSession(headerSession);
+            const turnState = resolveExecutionRunTurnState({
+                latestTurnStatus: headerSession.latestTurnStatus,
+                pendingCount: Math.max(pendingCount, headerSession.pendingBlockedCount ?? 0),
+                hasPendingRequests:
+                    pendingFlags.hasPendingPermissionRequests
+                    || pendingFlags.hasPendingUserActionRequests,
+            });
+            const deliveryState = resolveExecutionRunDeliveryState(
+                readExecutionRunLinkPresentationSource(headerSession.metadata),
+            );
+            return [
+                formatExecutionRunTurnState(turnState, status.statusText),
+                formatExecutionRunDeliveryState(deliveryState),
+            ];
+        })();
         const openSessionInfo = () => routerRef.current.navigate(buildCurrentSessionHref('/info') as any, {
             dangerouslySingular() {
                 return 'session-info';
@@ -1826,7 +1875,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             agentId: resolveAgentIdFromSessionMetadata(headerSession.metadata)
                 ?? resolveAgentIdFromFlavor(headerSession.metadata?.flavor ?? null),
 	            rightElement,
-	            badges: providerBadge ? [storageBadge, providerBadge] : [storageBadge],
+	            badges: [storageBadge, ...(providerBadge ? [providerBadge] : []), ...(roleBadge ? [roleBadge] : []), ...executionRunBadges],
 	            isConnected: isConnected,
 	            flavor: headerSession.metadata?.flavor || null,
 	        };
@@ -1834,6 +1883,8 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         directSessionRuntime,
         handleToggleWorkspaceExperience,
         isDataReady,
+        headerPending.isLoaded,
+        headerPending.messages.length,
         mobileWorkspaceExperienceState.showWorkspaceExperienceToggle,
         mobileWorkspaceExperienceState.workspaceExperienceToggleLabelKey,
         mobileWorkspaceExperienceToggleActionId,
@@ -1844,6 +1895,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         stableSessionForHeader,
         sessionWorkspacePresentation,
         sessionAutomationsEnabledCount,
+        sessionRoleProfilesV1,
         sessionId,
         shouldRenderSessionSurface,
         shouldFoldHeaderIconActions,

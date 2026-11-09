@@ -41,6 +41,13 @@ export const PromptsSettingsHome = React.memo(() => {
             icon={<Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />}
             onPress={() => router.push('/settings/prompts/skills')}
           />
+          <Item
+            testID="settings-prompts-runtime-preview"
+            title={t('promptLibrary.runtimePreview')}
+            subtitle={t('promptLibrary.runtimePreviewSubtitle')}
+            icon={<Icon name="eye" size={29} color={theme.colors.state.success.foreground} />}
+            onPress={() => router.push('/settings/prompts/preview')}
+          />
         </ItemGroup>
 
         <ItemGroup title={t('promptLibrary.sections')}>

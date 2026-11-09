@@ -10,6 +10,7 @@ import {
     didSessionListRenderablePlacementRelevantTimingChange,
     didSessionListRenderableReachabilityPeerFieldsChange,
     didSessionListRenderableStructuralFieldsChange,
+    didSessionListRenderableWarmCacheFieldsChange,
     preserveSessionListRenderableStaleFields,
     preserveSessionListRenderableTransientState,
     resolveSessionListRenderableAttentionPromotionPlacement,
@@ -274,6 +275,36 @@ describe('preserveSessionListRenderableStaleFields', () => {
         expect(next.metadata).toBe(previousMetadata);
         expect(next.metadataVersion).toBe(4);
         expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).not.toBe(true);
+    });
+
+    it('preserves team lineage and role across a newer sparse metadata patch', () => {
+        const previousMetadata = {
+            path: '/repo',
+            sessionOriginV1: {
+                v: 1 as const,
+                kind: 'agent' as const,
+                creatorSessionId: 'lead',
+                via: { kind: 'team_assembly' as const, assignmentId: 'team-1' },
+            },
+            sessionRole: 'reviewer' as const,
+        };
+        const previous = buildRenderable({
+            id: 'team-child',
+            metadata: previousMetadata,
+            metadataVersion: 4,
+        });
+
+        const next = applySessionListRenderablePatch(previous, {
+            metadata: null,
+            metadataVersion: 5,
+            metadataUnavailable: true,
+        });
+
+        expect(next.metadata).toBe(previousMetadata);
+        expect(next.metadata?.sessionOriginV1).toEqual(previousMetadata.sessionOriginV1);
+        expect(next.metadata?.sessionRole).toBe('reviewer');
+        expect(next.metadataVersion).toBe(4);
+        expect(next.metadataUnavailable).not.toBe(true);
     });
 });
 
@@ -692,6 +723,66 @@ describe('buildSessionListRenderableFromSession', () => {
         });
 
         expect(areSessionListRenderablesEqual(previous, next)).toBe(false);
+    });
+
+    it('treats execution-run origin and delivery receipts as renderable equality inputs', () => {
+        const baseLink = {
+            v: 1 as const,
+            parentSessionId: 'lead',
+            runId: 'run-1',
+            turnEpoch: 2,
+            report: { turnEpoch: 2, ack: 'accepted' as const, reportedAt: 100, attempts: 1 },
+        };
+        const previous = buildRenderable({
+            id: 'linked-child',
+            metadata: {
+                path: '/repo',
+                sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run-1' } },
+                executionRunLinkV1: baseLink,
+            },
+        } as any);
+        const next = buildRenderable({
+            id: 'linked-child',
+            metadata: {
+                path: '/repo',
+                sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run-1' } },
+                executionRunLinkV1: {
+                    ...baseLink,
+                    relay: { turnEpoch: 2, status: 'queued' as const, localId: 'completion-1', at: 110 },
+                },
+            },
+        } as any);
+
+        expect(areSessionListRenderablesEqual(previous, next)).toBe(false);
+    });
+
+    it('marks same-version execution-run delivery repair as warm-cache relevant', () => {
+        const previous = buildRenderable({
+            id: 'linked-child',
+            metadataVersion: 7,
+            metadata: {
+                path: '/repo',
+                sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run-1' } },
+                executionRunLinkV1: null,
+            },
+        });
+        const next = buildRenderable({
+            ...previous,
+            metadata: {
+                ...previous.metadata!,
+                executionRunLinkV1: {
+                    v: 1,
+                    parentSessionId: 'lead',
+                    runId: 'run-1',
+                    turnEpoch: 0,
+                    report: { turnEpoch: 1, ack: 'accepted', reportedAt: 100, attempts: 1 },
+                    relay: { turnEpoch: 1, status: 'queued', localId: 'completion-1', at: 110 },
+                    delivery: { turnEpoch: 1, status: 'verified', localId: 'completion-1', transcriptSeq: 12, verifiedAt: 120 },
+                },
+            },
+        });
+
+        expect(didSessionListRenderableWarmCacheFieldsChange(previous, next)).toBe(true);
     });
 
     it('ignores progress timestamps when attention placement is unchanged', () => {

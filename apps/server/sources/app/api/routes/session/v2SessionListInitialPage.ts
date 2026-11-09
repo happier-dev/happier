@@ -493,7 +493,8 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
     const activeRowsLimit = params.activeRowsLimit ?? V2_ACTIVE_SESSION_LIST_ROW_LIMIT;
     const pinnedSessionIds = params.pinnedSessionIds;
     const includeActiveRows = params.includeActiveRows === true;
-    const measureQuery = params.timing?.measureQuery ?? (<T>(fn: () => Promise<T>) => fn());
+    const measureQuery: V2SessionListInitialPageTiming["measureQuery"] = params.timing?.measureQuery
+        ?? ((_owner, fn) => fn());
     const measurePage = params.timing?.measurePage ?? (<T>(fn: () => T) => fn());
 
     // Resolve where the page ends *before* the family reads are issued: the page rows are already in
@@ -530,7 +531,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
 
     const [pinnedRowsBeyondPage, attentionRowsBeyondPage, activeRowsBeyondPage] = await Promise.all([
         pinnedPlan.sessionIdsToRead.length > 0
-            ? measureQuery(() => findV2SessionListRows({
+            ? measureQuery("pinned", () => findV2SessionListRows({
                 userId: params.userId,
                 where: { archivedAt: null, id: { in: pinnedPlan.sessionIdsToRead } },
                 orderBy: { id: "desc" },
@@ -538,7 +539,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             }))
             : Promise.resolve([]),
         attentionPlan && attentionPlan.beyondPageLimit > 0
-            ? measureQuery(() => findV2SessionListAttentionRows({
+            ? measureQuery("attention", () => findV2SessionListAttentionRows({
                 userId: params.userId,
                 initialWhere: attentionPlan.beyondPageWhere,
                 durableRowLimit: attentionPlan.beyondPageLimit,
@@ -547,7 +548,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             }))
             : Promise.resolve([]),
         activePlan && activePlan.beyondPageLimit > 0
-            ? measureQuery(() => findV2SessionListRows({
+            ? measureQuery("active", () => findV2SessionListRows({
                 userId: params.userId,
                 where: mergeSessionWhereInputs(
                     createV2ActiveSessionListRowsWhere(activeSessionsNow),
@@ -570,7 +571,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
     const requiredSessionIds = [...new Set(params.requiredSessionIds ?? [])];
     const missingRequiredIds = requiredSessionIds.filter((id) => !observedRowsById.has(id));
     const requiredRowsBeyondFamilies = missingRequiredIds.length > 0
-        ? await measureQuery(() => findV2SessionListRows({
+        ? await measureQuery("required", () => findV2SessionListRows({
             userId: params.userId,
             where: { id: { in: missingRequiredIds } },
             orderBy: { id: "desc" },

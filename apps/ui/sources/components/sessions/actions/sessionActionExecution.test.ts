@@ -257,6 +257,29 @@ describe('executeSessionAction', () => {
         expect(stopSession).not.toHaveBeenCalled();
         expect(archiveSession).not.toHaveBeenCalled();
     });
+
+    it('does not repeat archive confirmation after a family archive choice', async () => {
+        storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'session.archive': { approvalRequiredSurfaces: ['ui_button'] } },
+        }) });
+        const stopArchiveFlow = vi.fn(async () => undefined);
+
+        await executeSessionAction({
+            actionId: SESSION_ACTION_ARCHIVE_ID,
+            target: createTarget({ active: true }),
+            context: {
+                archiveConfirmation: 'already-confirmed',
+                operations: {
+                    stopArchiveFlow,
+                    stopSession: vi.fn(async () => ({ success: true as const })),
+                    archiveSession: vi.fn(async () => ({ success: true as const })),
+                },
+            },
+        });
+
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(stopArchiveFlow).toHaveBeenCalledOnce();
+    });
     it('archives an active session through the stop/archive flow', async () => {
         const stopArchiveFlow = vi.fn(async () => undefined);
         const archiveSession = vi.fn(async () => ({ success: true as const }));

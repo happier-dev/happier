@@ -109,6 +109,7 @@ describe('useNewSessionAuthoringState', () => {
             agentNewSessionOptionStateByAgentId: {},
             draftScope: { serverId: 'server-a', accountId: 'account-a' },
             draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            sessionRole: null,
         }));
 
         hook.getCurrent().stageDraftIfEnabled({ selectedPath: '/repo' } as never);
@@ -167,6 +168,7 @@ describe('useNewSessionAuthoringState', () => {
             agentNewSessionOptionStateByAgentId: {},
             draftScope: null,
             draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            sessionRole: null,
         }));
 
         const buildDraftParams = buildLiveNewSessionAuthoringDraftFromResolvedInputsMock.mock.calls[0]?.[0] as Record<string, unknown>;

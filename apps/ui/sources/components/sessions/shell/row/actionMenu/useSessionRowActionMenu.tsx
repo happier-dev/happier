@@ -19,6 +19,7 @@ import {
     SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
+    SESSION_ACTION_UNARCHIVE_ID,
     resolveAttentionStandingFromSessionActionId,
     resolveManualReadStateFromSessionActionId,
     SESSION_ACTION_UNPIN_ID,
@@ -51,6 +52,7 @@ import {
     type SessionAppearanceColorMenuInput,
 } from '@/components/sessions/shell/appearance/sessionAppearanceColorMenu';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import { archiveSessionFamily, type SessionArchiveFamilyResult } from '@/components/sessions/actions/sessionArchiveFamily';
 
 function findMenuItem(items: readonly DropdownMenuItem[], itemId: string): DropdownMenuItem | null {
     for (const item of items) {
@@ -113,6 +115,8 @@ export function useSessionRowActionMenu(params: Readonly<{
     onTogglePinned?: (() => void) | null;
     onMoveToFolder?: () => void;
     leadingMenuItems?: readonly DropdownMenuItem[];
+    placementMenuItem?: DropdownMenuItem | null;
+    roleMenuItem?: DropdownMenuItem | null;
     trailingMenuItems?: readonly DropdownMenuItem[];
     onSelectCustomMenuItem?: (itemId: string) => void | Promise<void>;
     selectionModeAvailable?: boolean;
@@ -130,6 +134,8 @@ export function useSessionRowActionMenu(params: Readonly<{
     }>) | null;
     /** Closes this row's open menus (an item that kept them open while it loaded is ready). */
     closeMenus?: () => void;
+    nestedDescendantTargets?: readonly SessionActionTarget[];
+    beforeArchiveNestedDescendant?: (target: SessionActionTarget) => Promise<void>;
 }>): SessionRowActionMenuState {
     const target = params.target;
     const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
@@ -193,14 +199,110 @@ export function useSessionRowActionMenu(params: Readonly<{
         });
     });
 
+    const [archivingOnlyFromFamilyPrompt, performArchiveOnlyFromFamilyPrompt] = useHappyAction(async () => {
+        await executeSessionAction({
+            actionId: SESSION_ACTION_ARCHIVE_ID,
+            target,
+            context: {
+                hideInactiveSessions: params.hideInactiveSessions,
+                archiveConfirmation: 'already-confirmed',
+            },
+        });
+    });
+
+    const presentArchiveFamilyResult = React.useCallback((result: SessionArchiveFamilyResult) => {
+        const archivedIds = new Set(result.archived.map((candidate) => candidate.sessionId));
+        const lines = [
+            ...result.archived.map((candidate) => t('sessionArchiveFamily.resultArchived', { sessionId: candidate.sessionId })),
+            ...result.failed.map(({ target: candidate, phase }) => t(
+                phase === 'stop-linked-run'
+                    ? 'sessionArchiveFamily.resultStopFailed'
+                    : 'sessionArchiveFamily.resultArchiveFailed',
+                { sessionId: candidate.sessionId },
+            )),
+        ];
+        Modal.alert(
+            result.failed.length > 0
+                ? t('sessionArchiveFamily.resultPartialTitle')
+                : t('sessionArchiveFamily.resultCompleteTitle'),
+            lines.join('\n'),
+            [
+                ...(archivedIds.size > 0 ? [{
+                    text: t('sessionArchiveFamily.unarchiveSucceeded'),
+                    onPress: () => {
+                        void (async () => {
+                            const failed: string[] = [];
+                            for (const candidate of result.archived) {
+                                try {
+                                    const outcome = await executeSessionAction({
+                                        actionId: SESSION_ACTION_UNARCHIVE_ID,
+                                        target: { ...candidate, isArchived: true, canArchive: false },
+                                        context: { archiveConfirmation: 'already-confirmed' },
+                                    });
+                                    if (outcome === false) failed.push(candidate.sessionId);
+                                } catch {
+                                    failed.push(candidate.sessionId);
+                                }
+                            }
+                            if (failed.length > 0) {
+                                Modal.alert(
+                                    t('sessionArchiveFamily.unarchiveFailedTitle'),
+                                    t('sessionArchiveFamily.unarchiveFailedBody', { sessionIds: failed.join(', ') }),
+                                );
+                            }
+                        })();
+                    },
+                }] : []),
+                { text: t('common.ok'), style: 'cancel' as const },
+            ],
+        );
+    }, []);
+
+    const [archivingFamily, performArchiveFamilyMutation] = useHappyAction(async () => {
+        const result = await archiveSessionFamily({
+            parent: target,
+            descendants: params.nestedDescendantTargets ?? [],
+            beforeArchiveDescendant: params.beforeArchiveNestedDescendant ?? (async () => undefined),
+            archive: async (candidate) => {
+                const outcome = await executeSessionAction({
+                    actionId: SESSION_ACTION_ARCHIVE_ID,
+                    target: candidate,
+                    context: {
+                        hideInactiveSessions: params.hideInactiveSessions,
+                        archiveConfirmation: 'already-confirmed',
+                    },
+                });
+                if (outcome === false) throw new Error('archive-not-started');
+            },
+        });
+        presentArchiveFamilyResult(result);
+    });
+
     const confirmStopSession = React.useCallback(async () => {
         if (!await confirmSessionStop()) return;
         performStopMutation();
     }, [performStopMutation]);
 
     const confirmArchiveSession = React.useCallback(async () => {
-        performArchiveMutation();
-    }, [performArchiveMutation]);
+        const descendants = params.nestedDescendantTargets ?? [];
+        if (descendants.length === 0) {
+            performArchiveMutation();
+            return;
+        }
+        Modal.alert(
+            t('sessionArchiveFamily.promptTitle'),
+            t('sessionArchiveFamily.promptBody', { count: descendants.length }),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('sessionArchiveFamily.archiveOnly'), onPress: performArchiveOnlyFromFamilyPrompt },
+                {
+                    text: t('sessionArchiveFamily.archiveFamily', { count: descendants.length }),
+                    style: 'destructive',
+                    onPress: performArchiveFamilyMutation,
+                },
+            ],
+        );
+    }, [params.nestedDescendantTargets, performArchiveFamilyMutation, performArchiveMutation, performArchiveOnlyFromFamilyPrompt]);
 
     const handleRenameSession = React.useCallback(async () => {
         const newName = await Modal.prompt(
@@ -254,6 +356,8 @@ export function useSessionRowActionMenu(params: Readonly<{
             target,
             iconColor: params.iconColor,
             leadingItems: params.leadingMenuItems,
+            placementItem: params.placementMenuItem,
+            roleItem: params.roleMenuItem,
             trailingItems: params.trailingMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             reminderPresets,
@@ -282,6 +386,8 @@ export function useSessionRowActionMenu(params: Readonly<{
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
+        params.placementMenuItem,
+        params.roleMenuItem,
         params.trailingMenuItems,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
@@ -293,8 +399,13 @@ export function useSessionRowActionMenu(params: Readonly<{
     ]);
 
     const customMenuItems = React.useMemo(
-        () => [...(params.leadingMenuItems ?? []), ...(params.trailingMenuItems ?? [])],
-        [params.leadingMenuItems, params.trailingMenuItems],
+        () => [
+            ...(params.leadingMenuItems ?? []),
+            ...(params.placementMenuItem ? [params.placementMenuItem] : []),
+            ...(params.roleMenuItem ? [params.roleMenuItem] : []),
+            ...(params.trailingMenuItems ?? []),
+        ],
+        [params.leadingMenuItems, params.placementMenuItem, params.roleMenuItem, params.trailingMenuItems],
     );
 
     const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
@@ -484,6 +595,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleMoreMenuSelect,
         contextMenuItems,
         handleContextMenuSelect,
-        mutatingSession: stoppingSession || archivingSession || params.archiving === true,
+        mutatingSession: stoppingSession || archivingSession || archivingOnlyFromFamilyPrompt || archivingFamily || params.archiving === true,
     };
 }

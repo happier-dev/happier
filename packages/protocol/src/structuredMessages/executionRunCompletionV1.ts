@@ -8,6 +8,12 @@ export const ExecutionRunCompletionV1Schema = lazySchema(() => z.object({
   finishedAtMs: z.number().int().nonnegative(),
   canInspect: z.boolean(),
   summary: z.string().max(8_000).optional(),
+  /** Role applied to a role-bearing run. */
+  role: z.object({ id: z.string().min(1), name: z.string().min(1) }).passthrough().optional(),
+  /** The visible child Session whose turn completed the run. */
+  linkedSessionId: z.string().min(1).optional(),
+  /** Controls of the completing turn of a visible run. */
+  controls: z.object({ permissionMode: z.string().min(1), modelId: z.string().min(1).nullable() }).passthrough().optional(),
 }).passthrough());
 
 export type ExecutionRunCompletionV1 = z.infer<typeof ExecutionRunCompletionV1Schema>;
@@ -18,6 +24,8 @@ function buildExecutionRunCompletionText(completion: ExecutionRunCompletionV1): 
     '<happier_execution_run_notification>',
     'This is an automated background-run notification from Happier, not a user message.',
     `Run ID: ${completion.runId}`,
+    ...(completion.role ? [`Role: ${completion.role.name}`] : []),
+    ...(completion.linkedSessionId ? [`Linked session: ${completion.linkedSessionId}`] : []),
     `Status: ${completion.status}`,
     ...(summary ? ['', 'Final result:', summary] : []),
     '</happier_execution_run_notification>',

@@ -10,6 +10,7 @@ import {
     encryptSecretStringV1,
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
+    SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1,
 } from '@happier-dev/protocol';
 
 const mocks = vi.hoisted(() => {
@@ -253,6 +254,8 @@ describe('syncSettings account settings ciphertext', () => {
             payload: {
                 analyticsOptOut: false,
                 untouchedRawField: { preserved: true },
+                featureToggles: { 'sessions.lineageAppearancePresets': true },
+                sessionLineageAppearancePresetsV1: { future: 'keep', child: { avatarStyle: 'gradient' } },
             },
             randomBytes: mocks.getRandomBytes,
         });
@@ -313,6 +316,8 @@ describe('syncSettings account settings ciphertext', () => {
                 analyticsOptOut: false,
                 claudeLocalPermissionBridgeEnabled: true,
                 untouchedRawField: { preserved: true },
+                featureToggles: { 'sessions.lineageAppearancePresets': true },
+                sessionLineageAppearancePresetsV1: { future: 'keep', child: { avatarStyle: 'gradient' } },
             }),
         );
 
@@ -786,7 +791,14 @@ describe('syncSettings account settings ciphertext', () => {
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
             ciphertext: String(migrateBody.content?.c ?? ''),
         });
-        expect(opened?.value).toEqual({ analyticsOptOut: false });
+        expect(opened?.value).toEqual({
+            analyticsOptOut: false,
+            sessionRoleProfilesV1: {
+                v: 1,
+                instructionsByRole: {},
+                customRoles: [SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1],
+            },
+        });
         expect(mocks.fetchSessionOrganizationSnapshot).toHaveBeenCalledWith(expect.objectContaining({
             credentials,
             serverUrl: 'http://127.0.0.1:3009',
@@ -951,7 +963,13 @@ describe('syncSettings account settings ciphertext', () => {
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
             ciphertext: String(migrateBody.content?.c ?? ''),
         });
-        expect(opened?.value).toEqual({});
+        expect(opened?.value).toEqual({
+            sessionRoleProfilesV1: {
+                v: 1,
+                instructionsByRole: {},
+                customRoles: [SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1],
+            },
+        });
         expect(mocks.importLegacySessionOrganization).toHaveBeenCalledWith(expect.objectContaining({
             serverId: 'srv_identity',
             request: expect.objectContaining({

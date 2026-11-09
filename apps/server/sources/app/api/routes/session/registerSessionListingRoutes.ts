@@ -291,7 +291,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         const limit = request.query?.limit || V2_ACTIVE_SESSION_LIST_ROW_LIMIT;
         const timing = createV2SessionListServerTiming(request);
 
-        const sessions = await timing.measureAsync("query", async () => findV2SessionListRows({
+        const sessions = await timing.measureQuery("active", async () => findV2SessionListRows({
             userId,
             where: createV2ActiveSessionListRowsWhere(),
             orderBy: V2_ACTIVE_SESSION_LIST_ORDER_BY,
@@ -331,7 +331,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         } = request.query || {};
         const onlyRequiredRows = parseInitialIncludeFlag(requiredOnly);
         const initialPinnedSessionIds = !cursor && !onlyRequiredRows
-            ? await timing.measureAsync("cursor", async () => fetchSessionOrganizationPinnedSessionIds(userId))
+            ? await timing.measureAsync("cursor", async () => timing.measureQuery("pinned", async () => fetchSessionOrganizationPinnedSessionIds(userId)))
             : [];
         const includeInitialAttention = !cursor && !onlyRequiredRows && parseInitialIncludeFlag(includeAttention);
         const includeInitialActive = !cursor && !onlyRequiredRows && parseInitialIncludeFlag(includeActive);
@@ -358,7 +358,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         // read and for every family read the initial page issues, and resolving them per read cost a
         // `SessionShare` statement each.
         const visibilityArms = createV2SessionListVisibilityArmsReader(userId);
-        const sessions = onlyRequiredRows ? [] : await timing.measureAsync("query", async () => findV2SessionListRows({
+        const sessions = onlyRequiredRows ? [] : await timing.measureQuery("page", async () => findV2SessionListRows({
             userId,
             where,
             orderBy: V2_SESSION_LIST_ORDER_BY,
@@ -420,7 +420,7 @@ export function registerSessionListingRoutes(app: Fastify) {
             ...createV2SessionListCursorWhere(decodedCursor),
         };
 
-        const sessions = await timing.measureAsync("query", async () => findV2SessionListRows({
+        const sessions = await timing.measureQuery("archived", async () => findV2SessionListRows({
             userId,
             where,
             orderBy: V2_SESSION_LIST_ORDER_BY,

@@ -42,6 +42,56 @@ describe('resolveSessionListRowModelAdjacency', () => {
 
         expect(second).toBe(first);
     });
+
+    it('keeps a parent and three nested children in one visual group across source group boundaries', () => {
+        const parent = createSessionItem(createRenderable('lead'), {
+            groupKey: 'working:lead',
+            hasChildren: true,
+            nestingDepth: 0,
+        });
+        const children = [
+            createSessionItem(createRenderable('reviewer'), {
+                groupKey: 'working:children',
+                parentSessionId: 'lead',
+                nestingDepth: 1,
+            }),
+            createSessionItem(createRenderable('worker-one'), {
+                groupKey: 'working:children',
+                parentSessionId: 'lead',
+                nestingDepth: 1,
+            }),
+            createSessionItem(createRenderable('worker-two'), {
+                groupKey: 'recent:children',
+                parentSessionId: 'lead',
+                nestingDepth: 1,
+            }),
+        ];
+        const items = [parent, ...children];
+        const adjacency = items.map((_, index) => resolveSessionListRowModelAdjacency(items, index));
+
+        expect(adjacency).toEqual([
+            { isFirst: true, isLast: false, isSingle: false },
+            { isFirst: false, isLast: false, isSingle: false },
+            { isFirst: false, isLast: false, isSingle: false },
+            { isFirst: false, isLast: true, isSingle: false },
+        ]);
+
+        const settings = createSettings({
+            baseDensity: 'detailed',
+            lineageAppearanceEnabled: true,
+            lineageAppearancePresets: { child: { density: 'narrow' } },
+        });
+        const cache = createSessionListRowModelsCache();
+        const childModels = children.map((item, childIndex) => buildCachedSessionListRowModel({
+            item,
+            cache,
+            settings,
+            adjacency: adjacency[childIndex + 1]!,
+            snapshot: EMPTY_ROW_STATE,
+        }));
+        expect(childModels.map((model) => model.compactMinimal)).toEqual([true, true, true]);
+        expect(childModels.map((model) => model.adjacency.isLast)).toEqual([false, false, true]);
+    });
 });
 
 function createRenderable(
@@ -134,6 +184,136 @@ function createSettings(
 }
 
 describe('buildCachedSessionListRowModel', () => {
+    it('memoizes one display-only role-profile signature per profiles object', () => {
+        const cache = createSessionListRowModelsCache();
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+        const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        const customRoles = [{
+            id: customRole,
+            name: 'Architect',
+            instructions: 'Design.',
+            color: '#123456' as const,
+        }];
+        let customRolesReads = 0;
+        const profiles: NonNullable<SessionListRowPresentationSettings['sessionRoleProfilesV1']> = {
+            v: 1,
+            instructionsByRole: { reviewer: 'Review carefully.' },
+            displayNamesByRole: { reviewer: 'Quality Gate' },
+            colorsByRole: { reviewer: '#abcdef' },
+            get customRoles() {
+                customRolesReads += 1;
+                return customRoles;
+            },
+        };
+        const settings = createSettings({ sessionRoleProfilesV1: profiles });
+        const firstItem = createSessionItem(createRenderable('profile-signature-one'));
+        const first = buildCachedSessionListRowModel({
+            item: firstItem,
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings,
+            cache,
+        });
+        const readsAfterFirstRow = customRolesReads;
+
+        buildCachedSessionListRowModel({
+            item: createSessionItem(createRenderable('profile-signature-two')),
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings,
+            cache,
+        });
+        expect(customRolesReads).toBe(readsAfterFirstRow);
+
+        const instructionOnlyChange = buildCachedSessionListRowModel({
+            item: firstItem,
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings: createSettings({
+                sessionRoleProfilesV1: {
+                    v: 1,
+                    instructionsByRole: { reviewer: 'Different instructions.' },
+                    displayNamesByRole: { reviewer: 'Quality Gate' },
+                    colorsByRole: { reviewer: '#abcdef' },
+                    customRoles,
+                },
+            }),
+            cache,
+        });
+        expect(instructionOnlyChange).toBe(first);
+    });
+
+    it('recomputes built-in aliases and colors from account profiles while custom roles keep their snapshot', () => {
+        const cache = createSessionListRowModelsCache();
+        const reviewer = createSessionItem(createRenderable('reviewer-role', {
+            metadata: {
+                ...createRenderable('metadata-template').metadata,
+                path: '/repo/reviewer-role',
+                sessionRole: 'reviewer',
+                sessionRoleName: null,
+                sessionRoleColor: '#123456',
+            },
+        }));
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+        const first = buildCachedSessionListRowModel({
+            item: reviewer,
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings: createSettings({
+                sessionRoleProfilesV1: {
+                    v: 1,
+                    instructionsByRole: {},
+                    displayNamesByRole: { reviewer: 'Quality Gate' },
+                    colorsByRole: { reviewer: '#abcdef' },
+                },
+            }),
+            cache,
+        });
+        expect(first).toMatchObject({ role: 'reviewer', roleName: 'Quality Gate', roleColor: '#abcdef' });
+
+        const recolored = buildCachedSessionListRowModel({
+            item: reviewer,
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings: createSettings({
+                sessionRoleProfilesV1: {
+                    v: 1,
+                    instructionsByRole: {},
+                    displayNamesByRole: { reviewer: 'Final Review' },
+                    colorsByRole: { reviewer: '#654321' },
+                },
+            }),
+            cache,
+        });
+        expect(recolored).not.toBe(first);
+        expect(recolored).toMatchObject({ roleName: 'Final Review', roleColor: '#654321' });
+
+        const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        const custom = createSessionItem(createRenderable('custom-role', {
+            metadata: {
+                ...createRenderable('metadata-template').metadata,
+                path: '/repo/custom-role',
+                sessionRole: customRole,
+                sessionRoleName: 'Architect',
+                sessionRoleColor: '#112233',
+            },
+        }));
+        const customModel = buildCachedSessionListRowModel({
+            item: custom,
+            snapshot: EMPTY_ROW_STATE,
+            adjacency,
+            settings: createSettings({
+                sessionRoleProfilesV1: {
+                    v: 1,
+                    instructionsByRole: {},
+                    colorsByRole: { reviewer: '#ffffff' },
+                },
+            }),
+            cache,
+        });
+        expect(customModel).toMatchObject({ role: customRole, roleName: 'Architect', roleColor: '#112233' });
+    });
+
     it('reuses a fresh cached model on pure clock updates without rebuilding stable input signatures', () => {
         const cache = createSessionListRowModelsCache();
         const item = createSessionItem(createRenderable('s1'));

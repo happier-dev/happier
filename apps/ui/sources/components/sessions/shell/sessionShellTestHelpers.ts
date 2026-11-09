@@ -99,6 +99,7 @@ export function createSessionItemTestRowModel(
 
     const model: SessionListRowModel = {
         appearanceColor: null,
+        agentStarted: false, role: null, nestingDepth: 0, hasChildren: false, childrenCollapsed: false,
         rowKey: `${serverId ?? 'local'}:${sessionId}`,
         sessionId,
         serverId,
@@ -152,6 +153,7 @@ export function createSessionItemTestRowModel(
         isActive: session.active === true,
         hasUnreadMessages: false,
         pendingCount: session.pendingCount ?? 0,
+        executionRunStatus: null,
         draft: null,
         agentActivityLabel: null,
         pendingBlockedCount: session.pendingBlockedCount ?? 0,

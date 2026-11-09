@@ -23,6 +23,18 @@ function findAgentMarks(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('SessionListIdentity', () => {
+    it('distinguishes an agent-started avatar while retaining its provider mark and honoring no-identity mode', async () => {
+        const { SessionListIdentity } = await import('./SessionListIdentity');
+        const session = createSessionFixture({ metadata: { path: '/repo', host: 'test.local', flavor: 'codex' } });
+        const screen = await renderScreen(<SessionListIdentity session={session} display="avatar" agentStarted avatarSize={28} agentLogoSize={22} />);
+        expect(screen.tree.root.findAllByProps({ square: true, flavor: 'codex' }).length).toBeGreaterThan(0);
+        expect(findAgentMarks(screen)[0].props.agentId).toBe('codex');
+        await screen.update(<SessionListIdentity session={session} display="avatar" agentStarted={false} avatarSize={28} agentLogoSize={22} />);
+        expect(screen.tree.root.findAllByProps({ square: false, flavor: 'codex' }).length).toBeGreaterThan(0);
+        await screen.update(<SessionListIdentity session={session} display="none" agentStarted avatarSize={28} agentLogoSize={22} />);
+        expect(screen.tree.toJSON()).toBeNull();
+        expect(findAgentMarks(screen)).toHaveLength(0);
+    });
     it.each(['agentLogo', 'avatar'] as const)('uses the declared runtime identity for %s despite stale flavor', async (display) => {
         const { SessionListIdentity } = await import('./SessionListIdentity');
         const session = createSessionFixture({

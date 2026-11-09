@@ -14,7 +14,10 @@ import { SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from '
 import { SessionOrganizationLabelSchema, SessionOrganizationOrderEntrySchema } from './ordering.js';
 import { SessionOrganizationPinSchema } from './pins.js';
 import { SessionAttentionStandingSchema } from './standings.js';
-import { SessionOrganizationSessionAppearanceSchema } from './appearances.js';
+import {
+  SessionOrganizationSessionAppearancePresentationSchema,
+  SessionOrganizationSessionAppearanceSchema,
+} from './appearances.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
 import { lazySchema } from '../lazySchema.js';
 
@@ -56,6 +59,9 @@ export const SessionOrganizationSnapshotSchema = lazySchema(() => z
     labels: z.array(SessionOrganizationLabelSchema).max(SESSION_ORGANIZATION_MAX_LABELS),
     attentionStandings: z.array(SessionAttentionStandingSchema).max(SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS).optional(),
     sessionAppearances: z.array(SessionOrganizationSessionAppearanceSchema).max(SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES).optional(),
+    sessionAppearancePresentations: z.array(SessionOrganizationSessionAppearancePresentationSchema)
+      .max(SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES)
+      .optional(),
   })
   .strict());
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;

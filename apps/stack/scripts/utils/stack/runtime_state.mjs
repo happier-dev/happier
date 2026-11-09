@@ -181,10 +181,27 @@ function deepMerge(a, b) {
   return out;
 }
 
+/**
+ * A recorded process whose identity could not be established. Its PID may belong to anything by
+ * now, so a later read would only adopt whatever has it: the entry stays unverified, is never
+ * re-read or judged for ownership, and is never acted on. It leaves state once the PID is gone.
+ */
+export function isUnverifiedProcessInstance(identity, pid) {
+  return identity?.unverified === true && Number(identity?.pid) === Number(pid);
+}
+
+function retainUnverifiedProcessInstances(processInstances) {
+  const entries = Object.entries(processInstances?.processes ?? {});
+  return { processes: Object.fromEntries(entries.filter(([, identity]) => identity?.unverified === true)) };
+}
+
 function createRuntimeProcessInstanceProjection(ownerPid, processes, previous = {}) {
   const projectPid = (value, previousIdentity) => {
     const pid = normalizeRuntimePid(value);
     if (!pid) return null;
+    if (isUnverifiedProcessInstance(previousIdentity, pid)) {
+      return { pid, fingerprint: null, unverified: true };
+    }
     if (
       Number(previousIdentity?.pid) === pid
       && String(previousIdentity?.fingerprint ?? '').trim()
@@ -192,6 +209,7 @@ function createRuntimeProcessInstanceProjection(ownerPid, processes, previous = 
       return {
         pid,
         fingerprint: String(previousIdentity.fingerprint).trim(),
+        ...(previousIdentity.apiInstanceId ? { apiInstanceId: String(previousIdentity.apiInstanceId) } : {}),
       };
     }
     const fingerprint = readProcessInstanceFingerprintSync(pid);
@@ -217,14 +235,34 @@ function createRuntimeProcessInstanceProjection(ownerPid, processes, previous = 
   };
 }
 
+// What the caller already knows about a PID replaces any older identity, whichever process keys
+// carry it, so the projection records that instead of probing the process again.
+function seedKnownProcessInstances(previous, processes, { verifiedProcessInstances, unverifiedProcessPids }) {
+  const verifiedByPid = new Map([
+    ...Object.values(verifiedProcessInstances ?? {}).map((identity) => [Number(identity?.pid), identity]),
+    ...(unverifiedProcessPids ?? []).map((pid) => [Number(pid), { pid: Number(pid), fingerprint: null, unverified: true }]),
+  ]);
+  if (verifiedByPid.size === 0) return previous;
+  const seeded = { ...previous?.processes };
+  for (const [key, value] of Object.entries(isPlainObject(processes) ? processes : {})) {
+    const identity = /Pid$/.test(key) ? verifiedByPid.get(Number(value)) : null;
+    if (identity) seeded[key] = identity;
+  }
+  return { ...previous, processes: seeded };
+}
+
 export async function updateStackRuntimeStateFile(statePath, patch) {
   return await withStackRuntimeStateMutationLock(statePath, async () => {
     const existing = (await readStackRuntimeStateFile(statePath)) ?? {};
-    const next = deepMerge(existing, patch ?? {});
+    const { verifiedProcessInstances, unverifiedProcessPids, ...runtimePatch } = patch ?? {};
+    const next = deepMerge(existing, runtimePatch);
     next.processInstances = createRuntimeProcessInstanceProjection(
       next.ownerPid,
       next.processes,
-      existing.processInstances,
+      seedKnownProcessInstances(existing.processInstances, next.processes, {
+        verifiedProcessInstances,
+        unverifiedProcessPids,
+      }),
     );
     await writeStackRuntimeStateFileUnlocked(statePath, next);
     return next;
@@ -284,7 +322,7 @@ async function assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid
   }
 }
 
-async function reconcileRuntimeProcessMembership(processes, stackName, options = {}) {
+async function reconcileRuntimeProcessMembership(processes, processInstances, stackName, options = {}) {
   if (!isPlainObject(processes)) return {};
   const next = { ...processes };
   const trustContext = resolveStackEnvPath(stackName);
@@ -321,6 +359,10 @@ async function reconcileRuntimeProcessMembership(processes, stackName, options =
           `recorded ${key} liveness is inconclusive (pid=${pid}, reason=${liveness.reason})`);
       }
       if (liveness.status === 'dead') continue;
+      if (isUnverifiedProcessInstance(processInstances?.processes?.[key], pid)) {
+        retained.push(pid);
+        continue;
+      }
       try {
         // eslint-disable-next-line no-await-in-loop
         if (await observeOwnership(pid, key)) retained.push(pid);
@@ -345,7 +387,7 @@ async function recordStackRuntimeStartUnlocked(statePath, { stackName, script, e
   const { processes: restProcesses, ...restWithoutProcesses } = restPatch;
   const reconciledExistingProcesses = sameOwner
     ? (isPlainObject(existing.processes) ? existing.processes : {})
-    : await reconcileRuntimeProcessMembership(existing.processes, stackName, options);
+    : await reconcileRuntimeProcessMembership(existing.processes, existing.processInstances, stackName, options);
   const processes = deepMerge(
     reconciledExistingProcesses,
     isPlainObject(restProcesses) ? restProcesses : {},
@@ -374,7 +416,11 @@ async function recordStackRuntimeStartUnlocked(statePath, { stackName, script, e
     stopRequest: null,
     serverLifecycle: createStackServerLifecycleProjection({ phase: 'idle' }),
   });
-  next.processInstances = createRuntimeProcessInstanceProjection(next.ownerPid, next.processes);
+  next.processInstances = createRuntimeProcessInstanceProjection(
+    next.ownerPid,
+    next.processes,
+    retainUnverifiedProcessInstances(existing.processInstances),
+  );
   await writeStackRuntimeStateFileUnlocked(statePath, next);
   return next;
 }
@@ -622,6 +668,7 @@ export async function recordStackRuntimeServerActivation(
     managedBackendPid = null,
     managedGatewayPid = null,
     preserveReloadCompletion = false,
+    verifiedProcessInstances = null,
   } = {},
   {
     recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
@@ -694,6 +741,8 @@ export async function recordStackRuntimeServerActivation(
       : null;
   }
 
+  if (verifiedProcessInstances) patch.verifiedProcessInstances = verifiedProcessInstances;
+
   try {
     return await recordStackRuntimeUpdateImpl(statePath, patch);
   } catch (cause) {
@@ -727,7 +776,7 @@ function normalizeRuntimePort(port) {
 
 export async function recordStackRuntimeServerPids(
   statePath,
-  { listenerPid, wrapperPid, serverPort, clearProxyState = false } = {},
+  { listenerPid, wrapperPid, serverPort, clearProxyState = false, verifiedProcessInstances = null } = {},
   dependencies = {},
 ) {
   return await recordStackRuntimeServerActivation(
@@ -738,6 +787,7 @@ export async function recordStackRuntimeServerPids(
       stablePort: serverPort,
       mode: 'direct',
       clearProxyState,
+      verifiedProcessInstances,
     },
     dependencies,
   );

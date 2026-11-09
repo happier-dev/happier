@@ -9,6 +9,8 @@ export function readExecutionRunTurnInFlight(
 ): boolean | undefined {
   if (!controller) return undefined;
   if (controller.kind === 'voice_agent') return isVoiceAgentTurnInFlight(controller.voiceAgentId);
+  // A visible run's turns happen in the linked child Session; this runner observes no provider turn.
+  if (controller.kind === 'session') return undefined;
   // Until provisioning finishes, a false provider-turn flag does not mean the admitted run is idle.
   return controller.childSessionId ? controller.turnInFlight : undefined;
 }

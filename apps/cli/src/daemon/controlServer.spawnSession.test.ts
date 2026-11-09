@@ -53,6 +53,56 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
+  it('admits only current-catalog custom roles for fresh daemon creation while preserving existing-session snapshots', async () => {
+    const currentId = 'custom:123e4567-e89b-12d3-a456-426614174000';
+    const deletedId = 'custom:223e4567-e89b-12d3-a456-426614174000';
+    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'happy-test-123' }));
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession,
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+      readAccountSettings: () => ({
+        sessionRoleProfilesV1: {
+          v: 1,
+          instructionsByRole: {},
+          customRoles: [{ id: currentId, name: 'Architect', instructions: 'Design.', color: '#123456' }],
+        },
+      }),
+    });
+    const request = (role: string, existingSessionId?: string) => app.inject({
+      method: 'POST',
+      url: '/spawn-session',
+      headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+      payload: JSON.stringify({
+        directory: '/tmp',
+        ...(existingSessionId ? { existingSessionId } : {}),
+        sessionRoleV1: {
+          v: 1,
+          role,
+          name: 'Retained',
+          color: '#123456',
+          instructions: 'Retained.',
+          assignmentId: 'assignment-control',
+          assignedAt: 1,
+        },
+      }),
+    });
+
+    try {
+      await app.ready();
+      expect((await request(currentId)).statusCode).toBe(200);
+      expect((await request(deletedId)).statusCode).toBe(400);
+      expect((await request(deletedId, 'session-existing')).statusCode).toBe(200);
+      expect(spawnSession).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('passes canonical daemon spawn fields through to spawnSession and preserves fresh sessionId', async () => {
     let observed: any = null;
 

@@ -76,6 +76,40 @@ test('process identity observation classifies failed ps for an exited pid as not
   );
 });
 
+test('a budgeted fingerprint check stays inside the caller budget and never uses the synchronous reader', async () => {
+  const context = { stackName: 'test-stack', processInstanceFingerprint: 'win32-cim:expected' };
+  const budget = {
+    platform: 'win32',
+    timeoutMs: 40,
+    readProcessInstanceFingerprintImpl: () => assert.fail('a budgeted caller must not block on the synchronous reader'),
+  };
+
+  let aborted = false;
+  const hung = await resolvePidStackOwnership(4242, context, {
+    ...budget,
+    signal: AbortSignal.timeout(20),
+    runCaptureImpl: (_command, _args, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(Object.assign(new Error('aborted'), { code: 'ABORT_ERR' }));
+      }, { once: true });
+    }),
+  });
+  assert.equal(aborted, true);
+  assert.deepEqual(hung, { status: 'inconclusive', owned: null, reason: 'process-identity-cancelled' });
+
+  const unavailable = await resolvePidStackOwnership(4242, context, {
+    ...budget,
+    runCaptureImpl: async () => {
+      throw new Error('cim unavailable');
+    },
+  });
+  assert.deepEqual(unavailable, { status: 'inconclusive', owned: null, reason: 'process-identity-unavailable' });
+
+  const reused = await resolvePidStackOwnership(4242, context, { ...budget, runCaptureImpl: async () => 'other' });
+  assert.deepEqual(reused, { status: 'not_owned', owned: false, reason: 'process_instance_mismatch' });
+});
+
 test('Windows stack ownership uses an exact persisted process-instance fingerprint', async () => {
   const owned = await resolvePidStackOwnership(
     4242,

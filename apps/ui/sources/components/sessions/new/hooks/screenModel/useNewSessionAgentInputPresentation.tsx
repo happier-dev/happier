@@ -1,3 +1,4 @@
+import type { AssignableSessionRole } from '@happier-dev/protocol';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -113,6 +114,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     transcriptStorage: NewSessionTranscriptStorage;
     hasUserSelectedTranscriptStorageRef: React.MutableRefObject<boolean>;
     setTranscriptStorage: React.Dispatch<React.SetStateAction<NewSessionTranscriptStorage>>;
+    sessionRole: AssignableSessionRole | null;
+    setSessionRole: (next: AssignableSessionRole | null) => void;
     selectedMachineIsWindows: boolean;
     effectiveWindowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     windowsTerminalAvailable: boolean;
@@ -250,6 +253,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,
         transcriptStorage: params.transcriptStorage,
         onTranscriptStorageChange: handleTranscriptStorageChange,
+        sessionRole: params.sessionRole,
+        onSessionRoleChange: params.setSessionRole,
         selectedMachineIsWindows: params.selectedMachineIsWindows,
         windowsRemoteSessionLaunchMode: params.effectiveWindowsRemoteSessionLaunchMode,
         windowsTerminalAvailable: params.windowsTerminalAvailable,

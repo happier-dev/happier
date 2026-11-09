@@ -60,6 +60,45 @@ describe("session appearances on SQLite", () => {
     beforeEach(() => { harness.resetEnv(); });
     afterAll(async () => { await app.close(); await harness?.close(); });
 
+    it.each(["plain", "e2ee"] as const)(
+        "preserves protected placement and identity across released 0.2.21 color set and clear (%s)",
+        async (encryptionMode) => {
+            const { accountId, sessionId } = await createAccountWithSession(encryptionMode);
+            const headers = { authorization: `Bearer ${await auth.createToken(accountId)}`, "content-type": "application/json" };
+            const presentation = encryptionMode === "e2ee"
+                ? { t: "encrypted" as const, c: "opaque-placement-and-identity" }
+                : { t: "plain" as const, v: { placement: { kind: "topLevel" }, identity: "independent" } };
+
+            const protectedWrite = await fetch(`${origin}/v2/session-organization/appearance-presentations/${sessionId}`, {
+                method: "PUT", headers, body: JSON.stringify({ presentation }),
+            });
+            expect(protectedWrite.status).toBe(200);
+
+            // Exact released ui-web/ui-desktop/ui-mobile 0.2.21 writer behavior from
+            // f6f4032ffe21310f83a652c0c7dc07a205e66ee8: replace the whole display with
+            // {color}, then send null to clear it.
+            const releasedColorDisplay = encryptionMode === "e2ee"
+                ? { t: "encrypted" as const, c: "opaque-released-color" }
+                : { t: "plain" as const, v: { color: { kind: "accent", key: "blue" } } };
+            for (const display of [releasedColorDisplay, null]) {
+                const legacyWrite = await fetch(`${origin}/v2/session-organization/appearances/${sessionId}`, {
+                    method: "PUT", headers, body: JSON.stringify({ display }),
+                });
+                expect(legacyWrite.status).toBe(200);
+            }
+
+            const protectedRead = await fetch(`${origin}/v2/session-organization/appearance-presentations`, { headers });
+            expect(protectedRead.status).toBe(200);
+            expect(await protectedRead.json()).toEqual({
+                presentations: [{ sessionId, presentation, updatedAt: expect.any(Number) }],
+            });
+
+            const legacyRead = await fetch(`${origin}/v2/session-organization?includeSessionAppearances=true`, { headers });
+            expect(legacyRead.status).toBe(200);
+            expect(SessionOrganizationSnapshotResponseSchema.parse(await legacyRead.json()).snapshot.sessionAppearances).toEqual([]);
+        },
+    );
+
     it("round-trips appearances over authenticated HTTP and preserves the published error response", async () => {
         const { accountId, sessionId } = await createAccountWithSession();
         const headers = { authorization: `Bearer ${await auth.createToken(accountId)}`, "content-type": "application/json" };

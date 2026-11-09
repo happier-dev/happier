@@ -3,6 +3,7 @@ import { log } from "@/utils/logging/log";
 import { sessionCacheCounter, databaseUpdatesSkippedCounter } from "@/app/monitoring/metrics2";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { IN_TX_OPERATION_LABELS, runWithTransactionAttribution } from "@/storage/inTx";
 import { createMachinePresenceUpdateManyArgs } from "./machinePresenceWritePlan";
 
 interface SessionCacheEntry {
@@ -289,7 +290,10 @@ class ActivityCache {
                         timestamp: update.timestamp,
                     })),
                 );
-                await db.$transaction(operations);
+                await runWithTransactionAttribution(
+                    IN_TX_OPERATION_LABELS.machinePresenceBatch,
+                    async () => await db.$transaction(operations),
+                );
 
                 for (const update of machineUpdates) {
                     update.entry.lastUpdateSent = update.timestamp;

@@ -12,7 +12,7 @@ test('hstack start routes every source-backed server spawn through the canonical
     true,
   );
   assert.equal(
-    source.includes("spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv })"),
+    source.includes("spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env })"),
     true,
   );
 });

@@ -371,6 +371,34 @@ describe('createActionToolExecutorBridge', () => {
     ]);
   });
 
+  it('passes a recycled MCP request id as correlation only, never as an action resume', async () => {
+    const calls: Array<{ actionId: unknown; ctx: Record<string, unknown> }> = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'session_agent',
+      executor: {
+        execute: async (actionId, _input, ctx) => {
+          calls.push({ actionId, ctx: ctx as Record<string, unknown> });
+          return { ok: true, result: {} };
+        },
+      },
+    });
+    // The same JSON-RPC id from two client connections: two separate role changes.
+    for (const role of ['delegate', 'planner']) {
+      await bridge.executeActionByToolName(
+        'action_execute',
+        { actionId: 'session.role.set', input: { sessionId: 'sess-1', role } },
+        'sess-1',
+        { approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'sess-1', toolCallId: '7', mcpRequestId: '7', toolName: 'action_execute' } },
+      );
+    }
+
+    expect(calls.map((call) => call.actionId)).toEqual(['session.role.set', 'session.role.set']);
+    for (const call of calls) {
+      expect(call.ctx.actionRequestId).toBe('7');
+      expect(call.ctx).not.toHaveProperty('resumeActionRequest');
+    }
+  });
+
   it('passes live caller permission mode through to action executor context', async () => {
     const calls: unknown[] = [];
     const actionsSettings = ActionsSettingsV1Schema.parse({

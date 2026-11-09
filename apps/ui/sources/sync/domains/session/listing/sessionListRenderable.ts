@@ -1,5 +1,14 @@
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
-import { readSessionRepositoryV1FromMetadata, type SessionRepositoryV1 } from '@happier-dev/protocol';
+import {
+    readSessionOriginV1,
+    readSessionRepositoryV1FromMetadata,
+    readSessionRoleAssignmentV1,
+    readSessionRoleV1,
+    type SessionOriginV1,
+    type SessionRepositoryV1,
+    type SessionRole,
+    type SessionRoleBadgeColorV1,
+} from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type {
@@ -41,10 +50,22 @@ import {
     deriveSessionRuntimePresentationState,
     resolveSessionRuntimePresenceFields,
 } from '../attention/deriveSessionRuntimePresentationState';
+import {
+    readExecutionRunLinkPresentationSource,
+    resolveExecutionRunDeliveryState,
+    type ExecutionRunLinkPresentationSource,
+} from '../executionRunLinkPresentation';
 
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export interface SessionListRenderableMetadata {
+    sessionOriginV1?: SessionOriginV1 | null;
+    executionRunLinkV1?: ExecutionRunLinkPresentationSource | null;
+    /** Mutable job label; presentation only. */
+    sessionRole?: SessionRole | null;
+    /** Self-contained custom-role display snapshot, retained after catalog deletion. */
+    sessionRoleName?: string | null;
+    sessionRoleColor?: SessionRoleBadgeColorV1 | null;
     name?: string;
     summaryText?: string | null;
     path: string;
@@ -274,6 +295,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
             updatedAt,
         };
     })();
+    const sessionRoleAssignment = readSessionRoleAssignmentV1(metadata);
     return {
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
         summaryText: typeof metadata.summary?.text === 'string' ? metadata.summary.text : null,
@@ -288,6 +310,11 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
         agentActivityCounts: deriveAgentActivityCounts(agentActivityEntries.map(toAgentActivityCountable)),
         agentActivityEntries,
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
+        sessionOriginV1: readSessionOriginV1(metadata),
+        executionRunLinkV1: readExecutionRunLinkPresentationSource(metadata),
+        sessionRole: readSessionRoleV1(metadata),
+        sessionRoleName: sessionRoleAssignment?.name ?? null,
+        sessionRoleColor: sessionRoleAssignment?.color ?? null,
         terminalControlServiceabilityV1: metadata.terminal?.controlServiceabilityV1 ?? null,
     };
 }
@@ -496,6 +523,13 @@ export function preserveSessionListRenderableStaleFields(
     // seq, timestamps and metadata contents), so this adds no second notion of "unchanged".
     if (previous && areSessionListRenderablesEqual(previous, next)) return previous;
 
+    return preserveSessionListRenderableMetadataProjection(previous, next);
+}
+
+function preserveSessionListRenderableMetadataProjection(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): SessionListRenderableSession {
     const preserveMetadata = next.metadata == null && previous?.metadata != null;
     const preserveMetadataUnavailable =
         !preserveMetadata
@@ -542,6 +576,15 @@ function areSessionRepositoriesEqual(previous: SessionRepositoryV1 | null | unde
         && (previous?.worktreePath ?? null) === (next?.worktreePath ?? null);
 }
 
+function areExecutionRunLinksEqual(
+    previous: ExecutionRunLinkPresentationSource | null | undefined,
+    next: ExecutionRunLinkPresentationSource | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+    return resolveExecutionRunDeliveryState(previous) === resolveExecutionRunDeliveryState(next);
+}
+
 function areSessionListRenderableMetadataEqual(
     previous: SessionListRenderableMetadata | null | undefined,
     next: SessionListRenderableMetadata | null | undefined,
@@ -549,7 +592,13 @@ function areSessionListRenderableMetadataEqual(
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
 
-    return (previous.name ?? null) === (next.name ?? null)
+    return (previous.sessionOriginV1?.creatorSessionId ?? null) === (next.sessionOriginV1?.creatorSessionId ?? null)
+        && (previous.sessionOriginV1?.via?.kind ?? null) === (next.sessionOriginV1?.via?.kind ?? null)
+        && areExecutionRunLinksEqual(previous.executionRunLinkV1, next.executionRunLinkV1)
+        && (previous.sessionRole ?? null) === (next.sessionRole ?? null)
+        && (previous.sessionRoleName ?? null) === (next.sessionRoleName ?? null)
+        && (previous.sessionRoleColor ?? null) === (next.sessionRoleColor ?? null)
+        && (previous.name ?? null) === (next.name ?? null)
         && (previous.summaryText ?? null) === (next.summaryText ?? null)
         && previous.path === next.path
         && (previous.homeDir ?? null) === (next.homeDir ?? null)
@@ -630,7 +679,11 @@ export function applySessionListRenderablePatch(
     // entry fact is re-stamped from the latest activity; keep the row's
     // existing entry time so an unread row does not move on every message.
     patched.unreadSince = resolveSessionListRenderableUnreadSince(renderable, patched);
-    return preserveSessionListRenderableMissingPendingFlags(renderable, reconcileSessionListRenderableSnapshot(renderable, patched, options));
+    const next = preserveSessionListRenderableMissingPendingFlags(
+        renderable,
+        reconcileSessionListRenderableSnapshot(renderable, patched, options),
+    );
+    return preserveSessionListRenderableMetadataProjection(renderable, next);
 }
 
 export function isSessionListRenderablePatchNoop(
@@ -759,6 +812,7 @@ export function didSessionListRenderableStructuralFieldsChange(
 
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;
+    if ((prevMeta?.sessionOriginV1?.creatorSessionId ?? null) !== (nextMeta?.sessionOriginV1?.creatorSessionId ?? null)) return true;
 
     if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
@@ -790,7 +844,11 @@ function areSessionListRenderableEmbeddedRowMetadataEqual(
 ): boolean {
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
-    return (previous.name ?? null) === (next.name ?? null)
+    return (previous.sessionOriginV1?.creatorSessionId ?? null) === (next.sessionOriginV1?.creatorSessionId ?? null)
+        && (previous.sessionRole ?? null) === (next.sessionRole ?? null)
+        && (previous.sessionRoleName ?? null) === (next.sessionRoleName ?? null)
+        && (previous.sessionRoleColor ?? null) === (next.sessionRoleColor ?? null)
+        && (previous.name ?? null) === (next.name ?? null)
         && (previous.summaryText ?? null) === (next.summaryText ?? null)
         && previous.path === next.path
         && (previous.homeDir ?? null) === (next.homeDir ?? null)
@@ -958,6 +1016,11 @@ export function didSessionListRenderableWarmCacheFieldsChange(
 
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;
+    if ((prevMeta?.sessionOriginV1?.creatorSessionId ?? null) !== (nextMeta?.sessionOriginV1?.creatorSessionId ?? null)) return true;
+    if (!areExecutionRunLinksEqual(prevMeta?.executionRunLinkV1, nextMeta?.executionRunLinkV1)) return true;
+    if ((prevMeta?.sessionRole ?? null) !== (nextMeta?.sessionRole ?? null)) return true;
+    if ((prevMeta?.sessionRoleName ?? null) !== (nextMeta?.sessionRoleName ?? null)) return true;
+    if ((prevMeta?.sessionRoleColor ?? null) !== (nextMeta?.sessionRoleColor ?? null)) return true;
     if ((prevMeta?.name ?? null) !== (nextMeta?.name ?? null)) return true;
     if ((prevMeta?.summaryText ?? null) !== (nextMeta?.summaryText ?? null)) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;

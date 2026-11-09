@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { usageReportWritesCounter } from "@/app/monitoring/metrics2";
-import { inTx, type Tx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx, type Tx } from "@/storage/inTx";
 import { AsyncLock } from "@/utils/runtime/lock";
 
 type UsageReportWriteSummary = Readonly<{
@@ -85,7 +85,7 @@ export async function recordUsageReportForAccount(params: Readonly<{
             });
 
         return { ok: true as const, report: report.report, usageData, changed: report.changed };
-    });
+    }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.usageReportWrite } });
     return sessionId
         ? await write()
         : await inAccountUsageWriteLock({ userId: params.userId, key: params.key }, write);

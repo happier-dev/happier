@@ -32,6 +32,8 @@ Use the current backend's native subagent facility by default. Treat generic req
 
 - Explicit Happier wording includes “Happier subagent,” “Happier delegation run,” and “Happier execution run.” Only then discover actions with \`action_spec_search\` or \`action_spec_get\` and invoke them with \`action_execute\`.
 - Prefer \`subagents.delegate.start\` for bounded delegation and \`execution.run.start\` for lower-level control. Do not use \`session.spawn_new\` for routine delegation.
+- When an assigned role's instructions direct you to create or bind child sessions (for example a Project Manager's Worker and Reviewer), the role takes precedence: create them with \`session.spawn_new\` and an explicit \`role\`, or start a visible run; otherwise the routing above applies.
+- Runs are hidden by default. \`visibility: "session"\` makes a review, plan, or delegate run a child Session the user can open, steer, and interrupt; pass an explicit \`role\`, and \`targetSessionId\` to bind an existing child you created. Verify the start echo (\`visibility\`, \`binding\`, \`linkedSessionId\`, \`role\`, \`permissionMode\`, \`modelId\`); a start without it is not the run you asked for.
 - In a session-agent call, omit \`sessionId\` to use the current invoking session. Supply it only for an intentional explicit cross-session target.
 - Resolve dependent values through \`action_options_resolve\` (the \`action.options.resolve\` action) with the partial action draft. Backend targets select provider/backend implementations, not parallelism slots. Respect the requested backend, model, account, and service.
 - A typed retryable rate limit may be retried; backend substitution requires authorization.

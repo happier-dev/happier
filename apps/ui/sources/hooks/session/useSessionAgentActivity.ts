@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import {
     readSessionAgentActivityHeadlineFromMetadata,
+    SessionRoleSchema,
     type SessionAgentActivityHeadlineV1,
 } from '@happier-dev/protocol';
 
@@ -19,20 +20,29 @@ import {
 } from '@/components/sessions/agentActivity/open/resolveAgentActivityOpenTarget';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { readSessionWorkflowActivityHeadlineFromMetadata } from '@/components/sessions/workState/sessionWorkflowActivityPresentation';
+import { resolveSessionRoleDisplayName } from '@/components/sessions/roles/sessionRoleLabels';
 import {
     deriveAgentActivityCounts,
     deriveAgentActivityEntries,
     deriveBackgroundTaskActivityEntries,
+    deriveChildSessionActivityEntries,
     toAgentActivityCountable,
     toLocalAgentActivityEntry,
     type AgentActivityCounts,
     type AgentActivityEntry,
     type AgentActivityMergeResult,
+    type AgentActivityLocalEntry,
 } from '@/sync/domains/session/agentActivity';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { t } from '@/text';
-import { useSession, useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
+import {
+    useSession,
+    useSessionListViewDataByServerId,
+    useSessionServerId,
+    useSessionSubagentSourceMessages,
+    useSetting,
+} from '@/sync/domains/state/storage';
 
 import { useReconciledStableRows } from './reconcileStableRows';
 import {
@@ -71,6 +81,33 @@ import { useSessionSubagents } from './useSessionSubagents';
 
 export type { SessionAgentActivityEnrichment } from './useSessionAgentActivityEnrichment';
 export type { SessionBackgroundTaskRow } from './useSessionBackgroundTaskActivity';
+
+function resolveChildSessionRoleLabel(
+    role: string,
+    storedName: string | null,
+    sessionRoleProfilesV1: unknown,
+): string | null {
+    const parsed = SessionRoleSchema.safeParse(role);
+    if (!parsed.success) return storedName;
+    return resolveSessionRoleDisplayName({
+        role: parsed.data,
+        snapshotName: storedName,
+        sessionRoleProfilesV1,
+    });
+}
+
+function useChildSessionActivityEntries(sessionId: string): readonly AgentActivityLocalEntry[] {
+    const serverId = useSessionServerId(sessionId);
+    const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
+    const viewDataByServerId = useSessionListViewDataByServerId(serverIds);
+    const sessionRoleProfilesV1 = useSetting('sessionRoleProfilesV1');
+    const items = serverId ? viewDataByServerId[serverId] ?? null : null;
+    return React.useMemo(() => deriveChildSessionActivityEntries({
+        parentSessionId: sessionId,
+        items,
+        resolveRoleLabel: (role, storedName) => resolveChildSessionRoleLabel(role, storedName, sessionRoleProfilesV1),
+    }), [items, sessionId, sessionRoleProfilesV1]);
+}
 
 /** A merged entry, ready for the row: everything the merge knows plus the host's action set. */
 export type SessionAgentActivityRow = AgentActivityEntry & Readonly<{
@@ -128,6 +165,7 @@ export function useSessionAgentActivity(params: Readonly<{
         messages,
         ...(params.directSessionRuntime ? { directSessionRuntime: params.directSessionRuntime } : {}),
     });
+    const childSessions = useChildSessionActivityEntries(params.sessionId);
 
     // Background commands are counted here too, and that is what makes ONE count source real: the
     // Agents tab badge reads this variant while the roster one component below it reads the other,
@@ -150,6 +188,7 @@ export function useSessionAgentActivity(params: Readonly<{
         messages,
         enrichment: NO_SESSION_AGENT_ACTIVITY_ENRICHMENT,
         backgroundTasks,
+        childSessions,
     });
 }
 
@@ -174,6 +213,7 @@ export function useSessionAgentActivityRoster(params: Readonly<{
         messages,
         ...(params.directSessionRuntime ? { directSessionRuntime: params.directSessionRuntime } : {}),
     });
+    const childSessions = useChildSessionActivityEntries(params.sessionId);
     const enrichment = useSessionAgentActivityEnrichment({
         sessionId: params.sessionId,
         subagents,
@@ -196,6 +236,7 @@ export function useSessionAgentActivityRoster(params: Readonly<{
         messages,
         enrichment,
         backgroundTasks,
+        childSessions,
     });
 }
 
@@ -207,8 +248,9 @@ function useMergedSessionAgentActivity(params: Readonly<{
     messages: readonly Message[];
     enrichment: SessionAgentActivityEnrichment;
     backgroundTasks: SessionBackgroundTaskActivity;
+    childSessions: readonly AgentActivityLocalEntry[];
 }>): SessionAgentActivityState {
-    const { backgroundTasks, enrichment, messages, metadata, sessionId, subagents } = params;
+    const { backgroundTasks, childSessions, enrichment, messages, metadata, sessionId, subagents } = params;
 
     const headline = React.useMemo<SessionAgentActivityHeadlineV1 | null>(
         () => readSessionAgentActivityHeadlineFromMetadata(metadata),
@@ -240,7 +282,7 @@ function useMergedSessionAgentActivity(params: Readonly<{
             runtimeLostSinceMs: params.runtimeLostSinceMs,
             // Background commands join the same list, at the end: they are the least agent-like
             // thing on it, and the section model re-orders by status anyway.
-            local: [...local, ...deriveBackgroundTaskActivityEntries({
+            local: [...local, ...childSessions, ...deriveBackgroundTaskActivityEntries({
                 records: backgroundTasks.records,
                 // A command with no redacted label must not borrow the roster's "Unnamed agent":
                 // it is a headless process, and calling it an agent is the one claim this kind
@@ -250,6 +292,7 @@ function useMergedSessionAgentActivity(params: Readonly<{
         });
     }, [
         backgroundTasks.records,
+        childSessions,
         enrichment.activityPreviewById,
         enrichment.lastActivityAtMsById,
         enrichment.pendingPermissionIds,

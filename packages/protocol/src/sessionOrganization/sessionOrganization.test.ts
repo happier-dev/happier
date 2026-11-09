@@ -16,6 +16,9 @@ import {
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
   SessionOrganizationContentEnvelopeSchema,
   SessionOrganizationSessionAppearanceSchema,
+  SessionOrganizationSessionAppearancePresentationSchema,
+  SetSessionAppearancePresentationRequestSchema,
+  SetSessionAppearancePresentationResponseSchema,
   SetSessionAppearanceRequestSchema,
   SetSessionAppearanceResponseSchema,
   SessionOrganizationFolderSchema,
@@ -33,6 +36,23 @@ import {
 } from './index.js';
 
 describe('session organization protocol contracts', () => {
+  it('keeps protected presentation envelopes separate from legacy color appearance writes', () => {
+    const presentation = {
+      sessionId: 'session_1',
+      presentation: { t: 'encrypted', c: 'opaque-placement-and-identity' },
+      updatedAt: 10,
+    };
+    expect(SessionOrganizationSessionAppearancePresentationSchema.parse(presentation)).toEqual(presentation);
+    expect(SetSessionAppearancePresentationRequestSchema.parse({ presentation: presentation.presentation }))
+      .toEqual({ presentation: presentation.presentation });
+    expect(SetSessionAppearancePresentationRequestSchema.parse({ presentation: null }))
+      .toEqual({ presentation: null });
+    expect(SetSessionAppearancePresentationResponseSchema.parse({ presentation })).toEqual({ presentation });
+    expect(SetSessionAppearancePresentationResponseSchema.parse({ presentation: null })).toEqual({ presentation: null });
+    expect(SetSessionAppearancePresentationRequestSchema.safeParse({ presentation: presentation.presentation, display: null }).success)
+      .toBe(false);
+  });
+
   it('validates strict appearance mutations without interpreting display contents', () => {
     const display = { t: 'plain', v: { color: '#123456', extension: [true, 7] } };
     const appearance = { sessionId: 'session_1', display, updatedAt: 10 };

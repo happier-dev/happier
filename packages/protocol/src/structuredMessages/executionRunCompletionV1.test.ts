@@ -47,3 +47,23 @@ describe('buildExecutionRunCompletionInputV1', () => {
     },
   );
 });
+
+describe('visible and role-bearing run completions', () => {
+  it('names the run role and linked session and records the completing turn controls', () => {
+    const completion = {
+      v: 1 as const,
+      runId: 'run_1',
+      status: 'succeeded' as const,
+      finishedAtMs: 42,
+      canInspect: true,
+      summary: 'No findings.',
+      role: { id: 'reviewer', name: 'Reviewer' },
+      linkedSessionId: 'child_1',
+      controls: { permissionMode: 'read_only', modelId: 'claude-opus-5-5' },
+    };
+    const input = buildExecutionRunCompletionInputV1(completion);
+    expect(input.text).toContain('Role: Reviewer');
+    expect(input.text).toContain('Linked session: child_1');
+    expect((input.meta.happierStructuredInputV1 as Record<string, unknown>).executionRunCompletion).toEqual(completion);
+  });
+});

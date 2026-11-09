@@ -1,5 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { readApiStartupIdentityFromReadyPayload } from '@happier-dev/cli-common/firstPartyRuntime/serverStartupReceipt';
+
 const DEFAULT_SERVER_MIGRATION_TIMEOUT_MS = 30 * 60_000;
 const MAX_SERVER_MIGRATION_TIMEOUT_MS = 24 * 60 * 60_000;
 
@@ -7,15 +9,12 @@ function isCanonicalHappierHealthPayload(payload) {
   return payload?.service === 'happier-server' && payload?.status === 'ok';
 }
 
-function isServerStartupHealthPayload(payload) {
-  if (!payload || typeof payload !== 'object') return false;
-  if (isCanonicalHappierHealthPayload(payload)) return true;
-  return payload?.status === 'ok';
-}
-
-async function fetchHappierMonitoringEndpoint(baseUrl, endpoint) {
+async function fetchHappierMonitoringEndpoint(baseUrl, endpoint, { signal } = {}) {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 1500);
+  const cancel = () => ctl.abort();
+  const t = setTimeout(cancel, 1500);
+  if (signal?.aborted) cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
     const url = baseUrl.replace(/\/+$/, '') + endpoint;
     const res = await fetch(url, { method: 'GET', signal: ctl.signal });
@@ -28,15 +27,15 @@ async function fetchHappierMonitoringEndpoint(baseUrl, endpoint) {
     }
     return {
       ok: res.ok && isCanonicalHappierHealthPayload(json),
-      ready: res.ok && isServerStartupHealthPayload(json),
       status: res.status,
       json,
       text,
     };
   } catch {
-    return { ok: false, ready: false, status: null, json: null, text: null };
+    return { ok: false, status: null, json: null, text: null };
   } finally {
     clearTimeout(t);
+    signal?.removeEventListener('abort', cancel);
   }
 }
 
@@ -62,8 +61,38 @@ export async function fetchHappierHealth(baseUrl) {
   return await fetchHappierMonitoringEndpoint(baseUrl, '/health');
 }
 
-export async function fetchHappierReadiness(baseUrl) {
-  return await fetchHappierMonitoringEndpoint(baseUrl, '/ready');
+export async function fetchHappierReadiness(baseUrl, options) {
+  return await fetchHappierMonitoringEndpoint(baseUrl, '/ready', options);
+}
+
+const invalidReadyEvidence = (reason) => ({ status: 'invalid', reason });
+
+/**
+ * What exactly this endpoint says about its startup identity. Ownership proof depends on who
+ * answered, so unlike the shared probes only a direct healthy 200 counts. `legacy` is an affirmative
+ * healthy answer from a server that has no identity to give; anything failed or malformed is
+ * `invalid` and must never be read as a legacy server.
+ */
+export async function fetchExactServerReadyIdentity({ host, port, signal, timeoutMs }, { fetchImpl = fetch } = {}) {
+  if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) return invalidReadyEvidence('ready-no-budget');
+  const url = `http://${host}:${Number(port)}/ready`;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      redirect: 'error',
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    });
+    if (res.url !== url) return invalidReadyEvidence('ready-endpoint-mismatch');
+    if (res.status !== 200) return invalidReadyEvidence('ready-status');
+    const payload = await res.json();
+    if (!isCanonicalHappierHealthPayload(payload)) return invalidReadyEvidence('ready-unhealthy');
+    if (payload.apiStartupIdentity === undefined) return { status: 'legacy' };
+    const identity = readApiStartupIdentityFromReadyPayload(payload);
+    return identity ? { status: 'identity', ...identity } : invalidReadyEvidence('ready-identity-malformed');
+  } catch {
+    return invalidReadyEvidence('ready-unavailable');
+  }
 }
 
 export async function isHappierServerRunning(baseUrl) {
@@ -91,6 +120,12 @@ function formatServerReadyEarlyExit(url, code, signal) {
   return suffix
     ? `Server process exited before becoming ready at ${url} (${suffix})`
     : `Server process exited before becoming ready at ${url}`;
+}
+
+function createServerReadinessCancelledError(url) {
+  const error = new Error(`Cancelled while waiting for server at ${url}`);
+  error.code = 'ESERVERREADINESSCANCELLED';
+  return error;
 }
 
 export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = process.env } = {}) {
@@ -189,6 +224,7 @@ export async function waitForServerReady(url, {
   onTimeoutCheckpoint = ({ phase }) => {
     console.warn(`[stack] server ${phase} is still in progress at ${url}; continuing to wait (TUI is attended)`);
   },
+  signal,
 } = {}) {
   const deadline = startupDeadline ?? createServerReadinessDeadline({
     readinessTimeoutMs: timeoutMs,
@@ -212,6 +248,9 @@ export async function waitForServerReady(url, {
       if (earlyExitError) {
         throw earlyExitError;
       }
+      if (signal?.aborted) {
+        throw createServerReadinessCancelledError(url);
+      }
       if (deadline.isExpired()) {
         const childAlive = childProcess
           && childProcess.exitCode == null
@@ -223,14 +262,18 @@ export async function waitForServerReady(url, {
       // Runtime-backed stacks and modern server builds expose startup readiness on /ready.
       // Promotion must not accept root-page liveness because the app shell can serve before DB readiness.
       // eslint-disable-next-line no-await-in-loop
-      const readiness = await fetchHappierReadiness(url);
+      const readiness = await fetchHappierReadiness(url, { signal });
       if (earlyExitError) {
         throw earlyExitError;
       }
-      if (readiness.ready) {
+      if (readiness.ok) {
         return;
       }
-      await delay(intervalMs);
+      // Cancellation ends the pause; the loop then decides between exit and cancellation.
+      // eslint-disable-next-line no-await-in-loop
+      await delay(intervalMs, undefined, { signal }).catch((error) => {
+        if (error?.name !== 'AbortError') throw error;
+      });
     }
     if (earlyExitError) {
       throw earlyExitError;

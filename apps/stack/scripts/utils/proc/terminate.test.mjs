@@ -257,3 +257,147 @@ test('terminateProcessGroup requires leader exit after successful Windows taskki
 
   assert.equal(result.ok, false);
 });
+
+const RECORDED_LEADER = 'win32-cim:2026-11-07T04:27:00.0000000Z';
+
+function exitedWindowsLeader(descendants) {
+  return {
+    platform: 'win32',
+    isPidAlive: () => false,
+    kill: () => {},
+    spawn: () => assert.fail('must not spawn without a live root'),
+    observeProcessDescendants: async (pid, fingerprint) => {
+      assert.equal(pid, 4242);
+      assert.equal(fingerprint, RECORDED_LEADER);
+      return descendants;
+    },
+  };
+}
+
+test('an exited recorded Windows leader with no descendants has proven its tree', async () => {
+  const result = await terminateProcessGroup(4242, {
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: exitedWindowsLeader({ status: 'none' }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyExited, true);
+});
+
+test('an exited Windows leader does not prove its tree while a child survives', async () => {
+  const result = await terminateProcessGroup(4242, {
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: exitedWindowsLeader({ status: 'present', pids: [4343] }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'descendants_remain');
+});
+
+test('an exited Windows leader keeps the missing tree proof when descendants cannot be read', async () => {
+  const result = await terminateProcessGroup(4242, {
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: exitedWindowsLeader({ status: 'inconclusive' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'leader_absent_without_tree_proof');
+});
+
+function leaderExitingDuringFailedTaskkill(descendants) {
+  let leaderAlive = true;
+  return {
+    platform: 'win32',
+    isPidAlive: () => leaderAlive,
+    observePidLiveness: () => ({ status: leaderAlive ? 'alive' : 'dead' }),
+    readProcessInstanceFingerprint: () => (leaderAlive ? RECORDED_LEADER : null),
+    observeProcessDescendants: async () => descendants,
+    spawn: () => {
+      const child = new EventEmitter();
+      child.kill = () => true;
+      queueMicrotask(() => {
+        leaderAlive = false;
+        child.emit('exit', 128);
+      });
+      return child;
+    },
+  };
+}
+
+test('a Windows leader that exits while taskkill fails is accepted only with tree proof', async () => {
+  const proven = await terminateProcessGroup(4242, {
+    graceMs: 60,
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: leaderExitingDuringFailedTaskkill({ status: 'none' }),
+  });
+  const survivor = await terminateProcessGroup(4242, {
+    graceMs: 60,
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: leaderExitingDuringFailedTaskkill({ status: 'present', pids: [4343] }),
+  });
+
+  assert.equal(proven.ok, true);
+  assert.equal(survivor.ok, false);
+  assert.equal(survivor.reason, 'descendants_remain');
+});
+
+test('a failed taskkill is still a failure when the Windows leader stays alive', async () => {
+  const boundary = leaderExitingDuringFailedTaskkill({ status: 'none' });
+  const result = await terminateProcessGroup(4242, {
+    graceMs: 60,
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: {
+      ...boundary,
+      isPidAlive: () => true,
+      observePidLiveness: () => ({ status: 'alive' }),
+      readProcessInstanceFingerprint: () => RECORDED_LEADER,
+    },
+  });
+
+  assert.equal(result.ok, false);
+});
+
+test('terminateProcessPid accepts an exit that made its identity read come back empty', async () => {
+  const liveness = ['alive', 'alive', 'dead'];
+  let killed = false;
+  const result = await terminateProcessPid(4242, {
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: {
+      observePidLiveness: () => ({ status: liveness.shift() ?? 'dead' }),
+      readProcessInstanceFingerprint: () => null,
+      kill: () => { killed = true; },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyExited, true);
+  assert.equal(killed, false);
+});
+
+test('an empty identity read of a live process stays unavailable', async () => {
+  const result = await terminateProcessPid(4242, {
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: {
+      observePidLiveness: () => ({ status: 'alive' }),
+      readProcessInstanceFingerprint: () => null,
+      kill: () => assert.fail('an unproven process must not be signalled'),
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'process_instance_unavailable');
+});
+
+test('a fingerprint taken from another process cannot prove this leader exited tree', async () => {
+  const result = await terminateProcessGroup(4242, {
+    identityPid: 5252,
+    processInstanceFingerprint: RECORDED_LEADER,
+    boundary: {
+      ...exitedWindowsLeader({ status: 'none' }),
+      observeProcessDescendants: async () => assert.fail('the fingerprint does not date this leader'),
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'leader_absent_without_tree_proof');
+});

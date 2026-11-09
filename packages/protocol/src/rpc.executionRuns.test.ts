@@ -15,3 +15,11 @@ describe('SESSION_RPC_METHODS (execution runs)', () => {
     );
   });
 });
+
+describe('SESSION_RPC_METHODS (visible agents)', () => {
+  it('names the exact visible/role-bearing start, child-turn report, and prompt preview methods', () => {
+    expect(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2).toBe('execution.run.start.v2');
+    expect(SESSION_RPC_METHODS.SESSION_EXECUTION_RUN_CHILD_TURN_REPORT_V1).toBe('session.executionRun.childTurn.report.v1');
+    expect(SESSION_RPC_METHODS.SESSION_PROMPT_PREVIEW_GET_V1).toBe('session.promptPreview.get.v1');
+  });
+});

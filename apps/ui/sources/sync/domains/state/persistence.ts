@@ -1,3 +1,4 @@
+import type { AssignableSessionRole } from '@happier-dev/protocol';
 import { MMKV } from 'react-native-mmkv';
 import { Platform } from 'react-native';
 import { z } from 'zod';
@@ -201,6 +202,8 @@ export interface NewSessionDraft {
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     codexBackendMode?: CodexBackendMode | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
+    /** Optional explicit role for the session being drafted; device-local, default No role. */
+    sessionRole?: AssignableSessionRole | null;
     resumeSessionId?: string;
     /**
      * Provider-specific new-session option state keyed by agent id.

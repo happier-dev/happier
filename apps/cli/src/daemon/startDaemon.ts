@@ -2026,6 +2026,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         trigger: () => void;
       }> | null = null;
       let daemonServerWorkOnline = true;
+      // Unlike the work gate above, which starts open, this only reports a connection that happened.
+      let machineServerConnected = false;
       const daemonServerWorkScheduler: DaemonServerWorkScheduler = createDaemonServerWorkScheduler({
         budget: createDaemonServerWorkBudget({
           maxConcurrentWrites: resolvePositiveIntEnv(
@@ -6777,9 +6779,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       getChildren: getCurrentChildren,
       machineId,
       runtimeId,
+      getServerConnected: () => (diagnosticSubsystemGates.disableMachineSync ? undefined : machineServerConnected),
       stopSession,
       prepareStopSession: prepareStopSessionForDaemonStop,
       spawnSession,
+      readAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
       resolveSpawnSessionByNonce: async (spawnNonce) => {
         const resolved = daemonSpawnAttemptRegistry.resolve(spawnNonce);
         if (resolved.status === 'success' || resolved.status === 'error') return resolved;
@@ -8724,6 +8728,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     }
                   : {}),
               }, {
+                readAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
                 checkRuntimeAuthUsageLimitRecovery: async (input) => await checkRuntimeAuthUsageLimitRecovery({
                   scheduler: runtimeAuthRecoveryScheduler, ...input,
                 }),
@@ -8902,6 +8907,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
               machineConnectionStateCleanup = connectedApiMachine.onConnectionStateChange((state) => {
                 daemonServerWorkOnline = state.phase === 'online';
+                machineServerConnected = daemonServerWorkOnline;
                 if (daemonServerWorkOnline) {
                   runtimeAuthRecoveryStorm.recordSuccess();
                   connectedServiceQuotasCoordinator?.notifyQuotaPersistenceConnectivityChanged();

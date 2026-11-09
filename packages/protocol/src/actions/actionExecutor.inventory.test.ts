@@ -17,6 +17,7 @@ function createDeps(): ActionExecutorDeps {
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
+    sessionSpawnRecover: vi.fn(async () => ({ ok: true, sessionId: 'child-1' })),
     sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
@@ -27,6 +28,7 @@ function createDeps(): ActionExecutorDeps {
     agentsModelsList: vi.fn(async () => ({ items: [] })),
     agentsConfigOptionsList: vi.fn(async () => ({ items: [] })),
     agentsSessionModesList: vi.fn(async () => ({ items: [] })),
+    sessionRolesList: vi.fn(async () => []),
     sessionsSpawnProfilesList: vi.fn(async () => ({ items: [] })),
     sessionsSpawnConnectedServicesList: vi.fn(async () => ({ items: [] })),
     sessionsSpawnMcpServersPreview: vi.fn(async () => ({ ok: true, builtIn: [], managed: [], detected: [] })),
@@ -438,6 +440,20 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
+  it('forwards only the exact nonce to session.spawn_recover', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.spawn_recover', {
+      spawnNonce: 'session.spawn_new:parent-1:13',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionSpawnRecover).toHaveBeenCalledWith({
+      spawnNonce: 'session.spawn_new:parent-1:13',
+    });
+  });
+
   it('forwards agentId + modelId to session.spawn_new', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -545,6 +561,58 @@ describe('createActionExecutor (inventory/discovery)', () => {
       windowsTerminalWindowName: 'Happier',
       surface: null,
     }));
+  });
+
+  it('forwards an explicit current session.spawn_new role and rejects legacy and unknown roles', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.spawn_new', { agentId: 'codex', role: 'worker' });
+    const legacyRole = await executor.execute('session.spawn_new', { agentId: 'codex', role: 'delegate' });
+    const unknownRole = await executor.execute('session.spawn_new', { agentId: 'codex', role: 'architect' });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionSpawnNew).toHaveBeenCalledTimes(1);
+    expect(deps.sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'codex', role: 'worker' }));
+    expect(legacyRole).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(unknownRole).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+  });
+
+  it('sets, reapplies, and explicitly clears an existing session role through deps.sessionRoleSet', async () => {
+    const { getActionSpec } = await import('./actionSpecs.js');
+    expect(getActionSpec('session.role.set').surfaces).toMatchObject({ session_agent: true, mcp: true, cli: true });
+    const deps = { ...createDeps(), sessionRoleSet: vi.fn(async () => ({ ok: true })) } as ActionExecutorDeps;
+    const executor = createActionExecutor(deps);
+
+    expect(await executor.execute('session.role.set', { sessionId: 's-2', role: 'reviewer' })).toMatchObject({ ok: true });
+    expect(await executor.execute('session.role.set', { sessionId: 's-2', role: 'none' })).toMatchObject({ ok: true });
+    const missing = await executor.execute('session.role.set', { sessionId: 's-2' });
+    const legacy = await executor.execute('session.role.set', { sessionId: 's-2', role: 'delegate' });
+    const unknown = await executor.execute('session.role.set', { sessionId: 's-2', role: 'architect' });
+
+    const sessionRoleSet = (deps as unknown as { sessionRoleSet: ReturnType<typeof vi.fn> }).sessionRoleSet;
+    expect(sessionRoleSet.mock.calls.map((call) => call[0])).toEqual([
+      { sessionId: 's-2', role: 'reviewer' },
+      { sessionId: 's-2', role: null },
+    ]);
+    expect(missing).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(legacy).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(unknown).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it('forwards the action request id so a retried session.role.set replays the same change', async () => {
+    const deps = { ...createDeps(), sessionRoleSet: vi.fn(async () => ({ ok: true })) } as ActionExecutorDeps;
+    const executor = createActionExecutor(deps);
+
+    await executor.execute('session.role.set', { sessionId: 's-2', role: 'planner' }, { actionRequestId: 'req-7' });
+    await executor.execute('session.role.set', { sessionId: 's-2', role: 'planner' }, { actionRequestId: 'req-7', resumeActionRequest: true });
+
+    const sessionRoleSet = (deps as unknown as { sessionRoleSet: ReturnType<typeof vi.fn> }).sessionRoleSet;
+    // The resume signal travels with its request id, so the owner can resolve instead of re-writing.
+    expect(sessionRoleSet.mock.calls.map((call) => call[0])).toEqual([
+      { sessionId: 's-2', role: 'planner', actionRequestId: 'req-7' },
+      { sessionId: 's-2', role: 'planner', actionRequestId: 'req-7', resumeActionRequest: true },
+    ]);
   });
 
   it('rejects authority or unknown session.spawn_new input before deps.sessionSpawnNew runs', async () => {
@@ -1148,6 +1216,30 @@ describe('createActionExecutor (inventory/discovery)', () => {
         { value: 'agent:claude', label: 'Claude' },
       ],
     });
+  });
+
+  it('resolves current custom roles for role fields and adds clear only to session.role.set', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    (deps.sessionRolesList as any).mockResolvedValue([
+      { value: 'planner', label: 'Planner' },
+      { value: 'custom:123e4567-e89b-12d3-a456-426614174000', label: 'Architect' },
+    ]);
+
+    const spawn = await executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new', fieldPath: 'role', sessionId: 's1',
+    }, { serverId: 'server-a' });
+    const set = await executor.execute('action.options.resolve', {
+      actionId: 'session.role.set', fieldPath: 'role', sessionId: 's1',
+    }, { serverId: 'server-a' });
+
+    expect((spawn as any).result.options.map((option: any) => option.value)).toEqual([
+      'planner', 'custom:123e4567-e89b-12d3-a456-426614174000',
+    ]);
+    expect((set as any).result.options.map((option: any) => option.value)).toEqual([
+      'planner', 'custom:123e4567-e89b-12d3-a456-426614174000', 'none',
+    ]);
+    expect(deps.sessionRolesList).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
   });
 
   it('resolves dependent model options from the canonical draftInput shape', async () => {

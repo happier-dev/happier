@@ -11,6 +11,7 @@ import {
     resolveAgentIdFromFlavor,
     getAgentAvatarOverlaySizes,
 } from '@/agents/catalog/catalog';
+import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
 
 interface AvatarProps {
     id: string;
@@ -22,6 +23,7 @@ interface AvatarProps {
     imageUrl?: string | null;
     thumbhash?: string | null;
     hasUnreadMessages?: boolean;
+    styleId?: AvatarStyleId;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -49,7 +51,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const Avatar = React.memo((props: AvatarProps) => {
-    const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, ...avatarProps } = props;
+    const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, styleId, ...avatarProps } = props;
     const avatarStyle = useSetting('avatarStyle');
     const showFlavorIcons = useSetting('showFlavorIcons');
 
@@ -102,7 +104,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
         return imageElement;
     }
 
-    const displayAvatarStyle = normalizeAvatarStyleId(avatarStyle);
+    const displayAvatarStyle = styleId ?? normalizeAvatarStyleId(avatarStyle);
     const AvatarComponent = getGeneratedAvatarComponentForStyle(displayAvatarStyle);
 
     const overlayAgentId = showFlavorIcons ? agentId : null;

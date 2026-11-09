@@ -39,7 +39,49 @@ export {
   projectExecutionRunRequestedConfiguration,
   type ExecutionRunRequestedConfiguration,
 } from './executionRunRequestedConfiguration.js';
+export {
+  EXECUTION_RUN_BIND_ROLE_BY_INTENT_V1,
+  EXECUTION_RUN_BUILT_IN_ROLES,
+  EXECUTION_RUN_REFUSED_ROLES,
+  EXECUTION_RUN_START_V2_ONLY_FIELDS,
+  EXECUTION_RUN_VISIBLE_ERROR_CODES,
+  EXECUTION_RUN_VISIBLE_INTENTS,
+  ExecutionRunBindRejectionReasonSchema,
+  ExecutionRunBindingSchema,
+  ExecutionRunRoleSchema,
+  ExecutionRunRoleSnapshotSchema,
+  ExecutionRunRoleSourceSchema,
+  ExecutionRunStartV2EchoSchema,
+  ExecutionRunStartV2RequestSchema,
+  ExecutionRunStartV2ResponseSchema,
+  ExecutionRunVisibilitySchema,
+  isExecutionRunBindRoleCompatibleV1,
+  isExecutionRunVisibleIntent,
+  readExecutionRunStartV2OnlyFieldsV1,
+  resolveExecutionRunStartV2UnsupportedErrorCodeV1,
+  verifyExecutionRunStartV2EchoV1,
+  type ExecutionRunBindRejectionReason,
+  type ExecutionRunBinding,
+  type ExecutionRunRole,
+  type ExecutionRunRoleSnapshot,
+  type ExecutionRunRoleSource,
+  type ExecutionRunStartV2Echo,
+  type ExecutionRunStartV2EchoVerification,
+  type ExecutionRunStartV2OnlyField,
+  type ExecutionRunStartV2Request,
+  type ExecutionRunStartV2Response,
+  type ExecutionRunVisibility,
+  type ExecutionRunVisibleErrorCode,
+  type ExecutionRunVisibleIntent,
+} from './executionRunStartV2.js';
 import { ExecutionRunRequestedConfigurationSchema } from './executionRunRequestedConfiguration.js';
+import {
+  ExecutionRunBindingSchema,
+  ExecutionRunRoleSnapshotSchema,
+  ExecutionRunRoleSourceSchema,
+  ExecutionRunVisibilitySchema,
+} from './executionRunStartV2.js';
+import { ExecutionRunLinkStateV1Schema } from './sessionMetadata/executionRunLinkV1.js';
 import { lazySchema } from './lazySchema.js';
 
 /**
@@ -96,6 +138,10 @@ export const ExecutionRunTransportErrorCodeSchema = lazySchema(() => z.enum([
   'execution_run_target_unavailable',
   'execution_run_start_ambiguous',
   'execution_run_start_conflict',
+  'execution_run_visibility_unsupported',
+  'execution_run_role_unsupported',
+  'execution_run_bind_rejected',
+  'execution_run_visible_turn_entry_unsupported',
   'run_depth_exceeded',
   'permission_denied',
 ]));
@@ -139,6 +185,17 @@ export const ExecutionRunPublicStateSchema = lazySchema(() => z.object({
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
+  // Visible and role-bearing runs (`execution.run.start.v2`). Absent on older producers: hidden, roleless.
+  visibility: ExecutionRunVisibilitySchema.optional(),
+  binding: ExecutionRunBindingSchema.optional(),
+  /** The child Session doing the work of a visible run. */
+  linkedSessionId: z.string().min(1).optional(),
+  role: ExecutionRunRoleSnapshotSchema.optional(),
+  roleSource: ExecutionRunRoleSourceSchema.optional(),
+  /** Effective model of a visible run, or null when the backend default applies. */
+  modelId: z.string().min(1).nullable().optional(),
+  /** R21: the linked child's report, relay, and delivery records; only a verified delivery means sent. */
+  linkState: ExecutionRunLinkStateV1Schema.optional(),
 }).passthrough());
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
 
@@ -183,7 +240,11 @@ export type ExecutionRunSendRequest = z.infer<typeof ExecutionRunSendRequestSche
 export const ExecutionRunSendResponseSchema = lazySchema(() => z.object({ ok: z.literal(true) }).passthrough());
 export type ExecutionRunSendResponse = z.infer<typeof ExecutionRunSendResponseSchema>;
 
-export const ExecutionRunStopRequestSchema = lazySchema(() => z.object({ runId: z.string().min(1) }).passthrough());
+export const ExecutionRunStopRequestSchema = lazySchema(() => z.object({
+  runId: z.string().min(1),
+  /** Why the caller stopped the run; `child_archived` when the linked child of a visible run is archived. */
+  reason: z.enum(['child_archived']).optional(),
+}).passthrough());
 export type ExecutionRunStopRequest = z.infer<typeof ExecutionRunStopRequestSchema>;
 
 export const ExecutionRunStopResponseSchema = lazySchema(() => z.object({ ok: z.literal(true) }).passthrough());

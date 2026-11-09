@@ -1,3 +1,5 @@
+import { transformFileSync } from '@babel/core';
+import { fileURLToPath } from 'node:url';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -99,6 +101,27 @@ describe('desktop app updater (one owner for every surface)', () => {
         clearDesktopGlobals();
         if (originalUpdateChecksEnv === undefined) delete process.env[UPDATE_CHECKS_ENV];
         else process.env[UPDATE_CHECKS_ENV] = originalUpdateChecksEnv;
+    });
+
+    it('statically inlines the desktop update override in a production Expo transform', () => {
+        process.env[UPDATE_CHECKS_ENV] = '0';
+        const originalBabelEnv = process.env.BABEL_ENV;
+        process.env.BABEL_ENV = 'production';
+        let transformed: ReturnType<typeof transformFileSync>;
+        try {
+            transformed = transformFileSync(fileURLToPath(new URL('./desktopUpdater.ts', import.meta.url)), {
+                babelrc: false,
+                configFile: false,
+                caller: { name: 'metro' },
+                presets: ['babel-preset-expo'],
+            });
+        } finally {
+            if (originalBabelEnv === undefined) delete process.env.BABEL_ENV;
+            else process.env.BABEL_ENV = originalBabelEnv;
+        }
+
+        expect(transformed?.code).toContain('parseOptionalBoolean("0")');
+        expect(transformed?.code).not.toContain('process.env.EXPO_PUBLIC_HAPPIER_DESKTOP_UPDATES_ENABLED');
     });
 
     it('stays idle outside Tauri and in a source development bundle', async () => {

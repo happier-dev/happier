@@ -11,6 +11,7 @@ import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../pro
 import { BackendTargetKeySchema, BackendTargetRefSchema, buildBackendTargetKey, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
+import { createExecutionRunVisibleStartInputShapeV1 } from '../executionRunStartV2.js';
 import { MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS } from '../executionRunObservationTimeout.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
 import { SessionForkRpcParamsSchema } from '../sessionFork.js';
@@ -51,6 +52,8 @@ import {
   type ActionOperationDeclarationV1,
 } from './operations/actionOperationDeclarationV1.js';
 import { lazySchema } from '../lazySchema.js';
+import { AssignableSessionRoleSchema } from '../sessionMetadata/sessionRole.js';
+import { SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID, SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID } from './actionOptionSources.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -264,6 +267,12 @@ const SessionTitleSetInputSchema = lazySchema(() => z.object({
   title: z.string().trim().min(1),
 }).passthrough());
 
+/** `role: 'none'` is the explicit clear; omitting the role is invalid rather than an implicit clear. */
+const SessionRoleSetInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1).optional(),
+  role: z.union([AssignableSessionRoleSchema, z.literal('none')]),
+}).strict());
+
 const SessionPermissionModeSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   permissionMode: SessionPermissionModeInputSchema,
@@ -283,6 +292,10 @@ const SessionConfigOptionSetInputSchema = lazySchema(() => z.object({
 const SessionStatusGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   live: z.boolean().optional(),
+}).passthrough());
+
+const SessionPromptPreviewGetInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1).optional(),
 }).passthrough());
 
 const SessionHistoryGetInputSchema = lazySchema(() => z.object({
@@ -461,6 +474,7 @@ const IntentStartCommonSchema = lazySchema(() => z.object({
   connectedServicesByBackendTargetKey: z.record(z.string().min(1), z.unknown()).optional(),
   waitForCompletion: z.boolean().optional(),
   waitTimeoutSeconds: z.number().int().min(1).max(MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS).optional(),
+  ...createExecutionRunVisibleStartInputShapeV1(),
 }).passthrough());
 
 const PlanStartInputSchema = lazySchema(() => IntentStartCommonSchema.extend({
@@ -519,6 +533,7 @@ const ExecutionRunStartInputSchema = lazySchema(() => z.object({
   connectedServices: z.unknown().optional(),
   waitForCompletion: z.boolean().optional(),
   waitTimeoutSeconds: z.number().int().min(1).max(MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS).optional(),
+  ...createExecutionRunVisibleStartInputShapeV1(),
 }).passthrough());
 
 const ExecutionRunGetInputSchema = lazySchema(() => ExecutionRunIdInputSchema.extend({
@@ -612,6 +627,11 @@ export const SessionSpawnNewInputSchema = lazySchema(() => z.object({
   backendTargetKey: BackendTargetKeySchema.optional(),
   backendTarget: BackendTargetRefSchema.optional(),
   title: z.string().min(1).optional(),
+  /**
+   * Explicit mutable job label seeded into the new session's `sessionRoleV1` metadata.
+   * Presentation only: it never changes permissions, provider/model, control, or provenance.
+   */
+  role: AssignableSessionRoleSchema.optional(),
   path: z.string().min(1).optional(),
   directory: z.string().min(1).optional(),
   approvedNewDirectoryCreation: z.boolean().optional(),
@@ -726,6 +746,11 @@ export const SessionSpawnNewInputSchema = lazySchema(() => z.object({
   rejectConflictingConfigAliases();
 }));
 export type SessionSpawnNewInput = z.infer<typeof SessionSpawnNewInputSchema>;
+
+export const SessionSpawnRecoverInputSchema = lazySchema(() => z.object({
+  spawnNonce: SessionSpawnAttemptIdentifierSchema,
+}).strict());
+export type SessionSpawnRecoverInput = z.infer<typeof SessionSpawnRecoverInputSchema>;
 
 const SessionSpawnPickerInputSchema = lazySchema(() => z.object({
   tag: z.string().min(1).optional(),
@@ -1898,6 +1923,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'modelId', title: 'Model id', widget: 'text', optionsSourceId: 'agents.models.available' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text', optionsSourceId: 'agents.backends.enabled' },
         { path: 'title', title: 'Title', widget: 'text' },
+        {
+          path: 'role',
+          title: 'Role',
+          description: 'Optional job label: a current built-in role or custom:<uuid> from the account role catalog. Never inferred; omit for no role.',
+          widget: 'select',
+          requireExplicitSelection: true,
+          optionsSourceId: SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID,
+        },
         { path: 'path', title: 'Path', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
         { path: 'machineId', title: 'Machine id', widget: 'text', optionsSourceId: 'sessions.spawn.machines.available' },
         { path: 'host', title: 'Host', widget: 'text' },
@@ -1911,6 +1944,30 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionSpawnNewInputSchema,
+  },
+  {
+    id: 'session.spawn_recover',
+    title: 'Recover created session',
+    description: 'Resolve one prior session.spawn_new attempt by its exact spawn nonce without creating or changing a session.',
+    safety: 'safe',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    bindings: { mcpToolName: 'session_spawn_recover' },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Recover a created session',
+      description: 'Uses the exact spawn nonce from the original request. It never retries or creates a replacement.',
+      fields: [{ path: 'spawnNonce', title: 'Spawn nonce', widget: 'text' }],
+    },
+    inputSchema: SessionSpawnRecoverInputSchema,
   },
   {
     id: 'session.spawn_picker',
@@ -2369,6 +2426,43 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: SessionTitleSetInputSchema,
   },
   {
+    id: 'session.role.set',
+    title: 'Set session role',
+    description: "Assign, reassign, or reapply a session's current built-in or account-catalog custom role, or clear it with role 'none'. The session receives a visible instruction with the role's current account instructions. It never changes permissions, tools, model, control, ownership, or placement. When the owner turns on Visible agents team assembly (off by default), assigning project_lead lets that Lead's own runner create idle Reviewer and Worker placeholder sessions nested under it, once per assignment.",
+    safety: 'safe',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    bindings: { mcpToolName: 'session_role_set' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","role":"worker"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    contextualDefaults: { sessionId: 'current_session' },
+    inputHints: {
+      title: 'Set role',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        {
+          path: 'role',
+          title: 'Role',
+          widget: 'select',
+          required: true,
+          requireExplicitSelection: true,
+          optionsSourceId: SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID,
+        },
+      ],
+    },
+    inputSchema: SessionRoleSetInputSchema,
+  },
+  {
     id: 'session.permission_mode.set',
     title: 'Set session permission mode',
     description: `Update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session. Compatible aliases are accepted.`,
@@ -2537,6 +2631,33 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionStatusGetInputSchema,
+  },
+  {
+    id: 'session.prompt_preview.get',
+    title: 'Preview session prompt',
+    description: "Get the coding prompt the session's live runner actually uses: the rendered text, its block ids and scopes, the launch form that applies (fresh, or retained after a resume or reset), and provider notes. Answered by the session's own runner; it fails when the runner is not live.",
+    safety: 'safe',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    bindings: { mcpToolName: 'session_prompt_preview_get' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    contextualDefaults: { sessionId: 'current_session' },
+    inputHints: {
+      title: 'Preview session prompt',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+    },
+    inputSchema: SessionPromptPreviewGetInputSchema,
   },
   {
     id: 'session.work_state.get',

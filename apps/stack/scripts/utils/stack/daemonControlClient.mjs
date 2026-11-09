@@ -312,6 +312,8 @@ export async function pingDaemon({
       distClosureFingerprint: /^[a-f0-9]{16}$/.test(distClosureFingerprint)
         ? distClosureFingerprint
         : null,
+      // Daemons older than this field report nothing, which is not the same as being disconnected.
+      serverConnected: typeof ping?.serverConnected === 'boolean' ? ping.serverConnected : null,
     };
   } catch {
     return { ok: false, reason: 'ping_failed', pid: controlState.pid };

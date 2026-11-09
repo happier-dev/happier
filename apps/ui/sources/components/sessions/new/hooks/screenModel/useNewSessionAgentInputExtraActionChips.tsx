@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ActionId, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import { type ActionId, type AssignableSessionRole, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import {
@@ -10,10 +10,13 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { createAutomationToggleActionChip } from '@/components/sessions/agentInput/definitions/createAutomationToggleActionChip';
 import { createServerActionChip } from '@/components/sessions/agentInput/definitions/createServerActionChip';
 import { createTranscriptStorageActionChip } from '@/components/sessions/agentInput/definitions/createTranscriptStorageActionChip';
+import { createSessionRoleActionChip } from '@/components/sessions/agentInput/definitions/createSessionRoleActionChip';
+import { listUiAssignableSessionRoleProfiles } from '@/components/sessions/roles/sessionRoleProfileOrder';
+import { resolveAssignableSessionRoleProfilesForServer } from '@/sync/ops/sessionRoleAssignment';
 import { createWindowsRemoteSessionLaunchModeActionChip } from '@/components/sessions/agentInput/definitions/createWindowsRemoteSessionLaunchModeActionChip';
 import { buildNewSessionActionShortcutChips } from '@/components/sessions/agentInput/sessionActions/buildNewSessionActionShortcutChips';
 import { NewSessionServerSelectionContent } from '@/components/sessions/new/components/NewSessionServerSelectionContent';
-import { storage } from '@/sync/domains/state/storage';
+import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 
 export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
@@ -34,6 +37,9 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     supportsDirectTranscriptStorage: boolean;
     transcriptStorage: NewSessionTranscriptStorage;
     onTranscriptStorageChange: (next: NewSessionTranscriptStorage) => void;
+    /** Optional explicit role for the new session; default No role. */
+    sessionRole: AssignableSessionRole | null;
+    onSessionRoleChange: (next: AssignableSessionRole | null) => void;
     selectedMachineIsWindows: boolean;
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     windowsTerminalAvailable: boolean;
@@ -45,6 +51,18 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
      */
     sourceContextChip?: AgentInputExtraActionChip | null;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
+    const roleProfilesSetting = useSetting('sessionRoleProfilesV1');
+    const builtInRoleProfiles = React.useMemo(() => listUiAssignableSessionRoleProfiles(null), []);
+    const [assignableRoleProfiles, setAssignableRoleProfiles] = React.useState(builtInRoleProfiles);
+    React.useEffect(() => {
+        let cancelled = false;
+        // A target switch invalidates every custom identity until that account's catalog resolves.
+        setAssignableRoleProfiles(builtInRoleProfiles);
+        void resolveAssignableSessionRoleProfilesForServer(params.targetServerId).then((profiles) => {
+            if (!cancelled && profiles) setAssignableRoleProfiles(profiles);
+        });
+        return () => { cancelled = true; };
+    }, [builtInRoleProfiles, params.targetServerId, roleProfilesSetting]);
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.showServerPickerChip) return null;
         return createServerActionChip({
@@ -84,6 +102,12 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.transcriptStorage,
     ]);
 
+    const sessionRoleActionChip = React.useMemo<AgentInputExtraActionChip>(() => createSessionRoleActionChip({
+        role: params.sessionRole,
+        profiles: assignableRoleProfiles,
+        onRoleChange: params.onSessionRoleChange,
+    }), [assignableRoleProfiles, params.onSessionRoleChange, params.sessionRole]);
+
     return React.useMemo(() => {
         const baseChips = getNewSessionAgentInputExtraActionChips({
             agentId: params.agentId,
@@ -116,6 +140,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         if (storageActionChip) {
             chips.push(storageActionChip);
         }
+        chips.push(sessionRoleActionChip);
         if (params.selectedMachineIsWindows && params.windowsRemoteSessionLaunchMode) {
             chips.push(createWindowsRemoteSessionLaunchModeActionChip({
                 mode: params.windowsRemoteSessionLaunchMode,
@@ -146,6 +171,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.onWindowsRemoteSessionLaunchModeChange,
         automationActionChip,
         serverPickerActionChip,
+        sessionRoleActionChip,
         storageActionChip,
     ]);
 }

@@ -19,6 +19,8 @@ export interface SessionAttentionStandingRecord {
 export interface SessionAppearanceRecord {
     readonly sessionId: string;
     readonly displayDbValue: string;
+    readonly displayCleared?: boolean;
+    readonly presentationDbValue?: string | null;
     readonly updatedAt: Date;
 }
 

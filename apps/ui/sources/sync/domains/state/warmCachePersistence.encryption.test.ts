@@ -93,7 +93,7 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-const SESSION_LIST_KEY = 'session-list-warm-cache-v1:server-a:account-a';
+const SESSION_LIST_KEY = 'session-list-warm-cache-v3:server-a:account-a';
 const ORGANIZATION_KEY = 'session-organization-warm-cache-v1:server-a:account-a';
 const MACHINE_KEY = 'machine-display-warm-cache-v1:server-a:account-a';
 const LEGACY_PINNED_KEY = 'session-list-pinned-ids-warm-cache-v1:server-a:account-a';
@@ -174,6 +174,7 @@ describe('warmCachePersistence at-rest encryption', () => {
         const writingInstances = instances.filter((instance) => instance.writes.length > 0);
         expect(writingInstances.length).toBeGreaterThan(0);
         for (const instance of writingInstances) {
+            expect(instance.config?.id).toBe('warm-cache-v2');
             expect(instance.config?.encryptionKey ?? '').not.toBe('');
         }
     });

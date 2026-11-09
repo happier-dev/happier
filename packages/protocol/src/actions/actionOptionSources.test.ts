@@ -12,6 +12,8 @@ describe('action option sources', () => {
       'agents.backends.enabled',
       'review.engines.available',
       'session.modes.available',
+      'session.roles.assignable',
+      'session.roles.assignable_or_clear',
       'agents.models.available',
       'agents.session_modes.available',
       'agents.config_options.available',

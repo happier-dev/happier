@@ -1,12 +1,75 @@
 import { describe, expect, it } from 'vitest';
+import { buildSessionRoleAssignmentV1, SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1 } from '@happier-dev/protocol';
 
 import {
+  isFreshSpawnSessionRoleKnownToAccount,
   mergeSpawnSessionOptions,
   SpawnDaemonSessionRequestSchema,
 } from './spawnSessionOptionsContract';
 import type { SpawnSessionOptions } from './registerSessionHandlers';
 
 describe('SpawnDaemonSessionRequestSchema', () => {
+  it('admits only current roles for fresh creation while retaining legacy roles for existing-session attach', () => {
+    const workerSnapshot = {
+      v: 1 as const,
+      role: 'worker' as const,
+      instructions: 'Implement this bounded package.',
+      assignmentId: 'assignment-worker',
+      assignedAt: 1,
+    };
+    const parsed = SpawnDaemonSessionRequestSchema.parse({ directory: '/tmp', sessionRoleV1: workerSnapshot });
+    expect(parsed.sessionRoleV1).toEqual(workerSnapshot);
+    expect(mergeSpawnSessionOptions(parsed as Partial<SpawnSessionOptions>).sessionRoleV1).toEqual(workerSnapshot);
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      sessionRoleV1: { ...workerSnapshot, instructions: '   ' },
+    })).toThrow();
+    const customSnapshot = {
+      v: 1 as const,
+      role: 'custom:123e4567-e89b-12d3-a456-426614174000' as const,
+      name: 'Architect',
+      color: '#123456',
+      instructions: 'Design.',
+      assignmentId: 'assignment-custom',
+      assignedAt: 2,
+    };
+    expect(SpawnDaemonSessionRequestSchema.parse({ directory: '/tmp', sessionRoleV1: customSnapshot }).sessionRoleV1)
+      .toEqual(customSnapshot);
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      sessionRoleV1: { v: 1, role: customSnapshot.role, instructions: 'Missing display snapshot.' },
+    })).toThrow();
+    expect(() => SpawnDaemonSessionRequestSchema.parse({ directory: '/tmp', sessionRoleV1: { v: 1, role: 'delegate' } })).toThrow();
+
+    const existing = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      existingSessionId: 'sess-legacy',
+      sessionRoleV1: { v: 1, role: 'delegate', instructions: 'Retained legacy snapshot.' },
+    });
+    expect(existing.sessionRoleV1).toEqual({ v: 1, role: 'delegate', instructions: 'Retained legacy snapshot.' });
+    expect(() => SpawnDaemonSessionRequestSchema.parse({ directory: '/tmp', sessionRoleV1: { v: 1, role: 'architect' } })).toThrow();
+  });
+
+  it('admits the Product Lead template only after its stable custom profile is persisted', () => {
+    const snapshot = buildSessionRoleAssignmentV1({
+      role: SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.id,
+      name: SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.name,
+      color: SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.color,
+      instructions: SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.instructions,
+      assignmentId: 'assignment-product-lead',
+      assignedAt: 1,
+    });
+
+    expect(isFreshSpawnSessionRoleKnownToAccount(snapshot, {})).toBe(false);
+    expect(isFreshSpawnSessionRoleKnownToAccount(snapshot, {
+      sessionRoleProfilesV1: {
+        v: 1,
+        instructionsByRole: {},
+        customRoles: [SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1],
+      },
+    })).toBe(true);
+  });
+
   it('preserves exact pending first-input localId bytes and rejects blank identities', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
@@ -204,5 +267,16 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     expect(mergeSpawnSessionOptions(options)).toMatchObject({
       materializationDiagnostics: options.materializationDiagnostics,
     });
+  });
+});
+
+describe('spawn ingress (visible agents)', () => {
+  it('declares the run link and creation origin so the ingress never strips them', () => {
+    const executionRunLinkV1 = { v: 1, parentSessionId: 'lead', runId: 'run_1', turnEpoch: 0 };
+    const sessionOriginV1 = { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'team_assembly', assignmentId: 'a1' } };
+    const parsed = SpawnDaemonSessionRequestSchema.parse({ directory: '/tmp', executionRunLinkV1, sessionOriginV1 }) as Record<string, unknown>;
+    expect(parsed.executionRunLinkV1).toEqual(executionRunLinkV1);
+    expect(parsed.sessionOriginV1).toEqual(sessionOriginV1);
+    expect(SpawnDaemonSessionRequestSchema.safeParse({ directory: '/tmp', executionRunLinkV1: { v: 1, runId: 'r' } }).success).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 
 import {
   createServerReadinessDeadline,
+  fetchExactServerReadyIdentity,
   fetchHappierHealth,
   isHappierServerRunning,
   resolveServerMigrationTimeoutMs,
@@ -428,4 +429,153 @@ test('resolveServerReadyTimeoutMs prefers an explicit override and otherwise giv
     resolveServerMigrationTimeoutMs({ env: { HAPPIER_STACK_SERVER_MIGRATION_TIMEOUT_MS: '86400001' } }),
     30 * 60_000,
   );
+});
+
+async function withReadyResponder(t, handler) {
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return { host: '127.0.0.1', port: server.address().port };
+}
+
+const sendReady = (res, status, body) => {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+};
+
+test('fetchExactServerReadyIdentity reads the identity from the exact endpoint', async (t) => {
+  const paths = [];
+  const endpoint = await withReadyResponder(t, (req, res) => {
+    paths.push(req.url);
+    sendReady(res, 200, { status: 'ok', service: 'happier-server', apiStartupIdentity: { instanceId: 'instance-1' } });
+  });
+  assert.deepEqual(
+    await fetchExactServerReadyIdentity({ ...endpoint, timeoutMs: 2_000 }),
+    { status: 'identity', instanceId: 'instance-1' },
+  );
+  assert.deepEqual(paths, ['/ready']);
+});
+
+test('fetchExactServerReadyIdentity accepts nothing but a direct healthy identity response', async (t) => {
+  const redirect = await withReadyResponder(t, (_req, res) => {
+    res.writeHead(302, { location: 'http://127.0.0.1:9/ready' });
+    res.end();
+  });
+  const unhealthy = await withReadyResponder(t, (_req, res) => {
+    sendReady(res, 503, { status: 'ok', service: 'happier-server', apiStartupIdentity: { instanceId: 'instance-1' } });
+  });
+  for (const endpoint of [redirect, unhealthy]) {
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal((await fetchExactServerReadyIdentity({ ...endpoint, timeoutMs: 2_000 })).status, 'invalid');
+  }
+
+  const movedResponse = await fetchExactServerReadyIdentity(
+    { host: '127.0.0.1', port: 53944, timeoutMs: 2_000 },
+    {
+      fetchImpl: async () => ({
+        url: 'http://127.0.0.1:1/ready',
+        status: 200,
+        json: async () => ({ status: 'ok', service: 'happier-server', apiStartupIdentity: { instanceId: 'instance-1' } }),
+      }),
+    },
+  );
+  assert.equal(movedResponse.status, 'invalid');
+});
+
+test('fetchExactServerReadyIdentity honors caller cancellation', async (t) => {
+  const endpoint = await withReadyResponder(t, () => {});
+  const controller = new AbortController();
+  const pending = fetchExactServerReadyIdentity({ ...endpoint, timeoutMs: 30_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  assert.equal((await pending).status, 'invalid');
+});
+
+test('fetchExactServerReadyIdentity separates affirmative legacy readiness from failed evidence', async (t) => {
+  const legacy = await withReadyResponder(t, (_req, res) => {
+    sendReady(res, 200, { status: 'ok', service: 'happier-server' });
+  });
+  const unhealthy = await withReadyResponder(t, (_req, res) => {
+    sendReady(res, 503, { status: 'ok', service: 'happier-server' });
+  });
+  assert.deepEqual(await fetchExactServerReadyIdentity({ ...legacy, timeoutMs: 2_000 }), { status: 'legacy' });
+  assert.equal((await fetchExactServerReadyIdentity({ ...unhealthy, timeoutMs: 2_000 })).status, 'invalid');
+});
+
+test('startup readiness accepts only a happier-server answer', async (t) => {
+  const canonical = await withReadyResponder(t, (_req, res) => sendReady(res, 200, { status: 'ok', service: 'happier-server' }));
+  await waitForServerReady(`http://${canonical.host}:${canonical.port}`, { timeoutMs: 400, intervalMs: 20 });
+
+  for (const body of [{ status: 'ok', service: 'other-service' }, { status: 'ok' }]) {
+    // eslint-disable-next-line no-await-in-loop
+    const endpoint = await withReadyResponder(t, (_req, res) => sendReady(res, 200, body));
+    // eslint-disable-next-line no-await-in-loop
+    await assert.rejects(
+      waitForServerReady(`http://${endpoint.host}:${endpoint.port}`, { timeoutMs: 80, intervalMs: 20 }),
+      /Timed out waiting for server/,
+    );
+  }
+});
+
+async function assertReadinessCancelsPromptly(wait, controller) {
+  const startedAt = Date.now();
+  const cancelled = assert.rejects(wait, (error) => error.code === 'ESERVERREADINESSCANCELLED');
+  setTimeout(() => controller.abort(), 20);
+  await Promise.race([
+    cancelled,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error('readiness outlived its cancellation')), 1_000)),
+  ]);
+  assert.ok(Date.now() - startedAt < 1_000);
+}
+
+test('cancellation settles a readiness wait stuck in its fetch, with the child alive', async (t) => {
+  const stalled = await withReadyResponder(t, () => {});
+  const controller = new AbortController();
+  await assertReadinessCancelsPromptly(waitForServerReady(`http://${stalled.host}:${stalled.port}`, {
+    timeoutMs: 30_000,
+    childProcess: Object.assign(new EventEmitter(), { exitCode: null, signalCode: null }),
+    signal: controller.signal,
+  }), controller);
+});
+
+test('cancellation settles a readiness wait in its delay and an attended wait that would extend forever', async (t) => {
+  const notReady = await withReadyResponder(t, (_req, res) => sendReady(res, 503, {}));
+  const controller = new AbortController();
+  await assertReadinessCancelsPromptly(waitForServerReady(`http://${notReady.host}:${notReady.port}`, {
+    timeoutMs: 1,
+    intervalMs: 30_000,
+    continueWhileChildAlive: true,
+    onTimeoutCheckpoint: () => {},
+    childProcess: Object.assign(new EventEmitter(), { exitCode: null, signalCode: null }),
+    signal: controller.signal,
+  }), controller);
+});
+
+test('a readiness wait cancelled before it starts never probes', async (t) => {
+  let probes = 0;
+  const endpoint = await withReadyResponder(t, (_req, res) => {
+    probes += 1;
+    sendReady(res, 200, { status: 'ok', service: 'happier-server' });
+  });
+  await assert.rejects(
+    waitForServerReady(`http://${endpoint.host}:${endpoint.port}`, { timeoutMs: 400, signal: AbortSignal.abort() }),
+    (error) => error.code === 'ESERVERREADINESSCANCELLED',
+  );
+  assert.equal(probes, 0);
+});
+
+test('a child exit stays the readiness failure even though it also cancels the attempt', async () => {
+  const child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null });
+  const controller = new AbortController();
+  child.once('exit', () => controller.abort());
+  const wait = waitForServerReady('http://127.0.0.1:1', {
+    timeoutMs: 5_000,
+    intervalMs: 30_000,
+    childProcess: child,
+    signal: controller.signal,
+  });
+  setTimeout(() => {
+    child.exitCode = 1;
+    child.emit('exit', 1, null);
+  }, 20);
+  await assert.rejects(wait, /exited before becoming ready/);
 });

@@ -31,6 +31,11 @@ import {
     relocateServerRuntimeArtifactClosure,
     resolveServerRuntimePayloadRootFromBinaryPath,
 } from './serverRuntimeArtifactLayout.js';
+import {
+    SERVER_STARTUP_RECEIPT_NONCE_ENV,
+    SERVER_STARTUP_RECEIPT_PATH_ENV,
+    waitForServerStartupReceipt,
+} from './serverStartupReceipt.js';
 
 const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
     'config',
@@ -41,9 +46,6 @@ const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
 const DEFAULT_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS = 120_000;
 const MAX_RELAY_RUNTIME_INSTALL_HEALTHCHECK_TIMEOUT_MS = 600_000;
 const RELAY_RUNTIME_STARTUP_RECEIPT_WAIT_MS = 10_000;
-const RELAY_RUNTIME_STARTUP_RECEIPT_POLL_MS = 100;
-const SERVER_STARTUP_RECEIPT_PATH_ENV = 'HAPPIER_SERVER_STARTUP_RECEIPT_PATH';
-const SERVER_STARTUP_RECEIPT_NONCE_ENV = 'HAPPIER_SERVER_STARTUP_RECEIPT_NONCE';
 
 type LegacyRelayRuntimeInstallRootMigration = Readonly<{
     platform: NodeJS.Platform;
@@ -334,34 +336,18 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
     await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return Boolean(error && typeof error === 'object' && (error as { code?: unknown }).code === 'EPERM');
-    }
-}
-
 async function waitForRelayRuntimeStartupReceipt(params: Readonly<{
     path: string;
     nonce: string;
-}>): Promise<Readonly<{ nonce: string; pid: number }>> {
-    const deadline = Date.now() + RELAY_RUNTIME_STARTUP_RECEIPT_WAIT_MS;
-    while (Date.now() <= deadline) {
-        const receipt = await readFile(params.path, 'utf8')
-            .then(tryParseJsonObject)
-            .catch(() => null);
-        const nonce = typeof receipt?.nonce === 'string' ? receipt.nonce : '';
-        const pid = typeof receipt?.pid === 'number' && Number.isSafeInteger(receipt.pid)
-            ? receipt.pid
-            : 0;
-        if (nonce === params.nonce && pid > 0 && isProcessAlive(pid)) {
-            return { nonce, pid };
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, RELAY_RUNTIME_STARTUP_RECEIPT_POLL_MS));
-    }
-    throw new Error('[relay-runtime] relay runtime startup attestation did not arrive');
+}>): Promise<void> {
+    await waitForServerStartupReceipt({
+        path: params.path,
+        nonce: params.nonce,
+        requireApi: false,
+        timeoutMs: RELAY_RUNTIME_STARTUP_RECEIPT_WAIT_MS,
+    }).catch(() => {
+        throw new Error('[relay-runtime] relay runtime startup attestation did not arrive');
+    });
 }
 
 async function probePortOpen(params: Readonly<{ host: string; port: number; timeoutMs: number }>): Promise<boolean> {

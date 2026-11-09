@@ -262,6 +262,309 @@ These additions describe development source, not released availability.
 
 ### Session organization (development)
 
+Independent sessions started by the `session_agent` surface of `session.spawn_new`
+carry optional protocol-owned metadata
+`sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId }`. The action's execution
+context supplies the creator, never tool arguments, a title, a path, or `forkV1`.
+Replay-seeded creation includes it in the initial metadata; ordinary daemon
+creation persists it through the existing versioned metadata writer before the
+action returns. Startup and resume preserve an existing origin. Missing,
+malformed, or unsupported origin means unknown. There is no historical backfill.
+`forkV1` remains transcript ancestry and confers no creator identity.
+
+The sidebar derives automatic parent placement from that origin only when the
+creator is an accessible, unarchived session on the same server. Account appearance
+display content can separately carry `placement: { kind: 'session', parentSessionId }`
+or `{ kind: 'topLevel' }`, and `identity: 'independent'`. Explicit placement wins
+over automatic origin; explicit pins and folder assignments win over both. Invalid,
+self-linked, cyclic, missing, filtered, or cross-server parents leave the child
+discoverable at top level. The row and native context menus show one placement
+command near the bottom, just above the lifecycle actions: a top-level row offers
+**Nest under…**, which opens the existing session selector and writes only manual
+placement (so coordinator-created siblings can be organized without inventing creator
+provenance); a nested row offers **Make standalone**, which writes only
+`placement: { kind: 'topLevel' }`. To change parents, make the row standalone and nest
+it again. Each edit merges only its own display fields, retaining color, identity, and
+unknown display data. Search does not hide matches behind collapsed session parents.
+Section, project, and folder collapse apply after parent placement: a nested row follows
+its parent's visibility, so a pinned parent keeps its own child disclosure and children
+while their original date section is collapsed. Drag-and-drop nesting is deferred
+owner scope.
+
+Sessions can also carry an explicit, mutable role in protocol-owned metadata
+`sessionRoleV1: { v: 1, role: 'planner' | 'project_lead' | 'worker' | 'reviewer' | 'delegate' | 'custom:<uuid>', name?, color?, instructions, assignmentId, assignedAt }`.
+A new assignment offers Planner, Project Lead, Worker, and Reviewer. `delegate` remains a readable
+legacy identity only: it is not silently mapped to Worker or offered for new assignment. Existing
+Planner and Delegate snapshots, including their exact instructions, remain authoritative until an
+explicit reassign, reapply, or clear. Account role catalogs can also contain first-class custom
+identities with stable generated `custom:<uuid>` ids, editable display names, instructions, and
+opaque `#RRGGBB` badge colors. A custom assignment snapshot requires and retains its name and color,
+so a deleted profile remains correctly named, colored, and prompt-resumable in running and historical
+sessions even though it is no longer offered for a new assignment.
+A role can be assigned, reassigned, reapplied, or cleared at any time without forking. It never
+changes permission mode, provider/model, control or ownership, creator or fork provenance, manual
+placement, nesting, pins, folders, avatar, session-appearance color, or title, and it is never inferred from a title,
+provider, agent-started state, nesting, or delegation. `instructions` is the exact snapshot
+resolved when the role was assigned: account-wide **Role profiles** (Settings > Sub-agents, account
+setting `sessionRoleProfilesV1`, separate from `executionRunsGuidanceEntries`) supply one optional
+override per role over the built-in defaults, and editing them never rewrites an existing
+assignment. The snapshot is a verbatim copy of an admitted account-settings value, so it adds no
+separate size limit. Missing, malformed, or unknown future role data reads as no role guidance. A
+syntactically valid custom id is readable only with its self-contained name and badge-color snapshot.
+Existing legacy/custom instruction keys and unknown passthrough fields remain in the v1 settings
+object through unrelated edits. New defaults affect only a future assignment or explicit reapply;
+there is no settings or active-session migration. The four current built-in ids and names are
+stable: this v1 setting edits their instruction and badge-color overrides but does not rename or remove them;
+a display alias changes only their labels (below).
+Legacy `delegate` overrides remain readable and round-trip even though `delegate` is not offered
+for a new assignment. `sessionRoleProfilesV1.customRoles` owns the custom catalog. Editing a custom
+profile affects future assignments and an explicit reapply only. Removing one deletes only that
+catalog entry; it never rewrites, clears, renames, reassigns, or re-messages an existing session.
+Adding, editing, or removing one profile preserves unknown top-level and per-profile fields.
+
+An optional `sessionRoleProfilesV1.displayNamesByRole` gives a built-in role (`planner`, `project_lead`,
+`worker`, `delegate`, `reviewer`) a display alias for badges and labels. It is presentation only and
+absent by default. Agent-facing names never read it: the role snapshot carries no alias, so
+`Role assignment:`, `Current role assignment:`, and `Current run role:` keep the canonical built-in
+name, and a visible run's role echo keeps the profile's canonical `name`. Changing an alias rewrites
+no session and queues no instruction. A malformed alias reads as absent without discarding the rest
+of the profiles. Custom roles have no alias; their own `name` is already the label.
+
+Role profiles always come from the target session's own server and account: the active account
+uses its live settings, another account on this device uses its persisted settings plus pending
+edits, and an account never synchronized on this device fails closed (no role written, no
+instruction queued) rather than falling back to the active account's profiles. Until a target
+catalog resolves, role pickers and action-field options expose only the four built-ins (plus the
+explicit clear option where applicable), never custom roles retained from another account. The CLI
+resolves from its own authenticated account, which owns every session it can address. Fresh machine
+and daemon creation admit a custom assignment snapshot only when its id is still present in that
+target account catalog. Existing-session attach, resume, and persisted metadata remain
+catalog-independent so a deleted custom profile's self-contained snapshot continues to work.
+
+Delivery has two paths. At creation (`session.spawn_new` `role`, or the optional **Role** control
+in the Simple and Wizard New Session composer, kept in device-local draft state across reload and
+retry), the resolved snapshot travels as the daemon `sessionRoleV1` spawn option into the session's
+initial metadata, and the canonical coding prompt builder adds a `coding.session_role` block from it
+before the first provider prompt, independently of execution-run guidance and of the shared base,
+so a message that resets `appendSystemPrompt` to null still carries it. The same block is
+rebuilt from the retained snapshot whenever a runner starts or resumes, so the role survives
+provider restarts without switching to newer defaults. Claude keeps its original default base on
+provider resume and after an `appendSystemPrompt` reset or custom append, and re-establishes only
+the retained role block through the same builder. A resuming runner receives the validated
+`sessionRoleV1` through its short-lived attach handoff (the attach file, written by the daemon and
+`happier resume` from the decrypted metadata and deleted on read) and seeds it into the attach base
+metadata, so the first provider launch carries the role even when the server metadata snapshot is
+unavailable; a server snapshot, when present, stays authoritative. A Claude fast-start resume waits
+for that attach outcome before its first local launch; fresh sessions keep launching immediately.
+Older attach writers omit the field and older readers ignore it. Startup, resume, and attach always keep the
+persisted role or its absence. For a live assign, reassign, or reapply from the row or native
+context menu (**Set role…**), or from the `session.role.set` action (`role` is `planner`,
+`project_lead`, `worker`, `reviewer`, a current catalog `custom:<uuid>`, or the explicit clear `none`; exposed to session agents, MCP, and the
+CLI), the caller records the snapshot through the canonical metadata CAS writer
+and then queues a visible chat instruction ("Role assignment: Reviewer", the instructions, and a
+note that the assignment changes no permissions, tools, model, or ownership) through the canonical
+pending-outbox path with an id derived from the assignment, so it is read on the provider's next
+normal turn. Clearing removes only `sessionRoleV1` and queues a visible clearing instruction. UI and
+agent paths share one protocol plan (`planSessionRoleChangeV1`) for the snapshot, message text,
+and a fresh per-execution assignment and message id. The action schema declares its role choices
+through the protocol dynamic-option source; UI and CLI executors resolve that source from the
+target account's canonical catalog, omit legacy Delegate and deleted custom profiles, and append
+`none` only for the live-set action. An action's `actionRequestId` is correlation,
+not identity: agent tool bridges pass MCP JSON-RPC ids, which restart per client connection, so
+every `session.role.set` without `resumeActionRequest` is a new visible role change, including a
+recycled id or a provider re-running a completed tool call. The id is recorded on the assignment
+(`sessionRoleV1.actionRequestId`). Only an explicit resume (`resumeActionRequest`, CLI
+`--resume-action-request`) resolves a prior attempt: an assignment while the recorded assignment
+still carries that `actionRequestId` and the requested role, replaying its persisted snapshot and
+message id. A clear
+retains no identity, so a resumed clear is never resolved. Any unresolvable resume returns
+`role_change_not_current` and writes and sends nothing, so it never overwrites or clears a later role
+change. If the role cannot be recorded nothing is queued; if the instruction cannot be
+queued, the UI says the role change was saved but not yet delivered and offers Retry (the same
+message), and the action returns `role_instruction_not_delivered` with `roleSaved: true` and the
+exact message and id to resend. Pi receives the role block once: its bridge prompt carries it, and
+Pi's supplement pass explicitly omits it. No hidden live system-prompt mutation is used.
+Reporting between Planner, Project Lead, Worker, and Reviewer is behavioral guidance only. For substantial
+delegated work, the built-in Project Lead default instructs the Lead to create its bounded Workers and independent
+Reviewer itself through `session.spawn_new`, with an explicit stable role id at creation, before substantive
+implementation. The spawn path automatically records immutable `sessionOriginV1.creatorSessionId`. A successful exact
+role-aware spawn receipt is the Lead's admission signal; in development source the Lead can also confirm the child's
+role and creator through the `session.status.get` and `session.list` readback described under visible agents
+below. The Lead records the requested stable role and returned child id,
+confirms the child is reachable/active, monitors role-conforming behavior and output, inspects final child output, and
+acknowledges it. Creation failure, an unavailable child, or nonconforming behavior is reported visibly rather than
+retitling/tagging the Session or continuing with an unassigned child. A child may optionally add
+a provenance-labeled `session.message.send` event with `kind: "notice"` when the task packet supplies the Lead id. On
+the `session_agent` surface the runtime composes `from` as `<caller session id> <role name>`; a supplied sender naming
+another session returns `notice_sender_mismatch`. Such a notice is visibility only: it cannot wait for or wake the Lead, override
+model/permission settings, or act as a user instruction. Ordinary spawned Sessions have no automatic completion
+delivery to their creator; `notifyParentOnCompletion` belongs only to execution runs and is not a session-spawn relay.
+
+If the original `session.spawn_new` response is unavailable, the public read-only
+`session.spawn_recover` action accepts the exact tracked spawn nonce. It resolves exactly one canonical
+`session.spawn_new` action operation on the current parent machine, reads its terminal result through the
+action-operation owner, and admits the returned child only when the child remains on that machine, its immutable
+`sessionOriginV1.creatorSessionId` names the current caller, and it retains a complete role instruction snapshot.
+Pending, failed, cancelled, missing, ambiguous, or identity-mismatched attempts return an explicit failure and never
+create, rename, retag, reassign, or otherwise mutate a Session.
+
+Existing assignment snapshots and custom profile overrides remain authoritative; changed built-in defaults apply only
+to a future assignment or explicit reapply. Installed/runtime acceptance inspects the actual admitted role prompt
+(`session.prompt_preview.get`, development source) and the persisted creator id. Mixed-version preservation is source-inspected, not vector-tested, and
+is a local-dogfood assumption: the released 0.2.21 UI and 0.2.20 CLI metadata writers spread
+unknown fields, and the released UI merges account-settings edits onto the raw server settings.
+A current daemon may advertise `daemonSessionRoleV1SpawnSupported: true` as a diagnostic machine-metadata
+fact, but metadata is not spawn admission because a downgraded daemon can retain fields written by its
+predecessor. Fresh UI and agent-machine creation with an explicit role therefore uses only the exact
+`spawn-happy-session.role-v1` daemon RPC. A daemon that does not actively register that method receives
+no fallback request, and the caller returns an operation-scoped update/reconnect error instead of silently
+creating an unassigned session. An explicit role without a target machine identity is likewise refused
+rather than sent to the legacy local control endpoint. Roleless creation retains the provider-safe to
+legacy fallback. The role-aware daemon method rejects a missing or null snapshot before tracked-spawn,
+custody, or provider execution. Fresh assignment additionally requires nonblank retained instructions,
+a nonblank assignment id, and an assignment timestamp before any creation boundary accepts it; persisted,
+resume, and legacy readers remain permissive so historical label-only snapshots stay readable. The
+underlying ingress still validates the
+assignable snapshot and current custom-catalog membership, and the runtime builds the first provider
+prompt from the seeded metadata before the first substantive task. Rows show the role as a text badge before the avatar, inside the card, without moving
+the card edge or nesting indent. A custom badge uses its retained name and presentation color in
+addition to text, never color alone.
+
+### Visible agents and role-bearing runs (development contract)
+
+Status: development source, not released. The protocol contract (`packages/protocol/src/executionRunStartV2.ts` and the
+metadata owners named below) and its CLI runner, daemon, and UI consumers are implemented together; the composed
+Lead-run acceptance on a live stack has not run yet.
+
+- **Visibility and role on runs.** `review.start`, `subagents.plan.start`, `subagents.delegate.start`, and
+  `execution.run.start` accept optional `visibility: 'hidden' | 'session'`, `role`
+  (`planner | worker | reviewer | custom:<uuid>`; `project_lead` is refused on runs), and `targetSessionId`. Runs are
+  hidden by default. The fields are accepted only on the `session_agent`, `mcp`, and `cli` surfaces; elsewhere they
+  return `execution_run_visibility_unsupported` or `execution_run_role_unsupported`, and voice and memory runs never
+  carry them. A hidden roleless start, including an explicit `visibility: 'hidden'`, keeps the released
+  `execution.run.start` request byte-for-byte, and the fields never reach `intentInput`.
+- **Owner defaults.** Account setting `visibleAgentsV1 { v: 1, defaultVisibilityByIntent, defaultRoleByIntent,
+  defaultTargetByIntent?, assembleTeamOnLeadAssignment, teamTemplate? }` (lenient per field, passthrough) ships
+  every intent hidden, no default roles, and assembly off. `resolveExecutionRunVisibleDefaultsV1` is the one
+  resolver: visibility comes only from the start request, so a saved `defaultVisibilityByIntent` never promotes a
+  run and a start without visibility keeps the released hidden path; an explicit role wins; a default role fills
+  only an explicit visible start; a role is never inferred from the intent. The start echo reports
+  `roleSource: 'explicit' | 'settings' | 'none'`.
+- **Exact method, no fallback.** A visible or role-bearing start uses only the session RPC `execution.run.start.v2`
+  (`ExecutionRunStartV2RequestSchema`). Every older start entry (`execution.run.start`, the embedded `start` of
+  `execution.run.ensureOrStart`, and the CLI `session plan|delegate|review start` and `session run start` commands)
+  rejects a request carrying any field in `EXECUTION_RUN_START_V2_ONLY_FIELDS`. A host or runner without the method
+  yields the typed unsupported error and starts nothing. The response echoes `visibility`, `binding`
+  (`created | reused`, null when hidden), `linkedSessionId`, `role { id, name, assignmentId }`, `roleSource`, and
+  the effective `permissionMode` and `modelId`; every caller checks it with `verifyExecutionRunStartV2EchoV1`, and a
+  missing or mismatched echo is an unassigned run that is reported, not used. The echoed `assignmentId` is the
+  child's actual role assignment (the created child's snapshot, or the bound child's recorded `sessionRoleV1`), so
+  it matches `session.status.get` readback. An ambiguous start (`execution_run_start_ambiguous`, including a server
+  forward cutoff acknowledged as the socket.io ACK timeout after the request was sent) is resumed with the same
+  `startRequestId`, which returns the admitted run before bind admission runs; it is never repeated as a new start.
+- **Binding.** `targetSessionId` binds an existing child only when its origin creator is the hosting session, its
+  role matches the intent (`EXECUTION_RUN_BIND_ROLE_BY_INTENT_V1`: review → reviewer, plan → planner, delegate →
+  worker; a custom role only when passed explicitly), it has no active linked run, and its current permission mode,
+  model, and session config already equal the run's; an archived child is refused before any link is written.
+  Otherwise `execution_run_bind_rejected` with reason `foreign_child | child_archived | role_mismatch | child_busy |
+  controls_mismatch`. A run never changes a child's controls; a change
+  during a bound run fails it with `controls_changed`. Turn-stream entries on a visible run return
+  `execution_run_visible_turn_entry_unsupported`.
+- **Run link.** A visible child carries `executionRunLinkV1 { v: 1, parentSessionId, runId, turnEpoch }`, seeded
+  before a created child's first turn (child environment `HAPPIER_EXECUTION_RUN_LINK_V1_JSON`) and written through
+  the CAS metadata writer before a bound child's task message, whose meta carries the same link under
+  `happierExecutionRunLinkV1`; a caller-supplied copy is stripped from user-facing sends. The child wakes the parent
+  through the server-relayed session RPC `session.executionRun.childTurn.report.v1`
+  (`{ runId, linkedSessionId, turnEpoch, kind: 'linked' | 'turn_completed', turnStatus?: 'completed' | 'failed' }`;
+  a failed child turn is reported too); the parent reads the child's transcript forward from the task message. A child that never sends `linked` fails the run with
+  `execution_run_visible_child_unresponsive`. Stopping a run because its child was archived passes
+  `reason: 'child_archived'`.
+- **Visible controller.** The parent runner hosts a visible run as a `session` controller with no provider backend of
+  its own. Bind admission runs before any run state exists. A created child receives the run's mapped permission mode
+  (`permissionModeForExecutionRunPolicy`), model, and role snapshot, and its first message is exactly the run
+  profile's prompt; a bound child receives the task through `sendSessionMessage` with no control overrides.
+  `execution.run.send` queues into the child (`prompt` → `enqueue`, `steer_if_supported` → `steer_if_active`,
+  `interrupt` → `steer_now`; there is no interrupt action kind). Each report wakes one forward transcript read; the
+  first valid output after the task message completes the run exactly once through the same bounded-completion and
+  single-repair helper hidden runs use, and earlier invalid outputs the user followed up are skipped. The `linked`
+  window is the existing child-provisioning backstop, and the task deadline is the run's bounded timeout (none by
+  default), ending in one transcript re-read. Without depending on that deadline, the parent re-reads the child
+  transcript once each at 1, 5, and 15 minutes after its latest accepted wake-up (`linked`, a turn report, or
+  rehydration), then stops, and a child retries a failed report with bounded backoff (1 s, 4 s, 1, 5, and 15 minutes;
+  a newer turn supersedes a waiting retry). A failed child turn without a valid result fails the run with
+  `execution_run_visible_child_turn_failed` at the next scheduled re-read, unless the child's usage-limit recovery is
+  in progress (`isSessionUsageLimitRecoveryInProgressV1`), in which case the run waits for the resumed turn; a failed
+  turn's partial output is not repaired. A repair prompt that cannot be delivered fails the run with
+  `execution_run_visible_repair_undelivered`. A mode or model change, seen in child metadata or in a turn's recorded
+  message controls, fails the run with `controls_changed`. The completion relay to the parent uses the fixed local id
+  `execution-run-completion:<runId>`; its delivery wait is registered before the enqueue, and a relay found by a
+  re-read carries the epoch of the child's own latest report record.
+- **Recovery.** The daemon run marker carries `visibleRunV1` with identifiers and controls only (D18: link, binding,
+  permission mode, notify flag, controls, role `{ id, assignmentId, roleSource }`, whether the child confirmed the
+  link, last accepted turn epoch, absolute deadline; never task instructions or role text) and is rewritten on each
+  accepted report and on the link confirmation. On startup a parent runner reinstalls its running visible runs from
+  those markers, keeps their epoch and deadline, reads the task text and the role back from the child Session,
+  re-arms the handshake when the child had not confirmed the link, rewrites each marker under its own process, and
+  re-reads the child transcript forward from the task message; a terminal run is not reinstalled. Daemon marker GC keeps a running visible marker whose runner exited until its
+  deadline plus the terminal-marker retention. A restarted child re-sends `linked` and resumes its epoch from its
+  own `report` record.
+- **Turn report and delivery to the Lead (R21).** The link carries three records, each with one writer, all
+  written through the existing cross-session CAS metadata writer: `report { turnEpoch, reportedAt, ack: 'pending' |
+  'accepted' | 'failed', attempts }` by the child runner from the outcome of its report call; `relay { turnEpoch,
+  status: 'queued' | 'failed', localId, at }` by the parent runner from its completion-relay enqueue (queue
+  acceptance, not delivery; the enqueue returns no persisted-write receipt); and `delivery { turnEpoch, status:
+  'verified', localId, transcriptSeq, verifiedAt }` by the parent runner only after its own turn-input binding of that
+  `localId`, or its observation of the committed transcript row for it (the receipt point on delivery paths that emit
+  no binding, such as Claude remote), triggers a read of the Lead's persisted transcript that finds the completion
+  input carrying the run's structured `runId`; the wait stays registered until such a row is found. `applyExecutionRunLinkDeliveryV1`
+  admits delivery only for a queued relay of the same turn and local id, and every patcher ignores another run's
+  link. `resolveExecutionRunLinkDeliveryStateV1` is the one display derivation (`sent | queued | relay_failed |
+  reported | report_pending | report_failed | not_sent`) for the latest turn; only a verified delivery is `sent`.
+  Status readback and the run state (`linkState`) expose the records.
+- **Origin.** `sessionOriginV1` keeps `kind: 'agent'` and `creatorSessionId` and gains an optional `via`:
+  `{ kind: 'execution_run', runId }` or `{ kind: 'team_assembly', assignmentId }` (`buildSessionOriginV1`,
+  `readSessionOriginViaV1`). An origin without `via` is unchanged, older readers still nest by creator, and an
+  unknown future `via` reads as null while the origin stays readable.
+- **Team assembly.** `planTeamAssemblyV1` returns the idle placeholders (default Reviewer and Worker, or the
+  template's entries with their model, provider, and permission mode) for a `project_lead` Lead when the owner
+  setting is on. Only the Lead's own runner executes it, and it records `teamAssemblyV1 { v: 1, assignmentId,
+  created, skipped, failed, completedAt }` in the Lead's metadata so assembly is idempotent per assignment; a role
+  already filled by an assembled or run-hosted child from the same Lead, archived or recorded as created, is skipped.
+  The runner attempts assembly on startup and when a new Project Lead assignment appears in its metadata, creates
+  placeholders through `createSpawnedSession` with origin `via: team_assembly`, and posts the result as a visible
+  notice in the Lead's transcript; a spawn failure is recorded and announced, and nothing hidden is created; a spawn that errors after its session
+  already exists is recorded as created, read back from the Lead's children.
+- **Readback.** `readSessionLineageReadbackV1` projects `role`, `origin { creatorSessionId, via? }`,
+  `executionRunLink { parentSessionId, runId }`, and a Lead's `teamAssembly` for `session.status.get` and
+  `session.list` rows. Run state and `execution.run.get` add `visibility`, `binding`, `linkedSessionId`, `role`,
+  `roleSource`, and the effective `modelId`; the completion payload adds `role`, `linkedSessionId`, and the
+  completing turn's `controls`, and the completion text names the role and linked session.
+- **Run-scoped role text.** `buildExecutionRunRolePromptBlockTextV1` renders the catalog instructions with a run
+  scope note (the role applies to this run only, the run's output contract takes precedence, session-only steps do
+  not apply). Each run profile composes it first, then the caller's instructions, then its output contract.
+- **Standalone default.** Account setting `standaloneSessionPromptV1 { v: 1, text }` (shipped empty) is snapshotted
+  into a fresh roleless session's metadata as `standaloneSessionPromptSnapshotV1 { v: 1, text, sourceUpdatedAt? }`
+  (daemon starts pass it as `HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON`; terminal starts use the runner's loaded
+  settings). The coding prompt builder renders it as `coding.standalone_default` from metadata only while the
+  session has no role, so it survives resume and prompt resets; assigning a role removes it from the prompt without
+  rewriting the snapshot.
+- **Prompt preview.** `session.prompt_preview.get` (session RPC `session.promptPreview.get.v1`, also on the
+  `session_agent` surface) returns the live runner's last resolved coding prompt, its block ids and scopes, the launch
+  form (`fresh`, or `retained` from the Claude retained launch path), and provider notes. A runner that has not
+  resolved a prompt yet returns `prompt_not_resolved`.
+
+Rows participating in session nesting cannot use flat directional or drag ordering.
+Explicit folder assignment remains available and does not write flat group order
+for those rows. The canonical list move policy is checked again at commit.
+
+These controls affect presentation only. They do not change the session ID,
+transcript, immutable origin, sharing, permission modes, runtime access, or the
+parent agent's ability to continue communicating. An agent-started label and
+avatar shape distinguish the default identity, including a text marker in
+provider-logo and no-avatar modes. The row menu shows creator provenance. A parent's
+expand/collapse disclosure is the final trailing control of its card. Native
+transcript-only subagents are not converted to sessions.
+
 `GET /v2/session-organization` returns the account-scoped organization snapshot.
 Pins, folders, tags, ordering and workspace/group labels retain their existing
 collections. Per-session appearance uses a separate `sessionAppearances`
@@ -293,6 +596,40 @@ The existing organization mutation owner commits the row, increments the account
 organization checkpoint, and publishes a change hint with
 `scope: 'sessionAppearances'` and the affected `sessionIds`. Account and session
 deletion cascade to their appearance rows in PostgreSQL, SQLite and MySQL.
+
+Placement and independent-identity presentation are protected from released
+0.2.21 color writers by the same session-appearance owner using a separate,
+nullable `presentationDbValue` carrier. `GET
+/v2/session-organization/appearance-presentations` returns
+`{ presentations: [{ sessionId, presentation, updatedAt }] }`; `PUT
+/v2/session-organization/appearance-presentations/:sessionId` accepts
+`{ presentation }`. The content envelope is opened and sealed with the same
+account mode as appearance display. A current client treats a missing route as
+unsupported and fails an explicit placement/identity edit visibly; color edits
+continue through the released appearance route. Released clients can therefore
+replace or clear their legacy color display without deleting the protected
+placement/identity bytes, including for E2EE accounts where the server cannot
+merge opaque fields. The row remains as a presentation-only tombstone when the
+legacy display is cleared and the protected carrier exists. The legacy embedded
+placement/identity shape is a readable development predecessor and is copied
+into the protected carrier on the next explicit presentation edit; thereafter
+the protected carrier is authoritative. There is still one appearance decision
+owner, not a second placement registry.
+
+The experimental account feature `sessions.lineageAppearancePresets` is absent
+and off by default. When enabled, `sessionLineageAppearancePresetsV1` may carry
+passthrough-safe `parent` and `child` presets with optional list density and an
+existing avatar-style registry id. A top-level session uses the parent preset
+only when it has children; every nested row uses the child preset even when it
+also has children and keeps a disclosure. Missing values inherit the ordinary
+session-list presentation. Disabling the feature suppresses only this effective
+presentation and does not clear the stored presets or any session organization,
+role, identity, provenance, or runtime state. Released 0.2.21 account-setting
+writes merge onto the raw server baseline before plain or encrypted sealing, so
+the unknown toggle and preset keys survive an unrelated old-client edit. FlashList recycling types use
+the same effective per-row density result as row rendering, including parent/child presets and their
+updates, while retaining body/tail adjacency classes. Narrow native rows keep compact artwork but reserve
+48dp row and disclosure interaction geometry on iOS and Android; web retains its compact row geometry.
 Project colours remain client-owned display content inside workspace labels.
 These additions describe development source, not released availability.
 

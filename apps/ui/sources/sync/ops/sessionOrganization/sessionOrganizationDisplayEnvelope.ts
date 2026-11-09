@@ -147,7 +147,8 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
     const hasEncryptedDisplay = params.snapshot.folders.some((folder) => folder.display?.t === 'encrypted')
         || params.snapshot.tags.some((tag) => tag.display?.t === 'encrypted')
         || params.snapshot.labels.some((label) => label.display?.t === 'encrypted')
-        || params.snapshot.sessionAppearances?.some((appearance) => appearance.display.t === 'encrypted');
+        || params.snapshot.sessionAppearances?.some((appearance) => appearance.display.t === 'encrypted')
+        || params.snapshot.sessionAppearancePresentations?.some((entry) => entry.presentation.t === 'encrypted');
     if (!hasEncryptedDisplay) return params.snapshot;
 
     const machineKey = await getAccountMachineKey(params.credentials);
@@ -168,6 +169,11 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
             const display = await openDisplayEnvelopeWithMachineKey(machineKey, appearance.display);
             return display && display !== appearance.display ? { ...appearance, display } : appearance;
         })) : undefined;
+    const sessionAppearancePresentations = params.snapshot.sessionAppearancePresentations
+        ? await Promise.all(params.snapshot.sessionAppearancePresentations.map(async (entry) => {
+            const presentation = await openDisplayEnvelopeWithMachineKey(machineKey, entry.presentation);
+            return presentation && presentation !== entry.presentation ? { ...entry, presentation } : entry;
+        })) : undefined;
 
     return {
         ...params.snapshot,
@@ -175,5 +181,6 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
         tags,
         labels,
         ...(sessionAppearances ? { sessionAppearances } : {}),
+        ...(sessionAppearancePresentations ? { sessionAppearancePresentations } : {}),
     };
 }

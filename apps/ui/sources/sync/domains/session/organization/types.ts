@@ -6,6 +6,7 @@ import type {
     SessionOrganizationPin,
     SessionOrganizationSnapshot,
     SessionOrganizationSessionAppearance,
+    SessionOrganizationSessionAppearancePresentation,
     SessionOrganizationSnapshotRequest,
     SessionOrganizationTag,
 } from '@happier-dev/protocol';
@@ -23,7 +24,9 @@ export type NormalizedSessionOrganizationState = Readonly<{
     tagAssignmentsBySessionKey: Readonly<Record<string, readonly string[]>>;
     attentionStandingsBySessionKey: Readonly<Record<string, SessionAttentionStanding>>;
     appearancesBySessionKey: Readonly<Record<string, SessionOrganizationSessionAppearance>>;
+    appearancePresentationsBySessionKey?: Readonly<Record<string, SessionOrganizationSessionAppearancePresentation>>;
     sessionAppearancesSupportedByServerId: Readonly<Record<string, boolean>>;
+    sessionAppearancePresentationsSupportedByServerId?: Readonly<Record<string, boolean>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;
@@ -54,7 +57,9 @@ export type SessionOrganizationProjection = Readonly<{
     attentionStandingsBySessionId: Readonly<Record<string, SessionAttentionStanding>>;
     appearancesBySessionId: Readonly<Record<string, SessionAppearanceColor>>;
     sessionAppearancesBySessionId: Readonly<Record<string, SessionOrganizationSessionAppearance>>;
+    sessionAppearancePresentationsBySessionId?: Readonly<Record<string, SessionOrganizationSessionAppearancePresentation>>;
     sessionAppearancesSupported: boolean;
+    sessionAppearancePresentationsSupported?: boolean;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;

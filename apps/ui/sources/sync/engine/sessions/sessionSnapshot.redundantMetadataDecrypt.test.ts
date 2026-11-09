@@ -8,6 +8,7 @@ import {
     preserveSessionListRenderableTransientState,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListCacheEntryFromRenderable } from '@/sync/domains/state/warmCacheAdapters';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type { V2SessionRecord } from '@happier-dev/protocol';
@@ -29,6 +30,30 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 const SESSION_ID = 'session_redundant_decrypt';
 const CREATED_AT = 1_699_000_000_000;
+const TEAM_ORIGIN = {
+    v: 1 as const,
+    kind: 'agent' as const,
+    creatorSessionId: 'lead-session',
+    via: { kind: 'team_assembly' as const, assignmentId: 'team-1' },
+};
+const VERIFIED_EXECUTION_RUN_LINK = {
+    v: 1 as const,
+    parentSessionId: 'lead-session',
+    runId: 'run-1',
+    turnEpoch: 0,
+    report: { turnEpoch: 1, ack: 'accepted' as const, reportedAt: CREATED_AT + 100, attempts: 1 },
+    relay: { turnEpoch: 1, status: 'queued' as const, localId: 'completion-1', at: CREATED_AT + 200 },
+    delivery: { turnEpoch: 1, status: 'verified' as const, localId: 'completion-1', transcriptSeq: 12, verifiedAt: CREATED_AT + 300 },
+};
+const DECRYPTED_METADATA = {
+    path: '/repo',
+    host: 'host',
+    machineId: 'machine-1',
+    name: 'Reviewer session',
+    sessionOriginV1: TEAM_ORIGIN,
+    sessionRoleV1: { v: 1 as const, role: 'reviewer' as const },
+    executionRunLinkV1: VERIFIED_EXECUTION_RUN_LINK,
+};
 
 type RowMovement = Readonly<{
     seq: number;
@@ -141,12 +166,12 @@ type DecryptCounter = Readonly<{ calls: () => number }>;
 
 function createEncryptionHarness(counter: { count: number }): SessionListEncryption & DecryptCounter {
     const sessionEncryption = {
-        decryptMetadata: async () => ({ path: '/repo', host: 'host', name: 'session' }),
+        decryptMetadata: async () => DECRYPTED_METADATA,
         decryptAgentState: async () => ({}),
-        decryptSessionSnapshotState: async (metadataVersion: number) => {
+        decryptSessionSnapshotState: async () => {
             counter.count += 1;
             return {
-                metadata: { path: '/repo', host: 'host', name: `session-v${metadataVersion}` },
+                metadata: DECRYPTED_METADATA,
                 agentState: {},
             };
         },
@@ -252,6 +277,89 @@ afterEach(() => {
 });
 
 describe('session-list snapshot metadata decryption', () => {
+    it('cold-hydrates team lineage, role, and verified delivery into both the renderable and warm-cache entry', async () => {
+        const store = createStoreHarness();
+        const counter = { count: 0 };
+        const encryption = createEncryptionHarness(counter);
+
+        await fetchAndApplySessions({
+            serverId: 'test',
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>([[SESSION_ID, new Uint8Array(32)]]),
+            request: async () => jsonResponse({
+                sessions: [buildEncryptedRow(FIRST)],
+                nextCursor: null,
+                hasNext: false,
+            }),
+            getExistingSession: (sessionId) => store.sessions.get(sessionId) ?? null,
+            getCurrentSessionListRenderable: (sessionId) => store.renderables.get(sessionId) ?? null,
+            applySessionListRenderables: store.applySessionListRenderables,
+            applySessionListRenderablePatches: store.applySessionListRenderablePatches,
+            applySessions: store.applySessions,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 0,
+            sessionListBackgroundHydrationYieldDelayMs: 0,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        await settleBackgroundHydration();
+
+        const renderable = store.renderables.get(SESSION_ID);
+        expect(counter.count).toBe(1);
+        expect(renderable?.metadata?.sessionOriginV1).toEqual(TEAM_ORIGIN);
+        expect(renderable?.metadata?.sessionRole).toBe('reviewer');
+        expect(renderable?.metadata?.executionRunLinkV1).toEqual(VERIFIED_EXECUTION_RUN_LINK);
+        const cachedEntry = buildSessionListCacheEntryFromRenderable(renderable!);
+        expect(cachedEntry.sessionOriginV1).toEqual(TEAM_ORIGIN);
+        expect(cachedEntry.sessionRole).toBe('reviewer');
+        expect(cachedEntry.executionRunLinkV1).toEqual(VERIFIED_EXECUTION_RUN_LINK);
+    });
+
+    it('keeps lineage, role, and verified delivery from a complete current warm-cache projection', async () => {
+        const store = createStoreHarness();
+        const counter = { count: 0 };
+        const encryption = createEncryptionHarness(counter);
+        const cachedEntry = buildSessionListCacheEntryFromRenderable(
+            buildSessionListRenderableFromSession({
+                ...buildEncryptedRow(FIRST),
+                metadata: DECRYPTED_METADATA,
+                agentState: {},
+                presence: 'online',
+            } as Session),
+        );
+
+        await fetchAndApplySessions({
+            serverId: 'test',
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>([[SESSION_ID, new Uint8Array(32)]]),
+            request: async () => jsonResponse({
+                sessions: [buildEncryptedRow(FIRST)],
+                nextCursor: null,
+                hasNext: false,
+            }),
+            cachedSessionListEntries: { [SESSION_ID]: cachedEntry },
+            getExistingSession: () => null,
+            getCurrentSessionListRenderable: (sessionId) => store.renderables.get(sessionId) ?? null,
+            applySessionListRenderables: store.applySessionListRenderables,
+            applySessionListRenderablePatches: store.applySessionListRenderablePatches,
+            applySessions: store.applySessions,
+            sessionListBackgroundHydrationMaxRows: 0,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        const renderable = store.renderables.get(SESSION_ID);
+        expect(counter.count).toBe(0);
+        expect(renderable?.metadata?.sessionOriginV1).toEqual(TEAM_ORIGIN);
+        expect(renderable?.metadata?.sessionRole).toBe('reviewer');
+        expect(renderable?.metadata?.executionRunLinkV1).toEqual(VERIFIED_EXECUTION_RUN_LINK);
+        const reloadedEntry = buildSessionListCacheEntryFromRenderable(renderable!);
+        expect(reloadedEntry.sessionOriginV1).toEqual(TEAM_ORIGIN);
+        expect(reloadedEntry.sessionRole).toBe('reviewer');
+        expect(reloadedEntry.executionRunLinkV1).toEqual(VERIFIED_EXECUTION_RUN_LINK);
+    });
+
     it('keeps plain sessions readable when a keyless account also has unavailable encrypted history', async () => {
         const encrypted = { ...buildEncryptedRow(FIRST), dataEncryptionKey: 'unavailable-history-key' };
         const metadata = { path: '/plain/project', host: 'plain-host' };

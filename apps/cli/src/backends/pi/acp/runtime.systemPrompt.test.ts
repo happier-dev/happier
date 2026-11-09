@@ -66,6 +66,43 @@ describe('Pi ACP runtime spawn system prompt', () => {
     }
   });
 
+  it('delivers the retained session role guidance exactly once in the final Pi prompt', async () => {
+    const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture({
+        metadata: { ...createTestMetadata({}), sessionRoleV1: { v: 1, role: 'reviewer', instructions: 'PI_ROLE_SNAPSHOT', assignmentId: 'a-1', assignedAt: 1 } },
+      }), { sessionId: 'happy-session-role' });
+
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-1',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        accountSettings: {
+          executionRunsGuidanceEnabled: true,
+          executionRunsGuidanceEntries: [{ id: 'supplement', description: 'SUPPLEMENTAL_PROFILE_GUIDANCE', enabled: true }],
+        },
+      });
+
+      await runtime.startOrLoad({});
+
+      const finalPrompt = [createCalls[0]?.appendSystemPromptText ?? '', createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition ?? ''].join('\n');
+      expect(finalPrompt.split('PI_ROLE_SNAPSHOT').length - 1).toBe(1);
+      expect(finalPrompt.split('Current role assignment: Reviewer').length - 1).toBe(1);
+    } finally {
+      removeTempDirSync(agentDir);
+    }
+  });
+
   it('preserves canonical base-before-supplemental ordering inside the bridge prompt', async () => {
     const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);

@@ -296,8 +296,9 @@ model SessionOrganizationLabel {
 }
 
 model SessionAppearance {
-    id             String @id
-    displayDbValue String
+    id                  String @id
+    displayDbValue      String
+    presentationDbValue String?
 }
 `;
 
@@ -305,7 +306,8 @@ model SessionAppearance {
         expect(mysql).toContain("folderKey      String @db.LongText");
         expect(mysql).toContain("parentKey      String? @db.LongText");
         expect(mysql).toContain("displayDbValue String? @db.LongText");
-        expect(mysql).toContain("displayDbValue String @db.LongText");
+        expect(mysql).toMatch(/displayDbValue\s+String @db.LongText/);
+        expect(mysql).toMatch(/presentationDbValue\s+String\? @db.LongText/);
         expect(mysql).toContain("scopeKey  String @db.LongText");
         expect(mysql).toContain("itemKey   String @db.LongText");
         expect(mysql).toContain("folderHash     String @db.VarChar(71)");

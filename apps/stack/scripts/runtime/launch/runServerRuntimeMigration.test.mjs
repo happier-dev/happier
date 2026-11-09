@@ -209,3 +209,22 @@ test('startup cancellation fences normal server spawn before and after migration
   assert.deepEqual(labels, ['server-migrate']);
   assert.deepEqual(children, []);
 });
+
+test('startup attempt values reach only the server process, not its migration', async (t) => {
+  const { spec } = await fixture(t);
+  const env = { HAPPIER_DB_PROVIDER: 'sqlite' };
+  const serverProcessEnv = { ...env, HAPPIER_SERVER_STARTUP_RECEIPT_NONCE: 'attempt-nonce' };
+  const spawned = new Map();
+  await spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: spec,
+    env,
+    serverProcessEnv,
+    children: [],
+    spawnProcImpl: (label, _command, _args, spawnEnv) => {
+      spawned.set(label, spawnEnv);
+      return { pid: 303, completion: Promise.resolve({ code: 0 }) };
+    },
+  });
+  assert.deepEqual(spawned.get('server-migrate'), env);
+  assert.deepEqual(spawned.get('server'), serverProcessEnv);
+});

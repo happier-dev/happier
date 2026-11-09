@@ -329,9 +329,11 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     // Expose health + metrics in all roles (metrics server can be disabled via METRICS_ENABLED=false).
     const metricsServerStarted = await startMetricsServer();
 
+    // Stays empty for roles without an API, so their receipt never claims a listener.
+    let apiStartupIdentity: Awaited<ReturnType<typeof startApi>>['apiStartupIdentity'] = null;
     if (role === 'all' || role === 'api') {
         void inferAndApplyTailscaleServePublicServerUrl(process.env);
-        await startApi();
+        ({ apiStartupIdentity } = await startApi());
     }
 
     if (role === 'all' || role === 'worker') {
@@ -353,7 +355,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     // Ready
     //
 
-    await writeStartupReceiptFromEnvironment(process.env);
+    await writeStartupReceiptFromEnvironment(process.env, { api: apiStartupIdentity });
     log('Ready');
     await awaitShutdown();
     log('Shutting down...');

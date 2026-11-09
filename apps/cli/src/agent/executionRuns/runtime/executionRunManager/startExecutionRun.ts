@@ -6,6 +6,9 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import { buildExecutionRunPrompt } from '@/agent/executionRuns/profiles/shared/buildExecutionRunPrompt';
+import { EXECUTION_RUN_VISIBLE_ERROR_CODES } from '@happier-dev/protocol';
+import { toExecutionRunProfileRole } from '@/agent/executionRuns/runtime/buildExecutionRunProfileStartParams';
 import {
   projectExecutionRunRequestedConfiguration,
   type AcpConfigOptionOverridesV1,
@@ -81,7 +84,7 @@ const BACKEND_PROVISION_TIMEOUT_ENV_KEY = 'HAPPIER_EXECUTION_RUN_BACKEND_PROVISI
 const DEFAULT_BACKEND_PROVISION_TIMEOUT_MS = 30 * 60_000;
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
-function readBackendProvisionTimeoutMs(): number {
+export function readBackendProvisionTimeoutMs(): number {
   const raw = process.env[BACKEND_PROVISION_TIMEOUT_ENV_KEY];
   if (typeof raw !== 'string' || raw.trim().length === 0) return DEFAULT_BACKEND_PROVISION_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
@@ -176,6 +179,8 @@ export async function startExecutionRun(args: Readonly<{
   voiceAgentManager: VoiceAgentManager;
   getDepthByCallId: (callId: string) => number | null;
   onPublicStateUpdated?: (runId: string) => void;
+  /** Visible runs: installs the `session` controller (create or bind the linked child, deliver the task). */
+  startSessionController?: (args: Readonly<{ runId: string }>) => Promise<ExecutionRunController>;
 }>): Promise<ExecutionRunStartResult> {
   const startRequestId = typeof args.params.startRequestId === 'string' ? args.params.startRequestId.trim() : '';
   const profile = resolveExecutionRunIntentProfile(args.params.intent);
@@ -234,6 +239,8 @@ export async function startExecutionRun(args: Readonly<{
     ...(args.params.connectedServicesRegistration
       ? { connectedServicesRegistration: args.params.connectedServicesRegistration }
       : {}),
+    ...(args.params.visibility ? { visibility: args.params.visibility } : {}),
+    ...(args.params.launchRole ? { role: args.params.launchRole } : {}),
   } as const;
   args.runs.set(runId, {
     runId,
@@ -431,6 +438,18 @@ export async function startExecutionRun(args: Readonly<{
       };
       args.controllers.set(runId, ctrl);
       controllerOccurrence = ctrl;
+      args.onPublicStateUpdated?.(runId);
+      await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
+      return startResult;
+    }
+
+    if (args.params.visibility === 'session') {
+      if (!args.startSessionController) {
+        throw Object.assign(new Error('Visible runs are not available on this runner'), {
+          code: EXECUTION_RUN_VISIBLE_ERROR_CODES.VISIBILITY_UNSUPPORTED,
+        });
+      }
+      controllerOccurrence = await args.startSessionController({ runId });
       args.onPublicStateUpdated?.(runId);
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
       return startResult;
@@ -642,9 +661,10 @@ export async function startExecutionRun(args: Readonly<{
             runClass: args.params.runClass,
             ioMode: args.params.ioMode,
             startedAtMs,
+            ...(args.params.launchRole ? { role: toExecutionRunProfileRole(args.params.launchRole) } : {}),
           } as const;
           const profile = resolveExecutionRunIntentProfile(args.params.intent);
-          await args.send(runId, { message: profile.buildPrompt(start) });
+          await args.send(runId, { message: buildExecutionRunPrompt(profile, start) });
         }
         if (args.controllers.get(runId) === ctrl) args.onPublicStateUpdated?.(runId);
       } catch (error: unknown) {

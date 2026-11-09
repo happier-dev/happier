@@ -28,11 +28,17 @@ const GUTTER_MIN_WIDTH_PX = 60;
 /** The header's own horizontal inset — the margin every other control in it is measured from. */
 const HEADER_HORIZONTAL_PADDING_PX = 8;
 
+export type ChatHeaderBadge = string | Readonly<{
+    key: string;
+    label: string;
+    color?: string | null;
+}>;
+
 interface ChatHeaderViewProps {
     title: string;
     subtitle?: string;
     subtitleEllipsizeMode?: 'head' | 'tail';
-    badges?: ReadonlyArray<string>;
+    badges?: ReadonlyArray<ChatHeaderBadge>;
     onBackPress?: () => void;
     avatarId?: string;
     /** Resolved agent for this session, when there is one. Shown in place of the avatar on request. */
@@ -212,20 +218,26 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                                     ) : subtitle}
                                 </Text>
                             ) : null}
-                            {badges?.map((badge, index) => (
+                            {badges?.map((badge, index) => {
+                                const resolved = typeof badge === 'string'
+                                    ? { key: badge, label: badge, color: null }
+                                    : badge;
+                                return (
                                 <StatusPill
-                                    key={`${badge}:${index}`}
+                                    key={`${resolved.key}:${index}`}
                                     variant="neutral"
                                     chrome="plain"
                                     foregroundColor={theme.colors.text.secondary}
-                                    hideDot
-                                    label={badge}
+                                    hideDot={!resolved.color}
+                                    dotColor={resolved.color ?? undefined}
+                                    label={resolved.label}
                                     labelVariant="phrase"
                                     labelNumberOfLines={1}
                                     style={styles.badge}
                                     testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
                                 />
-                            ))}
+                                );
+                            })}
                         </View>
                     ) : null}
                 </View>

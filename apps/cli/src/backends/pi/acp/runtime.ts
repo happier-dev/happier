@@ -133,6 +133,8 @@ export function createPiAcpRuntime(params: {
           env: process.env,
         }).state === 'enabled',
         baseOverride: null,
+        // The bridge prompt addition above already carries the base and the retained role.
+        includeSessionRole: false,
         memoryRecallGuidanceEnabled: false,
       });
       const resolvedPromptText = typeof text === 'string' && text.trim() ? text : undefined;

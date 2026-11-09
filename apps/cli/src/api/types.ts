@@ -335,6 +335,8 @@ export const MachineMetadataSchema = lazySchema(() => z.object({
   happyLibDir: z.string(),
   daemonTerminalSessionAttachSupported: z.boolean().optional(),
   daemonSessionGoalControlsSupported: z.boolean().optional(),
+  /** Diagnostic only; role-bearing spawn admission uses the exact role-aware RPC method. */
+  daemonSessionRoleV1SpawnSupported: z.boolean().optional(),
   /** K5 — this machine's first-party CLI update facts (plan R13); absent from older daemons. */
   cliUpdate: CliUpdateFactsSchema.optional(),
 }))
@@ -528,6 +530,9 @@ export type SessionHandoffMetadataV1 = {
 };
 
 export type Metadata = {
+  sessionOriginV1?: import('@happier-dev/protocol').SessionOriginV1,
+  /** Mutable job label; read with readSessionRoleV1 so unknown future shapes read as no role. */
+  sessionRoleV1?: unknown,
   path: string,
   host: string,
   version?: string,

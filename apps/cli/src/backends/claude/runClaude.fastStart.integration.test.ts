@@ -1924,6 +1924,295 @@ describe('runClaude fast-start', () => {
     ]);
   });
 
+  it('passes exactly one retained role block to the first real local Claude spawn when the server snapshot is unavailable', async () => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_role_offline', metadataVersion: 1 }));
+    const role = { v: 1, role: 'reviewer', instructions: 'ROLE SNAPSHOT RULES', assignmentId: 'a-1', assignedAt: 1 };
+
+    // No server snapshot: the session client only holds the base metadata it was created from.
+    const previousSessionImpl = sessionSyncClientSpy.getMockImplementation();
+    if (!previousSessionImpl) throw new Error('expected the session client test implementation');
+    sessionSyncClientSpy.mockImplementation((response: unknown) => {
+      const client = previousSessionImpl(response);
+      const baseOnly = {
+        ...client,
+        ensureMetadataSnapshot: vi.fn(async () => {
+          throw new Error('metadata snapshot unavailable');
+        }),
+        getMetadataSnapshot: vi.fn(() => (response as { metadata?: unknown }).metadata ?? null),
+      };
+      lastRuntimeSessionClient = baseOnly;
+      return baseOnly;
+    });
+
+    // The retained role arrives only through the short-lived attach handoff.
+    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const { resolveSessionAttachBaseDir } = await import('@/agent/runtime/sessionAttachPaths');
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
+    await mkdir(attachBaseDir, { recursive: true });
+    const attachPath = join(attachBaseDir, 'role-offline-attach.json');
+    await writeFile(attachPath, JSON.stringify({
+      v: 2,
+      encryptionMode: 'e2ee',
+      encryptionKeyBase64: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
+      encryptionVariant: 'legacy',
+      sessionRoleV1: role,
+    }), 'utf8');
+    await chmod(attachPath, 0o600);
+    process.env.HAPPIER_SESSION_ATTACH_FILE = attachPath;
+
+    const { resolveEffectiveCodingPromptText } = await import('@/agent/prompting/coding/resolveEffectiveCodingPrompt');
+    const { buildAppendSystemPromptBaseV1 } = await import('@happier-dev/protocol');
+    vi.mocked(resolveEffectiveCodingPromptText).mockImplementation(async (args) => buildAppendSystemPromptBaseV1({
+      settings: null,
+      base: 'DEFAULT BASE PROMPT',
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+      sessionMetadata: args.sessionMetadata,
+    }));
+
+    // Real provider loop and local launcher; only the OS child process is replaced.
+    const environment = createEnvKeyScope(['HAPPIER_CLAUDE_PATH', 'CLAUDE_CONFIG_DIR']);
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-role-launch-'));
+    environment.patch({ HAPPIER_CLAUDE_PATH: process.execPath, CLAUDE_CONFIG_DIR: claudeConfigDir });
+    const actualLoop = await vi.importActual<typeof import('./loop')>('./loop');
+    const { loop } = await import('./loop');
+    const originalLoop = vi.mocked(loop).getMockImplementation();
+    if (!originalLoop) throw new Error('Provider loop fixture is missing');
+    vi.mocked(loop).mockImplementationOnce((opts) => actualLoop.loop(opts));
+    const firstSpawnArgs = createDeferred<readonly string[]>();
+    const originalSpawn = vi.mocked(childProcess.spawn).getMockImplementation();
+    if (!originalSpawn) throw new Error('OS process boundary fixture is missing');
+    vi.mocked(childProcess.spawn).mockImplementation((command, args, options) => {
+      if (command !== process.execPath) return originalSpawn(command, args, options);
+      firstSpawnArgs.resolve([...(args ?? [])].map(String));
+      const child = new childProcess.ChildProcess();
+      Object.assign(child, { pid: 23456, stdio: [] });
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return child;
+    });
+
+    const { runClaude } = await import('./runClaude');
+    const run = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'sess_role_offline',
+      claudeArgs: ['--dangerously-skip-permissions'],
+    }).catch((error: unknown) => error);
+
+    try {
+      const args = await waitFor(firstSpawnArgs.promise, loopStartWaitMs);
+      const appendIndex = args.indexOf('--append-system-prompt');
+      expect(appendIndex).toBeGreaterThanOrEqual(0);
+      const appended = args[appendIndex + 1] ?? '';
+      expect(appended.split('Current role assignment: Reviewer').length - 1).toBe(1);
+      expect(appended).toContain('ROLE SNAPSHOT RULES');
+    } finally {
+      await waitFor(run, loopStartWaitMs).catch(() => undefined);
+      vi.mocked(loop).mockReset().mockImplementation(originalLoop);
+      vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
+      vi.mocked(resolveEffectiveCodingPromptText).mockReset().mockResolvedValue('');
+      sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      environment.restore();
+      if (previousAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
+      await rm(attachPath, { force: true });
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  it('launches a resumed role-selected session only with its retained role, then keeps it across later launches and a reset', async () => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_role_resume', metadataVersion: 1 }));
+    const roleMetadata = {
+      sessionRoleV1: { v: 1, role: 'reviewer', instructions: 'ROLE SNAPSHOT RULES', assignmentId: 'a-1', assignedAt: 1 },
+    };
+    // The authoritative attach is held back so a launch that does not wait for it is observable.
+    const attachGate = createDeferred<void>();
+    const previousSessionImpl = sessionSyncClientSpy.getMockImplementation();
+    if (!previousSessionImpl) throw new Error('expected the session client test implementation');
+    sessionSyncClientSpy.mockImplementation((response: unknown) => {
+      const client = previousSessionImpl(response);
+      const withRole = {
+        ...client,
+        ensureMetadataSnapshot: vi.fn(async () => {
+          await attachGate.promise;
+          return roleMetadata;
+        }),
+        getMetadataSnapshot: vi.fn(() => roleMetadata),
+      };
+      lastRuntimeSessionClient = withRole;
+      return withRole;
+    });
+
+    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    // The attach reader only accepts files inside its own session-attach base directory.
+    const { resolveSessionAttachBaseDir } = await import('@/agent/runtime/sessionAttachPaths');
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
+    await mkdir(attachBaseDir, { recursive: true });
+    const attachPath = join(attachBaseDir, 'role-resume-attach.json');
+    await writeFile(attachPath, JSON.stringify({
+      v: 2,
+      encryptionMode: 'e2ee',
+      encryptionKeyBase64: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
+      encryptionVariant: 'legacy',
+    }), 'utf8');
+    await chmod(attachPath, 0o600);
+    process.env.HAPPIER_SESSION_ATTACH_FILE = attachPath;
+
+    const { resolveEffectiveCodingPromptText } = await import('@/agent/prompting/coding/resolveEffectiveCodingPrompt');
+    const { buildAppendSystemPromptBaseV1 } = await import('@happier-dev/protocol');
+    // The canonical composition (base + retained role) over whatever metadata the runner passes.
+    vi.mocked(resolveEffectiveCodingPromptText).mockImplementation(async (args) => buildAppendSystemPromptBaseV1({
+      settings: null,
+      base: 'DEFAULT BASE PROMPT',
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+      sessionMetadata: args.sessionMetadata,
+    }));
+    const countRoleBlocks = (text: unknown) => String(text ?? '').split('Current role assignment: Reviewer').length - 1;
+    const { runClaude } = await import('./runClaude');
+    const loopCallsAtStart = loopCalls;
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'sess_role_resume',
+      claudeArgs: ['--dangerously-skip-permissions'],
+    });
+
+    try {
+      // Give a non-waiting launch every chance to start before the attach completes.
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const loopCallsBeforeAttach = loopCalls - loopCallsAtStart;
+      attachGate.resolve();
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+
+      // The first local launch (loop -> Session.defaultSystemPromptText -> claudeLocal --append-system-prompt)
+      // happens only after the attach and carries the retained role exactly once.
+      expect(countRoleBlocks(lastLoopOpts?.defaultSystemPromptText)).toBe(1);
+      expect(String(lastLoopOpts?.defaultSystemPromptText)).toContain('ROLE SNAPSHOT RULES');
+      expect(loopCallsBeforeAttach).toBe(0);
+
+      await waitFor(new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now();
+        const tick = () => {
+          if (getLastRuntimeSessionClient()?.onUserMessage.mock.calls[0]?.[0]) return resolve();
+          if (Date.now() - startedAt > 5_000) return reject(new Error('Timed out waiting for the user message handler'));
+          setTimeout(tick, 0);
+        };
+        tick();
+      }), 10_000);
+
+      const launchModes: Array<{ appendSystemPrompt?: string }> = [];
+      lastLoopOpts.messageQueue.push = vi.fn((_text: string, mode: { appendSystemPrompt?: string }) => launchModes.push(mode));
+      const handler = getLastRuntimeSessionClient()?.onUserMessage.mock.calls[0]?.[0];
+      if (!handler) throw new Error('user message handler was not registered');
+      await handler({ content: { type: 'text', text: 'continue' }, localId: 'role-resume-1', createdAt: 101, meta: {} });
+      await handler({ content: { type: 'text', text: 'reset' }, localId: 'role-resume-2', createdAt: 102, meta: { appendSystemPrompt: null } });
+
+      expect(launchModes).toHaveLength(2);
+      for (const mode of launchModes) {
+        const prompt = String(mode.appendSystemPrompt ?? '');
+        expect(countRoleBlocks(prompt)).toBe(1);
+        expect(prompt).toContain('ROLE SNAPSHOT RULES');
+        expect(prompt).not.toContain('DEFAULT BASE PROMPT');
+      }
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+      attachGate.resolve();
+      vi.mocked(resolveEffectiveCodingPromptText).mockReset().mockResolvedValue('');
+      sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      if (previousAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
+      await rm(attachPath, { force: true });
+    }
+  });
+
+  it('does not spawn a local Claude provider when an existing-session attach fails before attachment', async () => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+
+    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const { resolveSessionAttachBaseDir } = await import('@/agent/runtime/sessionAttachPaths');
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
+    await mkdir(attachBaseDir, { recursive: true });
+    const attachPath = join(attachBaseDir, 'invalid-existing-session-attach.json');
+    await writeFile(attachPath, '{not valid json', 'utf8');
+    await chmod(attachPath, 0o600);
+    process.env.HAPPIER_SESSION_ATTACH_FILE = attachPath;
+
+    // If the failed attachment incorrectly opens the fast-start barrier, this reaches the real
+    // provider loop and local launcher. Only the OS child boundary is replaced.
+    const environment = createEnvKeyScope(['HAPPIER_CLAUDE_PATH', 'CLAUDE_CONFIG_DIR']);
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-failed-attach-'));
+    environment.patch({ HAPPIER_CLAUDE_PATH: process.execPath, CLAUDE_CONFIG_DIR: claudeConfigDir });
+    const actualLoop = await vi.importActual<typeof import('./loop')>('./loop');
+    const { loop } = await import('./loop');
+    const originalLoop = vi.mocked(loop).getMockImplementation();
+    if (!originalLoop) throw new Error('Provider loop fixture is missing');
+    let providerLoopCount = 0;
+    vi.mocked(loop).mockImplementationOnce((opts) => {
+      providerLoopCount += 1;
+      return actualLoop.loop(opts);
+    });
+    const originalSpawn = vi.mocked(childProcess.spawn).getMockImplementation();
+    if (!originalSpawn) throw new Error('OS process boundary fixture is missing');
+    let providerSpawnCount = 0;
+    vi.mocked(childProcess.spawn).mockImplementation((command, args, options) => {
+      if (command !== process.execPath) return originalSpawn(command, args, options);
+      providerSpawnCount += 1;
+      const child = new childProcess.ChildProcess();
+      Object.assign(child, { pid: 23457, stdio: [] });
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return child;
+    });
+
+    const { runClaude } = await import('./runClaude');
+    const run = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'sess_invalid_attach',
+      claudeArgs: ['--dangerously-skip-permissions'],
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    try {
+      const result = await waitFor(run, loopStartWaitMs);
+      expect(result).toBeInstanceOf(Error);
+      expect(providerLoopCount).toBe(0);
+      expect(providerSpawnCount).toBe(0);
+    } finally {
+      loopExit.resolve(0);
+      vi.mocked(loop).mockReset().mockImplementation(originalLoop);
+      vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
+      environment.restore();
+      if (previousAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
+      await rm(attachPath, { force: true });
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses fast-start attach when permission intent is inferred from Claude CLI args', async () => {
     vi.resetModules();
     loopStarted = createDeferred<void>();
@@ -1935,25 +2224,22 @@ describe('runClaude fast-start', () => {
     getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_attach', metadataVersion: 1 }));
 
     const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const homeDir = join(configuration.happyHomeDir, 'fast-start-home');
-    const attachBaseDir = join(homeDir, '.happier-attach');
+    const { resolveSessionAttachBaseDir } = await import('@/agent/runtime/sessionAttachPaths');
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
     await mkdir(attachBaseDir, { recursive: true });
     const attachPath = join(attachBaseDir, 'fast-start-attach.json');
     await writeFile(
       attachPath,
       JSON.stringify({
-        v: 1,
+        v: 2,
+        encryptionMode: 'e2ee',
         encryptionKeyBase64: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
         encryptionVariant: 'legacy',
       }),
       'utf8',
     );
     await chmod(attachPath, 0o600);
-    process.env.HOME = homeDir;
-    process.env.USERPROFILE = homeDir;
-    process.env.HAPPIER_SESSION_ATTACH_FILE = '~/.happier-attach/fast-start-attach.json';
+    process.env.HAPPIER_SESSION_ATTACH_FILE = attachPath;
 
     const { runClaude } = await import('./runClaude');
     const credentials = createLegacyCredentials();
@@ -1980,10 +2266,7 @@ describe('runClaude fast-start', () => {
       await runPromise;
       if (previousAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
       else process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
+      await rm(attachPath, { force: true });
     }
 
     if (testError) {

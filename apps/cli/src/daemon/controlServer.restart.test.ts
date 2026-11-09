@@ -16,6 +16,38 @@ function createBaseApp(overrides: Partial<Parameters<typeof createDaemonControlA
   });
 }
 
+describe('daemon control server: /ping server connection', () => {
+  async function ping(overrides: Partial<Parameters<typeof createDaemonControlApp>[0]>) {
+    const app = createBaseApp(overrides);
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/ping',
+        headers: { 'x-happier-daemon-token': 'test-token' },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json();
+    } finally {
+      await app.close();
+    }
+  }
+
+  it('reports whether the daemon is connected to the server right now', async () => {
+    let connected = false;
+    const overrides = { getServerConnected: () => connected };
+
+    expect((await ping(overrides)).serverConnected).toBe(false);
+    connected = true;
+    expect((await ping(overrides)).serverConnected).toBe(true);
+  });
+
+  it('omits the field when the daemon has no server connection to report', async () => {
+    expect(await ping({ getServerConnected: () => undefined })).not.toHaveProperty('serverConnected');
+    expect(await ping({})).not.toHaveProperty('serverConnected');
+  });
+});
+
 describe('daemon control server: /restart', () => {
   it('requires daemon control auth', async () => {
     const requestSelfRestart = vi.fn(async () => {});

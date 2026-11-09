@@ -41,7 +41,7 @@ const mocks = vi.hoisted(() => ({
   listDaemonStatusesForAllKnownServers: vi.fn(async (): Promise<unknown> => []),
   readSettings: vi.fn(async () => ({ machineId: 'machine-local' })),
   resolveCliFeatureDecisionForServer: vi.fn(async (_params?: unknown): Promise<unknown> => ({ decision: { state: 'enabled' } })),
-  resolveSessionTransportContext: vi.fn(async (): Promise<unknown> => ({
+  resolveSessionTransportContext: vi.fn(async (_params?: unknown): Promise<unknown> => ({
     ok: true as const,
     sessionId: 'sess_1',
     rawSession: { active: true },
@@ -1426,6 +1426,167 @@ describe('createCliActionDeps session controls', () => {
     }));
   });
 
+  it('recovers exactly one terminal spawn by nonce and admits only its same-machine role-assigned child', async () => {
+    const nonce = 'session.spawn_new:sess_parent:13';
+    const operation = {
+      version: 1 as const,
+      operationId: 'op_spawn_13',
+      requestId: nonce,
+      revision: 2,
+      actionId: 'session.spawn_new',
+      state: 'succeeded' as const,
+      scope: { accountId: 'acct_1', machineId: 'machine-local' },
+      title: 'Create session',
+      createdAt: 10,
+      startedAt: 11,
+      settledAt: 12,
+      result: { sessionId: 'sess_child' },
+      domainRef: { kind: 'spawnAttempt' as const, id: nonce },
+      cancellation: 'unsupported' as const,
+    };
+    mocks.callMachineRpc.mockImplementation(async (input: unknown) => {
+      const { method } = input as { method: string };
+      if (method === 'actionOperation.list.v1') return { items: [operation], nextCursor: null };
+      if (method === 'actionOperation.get.v1') return { kind: 'found', operation };
+      throw new Error(`unexpected method ${method}`);
+    });
+    mocks.resolveSessionTransportContext.mockImplementation(async (input?: unknown) => {
+      const { idOrPrefix } = input as { idOrPrefix: string };
+      return ({
+      ok: true as const,
+      sessionId: idOrPrefix,
+      rawSession: {
+        id: idOrPrefix,
+        machineId: 'machine-local',
+        metadata: idOrPrefix === 'sess_child'
+          ? {
+              machineId: 'machine-local',
+              sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'sess_parent' },
+              sessionRoleV1: {
+                v: 1,
+                role: 'worker',
+                instructions: 'Implement the bounded packet.',
+                assignmentId: 'assignment-1',
+                assignedAt: 12,
+              },
+            }
+          : { machineId: 'machine-local' },
+      },
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' as const },
+      mode: 'plain' as const,
+      });
+    });
+    const deps = createCliActionDeps({
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_parent',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+      mode: 'plain', rawSession: { machineId: 'machine-local', metadata: { machineId: 'machine-local' } },
+    });
+
+    await expect(deps.sessionSpawnRecover?.({ spawnNonce: nonce })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess_child',
+      spawnNonce: nonce,
+      role: 'worker',
+      roleAssignmentId: 'assignment-1',
+    });
+    expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
+    expect(mocks.callMachineRpc).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['not found', [], null, 'spawn_recovery_not_found'],
+    ['ambiguous', ['first', 'second'], null, 'spawn_recovery_ambiguous'],
+    ['pending', ['pending'], 'accepted', 'spawn_recovery_pending'],
+    ['failed', ['failed'], 'failed', 'spawn_recovery_failed'],
+  ] as const)('fails closed when exact spawn recovery is %s', async (_label, ids, state, errorCode) => {
+    const nonce = 'session.spawn_new:sess_parent:13';
+    const operations = ids.map((id) => ({
+      version: 1 as const,
+      operationId: `op_${id}`,
+      requestId: nonce,
+      revision: 1,
+      actionId: 'session.spawn_new',
+      state: (state ?? 'succeeded') as 'accepted' | 'failed' | 'succeeded',
+      scope: { accountId: 'acct_1', machineId: 'machine-local' },
+      title: 'Create session',
+      createdAt: 10,
+      ...(state === 'failed' ? { startedAt: 11, settledAt: 12, error: { errorCode: 'spawn_failed', error: 'Spawn failed' } } : {}),
+      ...(state === 'accepted' ? {} : state === 'failed' ? {} : { startedAt: 11, settledAt: 12, result: { sessionId: 'sess_child' } }),
+      domainRef: { kind: 'spawnAttempt' as const, id: nonce },
+      cancellation: 'unsupported' as const,
+    }));
+    mocks.callMachineRpc.mockImplementation(async (input: unknown) => {
+      const { method } = input as { method: string };
+      if (method === 'actionOperation.list.v1') return { items: operations, nextCursor: null };
+      if (method === 'actionOperation.get.v1') return { kind: 'found', operation: operations[0] };
+      throw new Error(`unexpected method ${method}`);
+    });
+    const deps = createCliActionDeps({
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_parent',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+      mode: 'plain', rawSession: { machineId: 'machine-local', metadata: { machineId: 'machine-local' } },
+    });
+
+    await expect(deps.sessionSpawnRecover?.({ spawnNonce: nonce })).resolves.toMatchObject({ ok: false, errorCode });
+    expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['machine', 'machine-other', 'sess_parent', { v: 1, role: 'worker', instructions: 'Implement.', assignmentId: 'assignment-1', assignedAt: 12 }, 'spawn_recovery_machine_mismatch'],
+    ['creator', 'machine-local', 'sess_other', { v: 1, role: 'worker', instructions: 'Implement.', assignmentId: 'assignment-1', assignedAt: 12 }, 'spawn_recovery_origin_mismatch'],
+    ['missing retained role', 'machine-local', 'sess_parent', null, 'spawn_recovery_role_missing'],
+    ['role missing assignedAt', 'machine-local', 'sess_parent', { v: 1, role: 'worker', instructions: 'Implement.', assignmentId: 'assignment-1' }, 'spawn_recovery_role_missing'],
+    ['legacy delegate role', 'machine-local', 'sess_parent', { v: 1, role: 'delegate', instructions: 'Implement.', assignmentId: 'assignment-1', assignedAt: 12 }, 'spawn_recovery_role_missing'],
+    ['role missing assignment identity', 'machine-local', 'sess_parent', { v: 1, role: 'worker', instructions: 'Implement.', assignedAt: 12 }, 'spawn_recovery_role_missing'],
+  ] as const)('rejects a recovered child with mismatched %s identity', async (_label, childMachineId, creatorSessionId, sessionRoleV1, errorCode) => {
+    const nonce = 'session.spawn_new:sess_parent:13';
+    const operation = {
+      version: 1 as const,
+      operationId: 'op_spawn_13',
+      requestId: nonce,
+      revision: 2,
+      actionId: 'session.spawn_new',
+      state: 'succeeded' as const,
+      scope: { accountId: 'acct_1', machineId: 'machine-local' },
+      title: 'Create session',
+      createdAt: 10,
+      startedAt: 11,
+      settledAt: 12,
+      result: { sessionId: 'sess_child' },
+      domainRef: { kind: 'spawnAttempt' as const, id: nonce },
+      cancellation: 'unsupported' as const,
+    };
+    mocks.callMachineRpc.mockImplementation(async (input: unknown) => {
+      const { method } = input as { method: string };
+      if (method === 'actionOperation.list.v1') return { items: [operation], nextCursor: null };
+      if (method === 'actionOperation.get.v1') return { kind: 'found', operation };
+      throw new Error(`unexpected method ${method}`);
+    });
+    mocks.resolveSessionTransportContext.mockResolvedValue({
+      ok: true as const,
+      sessionId: 'sess_child',
+      rawSession: {
+        id: 'sess_child',
+        machineId: childMachineId,
+        metadata: {
+          machineId: childMachineId,
+          sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId },
+          ...(sessionRoleV1 ? { sessionRoleV1 } : {}),
+        },
+      },
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' as const },
+      mode: 'plain' as const,
+    });
+    const deps = createCliActionDeps({
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_parent',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+      mode: 'plain', rawSession: { machineId: 'machine-local', metadata: { machineId: 'machine-local' } },
+    });
+
+    await expect(deps.sessionSpawnRecover?.({ spawnNonce: nonce })).resolves.toMatchObject({ ok: false, errorCode });
+    expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
+  });
+
   it('calls native usage-limit recovery RPCs', async () => {
     const deps = createCliActionDeps({
       token: 'token',
@@ -2585,4 +2746,41 @@ describe('createCliActionDeps session controls', () => {
     expect(mocks.callSessionRpc).not.toHaveBeenCalled();
   });
 
+});
+
+describe('createCliActionDeps session-agent notices', () => {
+  const build = () => createCliActionDeps({
+    token: 'token',
+    credentials: createCredentials(),
+    sessionId: 'worker_1',
+    ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+    mode: 'plain',
+    rawSession: { metadata: { sessionRoleV1: { v: 1, role: 'worker', instructions: 'Implement.', assignmentId: 'a1', assignedAt: 1 } } },
+  });
+
+  it('composes the notice sender from the calling session and its role, ignoring an agent-supplied label', async () => {
+    mocks.sendSessionMessage.mockClear();
+    mocks.sendSessionMessage.mockResolvedValueOnce({ ok: true });
+    await build().sessionSendMessage({
+      sessionId: 'lead_1', message: 'Final output available.', kind: 'notice', from: 'worker_1 Worker',
+      requestedAction: { v: 1, kind: 'enqueue' }, callerSurface: 'session_agent',
+    });
+    expect(mocks.sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: 'notice', from: 'worker_1 Worker' }));
+    mocks.sendSessionMessage.mockResolvedValueOnce({ ok: true });
+    await build().sessionSendMessage({
+      sessionId: 'lead_1', message: 'Progress.', kind: 'notice',
+      requestedAction: { v: 1, kind: 'enqueue' }, callerSurface: 'session_agent',
+    });
+    expect(mocks.sendSessionMessage).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'notice', from: 'worker_1 Worker' }));
+  });
+
+  it('rejects a session-agent notice that names a different session as its sender', async () => {
+    mocks.sendSessionMessage.mockClear();
+    const res = await build().sessionSendMessage({
+      sessionId: 'lead_1', message: 'Approved.', kind: 'notice', from: 'reviewer_9 Reviewer',
+      requestedAction: { v: 1, kind: 'enqueue' }, callerSurface: 'session_agent',
+    });
+    expect(res).toEqual(expect.objectContaining({ ok: false, errorCode: 'notice_sender_mismatch' }));
+    expect(mocks.sendSessionMessage).not.toHaveBeenCalled();
+  });
 });

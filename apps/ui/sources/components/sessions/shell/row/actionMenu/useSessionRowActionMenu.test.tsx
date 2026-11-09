@@ -5,7 +5,10 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 
-import { SESSION_ACTION_SET_APPEARANCE_COLOR_ID } from '@/components/sessions/actions/sessionActionIds';
+import {
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+} from '@/components/sessions/actions/sessionActionIds';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 
 import { useSessionRowActionMenu } from './useSessionRowActionMenu';
@@ -43,6 +46,7 @@ async function renderRowMenu(appearance: Parameters<typeof useSessionRowActionMe
 describe('useSessionRowActionMenu', () => {
     afterEach(() => {
         standardCleanup();
+        vi.restoreAllMocks();
     });
 
     it('dispatches contextual menu item selections through their owning handler', async () => {
@@ -100,6 +104,38 @@ describe('useSessionRowActionMenu', () => {
         });
 
         expect(onSelectCustomMenuItem).toHaveBeenCalledWith('session.copyDebugInformation');
+    });
+
+    it('offers this-only and all-descendants choices from the existing Archive item', async () => {
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+        const target = createRowTarget();
+        const child = { ...createRowTarget(), sessionId: 'child_1' };
+        const grandchild = { ...createRowTarget(), sessionId: 'grandchild_1' };
+        const hook = await renderHook(() => useSessionRowActionMenu({
+            target,
+            sessionName: 'Session 1',
+            hideInactiveSessions: false,
+            iconColor: '#999',
+            activeTags: [],
+            knownTags: [],
+            tagsEnabled: false,
+            nestedDescendantTargets: [grandchild, child],
+            isNativeMobile: false,
+            setContextMenuOpen: vi.fn(),
+            openTagsMenuFromContext: vi.fn(),
+        }));
+
+        await act(async () => {
+            await hook.getCurrent().handleMoreMenuSelect(SESSION_ACTION_ARCHIVE_ID);
+        });
+
+        const buttons = alert.mock.calls.at(-1)?.[2] ?? [];
+        expect(buttons.map((button) => button.text)).toEqual([
+            'Cancel',
+            'Archive this session only',
+            'Archive this session and its 2 nested sessions',
+        ]);
     });
 
     it('offers a session colour beside the frequent session actions and writes the chosen colour', async () => {

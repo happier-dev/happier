@@ -37,6 +37,9 @@ export function filterCollapsedSessionListItems(
     let result: SessionListViewItem[] | undefined;
     let skipUntilNextSection = false;
     const collapsedFolderIds = new Set<string>();
+    // Nested rows are emitted directly after their parent and share its visibility,
+    // not the group or folder they would occupy as top-level rows.
+    let parentHidden = false;
 
     const ensureResult = (index: number): SessionListViewItem[] => {
         if (result !== undefined) return result;
@@ -91,9 +94,14 @@ export function filterCollapsedSessionListItems(
             continue;
         }
 
+        const nested = (item.nestingDepth ?? 0) > 0;
         const groupKey = item.groupKey ?? '';
         const folderId = readFolderId(item);
-        if ((folderId && collapsedFolderIds.has(folderId)) || (groupKey && keys[groupKey])) {
+        const hidden: boolean = nested
+            ? parentHidden
+            : Boolean((folderId && collapsedFolderIds.has(folderId)) || (groupKey && keys[groupKey]));
+        if (!nested) parentHidden = hidden;
+        if (hidden) {
             ensureResult(index);
             continue;
         }

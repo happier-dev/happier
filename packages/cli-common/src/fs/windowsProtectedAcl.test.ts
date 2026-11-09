@@ -74,10 +74,11 @@ describe('Windows protected ACL boundary', () => {
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ]);
     for (const [, , options] of childProcessMocks.execFile.mock.calls.slice(2)) {
-      expect(options.env).toMatchObject({
-        SystemRoot: 'C:\\WINDOWS',
-        PATH: process.env.PATH,
-        PSModulePath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      const normalizedEnv = Object.fromEntries(Object.entries(options.env).map(([key, value]) => [key.toLowerCase(), value]));
+      expect(normalizedEnv).toMatchObject({
+        systemroot: 'C:\\WINDOWS',
+        path: process.env.PATH,
+        psmodulepath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
       });
       expect(Object.keys(options.env).filter((key) => key.toLowerCase() === 'psmodulepath')).toEqual(['PSModulePath']);
     }
@@ -125,10 +126,11 @@ describe('Windows protected ACL boundary', () => {
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ]);
     for (const [, , options] of childProcessMocks.spawnSync.mock.calls.slice(2)) {
-      expect(options.env).toMatchObject({
-        SystemRoot: 'C:\\WINDOWS',
-        PATH: process.env.PATH,
-        PSModulePath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      const normalizedEnv = Object.fromEntries(Object.entries(options.env).map(([key, value]) => [key.toLowerCase(), value]));
+      expect(normalizedEnv).toMatchObject({
+        systemroot: 'C:\\WINDOWS',
+        path: process.env.PATH,
+        psmodulepath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
       });
       expect(Object.keys(options.env).filter((key) => key.toLowerCase() === 'psmodulepath')).toEqual(['PSModulePath']);
     }
@@ -202,7 +204,8 @@ describe('Windows protected ACL boundary', () => {
       if (command === 'whoami.exe') return { exitCode: 0, stdout: '"USER","S-1-5-21-123"', stderr: '' };
       if (command === 'icacls.exe') return { exitCode: 0, stdout: 'processed', stderr: '' };
       if (args[3]?.includes('SetSecurityDescriptorSddlForm')) {
-        expect(args[3]).toContain('Set-Acl');
+        expect(args[3]).toContain('.SetAccessControl');
+        expect(args[3]).not.toContain('Set-Acl');
         expect(args).toContain('directory');
         rules = expectedRules;
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -231,7 +234,8 @@ describe('Windows protected ACL boundary', () => {
       if (command === 'whoami.exe') return { exitCode: 0, stdout: '"USER","S-1-5-21-123"', stderr: '' };
       if (command === 'icacls.exe') return { exitCode: 0, stdout: 'processed', stderr: '' };
       if (args[3]?.includes('SetSecurityDescriptorSddlForm')) {
-        expect(args[3]).toContain('Set-Acl');
+        expect(args[3]).toContain('.SetAccessControl');
+        expect(args[3]).not.toContain('Set-Acl');
         expect(args).toContain('file');
         rules = expectedRules;
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -283,7 +287,7 @@ describe('Windows protected ACL boundary', () => {
     expect(message).toContain(JSON.stringify(extraRule));
   });
 
-  it.runIf(process.platform === 'win32').each(['async', 'sync'] as const)('isolates incompatible modules and enforces real ACLs through the %s boundary', async mode => {
+  it.runIf(process.platform === 'win32').each(['async', 'sync'] as const)('reapplies real protected file and directory ACLs through the %s boundary', async mode => {
     const { execFile, spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
     childProcessMocks.execFile.mockImplementation(execFile);
     childProcessMocks.spawnSync.mockImplementation(spawnSync);
@@ -291,7 +295,6 @@ describe('Windows protected ACL boundary', () => {
     if (!systemRoot) throw new Error('Windows system root is unavailable');
     const root = await mkdtemp(join(tmpdir(), 'happier-acl-'));
     const boundary = mode === 'async' ? createWindowsProtectedAclBoundary() : createWindowsProtectedAclBoundarySync();
-    const verify = async (path = root) => await boundary.verify({ path, kind: 'directory' });
     try {
       // Synthetic distribution module: Windows PowerShell must not load the
       // incompatible Security module advertised by its caller's search path.
@@ -302,14 +305,27 @@ describe('Windows protected ACL boundary', () => {
         "@{ ModuleVersion = '99.0'; PowerShellVersion = '7.0'; RootModule = 'Security.psm1'; FunctionsToExport = @('Get-Acl', 'Set-Acl') }");
       await writeFile(join(securityModule, 'Security.psm1'), 'throw "Incompatible synthetic distribution module"');
       vi.stubEnv('PSModulePath', moduleRoot);
-      await boundary.applyAndVerify({ path: root, kind: 'directory' });
+
+      const protectedDirectory = join(root, 'private');
+      const protectedFile = join(root, 'private.json');
+      await mkdir(protectedDirectory);
+      await writeFile(protectedFile, 'private');
+      for (const target of [
+        { path: protectedDirectory, kind: 'directory' as const },
+        { path: protectedFile, kind: 'file' as const },
+      ]) {
+        await boundary.applyAndVerify(target);
+        await expect(Promise.resolve().then(() => boundary.applyAndVerify(target))).resolves.toBeUndefined();
+        await expect(Promise.resolve().then(() => boundary.verify(target))).resolves.toBeUndefined();
+      }
+
       await promisify(execFile)(win32.join(systemRoot, 'System32', 'icacls.exe'), [
-        root, '/grant', '*S-1-5-32-545:R',
+        protectedDirectory, '/grant', '*S-1-5-32-545:R',
       ]);
-      await expect(verify()).rejects.toThrow(/ACL entries/u);
-      await boundary.applyAndVerify({ path: root, kind: 'directory' });
-      await expect(verify()).resolves.toBeUndefined();
-      await expect(verify(join(root, 'missing'))).rejects.toThrow(/powershell\.exe.*exit 1/u);
+      await expect(Promise.resolve().then(() => boundary.verify({ path: protectedDirectory, kind: 'directory' }))).rejects.toThrow(/ACL entries/u);
+      await boundary.applyAndVerify({ path: protectedDirectory, kind: 'directory' });
+      await expect(Promise.resolve().then(() => boundary.verify({ path: protectedDirectory, kind: 'directory' }))).resolves.toBeUndefined();
+      await expect(Promise.resolve().then(() => boundary.verify({ path: join(root, 'missing'), kind: 'directory' }))).rejects.toThrow(/powershell\.exe.*exit 1/u);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

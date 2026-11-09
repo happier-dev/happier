@@ -3,6 +3,11 @@ import * as React from 'react';
 import { resolveBuiltInAgentTitle } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
+import { type AssignableSessionRoleProfileV1 } from '@happier-dev/protocol';
+import { listUiAssignableSessionRoleProfiles } from '@/components/sessions/roles/sessionRoleProfileOrder';
+import { resolveAssignableSessionRoleProfilesForServer } from '@/sync/ops/sessionRoleAssignment';
+import { useActiveServerAccountScope, useSessionServerId, useSetting } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 
 import {
     buildSessionActionFieldOptionsResolver,
@@ -13,17 +18,40 @@ function resolveAgentLabel(agentId: string): string {
     return resolveBuiltInAgentTitle(agentId) ?? agentId;
 }
 
+function useAssignableRoleProfilesForSession(sessionId: string | null): readonly AssignableSessionRoleProfileV1[] {
+    const builtIns = React.useMemo(() => listUiAssignableSessionRoleProfiles(null), []);
+    const serverId = useSessionServerId(sessionId ?? '');
+    const activeScope = useActiveServerAccountScope();
+    // The role-profile value is the narrow active-account invalidation signal. The scope/session
+    // subscriptions also retry a catalog that was unresolved before its account identity hydrated.
+    const activeRoleProfiles = useSetting('sessionRoleProfilesV1');
+    const [profiles, setProfiles] = React.useState<readonly AssignableSessionRoleProfileV1[]>(builtIns);
+    React.useEffect(() => {
+        let cancelled = false;
+        setProfiles(builtIns);
+        if (!sessionId) return () => { cancelled = true; };
+        void resolveAssignableSessionRoleProfilesForServer(serverId).then((resolved) => {
+            if (!cancelled && resolved) setProfiles(resolved);
+        });
+        return () => { cancelled = true; };
+    }, [activeRoleProfiles, activeScope?.accountId, activeScope?.serverId, builtIns, serverId, sessionId]);
+    return profiles;
+}
+
 /** The card's resolver: the full paint, including the snapshot-derived `disabled` flags. */
 export function useSessionActionFieldOptions(sessionId: string): ResolveSessionActionFieldOptions {
     const enabledAgentIds = useEnabledAgentIds();
     const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId);
+    const roleProfiles = useAssignableRoleProfilesForSession(sessionId);
     return React.useMemo(
         () => buildSessionActionFieldOptionsResolver({
             enabledAgentIds,
             executionRunsBackends,
             resolveAgentLabel,
+            roleProfiles,
+            roleClearLabel: t('sessionRole.none'),
         }),
-        [enabledAgentIds, executionRunsBackends],
+        [enabledAgentIds, executionRunsBackends, roleProfiles],
     );
 }
 
@@ -44,15 +72,18 @@ export function useSessionActionFieldOptions(sessionId: string): ResolveSessionA
  * `buildRowShellSignature` — and every row's size version through it. The list is rebuilt from the
  * dep itself, so there is no stale closure.
  */
-export function useSessionActionFieldOptionsForRowHeight(): ResolveSessionActionFieldOptions {
+export function useSessionActionFieldOptionsForRowHeight(sessionId: string | null = null): ResolveSessionActionFieldOptions {
     const enabledAgentIds = useEnabledAgentIds();
+    const roleProfiles = useAssignableRoleProfilesForSession(sessionId);
     const enabledAgentIdsKey = enabledAgentIds.join('|');
     return React.useMemo(
         () => buildSessionActionFieldOptionsResolver({
             enabledAgentIds: enabledAgentIdsKey.length > 0 ? enabledAgentIdsKey.split('|') : [],
             executionRunsBackends: null,
             resolveAgentLabel,
+            roleProfiles,
+            roleClearLabel: t('sessionRole.none'),
         }),
-        [enabledAgentIdsKey],
+        [enabledAgentIdsKey, roleProfiles],
     );
 }

@@ -46,6 +46,11 @@ export type SessionListViewItem =
     }
     | {
         type: 'session';
+        parentSessionId?: string;
+        nestingDepth?: number;
+        hasChildren?: boolean;
+        childrenCollapsed?: boolean;
+        identityOverride?: 'independent';
         session: SessionListRenderableSession;
         section?: 'active' | 'inactive';
         groupKey?: string;

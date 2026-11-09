@@ -19,9 +19,9 @@ test('spawned listener ownership timeout defaults for load and accepts a bounded
   }), 60_000);
 });
 
-test('spawned listener proof prefers a delayed process-group result over inconclusive broad discovery', async () => {
+test('a delayed process-group result still needs conclusive broad discovery', async () => {
   const observations = [];
-  const pid = await resolveSpawnedProcessGroupListenPid(
+  const resolve = (broad) => resolveSpawnedProcessGroupListenPid(
     { port: 4101, spawnedPid: 301 },
     {
       listenerOwnershipTimeoutMs: 3_000,
@@ -32,15 +32,27 @@ test('spawned listener proof prefers a delayed process-group result over inconcl
           await new Promise((resolve) => setTimeout(resolve, 300));
           return { status: 'ok', supported: true, pids: [301] };
         }
-        return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+        return broad;
       },
       getProcessGroupIdImpl: async (candidatePid) => candidatePid,
     },
   );
 
-  assert.equal(pid, 301);
+  for (const inconclusive of [
+    { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' },
+    { status: 'error', supported: true, pids: [], reason: 'listener-discovery-error' },
+    { status: 'unsupported', supported: false, pids: [], reason: 'missing-listener-discovery-command' },
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    await assert.rejects(resolve(inconclusive), (error) => {
+      assert.equal(error.code, 'ELISTENERDISCOVERYINCONCLUSIVE');
+      assert.equal(error.observation.reason, inconclusive.reason);
+      return true;
+    });
+  }
+  assert.equal(await resolve({ status: 'ok', supported: true, pids: [301] }), 301);
   assert.equal(observations.some((options) => options.processGroupId === 301), true);
-  assert.equal(observations.some((options) => options.processGroupId == null), false);
+  assert.equal(observations.some((options) => options.processGroupId == null), true);
 });
 
 test('spawned listener proof tolerates listener discovery delayed beyond three seconds under load', async () => {
@@ -51,7 +63,7 @@ test('spawned listener proof tolerates listener discovery delayed beyond three s
       listenerOwnershipRetryDelayMs: 0,
       listListenPidsWithStatusImpl: async (_port, { processGroupId, signal }) => {
         if (!processGroupId) {
-          return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+          return { status: 'ok', supported: true, pids: [301] };
         }
         return await new Promise((resolve) => {
           const remainingMs = Math.max(0, availableAt - Date.now());
@@ -83,7 +95,7 @@ test('spawned listener proof lets one process-group discovery consume its reserv
       listListenPidsWithStatusImpl: async (_port, { processGroupId, signal, timeoutMs }) => {
         if (!processGroupId) {
           broadAttempts += 1;
-          return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+          return { status: 'ok', supported: true, pids: [301] };
         }
         processGroupAttempts += 1;
         timeoutBudgets.push(timeoutMs);
@@ -103,7 +115,8 @@ test('spawned listener proof lets one process-group discovery consume its reserv
 
   assert.equal(pid, 301);
   assert.equal(processGroupAttempts, 1);
-  assert.equal(broadAttempts, 0);
+  // One bounded look for conflicts, never a retry loop.
+  assert.equal(broadAttempts, 1);
   assert.ok(timeoutBudgets[0] > 1_100);
 });
 
@@ -470,4 +483,118 @@ test('expired command scope never starts process identity observation and caches
   );
   assert.equal(cached, first);
   assert.equal(calls, 0);
+});
+
+test('a narrow process-group result does not hide a foreign listener from broad discovery', async () => {
+  const resolve = (groups) => resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 1_000,
+      listListenPidsWithStatusImpl: async (_port, options) => (options.processGroupId === 301
+        ? { status: 'ok', supported: true, pids: [302] }
+        : { status: 'ok', supported: true, pids: [302, 400] }),
+      getProcessGroupIdImpl: async (pid) => groups[pid] ?? null,
+    },
+  );
+
+  await assert.rejects(resolve({ 301: 301, 302: 301, 400: 77 }), /answered by another process/);
+  await assert.rejects(resolve({ 301: 301, 302: 301 }), /answered by another process/);
+  assert.equal(await resolve({ 301: 301, 302: 301, 400: 301 }), 302);
+});
+
+test('a second group proof in the same scope does not repeat broad corroboration', async () => {
+  let broadReads = 0;
+  const scope = createListenerOwnershipObservationScope({
+    totalTimeoutMs: 1_000,
+    listListenPidsWithStatusImpl: async (_port, options) => {
+      if (!options.processGroupId) broadReads += 1;
+      return { status: 'ok', supported: true, pids: [301] };
+    },
+  });
+  const options = { observationScope: scope, getProcessGroupIdImpl: async () => 301 };
+  await resolveSpawnedProcessGroupListenPid({ port: 4101, spawnedPid: 301 }, options);
+  await resolveSpawnedProcessGroupListenPid({ port: 4101, spawnedPid: 301 }, options);
+  assert.equal(broadReads, 1);
+});
+
+test('a listener found through the resolved process group is also checked against broad discovery', async () => {
+  await assert.rejects(
+    resolveSpawnedProcessGroupListenPid(
+      { port: 4101, spawnedPid: 301 },
+      {
+        listenerOwnershipTimeoutMs: 1_000,
+        listListenPidsWithStatusImpl: async (_port, { processGroupId }) => {
+          if (processGroupId === 301) return { status: 'ok', supported: true, pids: [] };
+          if (processGroupId === 44) return { status: 'ok', supported: true, pids: [302] };
+          return { status: 'ok', supported: true, pids: [302, 400] };
+        },
+        getProcessGroupIdImpl: async (pid) => ({ 301: 44, 302: 44, 400: 77 })[pid] ?? null,
+      },
+    ),
+    /answered by another process/,
+  );
+});
+
+test('the spawned process is never foreign to its own proof', async () => {
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 1_000,
+      listListenPidsWithStatusImpl: async (_port, { processGroupId }) => (processGroupId === 301
+        ? { status: 'ok', supported: true, pids: [302] }
+        : { status: 'ok', supported: true, pids: [301, 302] }),
+      getProcessGroupIdImpl: async () => null,
+    },
+  );
+  assert.equal(pid, 302);
+});
+
+test('inconclusive broad corroboration is one attempt, not a retry loop', async () => {
+  let broadAttempts = 0;
+  await assert.rejects(
+    resolveSpawnedProcessGroupListenPid(
+      { port: 4101, spawnedPid: 301 },
+      {
+        listenerOwnershipTimeoutMs: 1_000,
+        listenerOwnershipRetryDelayMs: 0,
+        listListenPidsWithStatusImpl: async (_port, { processGroupId }) => {
+          if (processGroupId) return { status: 'ok', supported: true, pids: [301] };
+          broadAttempts += 1;
+          return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+        },
+        getProcessGroupIdImpl: async (candidatePid) => candidatePid,
+      },
+    ),
+    (error) => error.code === 'ELISTENERDISCOVERYINCONCLUSIVE',
+  );
+  assert.equal(broadAttempts, 1);
+});
+
+test('a process probe that ignores its abort is still cut off at the scope deadline', async () => {
+  const scope = createListenerOwnershipObservationScope({ totalTimeoutMs: 60 });
+  const outcome = await Promise.race([
+    scope.withProcessProbeBudget(() => new Promise(() => {})),
+    new Promise((resolve) => setTimeout(() => resolve('still-pending'), 1_000)),
+  ]);
+  assert.deepEqual(outcome, { status: 'inconclusive', reason: 'process-identity-timeout' });
+});
+
+test('a process probe that ignores its abort is still cut off by the caller', async () => {
+  const controller = new AbortController();
+  const scope = createListenerOwnershipObservationScope({ totalTimeoutMs: 30_000 });
+  const pending = scope.withProcessProbeBudget(() => new Promise(() => {}), { signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  const outcome = await Promise.race([
+    pending,
+    new Promise((resolve) => setTimeout(() => resolve('still-pending'), 1_000)),
+  ]);
+  assert.deepEqual(outcome, { status: 'inconclusive', reason: 'process-identity-cancelled' });
+});
+
+test('a process probe that settles keeps its own answer', async () => {
+  const scope = createListenerOwnershipObservationScope({ totalTimeoutMs: 1_000 });
+  assert.deepEqual(await scope.withProcessProbeBudget(async () => ({ status: 'ok' })), { status: 'ok' });
+  await assert.rejects(scope.withProcessProbeBudget(async () => {
+    throw new Error('probe failed');
+  }), /probe failed/);
 });

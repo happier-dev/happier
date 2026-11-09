@@ -26,6 +26,15 @@ const workspaceB: SessionFolderWorkspaceRefV1 = {
     rootPath: '/repo/b',
 };
 
+it('keeps sidebar session parentage in the canonical tree without treating it as folder assignment', () => {
+    const parent = sessionItem({ id: 'planner', groupKey: 'workspace-a', folderId: null, depth: 0, workspace: workspaceA });
+    const child = { ...sessionItem({ id: 'implementer', groupKey: 'workspace-b', folderId: null, depth: 0, workspace: workspaceB }), parentSessionId: 'planner', nestingDepth: 1 };
+    const model = buildSessionListTreeRows({ items: [projectHeader('workspace-a', workspaceA), parent, child] });
+    expect(model.rowMetadataById.get(treeRowId.session('server-a', 'implementer'))).toMatchObject({
+        parentRowId: treeRowId.session('server-a', 'planner'), folderDepth: 1, folderId: null,
+    });
+});
+
 function bounds(y: number): WindowBounds {
     return { x: 0, y, width: 320, height: 40 };
 }

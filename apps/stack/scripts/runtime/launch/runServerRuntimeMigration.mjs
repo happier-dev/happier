@@ -104,13 +104,14 @@ export async function runServerRuntimeMigration({
 export async function spawnRuntimeServerAfterMigration({
   serverLaunchSpec,
   env,
+  serverProcessEnv = env,
   children,
   isCancellationRequested,
   spawnProcImpl = spawnProc,
 }) {
   await runServerRuntimeMigration({ serverLaunchSpec, env, children, isCancellationRequested, spawnProcImpl });
   throwIfStartupCancelled(isCancellationRequested, serverLaunchSpec.migration);
-  const server = spawnProcImpl('server', serverLaunchSpec.command, serverLaunchSpec.args, env, { cwd: serverLaunchSpec.serverDir });
+  const server = spawnProcImpl('server', serverLaunchSpec.command, serverLaunchSpec.args, serverProcessEnv, { cwd: serverLaunchSpec.serverDir });
   children?.push(server);
   return server;
 }

@@ -1,5 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { fetchSessionOrganizationSnapshot } from '@/sync/api/session/sessionOrganizationApi';
+import {
+    fetchSessionAppearancePresentations,
+    fetchSessionOrganizationSnapshot,
+} from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { SessionOrganizationSnapshotRequest } from '@happier-dev/protocol';
@@ -22,15 +25,22 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
     store.setSessionOrganizationLoading(initialServerId, true);
     store.setSessionOrganizationError(initialServerId, null);
     try {
-        const response = await fetchSessionOrganizationSnapshot({
-            credentials: params.credentials,
-            serverUrl: params.serverUrl,
-            request: params.request,
-        });
+        const [response, presentationResponse] = await Promise.all([
+            fetchSessionOrganizationSnapshot({
+                credentials: params.credentials,
+                serverUrl: params.serverUrl,
+                request: params.request,
+            }),
+            params.request?.includeSessionAppearances === true
+                ? fetchSessionAppearancePresentations({ credentials: params.credentials, serverUrl: params.serverUrl })
+                : Promise.resolve(null),
+        ]);
         if (!params.shouldContinue()) return;
         const snapshot = await openSessionOrganizationSnapshotDisplayEnvelopes({
             credentials: params.credentials,
-            snapshot: response.snapshot,
+            snapshot: presentationResponse?.supported
+                ? { ...response.snapshot, sessionAppearancePresentations: [...presentationResponse.presentations] }
+                : response.snapshot,
         });
         if (!params.shouldContinue()) return;
         currentServerId = resolveCurrentServerId();

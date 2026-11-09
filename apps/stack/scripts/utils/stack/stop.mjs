@@ -11,6 +11,7 @@ import {
   readStackRuntimeStateFile,
   recordStackRuntimeStopRequest,
   withStackRuntimeStopTransaction,
+  isUnverifiedProcessInstance,
 } from './runtime_state.mjs';
 import {
   getProcessGroupId,
@@ -25,6 +26,7 @@ import {
   textContainsEnvBindingName,
   textContainsNeedle,
 } from '../proc/ownership.mjs';
+import { observePidLiveness } from '../proc/pids.mjs';
 import { terminateProcessGroup, terminateProcessPid } from '../proc/terminate.mjs';
 import {
   processInstanceFingerprintMatches,
@@ -63,7 +65,7 @@ function getRuntimeProcessEntries(processes, processInstances = {}) {
       const processInstanceFingerprint = Number(identity?.pid) === pid
         ? String(identity?.fingerprint ?? '').trim() || null
         : null;
-      entries.push({ key, pid, processInstanceFingerprint });
+      entries.push({ key, pid, processInstanceFingerprint, unverified: isUnverifiedProcessInstance(identity, pid) });
     }
   }
   return entries;
@@ -134,6 +136,10 @@ const DEFINITIVE_NOT_OWNED_REASONS = new Set([
   'missing_process_env',
   'process-not-found',
 ]);
+
+// Failures a daemon can leave behind by exiting on its own. A mismatch means this was never the
+// recorded process, so a later exit proves nothing about it.
+const DAEMON_EXIT_RACE_REASONS = new Set(['kill_timeout', 'process_instance_unavailable']);
 
 async function requestLifecycleOwnerShutdown(pid, {
   stackName,
@@ -410,6 +416,9 @@ async function stopStackWithEnvInternal({
   readProcessInstanceFingerprintImpl = readProcessInstanceFingerprintSync,
   terminateProcessPidImpl = terminateProcessPid,
   terminateProcessGroupImpl = terminateProcessGroup,
+  listPsPidsForEnvQueriesImpl = listPsPidsForEnvQueries,
+  stopLocalDaemonImpl = stopLocalDaemon,
+  observePidLivenessImpl = observePidLiveness,
 } = {}, runtimeStopTransaction = null) {
   const resolvedStopAttribution = {
     requestedBy: String(stopAttribution?.requestedBy ?? 'stack stop'),
@@ -515,7 +524,9 @@ async function stopStackWithEnvInternal({
 
   const killedProcessPids = [];
   const visitedProcessPids = new Set();
-  for (const { key, pid, processInstanceFingerprint } of getRuntimeProcessEntries(processes, processInstances)) {
+  const runtimeProcessEntries = getRuntimeProcessEntries(processes, processInstances);
+  const unverifiedPids = new Set(runtimeProcessEntries.filter((entry) => entry.unverified).map((entry) => entry.pid));
+  for (const { key, pid, processInstanceFingerprint, unverified } of runtimeProcessEntries) {
     if (preserveDaemon && isDaemonRuntimeProcessKey(key)) {
       continue;
     }
@@ -523,6 +534,10 @@ async function stopStackWithEnvInternal({
     if (visitedProcessPids.has(pid)) continue;
     visitedProcessPids.add(pid);
     if (!isPidAlive(pid)) continue;
+    if (unverified) {
+      cleanupResults.push({ ok: false, step: key, pid, reason: 'process_instance_unverified' });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     const res = await killProcessGroupOwnedByStackImpl(pid, {
       stackName, envPath, cliHomeDir, processInstanceFingerprint, label: key, json,
@@ -636,7 +651,7 @@ async function stopStackWithEnvInternal({
       // Stopping stack infra should still work without the daemon stop step.
       const cliDistIndex = join(cliDir, 'dist', 'index.mjs');
       if (existsSync(cliDistIndex)) {
-        await stopLocalDaemon({
+        await stopLocalDaemonImpl({
           cliBin,
           internalServerUrl,
           cliHomeDir,
@@ -657,6 +672,20 @@ async function stopStackWithEnvInternal({
           ? { processGroupTerminated: e.processGroupTerminated }
           : {}),
       });
+    }
+
+    // The forced attempt above runs first, so it can fail and the daemon still leave through this
+    // graceful stop. Once its PID is gone, the same owner decides whether its tree is clean too.
+    for (const { key, pid, processInstanceFingerprint } of runtimeProcessEntries) {
+      if (!isDaemonRuntimeProcessKey(key) || !processInstanceFingerprint) continue;
+      const forced = cleanupResults.findLast((result) => result.pid === pid);
+      if (forced?.ok !== false || !DAEMON_EXIT_RACE_REASONS.has(forced.reason)) continue;
+      if (observePidLivenessImpl(pid).status !== 'dead') continue;
+      // eslint-disable-next-line no-await-in-loop
+      const settled = await killProcessGroupOwnedByStackImpl(pid, {
+        stackName, envPath, cliHomeDir, processInstanceFingerprint, label: key, json,
+      });
+      cleanupResults.push({ ok: settled.killed === true, step: key, pid, reason: settled.reason ?? 'cleanup_unconfirmed' });
     }
   }
 
@@ -730,7 +759,7 @@ async function stopStackWithEnvInternal({
       legacyServer,
       repoLocalInfraTagged = [],
       repoLocalLegacyServer = [],
-    ] = await listPsPidsForEnvQueries([
+    ] = await listPsPidsForEnvQueriesImpl([
       { needles: [envNeedle, 'HAPPIER_STACK_PROCESS_KIND=infra'] },
       // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
       // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
@@ -796,6 +825,10 @@ async function stopStackWithEnvInternal({
       if (preservedPids?.has(pid)) continue;
       if (confirmedCleanupPids.has(pid)) continue;
       if (!isPidAlive(pid)) continue;
+      if (unverifiedPids.has(pid)) {
+        sweepSkipped.push({ pid, reason: 'process_instance_unverified' });
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       const res = await killProcessGroupOwnedByStackImpl(pid, { stackName, envPath, cliHomeDir, label: 'sweep', json });
       if (res.killed) {
@@ -823,6 +856,10 @@ async function stopStackWithEnvInternal({
         if (preservedPids?.has(pid)) continue;
         if (confirmedCleanupPids.has(pid)) continue;
         if (!isPidAlive(pid)) continue;
+        if (unverifiedPids.has(pid)) {
+          sweepSkipped.push({ pid, reason: 'process_instance_unverified' });
+          continue;
+        }
         const fingerprintBeforeProof = readProcessInstanceFingerprintImpl(pid);
         // eslint-disable-next-line no-await-in-loop
         const identity = await observePsEnvLineImpl(pid);

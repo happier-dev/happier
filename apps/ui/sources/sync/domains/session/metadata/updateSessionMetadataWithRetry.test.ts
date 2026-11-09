@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { applySessionRoleV1ToMetadata, type SessionRoleV1 } from '@happier-dev/protocol';
+
 import { updateSessionMetadataWithRetry } from './updateSessionMetadataWithRetry';
 
 type Metadata = {
@@ -10,6 +12,39 @@ type Metadata = {
 };
 
 describe('updateSessionMetadataWithRetry', () => {
+    it('sets and clears only the role across a concurrent writer, preserving provenance and unrelated keys', async () => {
+        const origin = { v: 1, kind: 'agent', creatorSessionId: 'planner' };
+        let server = { version: 1, metadata: { path: '/repo', host: 'h', sessionOriginV1: origin, futureKey: 1 } as Record<string, unknown> };
+        let local = { metadataVersion: 1, metadata: server.metadata };
+        let raced = false;
+        const write = (assignment: SessionRoleV1 | null) => updateSessionMetadataWithRetry<Record<string, unknown>>({
+            sessionId: 's1', getSession: () => local, refreshSessions: async () => {},
+            encryptMetadata: async (metadata) => JSON.stringify(metadata),
+            decryptMetadata: async (_version, encrypted) => JSON.parse(encrypted),
+            emitUpdateMetadata: async (payload) => {
+                if (!raced) {
+                    // Another device renames the session between our read and write.
+                    raced = true;
+                    server = { version: 2, metadata: { ...server.metadata, summary: { text: 'Renamed', updatedAt: 2 } } };
+                }
+                if (payload.expectedVersion !== server.version) {
+                    return { result: 'version-mismatch' as const, version: server.version, metadata: JSON.stringify(server.metadata) };
+                }
+                server = { version: server.version + 1, metadata: JSON.parse(payload.metadata) };
+                return { result: 'success' as const, version: server.version, metadata: payload.metadata };
+            },
+            applySessionMetadata: (next) => { local = next; },
+            updater: (metadata) => applySessionRoleV1ToMetadata(metadata, assignment),
+        });
+        const delegate: SessionRoleV1 = { v: 1, role: 'delegate', instructions: 'Delegate rules.', assignmentId: 'a-1', assignedAt: 1 };
+        await write(delegate);
+        expect(server.metadata).toEqual({ path: '/repo', host: 'h', sessionOriginV1: origin, futureKey: 1,
+            summary: { text: 'Renamed', updatedAt: 2 }, sessionRoleV1: delegate });
+        await write(null);
+        expect(server.metadata).toEqual({ path: '/repo', host: 'h', sessionOriginV1: origin, futureKey: 1,
+            summary: { text: 'Renamed', updatedAt: 2 } });
+    });
+
     it('does not write metadata after its account scope retires during encryption', async () => {
         let current = true;
         const writes: string[] = [];

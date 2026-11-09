@@ -55,6 +55,7 @@ export function refreshMachineMetadataForCurrentDaemon(
     happyLibDir: projectPath(),
     daemonTerminalSessionAttachSupported: true,
     daemonSessionGoalControlsSupported: true,
+    daemonSessionRoleV1SpawnSupported: true,
     ...(cliUpdate ? { cliUpdate } : {}),
   };
   if (
@@ -66,6 +67,7 @@ export function refreshMachineMetadataForCurrentDaemon(
     && current.happyLibDir === next.happyLibDir
     && current.daemonTerminalSessionAttachSupported === next.daemonTerminalSessionAttachSupported
     && current.daemonSessionGoalControlsSupported === next.daemonSessionGoalControlsSupported
+    && current.daemonSessionRoleV1SpawnSupported === next.daemonSessionRoleV1SpawnSupported
     && JSON.stringify(current.cliUpdate ?? null) === JSON.stringify(next.cliUpdate ?? null)
   ) {
     return current as MachineMetadata;

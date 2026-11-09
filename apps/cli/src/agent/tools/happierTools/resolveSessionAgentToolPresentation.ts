@@ -24,7 +24,7 @@ function toJsonSchema(inputSchema: unknown): Readonly<Record<string, unknown>> {
   if (!(inputSchema instanceof z.ZodType)) {
     throw new Error('Session-Agent tool input schema must be a Zod schema');
   }
-  const projected = z.toJSONSchema(inputSchema, { target: 'draft-7' });
+  const projected = z.toJSONSchema(inputSchema, { target: 'draft-7', io: 'input' });
   if (!projected || typeof projected !== 'object' || Array.isArray(projected)) {
     throw new Error('Session-Agent tool input schema did not project to a JSON Schema object');
   }

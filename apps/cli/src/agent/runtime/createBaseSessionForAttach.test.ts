@@ -52,6 +52,31 @@ describe('createBaseSessionForAttach', () => {
     }
   });
 
+  it('seeds only a valid retained session role from the attach handoff into the base metadata', async () => {
+    const dir = await createTempDir('happy-base-attach-role-');
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: dir, HAPPIER_SESSION_ATTACH_FILE: undefined });
+      vi.resetModules();
+      const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const role = { v: 1, role: 'reviewer', instructions: 'REVIEW SNAPSHOT', assignmentId: 'a-1', assignedAt: 1 };
+      const attachWith = async (name: string, sessionRoleV1: unknown) => {
+        const filePath = join(attachDir, name);
+        await writeFile(filePath, JSON.stringify({ v: 2, encryptionMode: 'plain', sessionRoleV1 }), { mode: 0o600 });
+        process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
+        return await createBaseSessionForAttach({ existingSessionId: 'session-attach', metadata: createTestMetadata(), state: { controlledByUser: false } });
+      };
+
+      expect((await attachWith('role.json', role)).metadata).toMatchObject({ sessionRoleV1: role });
+      // A malformed role is ignored rather than failing the resume.
+      expect((await attachWith('bad-role.json', { v: 1, role: 'architect' })).metadata).not.toHaveProperty('sessionRoleV1');
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
   it('uses legacy lastObservedMessageSeq as the explicit startup cursor when initialTranscriptAfterSeq is absent', async () => {
     const dir = await createTempDir('happy-base-attach-');
     try {

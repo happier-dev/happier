@@ -7,7 +7,7 @@ import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports
 import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
 import { ensureDepsInstalled, pmExecBin, requireDir } from './utils/proc/pm.mjs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
@@ -56,10 +56,8 @@ import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { validateUiServingConfig } from './utils/server/ui_build_check.mjs';
 import { observeRuntimePortOwnedByStackDevProxy, selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
-import {
-  createListenerOwnershipCommandScope,
-  resolveSpawnedProcessGroupListenPid,
-} from './utils/server/listener_ownership.mjs';
+import { createListenerOwnershipCommandScope } from './utils/server/listener_ownership.mjs';
+import { startServerWithOwnershipProof } from './utils/server/server_startup_attempt.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart.mjs';
 import { applyRuntimeServerSqliteEnv } from './utils/server/apply_runtime_server_sqlite_env.mjs';
@@ -304,10 +302,12 @@ async function main() {
     let shutdown = null;
     let pendingShutdownSignal = null;
     let shutdownDispatchStarted = false;
+    const serverStartupController = new AbortController();
     const dispatchShutdown = (signal) => {
       if (shutdownDispatchStarted) return;
       if (!shutdown) {
         pendingShutdownSignal = signal;
+        serverStartupController.abort();
         for (const child of children.filter((candidate) => candidate?.exitCode == null)) {
           void killProcessTree(child, 'SIGINT').catch(() => {});
         }
@@ -590,33 +590,42 @@ async function main() {
   // Default server start (happier-server-light, or happier-server without managed infra).
   if (!(serverComponentName === 'happier-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
     if (startupDecision.startServer) {
-      const server = runtimeSnapshot
-        ? await spawnRuntimeServerAfterMigration({
-            serverLaunchSpec,
-            env: serverEnv,
-            children,
-            isCancellationRequested: () => pendingShutdownSignal !== null,
-          })
-        : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
-      if (!runtimeSnapshot) children.push(server);
-      activeServerProcess = server;
-      await waitForServerReady(internalServerUrl, { childProcess: server });
+      const spawnServer = async (env) => {
+        const server = runtimeSnapshot
+          ? await spawnRuntimeServerAfterMigration({
+              serverLaunchSpec,
+              env: serverEnv,
+              serverProcessEnv: env,
+              children,
+              isCancellationRequested: () => pendingShutdownSignal !== null,
+            })
+          : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env });
+        if (!runtimeSnapshot) children.push(server);
+        activeServerProcess = server;
+        return server;
+      };
+      const waitForReady = (server, { signal } = {}) => (
+        waitForServerReady(internalServerUrl, { childProcess: server, signal })
+      );
       if (stackMode && runtimeStatePath) {
-        const listenerPid = await resolveSpawnedProcessGroupListenPid({
-          port: serverPort,
-          spawnedPid: server.pid,
+        await startServerWithOwnershipProof({
+          stackBaseDir: dirname(runtimeStatePath),
+          env: serverEnv,
+          endpoint: { host: new URL(internalServerUrl).hostname, port: serverPort },
+          exactProcess: Boolean(runtimeSnapshot),
+          signal: serverStartupController.signal,
+          spawnServer,
+          waitForReady,
+          recordOwnership: ({ child, proof }) => recordStackRuntimeServerPids(runtimeStatePath, {
+            listenerPid: proof.listenerPid,
+            wrapperPid: child.pid,
+            serverPort,
+            clearProxyState: true,
+            verifiedProcessInstances: proof.verifiedProcessInstances,
+          }),
         });
-        if (!(Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1)) {
-          throw new Error(
-            `[local] server readiness ownership could not be proven on port ${serverPort}: no stack-owned listener PID was discovered`
-          );
-        }
-        await recordStackRuntimeServerPids(runtimeStatePath, {
-          listenerPid: Number(listenerPid),
-          wrapperPid: server.pid,
-          serverPort,
-          clearProxyState: true,
-        });
+      } else {
+        await waitForReady(await spawnServer(serverEnv));
       }
     } else {
       console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);

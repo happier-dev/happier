@@ -8,7 +8,7 @@ import { WARM_CACHE_STORAGE_ID } from '../../domains/state/warmCachePersistence'
 
 const ACCOUNT_ID = 'account_a';
 const SERVER_ID = 'server_a';
-const SESSION_LIST_WARM_CACHE_KEY = `session-list-warm-cache-v1:${SERVER_ID}:${ACCOUNT_ID}`;
+const SESSION_LIST_WARM_CACHE_KEY = `session-list-warm-cache-v3:${SERVER_ID}:${ACCOUNT_ID}`;
 
 // One map per MMKV instance id, because the warm cache now lives in its own encrypted instance and
 // a conflated double would let a read of the retired plaintext instance pass for a read of it.

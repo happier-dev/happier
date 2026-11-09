@@ -137,3 +137,30 @@ describe('summarizeSessionRow', () => {
     expect(session).not.toHaveProperty('permissionMode');
   });
 });
+
+describe('summarizeSessionRow (lineage readback)', () => {
+  const credentials = {
+    token: 'token',
+    encryption: { type: 'legacy', secret: new Uint8Array(32).fill(5) },
+  } satisfies { token: string; encryption: { type: 'legacy'; secret: Uint8Array } };
+
+  it('exposes role, origin, and run link with delivery state on status and list rows', () => {
+    const metadata = encodeBase64(encryptLegacy({
+      sessionRoleV1: { v: 1, role: 'reviewer', instructions: 'Review.', assignmentId: 'a1', assignedAt: 1 },
+      sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run_1' } },
+      executionRunLinkV1: { v: 1, parentSessionId: 'lead', runId: 'run_1', turnEpoch: 0, relay: { turnEpoch: 1, status: 'queued', localId: 'l1', at: 2 } },
+    }, credentials.encryption.secret));
+    const session = summarizeSessionRow({ credentials, row: createSessionRecordFixture({ id: 'child', metadata, metadataVersion: 1 }) });
+    expect(session.role).toEqual({ id: 'reviewer', name: 'Reviewer', assignmentId: 'a1' });
+    expect(session.origin).toEqual({ creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run_1' } });
+    expect(session.executionRunLink).toEqual(expect.objectContaining({ parentSessionId: 'lead', runId: 'run_1', deliveryState: 'queued' }));
+  });
+
+  it('reports null lineage for a plain roleless user session', () => {
+    const metadata = encodeBase64(encryptLegacy({ tag: 'MySession' }, credentials.encryption.secret));
+    const session = summarizeSessionRow({ credentials, row: createSessionRecordFixture({ id: 'user', metadata, metadataVersion: 1 }) });
+    expect(session.role).toBeNull();
+    expect(session.origin).toBeNull();
+    expect(session.executionRunLink).toBeNull();
+  });
+});

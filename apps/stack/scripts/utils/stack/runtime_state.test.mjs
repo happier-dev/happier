@@ -1218,3 +1218,213 @@ test('stack dev proxy runtime patch clears stale mode-specific metadata across d
     fallbackReason: null,
   });
 });
+
+test('a verified server identity is recorded as proven and is not re-read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-verified-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    // No live process has these PIDs, so a re-read could only lose the verified identity.
+    const verifiedProcessInstances = {
+      serverPid: { pid: 2147480001, fingerprint: 'win32-cim:listener' },
+      serverWrapperPid: { pid: 2147480002, fingerprint: 'win32-cim:wrapper' },
+    };
+    await recordStackRuntimeServerActivation(statePath, {
+      listenerPid: 2147480001,
+      wrapperPid: 2147480002,
+      stablePort: 53944,
+      backendPort: 53945,
+      proxyPid: null,
+      mode: 'proxy',
+      verifiedProcessInstances,
+    });
+
+    const state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverPid, verifiedProcessInstances.serverPid);
+    assert.deepEqual(state.processInstances.processes.serverWrapperPid, verifiedProcessInstances.serverWrapperPid);
+    assert.deepEqual(state.processInstances.processes.serverBackendPid, verifiedProcessInstances.serverPid);
+    assert.equal('verifiedProcessInstances' in state, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('recordStackRuntimeServerPids forwards a verified identity', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-verified-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    const serverPid = { pid: 2147480003, fingerprint: 'win32-cim:listener' };
+    await recordStackRuntimeServerPids(statePath, {
+      listenerPid: serverPid.pid,
+      wrapperPid: serverPid.pid,
+      serverPort: 53944,
+      clearProxyState: true,
+      verifiedProcessInstances: { serverPid, serverWrapperPid: serverPid },
+    });
+    const state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverPid, serverPid);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unverified process stays unverified across later writes and is never recaptured', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-unverified-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    // A live PID: any recapture would find a real identity here.
+    await recordStackRuntimeUpdate(statePath, {
+      processes: { serverDrainingPid: process.pid },
+      unverifiedProcessPids: [process.pid],
+    });
+    await recordStackRuntimeUpdate(statePath, { ports: { server: 53944 } });
+
+    const state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverDrainingPid, {
+      pid: process.pid,
+      fingerprint: null,
+      unverified: true,
+    });
+    assert.equal('unverifiedProcessPids' in state, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a recorded spawn identity survives later writes instead of being re-read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-spawn-identity-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    const serverDrainingPid = { pid: process.pid, fingerprint: 'win32-cim:spawn-created' };
+    await recordStackRuntimeUpdate(statePath, {
+      processes: { serverDrainingPid: process.pid },
+      verifiedProcessInstances: { serverDrainingPid },
+    });
+    await recordStackRuntimeUpdate(statePath, { ports: { server: 53944 } });
+
+    const state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverDrainingPid, serverDrainingPid);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function createUnverifiedRuntimeState(dir, { pid = process.pid, ownerPid } = {}) {
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeUpdate(statePath, {
+    stackName: 'unverified-test',
+    ownerPid,
+    processes: { serverDrainingPid: pid },
+    unverifiedProcessPids: [pid],
+  });
+  return statePath;
+}
+
+const expectedUnverified = (pid = process.pid) => ({ pid, fingerprint: null, unverified: true });
+
+test('a restart by the same owner keeps an unverified process unverified', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-unverified-start-'));
+  try {
+    const statePath = await createUnverifiedRuntimeState(dir, { ownerPid: process.pid });
+    const state = await recordStackRuntimeStart(statePath, {
+      stackName: 'unverified-test',
+      ownerPid: process.pid,
+    });
+    assert.equal(state.processes.serverDrainingPid, process.pid);
+    assert.deepEqual(state.processInstances.processes.serverDrainingPid, expectedUnverified());
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a successor owner keeps a live unverified process unverified without judging its ownership', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-unverified-successor-'));
+  try {
+    const statePath = await createUnverifiedRuntimeState(dir, { ownerPid: 2147480300 });
+    const state = await recordStackRuntimeStart(statePath, {
+      stackName: 'unverified-test',
+      ownerPid: process.pid,
+    }, {
+      observePidLivenessImpl: async (pid) => ({ status: pid === process.pid ? 'alive' : 'dead' }),
+      isRuntimeProcessTrustedImpl: async () => assert.fail('a positive ownership answer would adopt the PID'),
+    });
+    assert.equal(state.processes.serverDrainingPid, process.pid);
+    assert.deepEqual(state.processInstances.processes.serverDrainingPid, expectedUnverified());
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a successor owner drops an unverified process that is gone', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-unverified-gone-'));
+  try {
+    const statePath = await createUnverifiedRuntimeState(dir, { pid: 2147480301, ownerPid: 2147480300 });
+    const state = await recordStackRuntimeStart(statePath, {
+      stackName: 'unverified-test',
+      ownerPid: process.pid,
+    }, {
+      observePidLivenessImpl: async () => ({ status: 'dead', reason: 'not_found' }),
+    });
+    assert.equal(state.processes.serverDrainingPid, null);
+    assert.equal(state.processInstances.processes.serverDrainingPid, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a restart still captures a fresh identity for ordinary recorded processes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-ordinary-start-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    await recordStackRuntimeUpdate(statePath, {
+      stackName: 'ordinary-test',
+      ownerPid: process.pid,
+      processes: { serverPid: process.pid },
+    });
+    const state = await recordStackRuntimeStart(statePath, { stackName: 'ordinary-test', ownerPid: process.pid });
+    assert.equal(state.processInstances.processes.serverPid.pid, process.pid);
+    assert.equal(typeof state.processInstances.processes.serverPid.fingerprint, 'string');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a restart replaces a stale verified identity rather than carrying it forward', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-stale-verified-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    await recordStackRuntimeUpdate(statePath, {
+      stackName: 'ordinary-test',
+      ownerPid: process.pid,
+      processes: { serverPid: process.pid },
+      verifiedProcessInstances: { serverPid: { pid: process.pid, fingerprint: 'stale-identity' } },
+    });
+    const state = await recordStackRuntimeStart(statePath, { stackName: 'ordinary-test', ownerPid: process.pid });
+    assert.notEqual(state.processInstances.processes.serverPid.fingerprint, 'stale-identity');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a proven API instance stays with its process and leaves with it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-api-instance-'));
+  try {
+    const statePath = join(dir, 'stack.runtime.json');
+    const serverPid = { pid: 2147480500, fingerprint: 'win32-cim:listener', apiInstanceId: 'instance-1' };
+    await recordStackRuntimeUpdate(statePath, {
+      processes: { serverPid: serverPid.pid },
+      verifiedProcessInstances: { serverPid },
+    });
+    await recordStackRuntimeUpdate(statePath, { ports: { server: 53944 } });
+    let state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverPid, serverPid);
+
+    await recordStackRuntimeUpdate(statePath, {
+      processes: { serverPid: 2147480501 },
+      verifiedProcessInstances: { serverPid: { pid: 2147480501, fingerprint: 'win32-cim:replacement' } },
+    });
+    state = await readStackRuntimeStateFile(statePath);
+    assert.deepEqual(state.processInstances.processes.serverPid, { pid: 2147480501, fingerprint: 'win32-cim:replacement' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

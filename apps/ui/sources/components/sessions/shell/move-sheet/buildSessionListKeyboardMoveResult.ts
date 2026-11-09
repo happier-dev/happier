@@ -1,4 +1,5 @@
 import type { TreeDropResult } from '@/components/ui/treeDragDrop';
+import { canReorderSessionListItem } from '@/sync/domains/session/listing/sessionListIndex';
 
 import type {
     SessionListFolderSortMode,
@@ -48,6 +49,7 @@ function resolveOrderedSiblingRows(params: Readonly<{
 export function buildSessionListKeyboardMoveResult(
     params: BuildSessionListKeyboardMoveResultParams,
 ): TreeDropResult {
+    if (!canReorderSessionListItem(params.source.metadata.item)) return buildBlockedResult(params.source);
     const siblings = resolveOrderedSiblingRows({
         tree: params.tree,
         source: params.source,

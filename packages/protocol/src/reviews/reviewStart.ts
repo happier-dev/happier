@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { lazySchema } from '../lazySchema.js';
+import { createExecutionRunVisibleStartInputShapeV1 } from '../executionRunStartV2.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -57,6 +58,7 @@ export const ReviewStartInputSchema = lazySchema(() => z
     base: ReviewBaseSchema.default({ kind: 'none' }),
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     permissionMode: z.string().min(1).default('read_only'),
+    ...createExecutionRunVisibleStartInputShapeV1(),
   })
   .passthrough())
   // Intentionally no engine-specific requirements here: this is a generalized,

@@ -410,9 +410,10 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             headers: { "x-happier-session-list-timing": "1" },
         });
 
-        expect(reply.headers.get("server-timing")).toMatch(
-            /happier_v2_sessions_cursor;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_query;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_page;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_total;dur=[0-9]+(?:\.[0-9]+)?/,
-        );
+        const serverTiming = reply.headers.get("server-timing");
+        expect(serverTiming).toMatch(/happier_v2_sessions_query;dur=[0-9]+(?:\.[0-9]+)?/);
+        expect(serverTiming).toMatch(/happier_v2_sessions_query_page;dur=[0-9]+(?:\.[0-9]+)?/);
+        expect(serverTiming).toMatch(/happier_v2_sessions_total;dur=[0-9]+(?:\.[0-9]+)?/);
     });
 
     it("exposes diagnostic route timing headers on archived session listing when explicitly requested", async () => {
@@ -424,8 +425,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             headers: { "x-happier-session-list-timing": "1" },
         });
 
-        expect(reply.headers.get("server-timing")).toMatch(
-            /happier_v2_sessions_cursor;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_query;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_page;dur=[0-9]+(?:\.[0-9]+)?, happier_v2_sessions_total;dur=[0-9]+(?:\.[0-9]+)?/,
-        );
+        const serverTiming = reply.headers.get("server-timing");
+        expect(serverTiming).toMatch(/happier_v2_sessions_query;dur=[0-9]+(?:\.[0-9]+)?/);
+        expect(serverTiming).toMatch(/happier_v2_sessions_query_archived;dur=[0-9]+(?:\.[0-9]+)?/);
+        expect(serverTiming).toMatch(/happier_v2_sessions_total;dur=[0-9]+(?:\.[0-9]+)?/);
     });
 });

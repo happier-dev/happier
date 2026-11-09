@@ -56,6 +56,7 @@ import {
     removeCommittedPendingSettings,
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
+import { seedSessionRoleProfilesIfAbsent } from './writeback/sessionRoleProfilesSeed';
 import { fetchSessionOrganizationSnapshot } from '@/sync/api/session/sessionOrganizationApi';
 import { importLegacySessionOrganization as importLegacySessionOrganizationOp } from '@/sync/ops/sessionOrganization/importLegacySessionOrganization';
 import {
@@ -201,6 +202,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         version: number;
         raw: Record<string, unknown> | null;
         serverIdentityKeysChanged: boolean;
+        /** The persisted content already contains normalize(raw); raw may retain one-time migration inputs for local consumers. */
+        serverStorageNormalized: boolean;
     };
     type AccountSettingsV1UpdateResponse =
         | { success: true; version: number }
@@ -378,6 +381,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 version: fetched.version,
                 raw: migrated.raw,
                 serverIdentityKeysChanged: migrated.changed,
+                serverStorageNormalized: false,
             };
         } catch (e: unknown) {
             const errorCode = e && typeof e === 'object' && 'code' in e
@@ -396,6 +400,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 version: fetched.version,
                 raw: migrated.raw,
                 serverIdentityKeysChanged: migrated.changed,
+                serverStorageNormalized: false,
             };
         }
     }
@@ -414,7 +419,50 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             version: data.currentVersion,
             raw: migrated.raw,
             serverIdentityKeysChanged: migrated.changed,
+            serverStorageNormalized: false,
         };
+    }
+
+    async function persistFreshAccountRoleProfiles(
+        initialBaseline: AccountSettingsServerBaseline,
+        initialBaselineLegacyImportComplete: boolean,
+    ): Promise<AccountSettingsServerBaseline> {
+        if (!settingsScope) return initialBaseline;
+        let baseline = initialBaseline;
+        let baselineLegacyImportComplete = initialBaselineLegacyImportComplete;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const seeded = seedSessionRoleProfilesIfAbsent(baseline.raw);
+            if (!seeded.seeded) return baseline;
+            if (!baselineLegacyImportComplete) {
+                await maybeImportLegacySessionOrganization(baseline.raw, { requireExactBaseline: true });
+                baselineLegacyImportComplete = true;
+            }
+            const outgoingRaw = normalizeSettingsForServerStorageResult({
+                raw: seeded.raw,
+                mode: accountMode,
+            }).value;
+            const { content, v1Settings } = createSettingsContentForWrite(outgoingRaw);
+            const data = baseline.api === 'v2'
+                ? await updateSettingsV2({ content, expectedVersion: baseline.version })
+                : await updateSettingsV1({ settings: v1Settings, expectedVersion: baseline.version });
+            if (data.success) {
+                return {
+                    ...baseline,
+                    content,
+                    raw: seeded.raw,
+                    version: data.version,
+                    serverIdentityKeysChanged: false,
+                    serverStorageNormalized: true,
+                };
+            }
+            if (data.error === 'version-mismatch') {
+                baseline = await baselineFromVersionMismatch(data);
+                baselineLegacyImportComplete = false;
+                continue;
+            }
+            throw new Error(`Failed to seed fresh account role profiles: ${data.error}`);
+        }
+        throw new Error(`Fresh account role-profile seed failed after ${maxRetries} version conflicts`);
     }
 
     function normalizeSettingsForLocalStorage(params: { raw: Record<string, unknown>; mode: 'plain' | 'e2ee' }): Settings {
@@ -544,17 +592,20 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         clearPendingSettings(remainingPendingSettings);
     }
 
-    async function maybeImportLegacySessionOrganization(rawSettings: Record<string, unknown> | null): Promise<void> {
+    async function maybeImportLegacySessionOrganization(
+        rawSettings: Record<string, unknown> | null,
+        options: Readonly<{ requireExactBaseline?: boolean }> = {},
+    ): Promise<void> {
         if (!settingsScope || !rawSettings) return;
-        if (hasCompletedLegacySessionOrganizationImport(settingsScope)) return;
+
+        const initialPlan = buildLegacySessionOrganizationImportPlan({
+            serverId: settingsScope.serverId,
+            rawSettings,
+        });
+        if (!initialPlan.hasLegacyOrganizationSettings) return;
+        if (!options.requireExactBaseline && hasCompletedLegacySessionOrganizationImport(settingsScope)) return;
 
         try {
-            const initialPlan = buildLegacySessionOrganizationImportPlan({
-                serverId: settingsScope.serverId,
-                rawSettings,
-            });
-            if (!initialPlan.hasLegacyOrganizationSettings) return;
-
             const existing = await fetchSessionOrganizationSnapshot({
                 credentials,
                 serverUrl: activeServerUrl,
@@ -590,6 +641,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 endpoint: activeServerUrl,
                 error: error instanceof Error ? error.message : String(error),
             });
+            if (options.requireExactBaseline) throw error;
         }
     }
 
@@ -605,6 +657,12 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         let baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
         while (retryCount < maxRetries) {
             const version = baseline.version;
+            const seededBaseline = settingsScope
+                ? seedSessionRoleProfilesIfAbsent(baseline.raw)
+                : { raw: baseline.raw, seeded: false };
+            if (seededBaseline.seeded) {
+                await maybeImportLegacySessionOrganization(baseline.raw, { requireExactBaseline: true });
+            }
             const themeUpdate = legacyThemeProfiles || submittedThemeIntent;
             // Merge the definition being imported, not its pre-edit backup. If a successful
             // POST response was lost, the canonical merger recognizes the already saved copy.
@@ -638,12 +696,12 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             const pendingWithMigration: Partial<Settings> = theme
                 ? { ...pendingServerSettings, themeProfiles: theme.profiles } : pendingServerSettings;
             const merged = mergePendingSettingsIntoRawBaseline({
-                rawBaseline: baseline.raw,
+                rawBaseline: seededBaseline.raw,
                 pendingSettings: pendingWithMigration,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode }),
             });
 
-            if (!baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
+            if (!seededBaseline.seeded && !baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
                 const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, theme);
                 dbgSettings('syncSettings: pending merge produced no server change; skipped POST', {
                     endpoint: activeServerUrl,
@@ -744,9 +802,15 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         throw new Error(`Settings sync failed after ${maxRetries} retries due to version conflicts${mismatchHint}`);
     }
 
-    const fetched = await fetchAccountSettingsBaseline();
+    const initialFetched = await fetchAccountSettingsBaseline();
+    const initialSeed = settingsScope
+        ? seedSessionRoleProfilesIfAbsent(initialFetched.raw)
+        : { seeded: false };
+    await maybeImportLegacySessionOrganization(initialFetched.raw, {
+        requireExactBaseline: initialSeed.seeded,
+    });
+    const fetched = await persistFreshAccountRoleProfiles(initialFetched, initialSeed.seeded);
     const decryptedSettings = fetched.raw;
-    await maybeImportLegacySessionOrganization(decryptedSettings);
 
     const parsedSettings = decryptedSettings
         ? normalizeSettingsForLocalStorage({ raw: decryptedSettings, mode: accountMode })
@@ -805,7 +869,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             const needsMigration = missingCanonicalEnvelope
                 || nonCanonicalFormat
                 || fetched.serverIdentityKeysChanged
-                || migratedServerSettings.changed;
+                || (migratedServerSettings.changed && !fetched.serverStorageNormalized);
             dbgSettings('syncSettings: canonical migration check', {
                 endpoint: activeServerUrl,
                 serverVersion: fetched.version,

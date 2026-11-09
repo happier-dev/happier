@@ -1,4 +1,22 @@
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { readVisibleRunMarkerV1 } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunMarker';
+import type { DaemonExecutionRunMarker as ExecutionRunMarkerShape } from '@happier-dev/protocol';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
+import {
+  VISIBLE_RUN_RECOVERY_REREAD_DELAYS_MS,
+  VisibleRunCoordinator,
+  buildVisibleRunCompletionLocalId,
+} from '@/agent/executionRuns/runtime/visibleRuns/visibleRunCoordinator';
+import type { VisibleRunSessionPort } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunSessionPort';
+import { admitVisibleRunBind, type VisibleRunControls } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunRules';
+import { readBackendProvisionTimeoutMs } from '@/agent/executionRuns/runtime/executionRunManager/startExecutionRun';
+import type {
+  ExecutionRunBindRejectionReason,
+  ExecutionRunRole,
+  ExecutionRunVisibleIntent,
+  SessionExecutionRunChildTurnReportV1Request,
+  SessionExecutionRunChildTurnReportV1Response,
+} from '@happier-dev/protocol';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
@@ -127,7 +145,10 @@ export class ExecutionRunManager {
   private readonly maxTurns: number | null;
   private readonly budgetRegistry: ExecutionBudgetRegistry | null;
   private readonly runtimeActivityContributionHandle: SessionRuntimeActivityContributionHandle | null;
-  private readonly enqueueParentSessionInput: ((input: Readonly<{ text: string; meta: Record<string, unknown> }>) => Promise<void>) | null;
+  private readonly enqueueParentSessionInput: ((input: Readonly<{ text: string; meta: Record<string, unknown>; localId?: string }>) => Promise<void>) | null;
+  private readonly visibleRuns: VisibleRunCoordinator | null;
+  private readonly visibleRunSessionPort: VisibleRunSessionPort | null;
+  private readonly hostSessionId: string;
   private readonly runs = new Map<string, ExecutionRunState>();
   private readonly controllers = new Map<string, ExecutionRunController>();
   private readonly markerWriteChains = new Map<string, Promise<void>>();
@@ -295,6 +316,8 @@ export class ExecutionRunManager {
   }
 
   constructor(opts: Readonly<{
+    /** The hosting session; required for visible runs (the parent and creator of linked children). */
+    sessionId?: string;
     parentProvider: ACPProvider;
     cwd: string;
     resolveCwd?: () => string;
@@ -327,7 +350,11 @@ export class ExecutionRunManager {
     maxTurns?: number;
     budgetRegistry?: ExecutionBudgetRegistry;
     runtimeActivityContributionHandle?: SessionRuntimeActivityContributionHandle | null;
-    enqueueParentSessionInput?: (input: Readonly<{ text: string; meta: Record<string, unknown> }>) => Promise<void>;
+    enqueueParentSessionInput?: (input: Readonly<{ text: string; meta: Record<string, unknown>; localId?: string }>) => Promise<void>;
+    /** Authenticated session services for visible runs; absent means visible runs are unavailable here. */
+    visibleRunSessionPort?: VisibleRunSessionPort | null;
+    /** Visible-run recovery re-read offsets; the plan's cadence unless a test supplies its own. */
+    visibleRunRecoveryReReadDelaysMs?: readonly number[];
     resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
     /**
      * Canonical connected-services owner used to RE-materialize a run's account on resume, driven by
@@ -365,6 +392,27 @@ export class ExecutionRunManager {
     this.budgetRegistry = opts.budgetRegistry ?? null;
     this.runtimeActivityContributionHandle = opts.runtimeActivityContributionHandle ?? null;
     this.enqueueParentSessionInput = opts.enqueueParentSessionInput ?? null;
+    this.visibleRunSessionPort = opts.visibleRunSessionPort ?? null;
+    this.hostSessionId = opts.sessionId ?? '';
+    this.visibleRuns = opts.visibleRunSessionPort && opts.sessionId
+      ? new VisibleRunCoordinator({
+        hostSessionId: opts.sessionId,
+        port: opts.visibleRunSessionPort,
+        runs: this.runs,
+        controllers: this.controllers,
+        getNowMs: () => this.getNowMs(),
+        finishRun: async (runId, next, toolResult, structuredMeta) => await this.finishRun(runId, next as any, toolResult, structuredMeta),
+        resolveTaskDeadlineMs: (params) => this.resolveBoundedTimeoutMs(params),
+        handshakeTimeoutMs: readBackendProvisionTimeoutMs(),
+        onPublicStateUpdated: (runId) => this.emitPublicStateUpdated(runId),
+        recoveryReReadDelaysMs: opts.visibleRunRecoveryReReadDelaysMs ?? VISIBLE_RUN_RECOVERY_REREAD_DELAYS_MS,
+        writeMarker: (runId) => {
+          void this.writeActivityMarker(runId, this.getNowMs(), { force: true }).catch((error) => {
+            logger.warn('[EXECUTION RUN] Visible run marker write failed', { runId, error: error instanceof Error ? error.message : String(error) });
+          });
+        },
+      })
+      : null;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
     const resolveAccountSettings = opts.resolveAccountSettings ?? (async () => null);
     this.resolveAccountSettings = resolveAccountSettings;
@@ -505,6 +553,17 @@ export class ExecutionRunManager {
       ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
       ...(typeof run.finishedAtMs === 'number' ? { finishedAtMs: run.finishedAtMs } : {}),
       ...(run.error ? { error: run.error } : {}),
+      ...(run.launch?.visibility ? { visibility: run.launch.visibility } : {}),
+      ...(run.launch?.binding ? { binding: run.launch.binding } : {}),
+      ...(run.launch?.linkedSessionId ? { linkedSessionId: run.launch.linkedSessionId } : {}),
+      ...(ctrl?.kind === 'session' ? { modelId: ctrl.controls.modelId, turnInFlight: undefined } : {}),
+      ...(run.linkState ? { linkState: run.linkState } : {}),
+      ...(run.launch?.role
+        ? {
+          role: { id: run.launch.role.id, name: run.launch.role.name, assignmentId: run.launch.role.assignmentId },
+          roleSource: run.launch.role.roleSource,
+        }
+        : {}),
     });
   }
 
@@ -580,6 +639,8 @@ export class ExecutionRunManager {
     if (wasRunning && current && current.status !== 'running') {
       this.trackRunRuntimeActivityTerminal(runId, `execution_run_${current.status}`);
       if (current.notifyParentOnCompletion === true && this.enqueueParentSessionInput) {
+        const visibleController = this.controllers.get(runId);
+        const linkedSessionId = current.launch?.linkedSessionId;
         const input = buildExecutionRunCompletionInputV1({
           v: 1,
           runId: current.runId,
@@ -587,6 +648,11 @@ export class ExecutionRunManager {
           finishedAtMs: current.finishedAtMs ?? next.finishedAtMs,
           canInspect: current.retentionPolicy === 'resumable',
           ...(current.summary ? { summary: current.summary.slice(0, 8_000) } : {}),
+          ...(current.launch?.role ? { role: { id: current.launch.role.id, name: current.launch.role.name } } : {}),
+          ...(linkedSessionId ? { linkedSessionId } : {}),
+          ...(visibleController?.kind === 'session'
+            ? { controls: { permissionMode: visibleController.controls.sessionPermissionMode, modelId: visibleController.controls.modelId } }
+            : {}),
         });
         const reportEnqueueFailure = (error: unknown) => {
           logger.warn('[EXECUTION RUN] Failed to enqueue parent completion input', {
@@ -597,7 +663,21 @@ export class ExecutionRunManager {
         try {
           // Parent input delivery is independent of the child's terminal lifecycle.
           // Keep its persistence and handoff running while the child's backend is released.
-          void this.enqueueParentSessionInput(input).catch(reportEnqueueFailure);
+          if (visibleController?.kind === 'session' && this.visibleRuns) {
+            // R21: a visible run's relay carries a fixed local id, and its outcome is recorded.
+            const localId = buildVisibleRunCompletionLocalId(current.runId);
+            const visibleRuns = this.visibleRuns;
+            visibleRuns.expectRelayDelivery(current.runId, localId);
+            void this.enqueueParentSessionInput({ ...input, localId }).then(
+              () => visibleRuns.recordRelayOutcome(current.runId, { localId, status: 'queued' }),
+              async (error) => {
+                reportEnqueueFailure(error);
+                await visibleRuns.recordRelayOutcome(current.runId, { localId, status: 'failed' });
+              },
+            );
+          } else {
+            void this.enqueueParentSessionInput(input).catch(reportEnqueueFailure);
+          }
         } catch (error) {
           reportEnqueueFailure(error);
         }
@@ -631,6 +711,19 @@ export class ExecutionRunManager {
       writeActivityMarker: this.writeActivityMarker.bind(this),
       finishRun: this.finishRun.bind(this),
       executeBoundedRun: this.executeBoundedRun.bind(this),
+      ...(this.visibleRuns
+        ? {
+          startSessionController: async ({ runId }: Readonly<{ runId: string }>) => {
+            if (!params.visibleControls) throw new Error('Visible run controls are missing');
+            return await this.visibleRuns!.startController({
+              runId,
+              params,
+              controls: params.visibleControls,
+              ...(params.visibleSessionRoleV1 ? { sessionRoleV1: params.visibleSessionRoleV1 } : {}),
+            });
+          },
+        }
+        : {}),
       isSessionClosing: () => this.disposalPromise !== null,
       send: this.send.bind(this),
       voiceAgentManager: this.voiceAgentManager,
@@ -639,6 +732,112 @@ export class ExecutionRunManager {
     });
     this.emitPublicStateUpdated(started.runId);
     return started;
+  }
+
+  /** Visible runs only exist when this runner has the session port. */
+  supportsVisibleRuns(): boolean {
+    return this.visibleRuns !== null;
+  }
+
+  isVisibleRun(runId: string): boolean {
+    return this.controllers.get(runId)?.kind === 'session';
+  }
+
+  /** Bind admission before any run state exists: a rejection creates nothing. */
+  async admitVisibleBind(params: Readonly<{
+    intent: ExecutionRunVisibleIntent;
+    requestedRole?: ExecutionRunRole;
+    targetSessionId: string;
+    controls: VisibleRunControls;
+  }>): Promise<Readonly<{ ok: true; childRole: string; childAssignmentId: string | null } | { ok: false; reason: ExecutionRunBindRejectionReason }>> {
+    if (!this.visibleRuns || !this.visibleRunSessionPort) return { ok: false, reason: 'foreign_child' };
+    const child = await this.visibleRunSessionPort.readChild(params.targetSessionId);
+    if (!child) return { ok: false, reason: 'foreign_child' };
+    return admitVisibleRunBind({
+      hostingSessionId: this.hostSessionId,
+      intent: params.intent,
+      ...(params.requestedRole ? { requestedRole: params.requestedRole } : {}),
+      child,
+      busy: this.visibleRuns.isBusy(params.targetSessionId),
+      controls: params.controls,
+    });
+  }
+
+  /** Parent restart: reinstall this session's running visible runs from their daemon markers. */
+  async rehydrateVisibleRuns(markers: readonly unknown[]): Promise<number> {
+    if (!this.visibleRuns) return 0;
+    let rehydrated = 0;
+    for (const raw of markers) {
+      const marker = raw as Partial<ExecutionRunMarkerShape> & Record<string, unknown>;
+      const visible = readVisibleRunMarkerV1(marker);
+      if (!visible || marker.status !== 'running' || marker.happySessionId !== this.hostSessionId) continue;
+      const runId = typeof marker.runId === 'string' ? marker.runId : '';
+      if (!runId || this.runs.has(runId) || !marker.callId || !marker.sidechainId || !marker.intent || !marker.backendTarget) continue;
+      const startedAtMs = typeof marker.startedAtMs === 'number' ? marker.startedAtMs : this.getNowMs();
+      // D18: the task text and role come back from the child Session, not from the local marker.
+      const source = await this.visibleRuns.readRehydrationSource({
+        runId,
+        linkedSessionId: visible.linkedSessionId,
+        binding: visible.binding,
+        ...(visible.role ? { role: visible.role } : {}),
+      }).catch((error) => {
+        logger.warn('[EXECUTION RUN] Visible run rehydration could not read its child', { runId, error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
+      if (this.runs.has(runId)) continue;
+      const state: ExecutionRunState = {
+        runId,
+        callId: marker.callId,
+        sidechainId: marker.sidechainId,
+        sessionId: this.hostSessionId,
+        depth: 0,
+        intent: marker.intent,
+        backendTarget: marker.backendTarget,
+        backendId: resolveExecutionRunRuntimeBackendId(marker.backendTarget),
+        instructions: source?.taskText ?? '',
+        permissionMode: visible.permissionMode,
+        retentionPolicy: marker.retentionPolicy ?? 'ephemeral',
+        runClass: marker.runClass ?? 'bounded',
+        ioMode: marker.ioMode ?? 'request_response',
+        notifyParentOnCompletion: visible.notifyParentOnCompletion,
+        launch: {
+          visibility: 'session',
+          linkedSessionId: visible.linkedSessionId,
+          binding: visible.binding,
+          ...(source?.role ? { role: source.role } : {}),
+        },
+        status: 'running',
+        startedAtMs,
+        resumeHandle: null,
+      };
+      this.runs.set(runId, state);
+      // Count the run in this runner's budget and runtime activity again, as a start does. Recovery is
+      // not refused when the budget is full: the work already runs in the child Session.
+      if (this.budgetRegistry && !this.budgetRegistry.tryAcquireExecutionRun(runId, state.intent)) {
+        logger.warn('[EXECUTION RUN] Rehydrated visible run exceeds the execution budget', { runId });
+      }
+      void this.admitRunRuntimeActivity(runId).catch((error) => {
+        logger.warn('[EXECUTION RUN] Rehydrated visible run activity report failed', { runId, error: error instanceof Error ? error.message : String(error) });
+      });
+      this.visibleRuns.rehydrate({ runId, marker: visible });
+      this.emitPublicStateUpdated(runId);
+      rehydrated += 1;
+    }
+    return rehydrated;
+  }
+
+  handleChildTurnReport(report: SessionExecutionRunChildTurnReportV1Request): SessionExecutionRunChildTurnReportV1Response {
+    if (!this.visibleRuns) return { ok: true, accepted: false, reason: 'unknown_run' };
+    return this.visibleRuns.handleChildTurnReport(report);
+  }
+
+  /** This runner bound its own pending input to a turn; R21 delivery verification for visible relays. */
+  notifyParentInputBound(localIds: readonly string[]): void {
+    void this.visibleRuns?.notifyParentInputBound(localIds).catch((error) => {
+      logger.warn('[EXECUTION RUN] Visible run delivery verification failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private resolveBoundedTimeoutMs(params: ExecutionRunManagerStartParams): number | null {
@@ -719,6 +918,9 @@ export class ExecutionRunManager {
     if (this.disposalPromise) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
     const run = this.runs.get(runId) ?? null;
     if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    if (this.controllers.get(runId)?.kind === 'session' && this.visibleRuns) {
+      return await this.visibleRuns.send(runId, params);
+    }
 
     if (params.resume === true) {
       const sendArgs = {
@@ -1015,7 +1217,11 @@ export class ExecutionRunManager {
     });
   }
 
-  async stop(runId: string): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  async stop(runId: string, reason?: string): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    if (this.controllers.get(runId)?.kind === 'session' && this.visibleRuns) {
+      const visibleRuns = this.visibleRuns;
+      return this.withRunLifecycleLock(runId, async () => await visibleRuns.stop(runId, reason));
+    }
     return this.withRunLifecycleLock(runId, async () => {
       const controller = this.controllers.get(runId);
       try {

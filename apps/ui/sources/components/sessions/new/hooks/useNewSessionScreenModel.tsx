@@ -1,3 +1,4 @@
+import type { AssignableSessionRole } from '@happier-dev/protocol';
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { useLaunchSelectionMachines, useSessionRecentPathEntries, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -390,6 +391,12 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         () => resolveNewSessionDraftAttachmentFlowId(draftId),
         [draftId],
     );
+    // Optional explicit role, default No role; restored from the current draft on reload/retry.
+    const persistedSessionRole = persistedDraft?.sessionRole ?? null;
+    const [sessionRole, setSessionRole] = React.useState<AssignableSessionRole | null>(persistedSessionRole);
+    React.useEffect(() => {
+        setSessionRole(persistedSessionRole);
+    }, [draftId, persistedSessionRole]);
     const hydratedTempAuthoringDraft = React.useMemo(() => {
         return tempSessionData
             ? buildNewSessionAuthoringDraftFromTempData(tempSessionData)
@@ -1722,6 +1729,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         draftScope,
         draftId,
         launchUserAttemptId,
+        sessionRole,
     });
 
     const onDraftRemoved = params?.onDraftRemoved;
@@ -1791,8 +1799,9 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
             machineId: selectedMachineId,
             targetServerId: targetServerId ?? null,
             sourceContext: sourceContextState.sourceContext,
+            sessionRole,
         });
-    }, [currentAuthoringDraft, selectedMachineId, sourceContextState.sourceContext, targetServerId]);
+    }, [currentAuthoringDraft, selectedMachineId, sessionRole, sourceContextState.sourceContext, targetServerId]);
     const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
     React.useEffect(() => {
         if (previousLaunchIntentSignatureRef.current === launchIntentSignature) return;
@@ -1829,6 +1838,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         setIsResumeSupportChecking,
         checkoutCreationDraft,
         transcriptStorage,
+        sessionRole,
         settings,
         useProfiles,
         selectedProfileId,
@@ -1912,6 +1922,8 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         transcriptStorage,
         hasUserSelectedTranscriptStorageRef,
         setTranscriptStorage,
+        sessionRole,
+        setSessionRole,
         selectedMachineIsWindows,
         effectiveWindowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
         windowsTerminalAvailable,

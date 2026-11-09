@@ -108,6 +108,19 @@ function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
     );
 }
 
+type AgentInputSubmitStopAvailability = Readonly<{
+    disabled: boolean;
+    hasSendableContent: boolean;
+    canStop?: boolean;
+    hasMicPressHandler: boolean;
+    armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
+}>;
+
+export function canAgentInputSubmitButtonStopRun(input: AgentInputSubmitStopAvailability): boolean {
+    const hasSendIntent = input.hasSendableContent || input.armedContinuationTarget != null;
+    return !input.disabled && !hasSendIntent && !input.hasMicPressHandler && input.canStop === true;
+}
+
 export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton(props: Readonly<{
     testID: string;
     sessionId?: string;
@@ -145,7 +158,13 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     };
 
     React.useEffect(() => { setSendMenuOpen(false); }, [props.sessionId, sendMenuEnabled]);
-    const showStopWhenEmpty = !hasSendIntent && !props.micPressHandler && props.canStop === true;
+    const showStopWhenEmpty = canAgentInputSubmitButtonStopRun({
+        disabled: props.disabled,
+        hasSendableContent: props.hasSendableContent,
+        canStop: props.canStop,
+        hasMicPressHandler: Boolean(props.micPressHandler),
+        armedContinuationTarget: props.armedContinuationTarget,
+    });
     /*
      * With nothing to send, a composer that has Voice hands this button to the
      * microphone — `submitPress` routes there before it ever reaches Stop, whether

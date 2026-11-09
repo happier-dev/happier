@@ -135,3 +135,32 @@ test('checkDaemonState falls back to an older running daemon when the newest fal
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('checkDaemonStatePingAware carries the daemon server connection when the daemon reports one', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-connection-'));
+  let reply = { status: 'ok', serverConnected: false };
+  const server = http.createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(reply));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const serverUrl = 'http://127.0.0.1:4103';
+    const paths = resolveStackDaemonStatePaths({ cliHomeDir: dir, serverUrl });
+    await mkdir(dirname(paths.serverScopedStatePath), { recursive: true });
+    await writeFile(
+      paths.serverScopedStatePath,
+      JSON.stringify({ pid: process.pid, httpPort: server.address().port, controlToken: 'state-token' }) + '\n',
+      'utf-8',
+    );
+
+    assert.equal((await checkDaemonStatePingAware(dir, { serverUrl })).serverConnected, false);
+    reply = { status: 'ok', serverConnected: true };
+    assert.equal((await checkDaemonStatePingAware(dir, { serverUrl })).serverConnected, true);
+    reply = { status: 'ok' };
+    assert.equal('serverConnected' in await checkDaemonStatePingAware(dir, { serverUrl }), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -348,10 +348,11 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
 
         if (item.type === 'session') {
             const folderId = typeof item.folderId === 'string' && item.folderId.trim() ? item.folderId.trim() : null;
-            const parentRowId = folderId ? treeRowId.folder(folderId) : null;
-            const containerId = parentRowId ?? activeRoot.containerId;
+            const folderRowId = folderId ? treeRowId.folder(folderId) : null;
+            const containerId = folderRowId ?? activeRoot.containerId;
             const container = containerMetadataById.get(containerId) ?? activeRoot;
             const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
+            const parentRowId = item.parentSessionId && serverId ? treeRowId.session(serverId, item.parentSessionId) : folderRowId;
             const sessionId = String(item.sessionId ?? '').trim();
             if (!sessionId) return;
             const rowId = serverId ? treeRowId.session(serverId, sessionId) : `session:${sessionId}`;
@@ -368,7 +369,7 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                 serverId: serverId || null,
                 sessionId,
                 folderId,
-                folderDepth: normalizeDepth(item.folderDepth),
+                folderDepth: normalizeDepth(item.folderDepth) + normalizeDepth(item.nestingDepth),
                 workspace: item.workspace ?? container.workspace,
                 childContainerId: null,
                 childGroupKey: null,

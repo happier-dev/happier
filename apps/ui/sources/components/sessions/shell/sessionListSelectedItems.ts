@@ -39,7 +39,12 @@ function isSameSessionListItem(
         && (previous.attentionPromotionReason ?? null) === (item.attentionPromotionReason ?? null)
         && (previous.workingPlacementReason ?? null) === (item.workingPlacementReason ?? null)
         && (previous.folderId ?? null) === (item.folderId ?? null)
-        && (previous.folderDepth ?? null) === (item.folderDepth ?? null);
+        && (previous.folderDepth ?? null) === (item.folderDepth ?? null)
+        && previous.parentSessionId === item.parentSessionId
+        && previous.nestingDepth === item.nestingDepth
+        && previous.hasChildren === item.hasChildren
+        && previous.childrenCollapsed === item.childrenCollapsed
+        && previous.identityOverride === item.identityOverride;
 }
 
 export function buildSessionListSelectedItems(input: Readonly<{

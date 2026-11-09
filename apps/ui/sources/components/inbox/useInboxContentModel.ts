@@ -41,7 +41,9 @@ function readOrganizationSnapshot(state: ReturnType<typeof storage.getState>) {
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey ?? EMPTY_RECORD,
         attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey ?? EMPTY_RECORD,
         appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey ?? EMPTY_RECORD,
+        appearancePresentationsBySessionKey: state.sessionOrganizationAppearancePresentationsBySessionKey ?? EMPTY_RECORD,
         sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId ?? EMPTY_RECORD,
+        sessionAppearancePresentationsSupportedByServerId: state.sessionOrganizationAppearancePresentationsSupportedByServerId ?? EMPTY_RECORD,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey ?? EMPTY_RECORD,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey ?? EMPTY_RECORD,
     };

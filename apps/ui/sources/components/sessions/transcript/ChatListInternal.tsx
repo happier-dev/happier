@@ -675,7 +675,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     // chips while the row is offscreen. This hook is deliberately the narrow variant — one
     // `useSetting('backendEnabledByTargetKey')` subscription, no machine-capabilities snapshot — and
     // its result identity is keyed on the enabled-agent list, so it does not churn the transcript.
-    const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight();
+    const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight(props.sessionId);
     const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>(() => ({
         isPinned: resolveSessionEntryViewportState(readSessionViewportForEntry(props.sessionId)).shouldFollowBottom,
         newActivityCount: 0,

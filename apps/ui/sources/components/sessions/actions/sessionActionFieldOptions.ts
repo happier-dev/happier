@@ -1,9 +1,16 @@
-import type { ActionInputFieldHint } from '@happier-dev/protocol';
+import {
+    SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID,
+    SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID,
+    type ActionInputFieldHint,
+    type AssignableSessionRoleProfileV1,
+} from '@happier-dev/protocol';
 
 import {
     buildAvailableReviewEngineOptions,
     type ExecutionRunsBackendSnapshotEntry,
 } from '@/sync/domains/reviews/reviewEngineCatalog';
+import { resolveAssignableSessionRoleProfileDisplayName } from '@/components/sessions/roles/sessionRoleLabels';
+import { listUiAssignableSessionRoleProfiles } from '@/components/sessions/roles/sessionRoleProfileOrder';
 
 import type { ActionFieldOption } from './ActionInputFields';
 
@@ -58,6 +65,8 @@ export function buildSessionActionFieldOptionsResolver(params: Readonly<{
     enabledAgentIds: readonly string[];
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null;
     resolveAgentLabel: (agentId: string) => string;
+    roleProfiles?: readonly AssignableSessionRoleProfileV1[] | null;
+    roleClearLabel?: string;
 }>): ResolveSessionActionFieldOptions {
     const engineOptions: readonly ActionFieldOption[] = buildAvailableReviewEngineOptions({
         enabledAgentIds: params.enabledAgentIds,
@@ -72,11 +81,19 @@ export function buildSessionActionFieldOptionsResolver(params: Readonly<{
         value: agentId,
         label: params.resolveAgentLabel(agentId),
     }));
+    const roleOptions: readonly ActionFieldOption[] = (params.roleProfiles ?? listUiAssignableSessionRoleProfiles(null)).map((profile) => ({
+        value: profile.id,
+        label: resolveAssignableSessionRoleProfileDisplayName(profile),
+    }));
 
     return (field) => {
         const sourceId = typeof field?.optionsSourceId === 'string' ? field.optionsSourceId : '';
         if (sourceId === 'review.engines.available') return engineOptions;
         if (sourceId === 'execution.backends.enabled') return backendOptions;
+        if (sourceId === SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID) return roleOptions;
+        if (sourceId === SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID) {
+            return [...roleOptions, { value: 'none', label: params.roleClearLabel ?? 'No role' }];
+        }
         return readStaticFieldOptions(field);
     };
 }

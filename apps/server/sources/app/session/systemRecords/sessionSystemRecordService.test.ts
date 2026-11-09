@@ -42,6 +42,7 @@ let currentTx: {
 };
 
 vi.mock("@/storage/inTx", () => ({
+    IN_TX_OPERATION_LABELS: { sessionSystemRecordWrite: "session.system-record.write" },
     inTx: async (fn: (tx: typeof currentTx) => Promise<unknown>) => await fn(currentTx),
 }));
 

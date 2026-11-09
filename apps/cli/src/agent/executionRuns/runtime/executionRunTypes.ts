@@ -1,10 +1,32 @@
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV1, ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunLaunchOrigin, ExecutionRunRequestedConfiguration, ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV1, ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunLaunchOrigin, ExecutionRunRequestedConfiguration, ExecutionRunResumeHandle, ExecutionRunRole, ExecutionRunVisibility, ExecutionRunLinkStateV1, FreshAssignableSessionRoleV1 } from '@happier-dev/protocol';
+import type { VisibleRunControls } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunRules';
 
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunConnectedServiceRegistrationV1 } from '@/daemon/connectedServices/runsBridge/contract';
 
+/**
+ * Role snapshot applied to a role-bearing run, resolved once by the hosting runner from its own
+ * account catalog at `execution.run.start.v2` and retained in the immutable launch record.
+ */
+export type ExecutionRunLaunchRoleV1 = Readonly<{
+  id: ExecutionRunRole;
+  name: string;
+  assignmentId: string;
+  instructions: string;
+  roleSource: 'explicit' | 'settings';
+}>;
+
 export type ExecutionRunManagerStartParams = Readonly<{
   sessionId: string;
+  /** Present only for `execution.run.start.v2` starts; absent keeps the released hidden roleless run. */
+  visibility?: ExecutionRunVisibility;
+  launchRole?: ExecutionRunLaunchRoleV1 | null;
+  /** Visible runs only: bind this existing child (admitted before the run is created). */
+  targetSessionId?: string;
+  /** Visible runs only: the resolved match-only controls. */
+  visibleControls?: VisibleRunControls;
+  /** Visible runs only: the role snapshot a created child receives at creation. */
+  visibleSessionRoleV1?: FreshAssignableSessionRoleV1;
   startRequestId?: string;
   /** Host-computed digest of the effective wire start request; never supplied by callers directly. */
   startRequestFingerprint?: string;
@@ -114,7 +136,14 @@ export type ExecutionRunState = Readonly<{
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     connectedServicesSelection?: ConnectedServiceBindingsV1 | null;
     connectedServicesRegistration?: ExecutionRunConnectedServiceRegistrationV1 | null;
+    visibility?: ExecutionRunVisibility;
+    role?: ExecutionRunLaunchRoleV1;
+    /** Visible runs only: the child Session doing the work. */
+    linkedSessionId?: string;
+    binding?: 'created' | 'reused';
   }>;
+  /** Visible runs only (R21): report, relay, and delivery records mirrored for readback. */
+  linkState?: ExecutionRunLinkStateV1;
   startedAtMs: number;
   finishedAtMs?: number;
   error?: { code: string; message?: string };

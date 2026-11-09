@@ -2,6 +2,7 @@ import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 
 export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'entryIntent'
+    | 'sessionRole'
     | 'selectedSecretId'
     | 'selectedSecretIdByProfileIdByEnvVarName'
     | 'sessionOnlySecretValueEncByProfileIdByEnvVarName'
@@ -14,6 +15,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
 export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
     return {
         entryIntent: draft.entryIntent ?? null,
+        sessionRole: draft.sessionRole ?? null,
         selectedSecretId: draft.selectedSecretId ?? null,
         selectedSecretIdByProfileIdByEnvVarName: draft.selectedSecretIdByProfileIdByEnvVarName ?? null,
         sessionOnlySecretValueEncByProfileIdByEnvVarName: draft.sessionOnlySecretValueEncByProfileIdByEnvVarName ?? null,

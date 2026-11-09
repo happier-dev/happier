@@ -1,6 +1,15 @@
+import { randomUUID } from 'node:crypto';
+import {
+  FreshAssignableSessionRoleV1Schema,
+  planSessionRoleChangeV1,
+  type AssignableSessionRole,
+  type FreshAssignableSessionRoleV1,
+} from '@happier-dev/protocol';
+import { readSessionRoleAccountSettings } from '@/session/services/setSessionRole';
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
   BackendTargetRefSchema,
+  buildBackendTargetKey,
   mergeSpawnConfigOptionAliases,
   parseBackendTargetKey,
   readAcpConfiguredBackendV1FromMetadata,
@@ -240,6 +249,54 @@ function resolveDeniedExplicitPolicyField(params: Readonly<{
   return null;
 }
 
+function resolveParentBackendTarget(
+  parentMetadata: Record<string, unknown> | null,
+  currentSession: SessionAgentSpawnActionCurrentSession,
+): Readonly<{
+  backendTarget: BackendTargetRefV1;
+  source: SessionAgentSpawnActionSource;
+}> | null {
+  if (currentSession.backendTarget) {
+    return {
+      backendTarget: currentSession.backendTarget,
+      source: { kind: 'currentSession', key: 'backendTarget' },
+    };
+  }
+
+  const configuredBackend = parentMetadata
+    ? readAcpConfiguredBackendV1FromMetadata(parentMetadata)
+    : null;
+  if (configuredBackend) {
+    return {
+      backendTarget: {
+        kind: 'configuredAcpBackend',
+        backendId: configuredBackend.backendId,
+      },
+      source: { kind: 'metadata', key: 'acpConfiguredBackendV1' },
+    };
+  }
+
+  const descriptor = parentMetadata
+    ? readAgentRuntimeDescriptorV1(parentMetadata.agentRuntimeDescriptorV1)
+    : null;
+  if (descriptor && AGENT_IDS.includes(descriptor.providerId as AgentId)) {
+    return {
+      backendTarget: { kind: 'builtInAgent', agentId: descriptor.providerId as AgentId },
+      source: { kind: 'runtimeDescriptorMetadata', key: 'agentRuntimeDescriptorV1' },
+    };
+  }
+
+  const inheritedAgentId = resolveAgentIdFromSessionMetadata(parentMetadata);
+  if (inheritedAgentId) {
+    return {
+      backendTarget: { kind: 'builtInAgent', agentId: inheritedAgentId },
+      source: { kind: 'metadata', key: 'sessionMetadataAgentId' },
+    };
+  }
+
+  return null;
+}
+
 function resolveBackendTarget(
   input: SessionAgentSpawnActionInput,
   parentMetadata: Record<string, unknown> | null,
@@ -316,44 +373,10 @@ function resolveBackendTarget(
     };
   }
 
-  if (currentSession.backendTarget) {
+  const parentBackend = resolveParentBackendTarget(parentMetadata, currentSession);
+  if (parentBackend) {
     return {
-      backendTarget: currentSession.backendTarget,
-      source: { kind: 'currentSession', key: 'backendTarget' },
-      invalidAgentId: false,
-    };
-  }
-
-  const configuredBackend = parentMetadata
-    ? readAcpConfiguredBackendV1FromMetadata(parentMetadata)
-    : null;
-  if (configuredBackend) {
-    return {
-      backendTarget: {
-        kind: 'configuredAcpBackend',
-        backendId: configuredBackend.backendId,
-      },
-      source: { kind: 'metadata', key: 'acpConfiguredBackendV1' },
-      invalidAgentId: false,
-    };
-  }
-
-  const descriptor = parentMetadata
-    ? readAgentRuntimeDescriptorV1(parentMetadata.agentRuntimeDescriptorV1)
-    : null;
-  if (descriptor && AGENT_IDS.includes(descriptor.providerId as AgentId)) {
-    return {
-      backendTarget: { kind: 'builtInAgent', agentId: descriptor.providerId as AgentId },
-      source: { kind: 'runtimeDescriptorMetadata', key: 'agentRuntimeDescriptorV1' },
-      invalidAgentId: false,
-    };
-  }
-
-  const inheritedAgentId = resolveAgentIdFromSessionMetadata(parentMetadata);
-  if (inheritedAgentId) {
-    return {
-      backendTarget: { kind: 'builtInAgent', agentId: inheritedAgentId },
-      source: { kind: 'metadata', key: 'sessionMetadataAgentId' },
+      ...parentBackend,
       invalidAgentId: false,
     };
   }
@@ -363,6 +386,18 @@ function resolveBackendTarget(
     source: { kind: 'default', key: 'defaultAgentId' },
     invalidAgentId: false,
   };
+}
+
+function hasSameParentBackendTarget(params: Readonly<{
+  parentMetadata: Record<string, unknown> | null;
+  currentBackendTarget?: BackendTargetRefV1 | null;
+  targetBackend: BackendTargetRefV1;
+}>): boolean {
+  const sourceBackend = resolveParentBackendTarget(params.parentMetadata, {
+    backendTarget: params.currentBackendTarget,
+  });
+  return sourceBackend !== null
+    && buildBackendTargetKey(sourceBackend.backendTarget) === buildBackendTargetKey(params.targetBackend);
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -389,13 +424,7 @@ function shouldInheritParentConnectedServices(params: Readonly<{
 
   // Bindings are Agent-scoped. Only inherit them when the known live source,
   // or persisted source when no live target exists, is the same Agent.
-  const sourceAgentId = params.currentBackendTarget
-    ? (params.currentBackendTarget.kind === 'builtInAgent'
-      && isKnownAgentId(params.currentBackendTarget.agentId)
-        ? params.currentBackendTarget.agentId
-        : null)
-    : resolveAgentIdFromSessionMetadata(params.parentMetadata);
-  return sourceAgentId === targetAgentId;
+  return hasSameParentBackendTarget(params);
 }
 
 export async function resolveSessionAgentSpawnPolicy(params: Readonly<{
@@ -411,6 +440,22 @@ export async function resolveSessionAgentSpawnPolicy(params: Readonly<{
   } catch {
     return DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1;
   }
+}
+
+/**
+ * Resolves the account role profile into the exact snapshot retained by a new session's
+ * assignment, through the same protocol plan as a live role change. Null means the account's
+ * role profiles are unavailable, so the caller fails closed rather than guessing defaults.
+ */
+export async function resolveSessionRoleAssignmentForSpawn(params: Readonly<{
+  credentials: Credentials;
+  role: AssignableSessionRole;
+}>): Promise<FreshAssignableSessionRoleV1 | null> {
+  const settings = await readSessionRoleAccountSettings(params.credentials);
+  if (settings === null) return null;
+  const assignment = planSessionRoleChangeV1({ role: params.role, settings, changeId: randomUUID(), at: Date.now() })?.assignment;
+  const parsed = FreshAssignableSessionRoleV1Schema.safeParse(assignment);
+  return parsed.success ? parsed.data : null;
 }
 
 export const resolveSessionAgentSpawnConnectedServicesDefaults: SessionAgentSpawnActionConnectedServicesDefaultResolver =
@@ -478,15 +523,21 @@ export async function normalizeSessionAgentSpawnActionRequest(params: Readonly<{
     };
   }
 
-  const inheritanceFields = shouldInheritParentConnectedServices({
+  const inheritConnectedServices = shouldInheritParentConnectedServices({
     parentMetadata: params.parentMetadata,
     currentBackendTarget: params.currentSession.backendTarget,
     targetBackend: backend.backendTarget,
-  })
-    ? CHILD_SESSION_INHERITANCE_FIELD_SETS.sessionAgentSpawn
-    : CHILD_SESSION_INHERITANCE_FIELD_SETS.sessionAgentSpawn.filter(
-        (field) => field !== CHILD_SESSION_INHERITANCE_FIELDS.connectedServices,
-      );
+  });
+  const inheritModel = hasSameParentBackendTarget({
+    parentMetadata: params.parentMetadata,
+    currentBackendTarget: params.currentSession.backendTarget,
+    targetBackend: backend.backendTarget,
+  });
+  const inheritanceFields = CHILD_SESSION_INHERITANCE_FIELD_SETS.sessionAgentSpawn.filter((field) => {
+    if (field === CHILD_SESSION_INHERITANCE_FIELDS.connectedServices) return inheritConnectedServices;
+    if (field === CHILD_SESSION_INHERITANCE_FIELDS.model) return inheritModel;
+    return true;
+  });
   const inherited = resolveChildSessionInheritedContextFromMetadata({
     metadata: params.parentMetadata,
     providerId: backend.backendTarget.kind === 'builtInAgent' ? backend.backendTarget.agentId : null,

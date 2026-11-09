@@ -30,6 +30,9 @@ export {
     toBackgroundTaskLocalEntry,
 } from './sources/fromBackgroundTasks';
 export {
+    deriveChildSessionActivityEntries,
+} from './sources/fromChildSessions';
+export {
     resolveSessionSubagentActivityHandle,
     resolveSessionSubagentActivityKind,
     toLocalAgentActivityEntry,

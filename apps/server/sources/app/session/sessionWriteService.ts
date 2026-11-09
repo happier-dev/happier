@@ -1,7 +1,7 @@
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { db } from "@/storage/db";
-import { inTx, type Tx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { log } from "@/utils/logging/log";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
@@ -1312,7 +1312,7 @@ export async function createSessionMessage(
                 participantCursors,
                 ...(readyProjection ? { readyProjection } : {}),
             };
-        });
+        }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionMessageWrite } });
     } catch (e) {
         if (localId && isPrismaErrorCode(e, "P2002")) {
             const target = (e as any)?.meta?.target;
@@ -1377,7 +1377,7 @@ export async function createSessionMessage(
                         resolvedRole,
                         attentionImpact,
                     });
-                });
+                }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionMessageWrite } });
             } catch {
                 return { ok: false, error: "internal" };
             }

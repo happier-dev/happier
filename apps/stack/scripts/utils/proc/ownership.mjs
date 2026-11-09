@@ -1,10 +1,12 @@
 import { runCapture } from './proc.mjs';
+import { observeWindowsProcessDescendants } from './windows_process_descendants.mjs';
 import { observePidLiveness } from './pids.mjs';
 import { terminateProcessGroup, terminateProcessPid } from './terminate.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import {
   processInstanceFingerprintMatches,
   readProcessInstanceFingerprintSync,
+  observeProcessInstanceFingerprint,
 } from '@happier-dev/cli-common/processInstance';
 
 function normalizeNeedles(needles) {
@@ -326,6 +328,27 @@ export function readStackProcessKindFromEnvLine(line) {
   return match ? String(match[1] ?? '').trim() : '';
 }
 
+async function observeExpectedProcessInstance(pid, {
+  platform,
+  readProcessInstanceFingerprintImpl,
+  runCaptureImpl,
+  timeoutMs,
+  signal,
+}) {
+  // Stop paths have no budget to honor and keep the synchronous read. A caller with a budget stays
+  // inside it, so a stalled probe is inconclusive and never falls back to the blocking reader.
+  if (timeoutMs === undefined && !signal) {
+    const fingerprint = readProcessInstanceFingerprintImpl(pid);
+    return fingerprint
+      ? { status: 'ok', fingerprint }
+      : { status: 'inconclusive', reason: 'process_instance_unavailable' };
+  }
+  const observation = await observeProcessInstanceFingerprint(pid, { platform, runCaptureImpl, timeoutMs, signal });
+  return observation.status === 'not_found'
+    ? { status: 'inconclusive', reason: 'process_instance_unavailable' }
+    : observation;
+}
+
 export async function resolvePidStackOwnership(
   pid,
   { stackName, envPath, cliHomeDir, processInstanceFingerprint } = {},
@@ -334,19 +357,25 @@ export async function resolvePidStackOwnership(
     observePsEnvLineImpl = observePsEnvLine,
     observePidLivenessImpl = observePidLiveness,
     readProcessInstanceFingerprintImpl = readProcessInstanceFingerprintSync,
+    runCaptureImpl = runCapture,
     timeoutMs,
     signal,
   } = {},
 ) {
   const expectedFingerprint = String(processInstanceFingerprint ?? '').trim();
   if (expectedFingerprint) {
-    const observedFingerprint = readProcessInstanceFingerprintImpl(pid);
-    if (!processInstanceFingerprintMatches(expectedFingerprint, observedFingerprint)) {
-      return {
-        status: observedFingerprint ? 'not_owned' : 'inconclusive',
-        owned: observedFingerprint ? false : null,
-        reason: observedFingerprint ? 'process_instance_mismatch' : 'process_instance_unavailable',
-      };
+    const observed = await observeExpectedProcessInstance(pid, {
+      platform,
+      readProcessInstanceFingerprintImpl,
+      runCaptureImpl,
+      timeoutMs,
+      signal,
+    });
+    if (observed.status !== 'ok') {
+      return { status: 'inconclusive', owned: null, reason: observed.reason };
+    }
+    if (!processInstanceFingerprintMatches(expectedFingerprint, observed.fingerprint)) {
+      return { status: 'not_owned', owned: false, reason: 'process_instance_mismatch' };
     }
     if (platform === 'win32') {
       return { status: 'owned', owned: true, reason: 'process_instance' };
@@ -441,6 +470,12 @@ function resolveUnavailableProcessInstanceCleanup(pid, observePidLivenessImpl) {
     : { killed: false, reason: 'process_instance_unavailable' };
 }
 
+/** The identity read came back empty because the recorded process left, not because it is unreadable. */
+function exitedDuringIdentityProof(pid, ownership, observePidLivenessImpl) {
+  return ownership?.reason === 'process_instance_unavailable'
+    && resolveUnavailableProcessInstanceCleanup(pid, observePidLivenessImpl).killed;
+}
+
 export async function killPidOwnedByStack(pid, {
   stackName,
   envPath,
@@ -474,9 +509,12 @@ export async function killPidOwnedByStack(pid, {
   if (!ownership.owned) {
     const alreadyExited = resolveAlreadyExitedCleanup(ownership);
     if (alreadyExited) return alreadyExited;
+    if (exitedDuringIdentityProof(pid, ownership, observePidLivenessImpl)) {
+      return { killed: true, reason: 'already_exited' };
+    }
     if (!json) {
       // eslint-disable-next-line no-console
-      console.warn(`[stack] refusing to kill ${label} pid=${pid} (cannot prove it belongs to stack ${stackName ?? ''})`);
+      console.warn(`[stack] refusing to kill ${label} pid=${pid} (cannot prove it belongs to stack ${stackName ?? ''}: ${ownership.reason ?? 'unknown'})`);
     }
     return { killed: false, reason: ownership.reason };
   }
@@ -488,6 +526,14 @@ export async function killPidOwnedByStack(pid, {
   return terminated.ok
     ? { killed: true, reason: terminated.alreadyExited ? 'already_exited' : 'killed', signal: terminated.signal }
     : { killed: false, reason: terminated.reason ?? 'kill_timeout', signal: terminated.signal };
+}
+
+/** For a caller with a budget: an unavailable identity reads as absent, which termination treats as unproven. */
+function createBoundedProcessInstanceReader({ timeoutMs, signal, runCaptureImpl = runCapture }, platform) {
+  return async (pid) => {
+    const observation = await observeProcessInstanceFingerprint(pid, { timeoutMs, signal, runCaptureImpl, platform });
+    return observation.status === 'ok' ? observation.fingerprint : null;
+  };
 }
 
 export async function killProcessGroupOwnedByStack(
@@ -508,8 +554,20 @@ export async function killProcessGroupOwnedByStack(
     terminateProcessGroupImpl = terminateProcessGroup,
     readProcessInstanceFingerprintImpl = readProcessInstanceFingerprintSync,
     observePidLivenessImpl = observePidLiveness,
+    boundedIdentity = null,
   } = {}
 ) {
+  const terminationBoundary = boundedIdentity
+    ? {
+        boundary: {
+          readProcessInstanceFingerprint: createBoundedProcessInstanceReader(boundedIdentity, platform),
+          observeProcessDescendants: (leaderPid, fingerprint) => observeWindowsProcessDescendants(leaderPid, {
+            ...boundedIdentity,
+            fingerprint,
+          }),
+        },
+      }
+    : {};
   const exactProcessInstanceFingerprint = resolveExactProcessInstanceFingerprint(
     pid,
     processInstanceFingerprint,
@@ -524,13 +582,26 @@ export async function killProcessGroupOwnedByStack(
     envPath,
     cliHomeDir,
     processInstanceFingerprint: exactProcessInstanceFingerprint,
-  });
+  }, boundedIdentity ? { ...boundedIdentity, platform } : undefined);
   if (!ownership.owned) {
     const alreadyExited = resolveAlreadyExitedCleanup(ownership);
     if (alreadyExited) return alreadyExited;
+    if (exitedDuringIdentityProof(pid, ownership, observePidLivenessImpl)) {
+      // The recorded process has gone, but only the tree owner can say what it left behind.
+      const settled = await terminateProcessGroupImpl(pid, {
+        graceMs,
+        signal,
+        identityPid: pid,
+        processInstanceFingerprint: exactProcessInstanceFingerprint,
+        ...terminationBoundary,
+      });
+      return settled.ok
+        ? { killed: true, reason: 'already_exited' }
+        : { killed: false, reason: settled.reason ?? 'kill_timeout' };
+    }
     if (!json) {
       // eslint-disable-next-line no-console
-      console.warn(`[stack] refusing to kill ${label} pid=${pid} (cannot prove it belongs to stack ${stackName ?? ''})`);
+      console.warn(`[stack] refusing to kill ${label} pid=${pid} (cannot prove it belongs to stack ${stackName ?? ''}: ${ownership.reason ?? 'unknown'})`);
     }
     return { killed: false, reason: ownership.reason };
   }
@@ -540,24 +611,26 @@ export async function killProcessGroupOwnedByStack(
       signal,
       identityPid: pid,
       processInstanceFingerprint: exactProcessInstanceFingerprint,
+      ...terminationBoundary,
     });
     if (!terminated.ok) {
       return { killed: false, reason: terminated.reason ?? 'kill_timeout', signal: terminated.signal ?? 'SIGKILL' };
     }
     return { killed: true, reason: 'killed_tree', signal: terminated.signal ?? 'SIGKILL' };
   }
-  const pgid = await getProcessGroupIdImpl(pid);
+  const pgid = await getProcessGroupIdImpl(pid, boundedIdentity ?? undefined);
   if (!pgid) {
     const terminated = await terminateProcessPidImpl(pid, {
       graceMs,
       signal,
       processInstanceFingerprint: exactProcessInstanceFingerprint,
+      ...terminationBoundary,
     });
     return terminated.ok
       ? { killed: true, reason: terminated.alreadyExited ? 'already_exited' : 'killed_pid_only', signal: terminated.signal }
       : { killed: false, reason: terminated.reason ?? 'kill_timeout', signal: terminated.signal };
   }
-  const selfPgid = await getProcessGroupIdImpl(process.pid);
+  const selfPgid = await getProcessGroupIdImpl(process.pid, boundedIdentity ?? undefined);
   // Safety: never signal our own process group from stack stop helpers.
   // If target PGID matches ours, kill only the target PID to avoid self-termination.
   if (selfPgid && selfPgid === pgid) {
@@ -565,6 +638,7 @@ export async function killProcessGroupOwnedByStack(
       graceMs,
       signal,
       processInstanceFingerprint: exactProcessInstanceFingerprint,
+      ...terminationBoundary,
     });
     return terminated.ok
       ? { killed: true, reason: terminated.alreadyExited ? 'already_exited' : 'killed_pid_only', pgid, signal: terminated.signal }
@@ -575,6 +649,7 @@ export async function killProcessGroupOwnedByStack(
     signal,
     identityPid: pid,
     processInstanceFingerprint: exactProcessInstanceFingerprint,
+    ...terminationBoundary,
   });
   if (!terminated.ok) {
     return { killed: false, reason: terminated.reason ?? 'kill_timeout', pgid, signal: terminated.signal ?? 'SIGKILL' };

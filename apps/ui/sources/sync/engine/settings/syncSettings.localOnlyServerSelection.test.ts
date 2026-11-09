@@ -440,6 +440,12 @@ describe('syncSettings local-only server-selection settings', () => {
 
     it('reloads pending settings for the captured scope before applying fetched settings', async () => {
         const settingsScope = { serverId: 'server-b', accountId: 'account-b' };
+        const existingAccountCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { sessionRoleProfilesV1: { v: 1, instructionsByRole: {}, customRoles: [] } },
+            randomBytes: (length) => new Uint8Array(length).fill(7),
+        });
         mocks.storageState.settingsScope = settingsScope;
         mocks.loadPendingAccountSettings.mockReturnValueOnce({
             sessionReplayEnabled: true,
@@ -459,7 +465,7 @@ describe('syncSettings local-only server-selection settings', () => {
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ content: null, version: 4 }), {
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: existingAccountCiphertext }, version: 4 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),

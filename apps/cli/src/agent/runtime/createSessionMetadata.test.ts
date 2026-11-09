@@ -9,6 +9,25 @@ const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
 describe('createSessionMetadata', () => {
+    it.each([
+        ['an explicit role', JSON.stringify({ v: 1, role: 'delegate' }), { v: 1, role: 'delegate' }],
+        ['an assignment snapshot', JSON.stringify({ v: 1, role: 'reviewer', instructions: 'Snapshot rules.', assignmentId: 'a-1', assignedAt: 5 }),
+            { v: 1, role: 'reviewer', instructions: 'Snapshot rules.', assignmentId: 'a-1', assignedAt: 5 }],
+        ['an unknown future role', JSON.stringify({ v: 1, role: 'architect' }), undefined],
+        ['malformed JSON', '{', undefined],
+    ])('seeds sessionRoleV1 only from %s in the daemon-provided environment', (_label, raw, expected) => {
+        const previous = process.env.HAPPIER_SESSION_ROLE_V1_JSON;
+        process.env.HAPPIER_SESSION_ROLE_V1_JSON = raw;
+        try {
+            const { metadata } = createSessionMetadata({ flavor: 'codex', machineId: 'machine-1', startedBy: 'daemon' });
+            expect(metadata.sessionRoleV1).toEqual(expected);
+            expect(process.env.HAPPIER_SESSION_ROLE_V1_JSON).toBeUndefined();
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_SESSION_ROLE_V1_JSON;
+            else process.env.HAPPIER_SESSION_ROLE_V1_JSON = previous;
+        }
+    });
+
     it('captures only the non-secret native account directories for later resume', () => {
         vi.stubEnv('CLAUDE_CONFIG_DIR', '/accounts/ambient');
         try {
@@ -441,5 +460,60 @@ describe('createSessionMetadata', () => {
                 process.env.HAPPIER_SESSION_MACHINE_WORKSPACE_PATH = previousMachineDirectory;
             }
         }
+    });
+});
+
+describe('createSessionMetadata (visible agents seeding)', () => {
+    const keys = ['HAPPIER_EXECUTION_RUN_LINK_V1_JSON', 'HAPPIER_SESSION_ORIGIN_V1_JSON', 'HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON', 'HAPPIER_SESSION_ROLE_V1_JSON'] as const;
+    const withEnv = (env: Partial<Record<(typeof keys)[number], string>>, run: () => void) => {
+        const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+        try {
+            for (const key of keys) delete process.env[key];
+            Object.assign(process.env, env);
+            run();
+        } finally {
+            for (const key of keys) {
+                if (previous[key] === undefined) delete process.env[key];
+                else process.env[key] = previous[key];
+            }
+        }
+    };
+
+    it('seeds the run link and creation origin from the daemon environment and consumes them', () => {
+        const link = { v: 1, parentSessionId: 'lead', runId: 'run_1', turnEpoch: 0 };
+        const origin = { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run_1' } };
+        withEnv({ HAPPIER_EXECUTION_RUN_LINK_V1_JSON: JSON.stringify(link), HAPPIER_SESSION_ORIGIN_V1_JSON: JSON.stringify(origin) }, () => {
+            const { metadata } = createSessionMetadata({ flavor: 'claude', machineId: 'm1', startedBy: 'daemon' });
+            expect((metadata as Record<string, unknown>).executionRunLinkV1).toEqual(link);
+            expect((metadata as Record<string, unknown>).sessionOriginV1).toEqual(origin);
+            expect(process.env.HAPPIER_EXECUTION_RUN_LINK_V1_JSON).toBeUndefined();
+            expect(process.env.HAPPIER_SESSION_ORIGIN_V1_JSON).toBeUndefined();
+        });
+        withEnv({ HAPPIER_EXECUTION_RUN_LINK_V1_JSON: '{"v":2}', HAPPIER_SESSION_ORIGIN_V1_JSON: 'not json' }, () => {
+            const { metadata } = createSessionMetadata({ flavor: 'claude', machineId: 'm1', startedBy: 'daemon' });
+            expect((metadata as Record<string, unknown>).executionRunLinkV1).toBeUndefined();
+            expect((metadata as Record<string, unknown>).sessionOriginV1).toBeUndefined();
+        });
+    });
+
+    it('snapshots the standalone prompt for a roleless daemon start, and from loaded settings for a terminal start', () => {
+        withEnv({ HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON: JSON.stringify({ v: 1, text: 'Be brief.', updatedAt: 3 }) }, () => {
+            const { metadata } = createSessionMetadata({ flavor: 'claude', machineId: 'm1', startedBy: 'daemon' });
+            expect((metadata as Record<string, unknown>).standaloneSessionPromptSnapshotV1).toEqual({ v: 1, text: 'Be brief.', sourceUpdatedAt: 3 });
+        });
+        withEnv({
+            HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON: JSON.stringify({ v: 1, text: 'Be brief.' }),
+            HAPPIER_SESSION_ROLE_V1_JSON: JSON.stringify({ v: 1, role: 'reviewer', instructions: 'Review.' }),
+        }, () => {
+            const { metadata } = createSessionMetadata({ flavor: 'claude', machineId: 'm1', startedBy: 'daemon' });
+            expect((metadata as Record<string, unknown>).standaloneSessionPromptSnapshotV1).toBeUndefined();
+        });
+        withEnv({}, () => {
+            const { metadata } = createSessionMetadata({
+                flavor: 'claude', machineId: 'm1', startedBy: 'terminal',
+                accountSettings: { standaloneSessionPromptV1: { v: 1, text: 'Terminal default.' } },
+            });
+            expect((metadata as Record<string, unknown>).standaloneSessionPromptSnapshotV1).toEqual({ v: 1, text: 'Terminal default.' });
+        });
     });
 });

@@ -228,6 +228,7 @@ function createSessionRowModel(overrides: Partial<SessionListRowModel> = {}): Se
     const serverId = overrides.serverId === undefined ? 'server_a' : overrides.serverId;
     const model: SessionListRowModel = {
         appearanceColor: null,
+        agentStarted: false, role: null, nestingDepth: 0, hasChildren: false, childrenCollapsed: false,
         rowKey: `${serverId ?? 'local'}:${sessionId}`,
         sessionId,
         serverId,
@@ -281,6 +282,7 @@ function createSessionRowModel(overrides: Partial<SessionListRowModel> = {}): Se
         isActive: true,
         hasUnreadMessages: false,
         pendingCount: 0,
+        executionRunStatus: null,
         draft: null,
         agentActivityLabel: null,
         pendingBlockedCount: 0,

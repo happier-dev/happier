@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { createWindowsProtectedAclBoundary } from '@happier-dev/cli-common/fs/windowsProtectedAcl';
 
 import {
   createSqliteSnapshot,
@@ -29,13 +30,31 @@ import {
 } from './utils/sqlite/sqlite_snapshot.mjs';
 
 const scriptPath = fileURLToPath(new URL('./sqlite_snapshot.mjs', import.meta.url));
+const windowsProtectedAcl = process.platform === 'win32' ? createWindowsProtectedAclBoundary() : null;
+
+async function assertPrivatePath(path, kind) {
+  if (windowsProtectedAcl) {
+    await windowsProtectedAcl.verify({ path, kind });
+    return;
+  }
+  const expectedMode = kind === 'directory' ? 0o700 : 0o600;
+  assert.equal((await lstat(path)).mode & 0o777, expectedMode);
+}
 
 async function withTempDir(run) {
   const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-snapshot-'));
+  let runFailure = null;
   try {
     return await run(dir);
+  } catch (error) {
+    runFailure = error;
+    throw error;
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    try {
+      await rm(dir, { recursive: true, force: true });
+    } catch (error) {
+      if (!runFailure) throw error;
+    }
   }
 }
 
@@ -122,20 +141,6 @@ async function waitForWrittenPartial(directory) {
   throw new Error(`timed out waiting for a written partial file in ${directory}`);
 }
 
-async function waitForExisting(path) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    try {
-      await lstat(path);
-      return;
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`timed out waiting for ${path}`);
-}
-
 test('online snapshot includes committed WAL rows and publishes private output plus a fingerprint manifest', async () => {
   await withTempDir(async (dir) => {
     const sourcePath = join(dir, 'source.sqlite');
@@ -166,10 +171,10 @@ test('online snapshot includes committed WAL rows and publishes private output p
         assert.equal(result.integrityCheck, 'ok');
         assert.equal(result.outputPath, snapshotPath);
         assert.equal(result.manifestPath, `${snapshotPath}.manifest.json`);
-        assert.equal((await lstat(disposableRoot)).mode & 0o777, 0o700);
-        assert.equal((await lstat(outputParent)).mode & 0o777, 0o700);
-        assert.equal((await lstat(snapshotPath)).mode & 0o777, 0o600);
-        assert.equal((await lstat(result.manifestPath)).mode & 0o777, 0o600);
+        await assertPrivatePath(disposableRoot, 'directory');
+        await assertPrivatePath(outputParent, 'directory');
+        await assertPrivatePath(snapshotPath, 'file');
+        await assertPrivatePath(result.manifestPath, 'file');
         await assertMissing(`${snapshotPath}-wal`);
         await assertMissing(`${snapshotPath}-shm`);
         assert.match(result.fingerprints.contentSha256, /^[a-f0-9]{64}$/);
@@ -198,6 +203,161 @@ test('online snapshot includes committed WAL rows and publishes private output p
   });
 });
 
+test('Windows snapshot and restore publication apply and verify protected ACLs instead of trusting POSIX mode bits', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  await withTempDir(async (dir) => {
+    const sourcePath = join(dir, 'source.sqlite');
+    const disposableRoot = join(dir, 'disposable');
+    const outputParent = join(disposableRoot, 'copies');
+    const snapshotPath = join(outputParent, 'snapshot.sqlite');
+    await mkdir(outputParent, { recursive: true });
+    createDatabase(sourcePath);
+
+    const protectedPaths = new Map();
+    const calls = [];
+    const sourcePaths = new Set([dirname(sourcePath), sourcePath]);
+    const windowsProtectedAclBoundary = {
+      async applyAndVerify(input) {
+        assert.equal(sourcePaths.has(input.path), false, `snapshot must not change source ACLs: ${input.path}`);
+        calls.push({ operation: 'applyAndVerify', ...input });
+        protectedPaths.set(input.path, input.kind);
+      },
+      async verify(input) {
+        assert.equal(sourcePaths.has(input.path), false, `snapshot must not require source ACLs: ${input.path}`);
+        calls.push({ operation: 'verify', ...input });
+        assert.equal(
+          protectedPaths.get(input.path),
+          input.kind,
+          `path was verified before its protected ACL was applied: ${input.path}`,
+        );
+      },
+    };
+
+    const result = await createSqliteSnapshot({
+      sourcePath,
+      outputPath: snapshotPath,
+      disposableRoot,
+    }, {
+      platform: 'win32',
+      windowsProtectedAclBoundary,
+    });
+
+    assert.equal(result.integrityCheck, 'ok');
+    assert.equal(calls.some((call) => sourcePaths.has(call.path)), false);
+    assert.equal(protectedPaths.get(disposableRoot), 'directory');
+    assert.equal(protectedPaths.get(outputParent), 'directory');
+    assert.equal(protectedPaths.get(snapshotPath), 'file');
+    assert.equal(protectedPaths.get(result.manifestPath), 'file');
+    assert.equal(calls.some((call) => call.operation === 'verify' && call.path === snapshotPath), true);
+    assert.equal(calls.some((call) => call.operation === 'verify' && call.path === result.manifestPath), true);
+
+    const restoredPath = join(outputParent, 'restored.sqlite');
+    const restored = await restoreSqliteSnapshot({
+      snapshotPath,
+      outputPath: restoredPath,
+      disposableRoot,
+    }, {
+      platform: 'win32',
+      windowsProtectedAclBoundary,
+    });
+
+    assert.equal(restored.integrityCheck, 'ok');
+    assert.equal(protectedPaths.get(restoredPath), 'file');
+    assert.equal(protectedPaths.get(restored.manifestPath), 'file');
+    assert.equal(calls.some((call) => call.operation === 'verify' && call.path === restoredPath), true);
+    assert.equal(calls.some((call) => call.operation === 'verify' && call.path === restored.manifestPath), true);
+  });
+});
+
+test('Windows snapshot publication cleans only its owned partial when protected ACL application is rejected', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  for (const rejectedStage of ['database', 'manifest']) {
+    await withTempDir(async (dir) => {
+      const sourcePath = join(dir, 'source.sqlite');
+      const disposableRoot = join(dir, 'disposable');
+      const outputParent = join(disposableRoot, 'copies');
+      const snapshotPath = join(outputParent, 'snapshot.sqlite');
+      await mkdir(outputParent, { recursive: true });
+      createDatabase(sourcePath);
+
+      await assert.rejects(
+        createSqliteSnapshot({
+          sourcePath,
+          outputPath: snapshotPath,
+          disposableRoot,
+        }, {
+          platform: 'win32',
+          windowsProtectedAclBoundary: {
+            async applyAndVerify({ path, kind }) {
+              if (kind !== 'file') return;
+              const isManifest = path.includes('.manifest.partial-');
+              if (
+                (rejectedStage === 'database' && !isManifest)
+                || (rejectedStage === 'manifest' && isManifest)
+              ) {
+                throw new Error(`synthetic ${rejectedStage} protected ACL rejection`);
+              }
+            },
+            async verify() {},
+          },
+        }),
+        new RegExp(`synthetic ${rejectedStage} protected ACL rejection`),
+      );
+
+      await assertMissing(snapshotPath);
+      await assertMissing(`${snapshotPath}.manifest.json`);
+      assert.equal(
+        (await readdir(disposableRoot, { recursive: true })).some((entry) => entry.includes('.partial-')),
+        false,
+        `${rejectedStage} ACL rejection left an owned partial behind`,
+      );
+    });
+  }
+});
+
+test('Windows ACL rejection cleanup preserves a replacement at the owned partial path', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  await withTempDir(async (dir) => {
+    const sourcePath = join(dir, 'source.sqlite');
+    const disposableRoot = join(dir, 'disposable');
+    const outputParent = join(disposableRoot, 'copies');
+    const snapshotPath = join(outputParent, 'snapshot.sqlite');
+    const displacedPartialPath = join(dir, 'owned-partial.sqlite');
+    await mkdir(outputParent, { recursive: true });
+    createDatabase(sourcePath);
+
+    let substitutePath = null;
+    await assert.rejects(
+      createSqliteSnapshot({
+        sourcePath,
+        outputPath: snapshotPath,
+        disposableRoot,
+      }, {
+        platform: 'win32',
+        windowsProtectedAclBoundary: {
+          async applyAndVerify({ path, kind }) {
+            if (kind !== 'file') return;
+            await rename(path, displacedPartialPath);
+            await writeFile(path, 'foreign substitute', { flag: 'wx' });
+            substitutePath = path;
+            throw new Error('synthetic replacement ACL rejection');
+          },
+          async verify() {},
+        },
+      }),
+      /synthetic replacement ACL rejection/,
+    );
+
+    assert.ok(substitutePath);
+    assert.equal(await readFile(substitutePath, 'utf8'), 'foreign substitute');
+    await assertMissing(snapshotPath);
+    await assertMissing(`${snapshotPath}.manifest.json`);
+  });
+});
+
 test('restore verifies the snapshot manifest and publishes a new private database with identical fingerprints', async () => {
   await withTempDir(async (dir) => {
     const sourcePath = join(dir, 'source.sqlite');
@@ -218,8 +378,8 @@ test('restore verifies the snapshot manifest and publishes a new private databas
     assert.equal(restored.sourceManifestPath, snapshot.manifestPath);
     assert.equal(restored.manifestPath, `${restoredPath}.manifest.json`);
     assert.deepEqual(restored.fingerprints, snapshot.fingerprints);
-    assert.equal((await lstat(restoredPath)).mode & 0o777, 0o600);
-    assert.equal((await lstat(restored.manifestPath)).mode & 0o777, 0o600);
+    await assertPrivatePath(restoredPath, 'file');
+    await assertPrivatePath(restored.manifestPath, 'file');
     assert.deepEqual(queryDatabase(restoredPath, 'SELECT id, value FROM retained'), [{
       id: 1,
       value: 'preserved',
@@ -800,11 +960,9 @@ test('detects output-parent replacement, keeps private partials, and leaves no m
 
     const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot });
     const partialPath = await waitForPartial(disposableRoot, outputParent);
-    const observedModes = {
-      root: (await lstat(disposableRoot)).mode & 0o777,
-      parent: (await lstat(outputParent)).mode & 0o777,
-      partial: (await lstat(partialPath)).mode & 0o777,
-    };
+    await assertPrivatePath(disposableRoot, 'directory');
+    await assertPrivatePath(outputParent, 'directory');
+    await assertPrivatePath(partialPath, 'file');
     await rename(outputParent, movedParent);
     await mkdir(outputParent, { mode: 0o700 });
 
@@ -812,9 +970,6 @@ test('detects output-parent replacement, keeps private partials, and leaves no m
       () => null,
       (error) => error,
     );
-    assert.equal(observedModes.root, 0o700);
-    assert.equal(observedModes.parent, 0o700);
-    assert.equal(observedModes.partial, 0o600);
     assert.match(String(failure), /output parent.*replaced|output parent.*changed/i);
     await assertMissing(outputPath);
     await assertMissing(`${outputPath}.manifest.json`);
@@ -864,12 +1019,12 @@ test('late output-parent replacement rejects success and leaves only private una
     await assertMissing(outputPath);
     await assertMissing(`${outputPath}.manifest.json`);
     const movedOutputPath = join(movedParent, 'snapshot.sqlite');
-    assert.equal((await lstat(movedOutputPath)).mode & 0o777, 0o600);
+    await assertPrivatePath(movedOutputPath, 'file');
     await assertMissing(`${movedOutputPath}.manifest.json`);
     const movedResiduals = await readdir(movedParent);
     assert.equal(movedResiduals.some((entry) => entry.includes('.manifest.partial-')), true);
     for (const residual of movedResiduals) {
-      assert.equal((await lstat(join(movedParent, residual))).mode & 0o777, 0o600);
+      await assertPrivatePath(join(movedParent, residual), 'file');
     }
     assert.equal((await readdir(disposableRoot)).some((entry) => entry.includes('.partial-')), false);
   });
@@ -889,18 +1044,43 @@ test('publishing the matching manifest is the final commit point', async () => {
     source.exec('UPDATE retained SET payload = zeroblob(134217728);');
     source.close();
 
-    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot });
-    await waitForExisting(manifestPath);
-    await rename(outputParent, movedParent);
-    await mkdir(outputParent, { mode: 0o700 });
+    let outcome = null;
+    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot }).then(
+      (result) => (outcome = { status: 'fulfilled', result }),
+      (error) => (outcome = { status: 'rejected', error }),
+    );
+    let testFailure = null;
+    try {
+      let manifestObserved = false;
+      while (!manifestObserved && !outcome) {
+        try {
+          await lstat(manifestPath);
+          manifestObserved = true;
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+        if (!manifestObserved && !outcome) await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (outcome?.status === 'rejected') throw outcome.error;
 
-    const result = await pending;
-    assert.equal(result.integrityCheck, 'ok');
-    const movedOutputPath = join(movedParent, 'snapshot.sqlite');
-    const movedManifestPath = `${movedOutputPath}.manifest.json`;
-    assert.equal((await lstat(movedOutputPath)).mode & 0o777, 0o600);
-    assert.equal((await lstat(movedManifestPath)).mode & 0o777, 0o600);
-    assert.deepEqual(JSON.parse(await readFile(movedManifestPath, 'utf8')).fingerprints, result.fingerprints);
+      await rename(outputParent, movedParent);
+      await mkdir(outputParent, { mode: 0o700 });
+
+      const settled = outcome ?? await pending;
+      if (settled.status === 'rejected') throw settled.error;
+      assert.equal(settled.result.integrityCheck, 'ok');
+      const movedOutputPath = join(movedParent, 'snapshot.sqlite');
+      const movedManifestPath = `${movedOutputPath}.manifest.json`;
+      await assertPrivatePath(movedOutputPath, 'file');
+      await assertPrivatePath(movedManifestPath, 'file');
+      assert.deepEqual(JSON.parse(await readFile(movedManifestPath, 'utf8')).fingerprints, settled.result.fingerprints);
+    } catch (error) {
+      testFailure = error;
+      throw error;
+    } finally {
+      const settled = outcome ?? await pending;
+      if (!testFailure && settled.status === 'rejected') throw settled.error;
+    }
   });
 });
 
@@ -924,7 +1104,7 @@ test('rejects disposable-root replacement without deleting substitutes and repor
     const residuals = await readdir(movedRoot);
     assert.equal(residuals.some((entry) => entry.includes('.partial-')), true);
     for (const residual of residuals) {
-      assert.equal((await lstat(join(movedRoot, residual))).mode & 0o777, 0o600);
+      await assertPrivatePath(join(movedRoot, residual), 'file');
     }
   });
 });

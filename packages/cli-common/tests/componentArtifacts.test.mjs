@@ -1025,14 +1025,14 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(mysqlClientDir, 'schema.prisma'), '// mysql\n', 'utf8');
-    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sqlite migration\r\nSELECT 1;\r\n', 'utf8');
     writeFileSync(join(runtimeScriptsDir, 'migrateFullRuntime.ts'), 'export {};\n', 'utf8');
-    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), '// postgres schema\n', 'utf8');
+    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), '// postgres schema\r\n', 'utf8');
     writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'migrations', 'migration_lock.toml'), 'provider = "postgresql"\n', 'utf8');
-    writeFileSync(join(postgresMigrationsDir, 'migration.sql'), '-- postgres migration\n', 'utf8');
-    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), '// mysql schema\n', 'utf8');
+    writeFileSync(join(postgresMigrationsDir, 'migration.sql'), '-- postgres migration\r\nSELECT 2;\r\n', 'utf8');
+    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), '// mysql schema\r\n', 'utf8');
     writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations', 'migration_lock.toml'), 'provider = "mysql"\n', 'utf8');
-    writeFileSync(join(mysqlMigrationsDir, 'migration.sql'), '-- mysql migration\n', 'utf8');
+    writeFileSync(join(mysqlMigrationsDir, 'migration.sql'), '-- mysql migration\r\nSELECT 3;\r\n', 'utf8');
     writeFileSync(join(schemaEngineDir, 'schema-engine-debian-openssl-3.0.x'), 'schema engine\n', 'utf8');
     writeFileSync(join(prismaBuildDir, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
     writeLinuxX64SharpFixtures(repoRoot);
@@ -1101,14 +1101,21 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
     assert.equal(readFileSync(join(payloadDir, 'happier-server'), 'utf8'), '#!/bin/sh\necho happier-server\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'), '// sqlite\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'mysql-client', 'schema.prisma'), 'utf8'), '// mysql\n');
-    assert.equal(readFileSync(join(payloadDir, 'prisma', 'sqlite', 'migrations', 'migration.sql'), 'utf8'), '-- sql\n');
+    assert.equal(
+      readFileSync(join(payloadDir, 'prisma', 'sqlite', 'migrations', 'migration.sql'), 'utf8'),
+      '-- sqlite migration\nSELECT 1;\n',
+    );
     assert.equal(existsSync(join(payloadDir, 'happier-server-migrate')), true);
-    assert.equal(readFileSync(join(payloadDir, 'prisma', 'schema.prisma'), 'utf8'), '// postgres schema\n');
+    assert.equal(readFileSync(join(payloadDir, 'prisma', 'schema.prisma'), 'utf8'), '// postgres schema\r\n');
     assert.equal(
       readFileSync(join(payloadDir, 'prisma', 'migrations', '20260719000100_pg_sentinel', 'migration.sql'), 'utf8'),
-      '-- postgres migration\n',
+      '-- postgres migration\nSELECT 2;\n',
     );
-    assert.equal(readFileSync(join(payloadDir, 'prisma', 'mysql', 'schema.prisma'), 'utf8'), '// mysql schema\n');
+    assert.equal(readFileSync(join(payloadDir, 'prisma', 'mysql', 'schema.prisma'), 'utf8'), '// mysql schema\r\n');
+    assert.equal(
+      readFileSync(join(payloadDir, 'prisma', 'mysql', 'migrations', '20260719000100_mysql_sentinel', 'migration.sql'), 'utf8'),
+      '-- mysql migration\nSELECT 3;\n',
+    );
     assert.equal(readFileSync(join(payloadDir, 'runtime', 'schema-engine'), 'utf8'), 'schema engine\n');
     assert.equal(readFileSync(join(payloadDir, 'runtime', 'prisma_schema_build_bg.wasm'), 'utf8'), 'schema wasm\n');
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui</html>\n');

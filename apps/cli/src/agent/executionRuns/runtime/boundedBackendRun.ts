@@ -1,4 +1,6 @@
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import { buildExecutionRunPrompt } from '@/agent/executionRuns/profiles/shared/buildExecutionRunPrompt';
+import { toExecutionRunProfileRole } from '@/agent/executionRuns/runtime/buildExecutionRunProfileStartParams';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runtime/executionRunTypes';
@@ -13,7 +15,7 @@ import {
   readExecutionRunErrorCode,
   type ExecutionRunTimeoutError,
 } from '@/agent/executionRuns/runtime/executionRunErrors';
-import { buildReviewGuidanceBlock } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
+import { runBoundedCompletionWithRepair } from './runBoundedCompletionWithRepair';
 import { logger } from '@/ui/logger';
 import { disposeExecutionRunBackendController, settleExecutionRunControllerOccurrence } from './settleExecutionRunControllerOccurrence';
 import { recoverFailedExecutionRunTurn, readExecutionRunFailureClassification, type ExecutionRunRecoveryContext } from './recoverFailedTurn';
@@ -80,9 +82,10 @@ export async function executeBoundedBackendRun(args: Readonly<{
       runClass: params.runClass,
       ioMode: params.ioMode,
       startedAtMs,
+      ...(params.launchRole ? { role: toExecutionRunProfileRole(params.launchRole) } : {}),
     } as const;
     let effectiveInstructions = start.instructions;
-    const prompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
+    const prompt = buildExecutionRunPrompt(profile, { ...start, instructions: effectiveInstructions });
     let activeTurnPrompt = prompt;
 
     function waitForExternalMessage(): Promise<void> {
@@ -195,7 +198,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
             ? `${effectiveInstructions}\n\nUser update:\n${updateText}`
             : `User update:\n${updateText}`;
         }
-        const updatedPrompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
+        const updatedPrompt = buildExecutionRunPrompt(profile, { ...start, instructions: effectiveInstructions });
         // ACK as soon as the bounded runtime adopts the replacement turn. Waiting for the backend
         // send promise to settle can incorrectly surface "Run is busy" even though the follow-up
         // prompt has already been accepted into the run state machine.
@@ -333,81 +336,19 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
     const rawText = backendCtrl.buffer.trim();
     const finishedAtMs = args.getNowMs();
-    let completion = profile.onBoundedComplete({
+    const { completion } = await runBoundedCompletionWithRepair({
+      profile,
       start,
       rawText,
       finishedAtMs,
+      runRepairTurn: async (repairPrompt) => {
+        // Reset buffers so the second pass is parsed deterministically.
+        resetExecutionRunBackendOutput(backendCtrl);
+        backendCtrl.turnInFlight = false;
+        await waitForRunPromise(runTurnWithRecovery(repairPrompt));
+        return backendCtrl.buffer.trim();
+      },
     });
-
-    const errorCode = (completion as any)?.toolResultOutput?.error?.code;
-    const shouldRepair =
-      completion.status === 'failed'
-      && errorCode === 'invalid_output'
-      && (params.intent === 'review' || params.intent === 'plan' || params.intent === 'delegate');
-
-    if (shouldRepair) {
-      const repairPrompt = (() => {
-        if (params.intent === 'review') {
-          return [
-            'Your previous response did not include the required final JSON object.',
-            'If you have already completed the review, convert your conclusions into the required JSON now.',
-            'If you have not yet inspected the workspace or gathered enough evidence, continue the review first using the available read-only tools, then return ONLY valid JSON (parsable by JSON.parse).',
-            'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
-            buildReviewGuidanceBlock(),
-            '',
-            'Content to convert:',
-            rawText,
-          ].join('\n');
-        }
-
-        if (params.intent === 'plan') {
-          return [
-            'Your previous response did not include the required final JSON object.',
-            'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
-            'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
-            'Return a single JSON object with this shape:',
-            '{',
-            '  "summary": "Ok",',
-            '  "sections": [{ "title": "Steps", "items": ["Step 1"] }],',
-            '  "risks": [],',
-            '  "milestones": [],',
-            '  "recommendedBackendId": "claude"',
-            '}',
-            '',
-            'Content to convert:',
-            rawText,
-          ].join('\n');
-        }
-
-        // delegate
-        return [
-          'Your previous response did not include the required final JSON object.',
-          'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
-          'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
-          'Return a single JSON object with this shape:',
-          '{',
-          '  "summary": "Ok",',
-          '  "deliverables": [{ "id": "d1", "title": "Deliverable", "details": "Optional details" }]',
-          '}',
-          '',
-          'Content to convert:',
-          rawText,
-        ].join('\n');
-      })();
-
-      // Reset buffers so the second pass is parsed deterministically.
-      resetExecutionRunBackendOutput(backendCtrl);
-      backendCtrl.turnInFlight = false;
-
-      await waitForRunPromise(runTurnWithRecovery(repairPrompt));
-
-      const repairedRawText = backendCtrl.buffer.trim();
-      completion = profile.onBoundedComplete({
-        start,
-        rawText: repairedRawText,
-        finishedAtMs,
-      });
-    }
 
     const sidechainMessage = (() => {
       // Avoid leaking strict JSON into the transcript for structured intents.

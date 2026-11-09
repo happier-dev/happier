@@ -13,7 +13,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createStorageModuleStub, createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createStorageModuleStub, createStorageStoreStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -44,6 +44,7 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const SESSION_ID = 's1';
 const RUN_ID = 'implicit:agent-activity';
 const BADGE_TEST_ID = 'session-work-state-status-badge';
+const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 
 /** Params are rendered into the key so an assertion can see the number that reached `t(...)`. */
 function formatTranslationKey(key: string, params?: Record<string, unknown>): string {
@@ -146,11 +147,11 @@ installSessionShellCommonModuleMocks({
             },
         }).module,
     storage: async () => {
-        const storage = createStorageStoreMock({
+        const storage = createStorageStoreStub(() => ({
             sessions: { [SESSION_ID]: sessionSnapshot },
             settings: settingsDefaults,
             sessionListViewDataByServerId: {},
-        });
+        }));
 
         return createStorageModuleStub({
             storage,
@@ -241,7 +242,10 @@ vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: () => null,
+    ChatHeaderView: (props: unknown) => {
+        chatHeaderPropsSpy(props);
+        return null;
+    },
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
     ChatList: () => React.createElement('ChatList'),
@@ -450,6 +454,40 @@ describe('SessionView (work-state chip call site)', () => {
 
         expect(readPaintedLabel(screen)).toContain('agents=1');
         expect(readAnnouncedLabel(screen)).toContain('agents=1');
+
+        await screen.unmount();
+    });
+
+    it('renders separate turn-finished and verified-delivery indicators in the child header', async () => {
+        sessionSnapshot = {
+            ...makeSession(1),
+            latestTurnStatus: 'completed',
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+            metadata: {
+                ...makeSession(1).metadata,
+                sessionOriginV1: {
+                    v: 1,
+                    kind: 'agent',
+                    creatorSessionId: 'lead',
+                    via: { kind: 'execution_run', runId: 'run-1' },
+                },
+                executionRunLinkV1: {
+                    v: 1,
+                    parentSessionId: 'lead',
+                    runId: 'run-1',
+                    turnEpoch: 6,
+                    delivery: { turnEpoch: 6, status: 'verified', localId: 'completion-1', transcriptSeq: 12, verifiedAt: 120 },
+                },
+            },
+        };
+
+        const screen = await renderSessionView();
+        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0] as { badges?: readonly string[] } | undefined;
+        expect(headerProps?.badges).toEqual(expect.arrayContaining([
+            'executionRunDelivery.turnFinished',
+            'executionRunDelivery.sent',
+        ]));
 
         await screen.unmount();
     });

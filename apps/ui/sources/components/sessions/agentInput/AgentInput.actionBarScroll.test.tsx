@@ -41,7 +41,7 @@ function getActionBarContentView(tree: renderer.ReactTestRenderer, index = 0) {
     return scrollView.find((node: any) => node?.type === 'View');
 }
 
-async function mockWebPlatform() {
+async function mockWebPlatform(windowWidth = 800) {
     vi.doMock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -49,6 +49,10 @@ async function mockWebPlatform() {
                             Platform: {
                                 OS: 'web',
                                 select: (v: any) => v?.web ?? v?.default ?? v?.default ?? v?.web ?? v?.native ?? v?.ios ?? v?.android,
+                            },
+                            useWindowDimensions: () => ({ width: windowWidth, height: 600 }),
+                            Dimensions: {
+                                get: () => ({ width: windowWidth, height: 600, scale: 1, fontScale: 1 }),
                             },
                         }
     );
@@ -436,4 +440,63 @@ describe('AgentInput (action bar scroll layout)', () => {
 
         act(() => tree!.unmount());
     });
+
+    it('hides and restores the control rows without hiding the composer or submit', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform(390);
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: false, showRight: false });
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const { tree } = await renderScreen(<AgentInput
+            value="draft"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={onSend}
+            onAgentClick={() => {}}
+            agentType="codex"
+            onPathClick={() => {}}
+            currentPath="/tmp"
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const toggle = tree.root.findByProps({ testID: 'agent-input-controls-toggle' });
+        expect(toggle.props.accessibilityState.expanded).toBe(true);
+        expect(getActionBarScrollViews(tree)).toHaveLength(2);
+        const [primaryRow, secondaryRow] = getActionBarScrollViews(tree);
+        act(() => {
+            primaryRow!.props.onScroll({ nativeEvent: { contentOffset: { x: 72, y: 0 } } });
+            secondaryRow!.props.onScroll({ nativeEvent: { contentOffset: { x: 128, y: 0 } } });
+        });
+        act(() => toggle.props.onPress());
+        expect(toggle.props.accessibilityState.expanded).toBe(false);
+        expect(getActionBarScrollViews(tree)).toHaveLength(0);
+        expect(tree.root.findByType('MultiTextInput' as never).props.value).toBe('draft');
+        expect(tree.root.findAllByProps({ testID: 'new-session-composer-send' }).length).toBeGreaterThan(0);
+        await tree.pressByTestIdAsync('new-session-composer-send');
+        expect(onSend).toHaveBeenCalledTimes(1);
+        act(() => toggle.props.onPress());
+        expect(toggle.props.accessibilityState.expanded).toBe(true);
+        const restoredRows = getActionBarScrollViews(tree);
+        expect(restoredRows).toHaveLength(2);
+        expect(restoredRows[0]?.props.contentOffset).toEqual({ x: 72, y: 0 });
+        expect(restoredRows[1]?.props.contentOffset).toEqual({ x: 128, y: 0 });
+        act(() => tree.unmount());
+    });
+
+    it('omits the disclosure when no controls are available', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform(390);
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: false, showRight: false });
+        const { AgentInput } = await import('./AgentInput');
+        const { tree } = await renderScreen(<AgentInput value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}} autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
+        expect(tree.root.findAllByProps({ testID: 'agent-input-controls-toggle' })).toHaveLength(0);
+        act(() => tree.unmount());
+    });
+
 });

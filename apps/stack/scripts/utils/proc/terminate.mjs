@@ -5,6 +5,7 @@ import {
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
 import { isPidAlive, observePidLiveness } from './pids.mjs';
+import { observeWindowsProcessDescendants } from './windows_process_descendants.mjs';
 
 function resolveProcessBoundary(boundary = {}) {
   return {
@@ -15,18 +16,23 @@ function resolveProcessBoundary(boundary = {}) {
       boundary.readProcessInstanceFingerprint ?? ((pid) => readProcessInstanceFingerprintSync(pid)),
     kill: boundary.kill ?? ((pid, signal) => process.kill(pid, signal)),
     spawn: boundary.spawn ?? spawn,
+    observeProcessDescendants:
+      boundary.observeProcessDescendants ?? ((pid, fingerprint) => observeWindowsProcessDescendants(pid, { fingerprint })),
   };
 }
 
-function observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary) {
+async function observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary) {
   const expected = String(processInstanceFingerprint ?? '').trim();
   if (!expected) return { status: 'not_required' };
   const liveness = boundary.observePidLiveness(pid);
   if (liveness?.status === 'dead') return { status: 'dead' };
   if (liveness?.status !== 'alive') return { status: 'inconclusive', reason: 'liveness_inconclusive' };
-  const observed = boundary.readProcessInstanceFingerprint(pid);
+  const observed = await boundary.readProcessInstanceFingerprint(pid);
   if (!String(observed ?? '').trim()) {
-    return { status: 'inconclusive', reason: 'process_instance_unavailable' };
+    // A process that exits during the read leaves it empty, which says nothing about a live one.
+    return boundary.observePidLiveness(pid)?.status === 'dead'
+      ? { status: 'dead' }
+      : { status: 'inconclusive', reason: 'process_instance_unavailable' };
   }
   return processInstanceFingerprintMatches(expected, observed)
     ? { status: 'matches' }
@@ -38,7 +44,8 @@ async function waitForPidDeath(pid, timeoutMs, boundary, processInstanceFingerpr
   while (Date.now() < end) {
     const observation = boundary.observePidLiveness(pid);
     if (observation?.status === 'dead') return observation;
-    const identity = observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary);
+    // eslint-disable-next-line no-await-in-loop
+    const identity = await observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary);
     if (identity.status === 'dead') return { status: 'dead', reason: 'not_found' };
     if (identity.status === 'mismatch' || identity.status === 'inconclusive') {
       return { status: 'replaced', reason: identity.reason };
@@ -48,7 +55,7 @@ async function waitForPidDeath(pid, timeoutMs, boundary, processInstanceFingerpr
   }
   const observation = boundary.observePidLiveness(pid);
   if (observation?.status === 'dead') return observation;
-  const identity = observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary);
+  const identity = await observeExpectedProcessInstance(pid, processInstanceFingerprint, boundary);
   if (identity.status === 'dead') return { status: 'dead', reason: 'not_found' };
   return identity.status === 'mismatch' || identity.status === 'inconclusive'
     ? { status: 'replaced', reason: identity.reason }
@@ -70,7 +77,7 @@ export async function terminateProcessPid(
   const before = boundary.observePidLiveness(n);
   if (before?.status === 'dead') return { ok: true, alreadyExited: true, reason: 'already_exited' };
   if (before?.status !== 'alive') return { ok: false, reason: 'liveness_inconclusive' };
-  const initialIdentity = observeExpectedProcessInstance(n, processInstanceFingerprint, boundary);
+  const initialIdentity = await observeExpectedProcessInstance(n, processInstanceFingerprint, boundary);
   if (initialIdentity.status === 'dead') {
     return { ok: true, alreadyExited: true, reason: 'already_exited' };
   }
@@ -183,6 +190,17 @@ function normalizeStartSignal(signal) {
   return 'SIGINT';
 }
 
+/** A missing leader says nothing about its children, so its tree needs evidence of its own. */
+async function proveExitedWindowsTree(pid, processInstanceFingerprint, boundary) {
+  const unproven = { ok: false, reason: 'leader_absent_without_tree_proof' };
+  if (!String(processInstanceFingerprint ?? '').trim()) return unproven;
+  const descendants = await boundary.observeProcessDescendants(pid, processInstanceFingerprint);
+  if (descendants?.status === 'none') return { ok: true, alreadyExited: true };
+  return descendants?.status === 'present'
+    ? { ok: false, reason: 'descendants_remain', pids: descendants.pids }
+    : unproven;
+}
+
 export async function terminateProcessGroup(
   pid,
   {
@@ -196,12 +214,14 @@ export async function terminateProcessGroup(
   const n = Number(pid);
   if (!Number.isFinite(n) || n <= 1) return { ok: false, reason: 'bad_pid' };
   const boundary = resolveProcessBoundary(boundaryOverrides);
+  const normalizedIdentityPid = Number(identityPid);
+  // The fingerprint dates the leader only when it was taken from this same process.
+  const leaderFingerprint = normalizedIdentityPid === n ? processInstanceFingerprint : null;
   if (!isTargetAlive(n, boundary)) {
     return boundary.platform === 'win32'
-      ? { ok: false, reason: 'leader_absent_without_tree_proof' }
+      ? await proveExitedWindowsTree(n, leaderFingerprint, boundary)
       : { ok: true, alreadyExited: true };
   }
-  const normalizedIdentityPid = Number(identityPid);
   if (processInstanceFingerprint && (!Number.isFinite(normalizedIdentityPid) || normalizedIdentityPid <= 1)) {
     return { ok: false, reason: 'bad_identity_pid' };
   }
@@ -210,7 +230,7 @@ export async function terminateProcessGroup(
     processInstanceFingerprint,
     boundary,
   );
-  const initialIdentity = observeGroupIdentity();
+  const initialIdentity = await observeGroupIdentity();
   if (initialIdentity.status === 'mismatch' || initialIdentity.status === 'inconclusive') {
     return { ok: false, reason: initialIdentity.reason };
   }
@@ -221,7 +241,8 @@ export async function terminateProcessGroup(
     // is the process-tree boundary, so invoke it while the observed leader is still alive.
     const treeKilled = await forceKillWindowsProcessTree(n, Math.min(2_000, perSignalMs), boundary);
     const exited = await waitForExit(n, Math.min(400, perSignalMs), boundary);
-    const finalIdentity = observeGroupIdentity();
+    if (exited && !treeKilled) return await proveExitedWindowsTree(n, leaderFingerprint, boundary);
+    const finalIdentity = await observeGroupIdentity();
     if (!exited && (finalIdentity.status === 'mismatch' || finalIdentity.status === 'inconclusive')) {
       return { ok: false, reason: finalIdentity.reason, signal: 'SIGKILL' };
     }
@@ -234,7 +255,8 @@ export async function terminateProcessGroup(
   );
 
   for (const sig of sequence) {
-    const identity = observeGroupIdentity();
+    // eslint-disable-next-line no-await-in-loop
+    const identity = await observeGroupIdentity();
     if (identity.status === 'mismatch' || identity.status === 'inconclusive') {
       return { ok: false, reason: identity.reason, signal: sig };
     }
@@ -242,7 +264,8 @@ export async function terminateProcessGroup(
     // eslint-disable-next-line no-await-in-loop
     const exited = await waitForExit(n, sig === 'SIGKILL' ? Math.min(400, perSignalMs) : perSignalMs, boundary);
     if (exited) return { ok: true, signal: sig };
-    const afterSignalIdentity = observeGroupIdentity();
+    // eslint-disable-next-line no-await-in-loop
+    const afterSignalIdentity = await observeGroupIdentity();
     if (afterSignalIdentity.status === 'mismatch' || afterSignalIdentity.status === 'inconclusive') {
       return { ok: false, reason: afterSignalIdentity.reason, signal: sig };
     }

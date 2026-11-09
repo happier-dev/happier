@@ -1,11 +1,14 @@
-import { isExecutionRunActive, type ExecutionRunPublicState } from '@happier-dev/protocol';
+import { isExecutionRunActive, resolveExecutionRunLinkDeliveryStateV1, type ExecutionRunPublicState } from '@happier-dev/protocol';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { t } from '@/text';
+import { formatExecutionRunDeliveryState } from '@/components/sessions/runs/executionRunLinkStatusLabels';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 const stylesheet = StyleSheet.create((theme) => ({
     card: {
@@ -67,6 +70,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 11,
         fontWeight: '600',
     },
+    linkedSession: {
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        alignSelf: 'flex-start',
+    },
+    linkedSessionText: {
+        color: theme.colors.accent.blue,
+        fontSize: 11,
+        fontWeight: '700',
+    },
 }));
 
 function resolveIntentLabel(intent: unknown): string | null {
@@ -81,16 +98,25 @@ function resolveIntentLabel(intent: unknown): string | null {
 function buildFacts(run: ExecutionRunPublicState): readonly string[] {
     const backendLabel = resolveExecutionRunBackendLabel(run.backendTarget);
     const modeParts = [
-        typeof (run as any).runClass === 'string' ? String((run as any).runClass) : null,
-        typeof (run as any).ioMode === 'string' ? String((run as any).ioMode) : null,
-    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+        typeof run.runClass === 'string' ? run.runClass : null,
+        typeof run.ioMode === 'string' ? run.ioMode : null,
+    ].filter((value) => value !== null);
 
     return [
+        run.visibility === 'session' ? t('visibleAgents.visibility.session') : null,
+        run.visibility === 'session' && run.role?.name
+            ? t('visibleAgents.role', { value: run.role.name })
+            : null,
         backendLabel
             ? t('executionRuns.details.labels.backend', { value: backendLabel })
             : null,
-        typeof (run as any).permissionMode === 'string'
-            ? t('executionRuns.details.labels.permissions', { value: String((run as any).permissionMode) })
+        run.visibility === 'session'
+            ? (run.modelId
+                ? t('visibleAgents.model', { value: run.modelId })
+                : t('visibleAgents.modelUnset'))
+            : null,
+        typeof run.permissionMode === 'string'
+            ? t('executionRuns.details.labels.permissions', { value: run.permissionMode })
             : null,
         modeParts.length > 0
             ? t('executionRuns.details.labels.mode', { value: modeParts.join(' · ') })
@@ -99,7 +125,7 @@ function buildFacts(run: ExecutionRunPublicState): readonly string[] {
 }
 
 function resolveTitle(run: ExecutionRunPublicState): string {
-    const intentLabel = resolveIntentLabel((run as any).intent);
+    const intentLabel = resolveIntentLabel(run.intent);
     if (intentLabel) {
         return t('executionRuns.details.titles.executionRunWithIntent', { intent: intentLabel });
     }
@@ -125,6 +151,14 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     daemonProcessLine?: string | null;
 }>) => {
     const styles = stylesheet;
+    const navigateToSession = useNavigateToSession();
+    const linkedSessionId = typeof props.run.linkedSessionId === 'string'
+        ? props.run.linkedSessionId.trim() || null
+        : null;
+    const linkedSessionServerId = usePreferredServerIdForSession(linkedSessionId ?? '');
+    const deliveryLabel = linkedSessionId
+        ? formatExecutionRunDeliveryState(resolveExecutionRunLinkDeliveryStateV1(props.run.linkState))
+        : null;
     const facts = React.useMemo(() => buildFacts(props.run), [props.run]);
     const launchOriginLabel = React.useMemo(
         () => resolveLaunchOriginLabel(props.run, props.hostSessionId),
@@ -141,6 +175,21 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
                     </Text>
                     {launchOriginLabel ? <Text style={styles.subtitle}>{launchOriginLabel}</Text> : null}
                     {props.daemonProcessLine ? <Text style={styles.subtitle}>{props.daemonProcessLine}</Text> : null}
+                    {deliveryLabel ? (
+                        <Text testID={`execution-run-details-delivery-status-${props.run.runId}`} style={styles.subtitle}>
+                            {deliveryLabel}
+                        </Text>
+                    ) : null}
+                    {linkedSessionId ? (
+                        <Pressable
+                            testID={`execution-run-details-linked-session-${props.run.runId}`}
+                            accessibilityRole="button"
+                            style={styles.linkedSession}
+                            onPress={() => { void navigateToSession(linkedSessionId, { serverId: linkedSessionServerId }); }}
+                        >
+                            <Text style={styles.linkedSessionText}>{t('runs.openSession')} · {linkedSessionId}</Text>
+                        </Pressable>
+                    ) : null}
                 </View>
                 <View style={styles.statusPill}>
                     <Text style={styles.statusText}>
@@ -169,9 +218,9 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
                         {t('executionRuns.details.timestamps.started')} {new Date(props.run.startedAtMs).toLocaleString()}
                     </Text>
                 ) : null}
-                {typeof (props.run as any).finishedAtMs === 'number' ? (
+                {typeof props.run.finishedAtMs === 'number' ? (
                     <Text style={styles.subtitle}>
-                        {t('executionRuns.details.timestamps.finished')} {new Date((props.run as any).finishedAtMs).toLocaleString()}
+                        {t('executionRuns.details.timestamps.finished')} {new Date(props.run.finishedAtMs).toLocaleString()}
                     </Text>
                 ) : null}
             </View>

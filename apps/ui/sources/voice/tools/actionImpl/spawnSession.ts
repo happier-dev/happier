@@ -1,5 +1,6 @@
 import { machineSpawnNewSessionUntilResolved } from '@/sync/ops/machines';
 import { storage } from '@/sync/domains/state/storage';
+import { resolveSessionRoleAssignmentSnapshot } from '@/sync/ops/sessionRoleAssignment';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
@@ -189,6 +190,12 @@ export async function spawnSessionForVoiceTool(params: SessionSpawnNewActionInpu
     path: directory,
   });
 
+  const sessionRoleAssignment = params.role
+    ? await resolveSessionRoleAssignmentSnapshot({ role: params.role, serverId: serverId ?? null })
+    : null;
+  if (params.role && !sessionRoleAssignment) {
+    return { type: 'error', errorCode: 'role_profiles_unavailable', errorMessage: 'role_profiles_unavailable' };
+  }
   const spawnAttempt = createVoiceSpawnAttempt(normalizeNonEmptyString(params.actionRequestId));
   const initialMessage = normalizeNonEmptyString(params.initialMessage);
   const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(targetMachine?.daemonState?.startedWithCliVersion);
@@ -206,6 +213,8 @@ export async function spawnSessionForVoiceTool(params: SessionSpawnNewActionInpu
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
     ...(params.sourceContext ? { sourceContext: params.sourceContext } : {}),
+    // Explicit role only; never inferred from the caller or delegation.
+    ...(sessionRoleAssignment ? { sessionRoleAssignment } : {}),
   });
 
   const spawnedSessionId = readVoiceSpawnedSessionIdForAttempt(spawned, spawnAttempt);

@@ -1,6 +1,6 @@
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { markSessionParticipantsChanged } from "@/app/session/changeTracking/markSessionParticipantsChanged";
-import { inTx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx } from "@/storage/inTx";
 import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 export type TimeoutPublisherResult =
@@ -57,7 +57,7 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
                     },
                 } : {}),
             };
-        }));
+        }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionPublisherPresence } }));
     }
     return results;
 }

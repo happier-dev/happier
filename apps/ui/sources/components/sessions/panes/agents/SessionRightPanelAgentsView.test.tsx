@@ -370,6 +370,7 @@ describe('SessionRightPanelAgentsView', () => {
         });
 
         expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-launch-execution-run-visibility')).toBeNull();
         await act(async () => {
             screen.pressByTestId('session-subagent-launch-execution-run:review');
         });

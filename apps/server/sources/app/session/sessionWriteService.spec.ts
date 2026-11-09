@@ -6,6 +6,7 @@ let currentTx: any;
 let transactionQueue: any[] = [];
 
 vi.mock("@/storage/inTx", () => ({
+    IN_TX_OPERATION_LABELS: { sessionMessageWrite: "session.message.write" },
     inTx: async (fn: any) => await fn(transactionQueue.shift() ?? currentTx),
 }));
 

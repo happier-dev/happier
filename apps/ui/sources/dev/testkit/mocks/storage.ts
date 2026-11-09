@@ -190,6 +190,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useAllSessionsForAttention: () => allAttentionSessions,
         useAllSessionListRenderablesForAttention: () => allAttentionSessionListRenderables,
         useSessionListViewDataByServerId: () => sessionListViewDataByServerId,
+        useSessionServerId: () => null,
         useSessionOrganizationProjection: () => sessionOrganizationProjection,
         useMachine: () => null,
         useIsDataReady: () => true,

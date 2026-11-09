@@ -11,6 +11,7 @@ import {
 } from './utils/dev/server.mjs';
 import { startDevReloadCoordinator } from './utils/dev/devReloadCoordinator.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+import { legacyServerOwnershipBoundary } from './testkit/core/server_ownership_proof.mjs';
 
 async function createServerFixture(t) {
   const rootDir = await mkdtemp(join(tmpdir(), 'hstack-dev-reload-composition-'));
@@ -116,6 +117,7 @@ test('production reload composition keeps app and Prisma reloads exclusive while
   }, {
     ensureDepsInstalledImpl: async () => {},
     applyServerMigrationsImpl: async () => {},
+    ownershipBoundary: legacyServerOwnershipBoundary,
     pmSpawnScriptImpl: spawnServer,
     waitForServerReadyImpl: async () => {},
     listListenPidsImpl: async (port) => {
@@ -165,6 +167,7 @@ test('production reload composition keeps app and Prisma reloads exclusive while
       },
       pickNextFreeTcpPortImpl: async () => nextBackendPort++,
       waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: spawnServer,
       listListenPidsImpl: async (port) => {
         const pid = listenerPidForPort(port);
@@ -328,6 +331,7 @@ test('production reload composition retries typed inconclusive post-stop evidenc
         calls.push('allocate');
         return 5102;
       },
+      ownershipBoundary: legacyServerOwnershipBoundary,
       pmSpawnScriptImpl: async ({ env }) => {
         calls.push(['spawn', Number(env.PORT), env.HAPPIER_STACK_MIGRATE_MODE]);
         return { pid: 202, exitCode: null, signalCode: null };

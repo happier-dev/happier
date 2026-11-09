@@ -51,6 +51,7 @@ describe('PromptsSettingsHome', () => {
 
         const promptsItem = screen.findByTestId('settings-prompts-library-prompts');
         const skillsItem = screen.findByTestId('settings-prompts-library-skills');
+        const runtimePreviewItem = screen.findByTestId('settings-prompts-runtime-preview');
         const foldersItem = screen.findByTestId('settings-prompts-folders');
         const templatesItem = screen.findByTestId('settings-prompts-templates');
         const stacksItem = screen.findByTestId('settings-prompts-stacks');
@@ -59,6 +60,7 @@ describe('PromptsSettingsHome', () => {
 
         expect(promptsItem).toBeTruthy();
         expect(skillsItem).toBeTruthy();
+        expect(runtimePreviewItem).toBeTruthy();
         expect(foldersItem).toBeTruthy();
         expect(templatesItem).toBeTruthy();
         expect(stacksItem).toBeTruthy();
@@ -70,6 +72,9 @@ describe('PromptsSettingsHome', () => {
 
         await screen.pressByTestIdAsync('settings-prompts-library-skills');
         expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills');
+
+        await screen.pressByTestIdAsync('settings-prompts-runtime-preview');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/preview');
 
         await screen.pressByTestIdAsync('settings-prompts-folders');
         expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/folders');

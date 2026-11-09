@@ -19,10 +19,23 @@ import {
   ExecutionRunUserTranscriptCommitRequestSchema,
   ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamCancelRequestSchema,
+  ExecutionRunStartV2RequestSchema,
+  EXECUTION_RUN_VISIBLE_ERROR_CODES,
+  readExecutionRunStartV2OnlyFieldsV1,
+  resolveAssignableSessionRoleProfileV1,
+  resolveExecutionRunStartV2UnsupportedErrorCodeV1,
+  type ExecutionRunVisibility,
+  SessionExecutionRunChildTurnReportV1RequestSchema,
+  isExecutionRunVisibleIntent,
+  planSessionRoleChangeV1,
+  type FreshAssignableSessionRoleV1,
 } from '@happier-dev/protocol';
+import { resolveVisibleRunControls, type VisibleRunControls } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunRules';
+import type { VisibleRunSessionPort } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunSessionPort';
+import { randomUUID } from 'node:crypto';
 
 import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunStartResult } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunLaunchRoleV1, ExecutionRunStartResult } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { SessionRuntimeActivityContributionHandle } from '@/session/runtimeActivity/types';
 import {
   ExecutionRunConnectedServicesUnavailableError,
@@ -54,6 +67,38 @@ function invalidParams(): { ok: false; error: string; errorCode: string } {
 function executionRunsDisabled(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Execution runs feature disabled', errorCode: 'execution_run_not_allowed' };
 }
+
+/**
+ * Every pre-v2 start entry rejects a request carrying a v2-only field, so a visible or role-bearing
+ * start can never run hidden or unlabelled through the passthrough start schema.
+ */
+function rejectExecutionRunStartV2OnlyFields(raw: unknown): { ok: false; error: string; errorCode: string } | null {
+  const fields = readExecutionRunStartV2OnlyFieldsV1(raw);
+  if (fields.length === 0) return null;
+  return {
+    ok: false,
+    error: `This start entry does not accept ${fields.join(', ')}; use execution.run.start.v2`,
+    errorCode: resolveExecutionRunStartV2UnsupportedErrorCodeV1(raw),
+  };
+}
+
+function visibleTurnEntryUnsupported(): { ok: false; error: string; errorCode: string } {
+  return {
+    ok: false,
+    error: 'Turn-stream entries do not apply to a visible run; use execution.run.send or the child Session',
+    errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.VISIBLE_TURN_ENTRY_UNSUPPORTED,
+  };
+}
+
+type ExecutionRunStartV2Launch = Readonly<{
+  visibility: ExecutionRunVisibility;
+  launchRole: ExecutionRunLaunchRoleV1 | null;
+  visibleControls?: VisibleRunControls;
+  targetSessionId?: string;
+  visibleSessionRoleV1?: FreshAssignableSessionRoleV1;
+  /** The complete v2 request, so idempotent replay never matches a different visibility or role. */
+  fingerprintSource: unknown;
+}>;
 
 function executionRunNotAllowedError(error: unknown): { ok: false; error: string; errorCode: string } {
   return {
@@ -113,8 +158,16 @@ export function registerExecutionRunHandlers(
     enqueueParentSessionInput?: (input: Readonly<{ text: string; meta: Record<string, unknown> }>) => Promise<void>;
     onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
     resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
+    /** Authenticated session services for visible runs (the hosting runner's own). */
+    visibleRunSessionPort?: VisibleRunSessionPort | null;
+    /** Visible-run recovery re-read offsets (tests only); the plan's cadence otherwise. */
+    visibleRunRecoveryReReadDelaysMs?: readonly number[];
   }>,
-): Readonly<{ dispose: () => Promise<void> }> {
+): Readonly<{
+  dispose: () => Promise<void>;
+  notifyParentInputBound: (localIds: readonly string[]) => void;
+  rehydrateVisibleRuns: (markers: readonly unknown[]) => Promise<number>;
+}> {
   const resolveCwd = ctx.resolveCwd ?? (() => ctx.cwd);
   const policy = resolveExecutionRunPolicy({
     defaults: {
@@ -131,6 +184,9 @@ export function registerExecutionRunHandlers(
   });
 
   const manager = new ExecutionRunManager({
+    sessionId: ctx.sessionId,
+    ...(ctx.visibleRunSessionPort ? { visibleRunSessionPort: ctx.visibleRunSessionPort } : {}),
+    ...(ctx.visibleRunRecoveryReReadDelaysMs ? { visibleRunRecoveryReReadDelaysMs: ctx.visibleRunRecoveryReReadDelaysMs } : {}),
     parentProvider: ctx.parentProvider,
     cwd: ctx.cwd,
     resolveCwd,
@@ -179,7 +235,7 @@ export function registerExecutionRunHandlers(
     return resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled';
   }
 
-  async function startRun(raw: unknown): Promise<
+  async function startRun(raw: unknown, v2?: ExecutionRunStartV2Launch): Promise<
     | ({ ok: true } & ExecutionRunStartResult)
     | { ok: false; error: string; errorCode: string }
   > {
@@ -187,7 +243,7 @@ export function registerExecutionRunHandlers(
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const startRequestFingerprint = parsed.data.startRequestId
-      ? fingerprintExecutionRunStartRequest(parsed.data)
+      ? fingerprintExecutionRunStartRequest(v2 ? v2.fingerprintSource : parsed.data)
       : undefined;
     try {
       const existing = manager.resolveStartRequest({
@@ -393,6 +449,13 @@ export function registerExecutionRunHandlers(
         })(),
         ...(parentRunId ? { parentRunId } : {}),
         ...(parentCallId ? { parentCallId } : {}),
+        ...(v2 ? {
+          visibility: v2.visibility,
+          launchRole: v2.launchRole,
+          ...(v2.visibleControls ? { visibleControls: v2.visibleControls } : {}),
+          ...(v2.targetSessionId ? { targetSessionId: v2.targetSessionId } : {}),
+          ...(v2.visibleSessionRoleV1 ? { visibleSessionRoleV1: v2.visibleSessionRoleV1 } : {}),
+        } : {}),
       } as any);
       return { ok: true, ...started };
     } catch (error) {
@@ -418,6 +481,8 @@ export function registerExecutionRunHandlers(
   }
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_START, async (raw: unknown) => {
+    const rejected = rejectExecutionRunStartV2OnlyFields(raw);
+    if (rejected) return rejected;
     const started = await startRun(raw);
     if (!started.ok) return started;
     return {
@@ -426,6 +491,132 @@ export function registerExecutionRunHandlers(
       sidechainId: started.sidechainId,
       ...(started.requestedConfiguration ? { requestedConfiguration: started.requestedConfiguration } : {}),
     };
+  });
+
+  /**
+   * The exact visible or role-bearing start. The role snapshot comes from this runner's own account
+   * catalog; the response echoes what was applied so the caller can verify it.
+   */
+  rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
+    const parsed = ExecutionRunStartV2RequestSchema.safeParse(raw);
+    if (!parsed.success) return invalidParams();
+    const { visibility, role, roleSource, targetSessionId, ...request } = parsed.data;
+    if (visibility === 'session' && !manager.supportsVisibleRuns()) {
+      return {
+        ok: false,
+        error: 'Visible runs are not available on this runner',
+        errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.VISIBILITY_UNSUPPORTED,
+      };
+    }
+    const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
+    const visibleControls = visibility === 'session'
+      ? resolveVisibleRunControls({
+        backendTarget: request.backendTarget,
+        permissionMode: request.permissionMode,
+        modelId: request.modelId ?? null,
+        sessionConfigOptionOverrides: request.sessionConfigOptionOverrides ?? null,
+      })
+      : null;
+    // A resumed ambiguous start replays its admitted run; admission would see that run as the busy one.
+    const replaysAdmittedStart = (() => {
+      if (!request.startRequestId) return false;
+      try {
+        return manager.resolveStartRequest({
+          startRequestId: request.startRequestId,
+          startRequestFingerprint: fingerprintExecutionRunStartRequest(parsed.data),
+        }) !== null;
+      } catch {
+        // A conflicting reuse of the id is answered by the start owner below.
+        return true;
+      }
+    })();
+    let boundChildAssignmentId: string | null = null;
+    if (visibleControls && targetSessionId && !replaysAdmittedStart) {
+      if (!isExecutionRunVisibleIntent(request.intent)) return invalidParams();
+      const admitted = await manager.admitVisibleBind({
+        intent: request.intent,
+        ...(role !== undefined ? { requestedRole: role } : {}),
+        targetSessionId,
+        controls: visibleControls,
+      });
+      if (!admitted.ok) {
+        return {
+          ok: false,
+          error: 'The run cannot bind session ' + targetSessionId + ': ' + admitted.reason,
+          errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.BIND_REJECTED,
+          reason: admitted.reason,
+        };
+      }
+      boundChildAssignmentId = admitted.childAssignmentId;
+    }
+    // A created visible child receives its role as a Session snapshot through the role-aware spawn.
+    const createsRoleBearingChild = visibility === 'session' && !targetSessionId && role !== undefined;
+    const visibleSessionRole = createsRoleBearingChild
+      ? planSessionRoleChangeV1({ role, settings: accountSettings, changeId: 'run-role:' + randomUUID(), at: Date.now() })
+      : null;
+    if (createsRoleBearingChild && !visibleSessionRole?.assignment) {
+      return {
+        ok: false,
+        error: 'Role ' + role + ' is not in the role catalog of this account',
+        errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
+      };
+    }
+    let launchRole: ExecutionRunLaunchRoleV1 | null = null;
+    if (role !== undefined) {
+      const profile = resolveAssignableSessionRoleProfileV1(accountSettings, role);
+      if (!profile || !profile.instructions.trim()) {
+        return {
+          ok: false,
+          error: `Role ${role} is not in this account's role catalog`,
+          errorCode: EXECUTION_RUN_VISIBLE_ERROR_CODES.ROLE_UNSUPPORTED,
+        };
+      }
+      launchRole = {
+        id: role,
+        name: profile.name,
+        // The echo names the child's actual assignment: the created snapshot's or the bound child's.
+        assignmentId: visibleSessionRole?.assignment?.assignmentId ?? boundChildAssignmentId ?? `run-role:${randomUUID()}`,
+        instructions: profile.instructions,
+        roleSource: roleSource === 'settings' ? 'settings' : 'explicit',
+      };
+    }
+    const started = await startRun(
+      // A visible child's result reaches its Lead unless the caller opts out explicitly.
+      visibility === 'session' && request.notifyParentOnCompletion === undefined ? { ...request, notifyParentOnCompletion: true } : request,
+      {
+        visibility,
+        launchRole,
+        fingerprintSource: parsed.data,
+        ...(visibleControls ? { visibleControls } : {}),
+        ...(targetSessionId ? { targetSessionId } : {}),
+        ...(visibleSessionRole?.assignment ? { visibleSessionRoleV1: visibleSessionRole.assignment as FreshAssignableSessionRoleV1 } : {}),
+      },
+    );
+    if (!started.ok) return started;
+    // An idempotent replay returns the run that was already admitted; echo its retained state.
+    const appliedRun = manager.get(started.runId);
+    const appliedRole = appliedRun?.launch?.role ?? launchRole;
+    return {
+      runId: started.runId,
+      callId: started.callId,
+      sidechainId: started.sidechainId,
+      ...(started.requestedConfiguration ? { requestedConfiguration: started.requestedConfiguration } : {}),
+      visibility,
+      binding: appliedRun?.launch?.binding ?? null,
+      linkedSessionId: appliedRun?.launch?.linkedSessionId ?? null,
+      role: appliedRole ? { id: appliedRole.id, name: appliedRole.name, assignmentId: appliedRole.assignmentId } : null,
+      roleSource: appliedRole?.roleSource ?? 'none',
+      permissionMode: request.permissionMode,
+      modelId: request.modelId ?? null,
+    };
+  });
+
+  /** Wake-up from a visible run's linked child; the transcript stays authoritative. */
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_EXECUTION_RUN_CHILD_TURN_REPORT_V1, async (raw: unknown) => {
+    const parsed = SessionExecutionRunChildTurnReportV1RequestSchema.safeParse(raw);
+    if (!parsed.success) return invalidParams();
+    return manager.handleChildTurnReport(parsed.data);
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, async (raw: unknown) => {
@@ -546,6 +737,8 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunEnsureOrStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    const rejected = rejectExecutionRunStartV2OnlyFields(parsed.data.start);
+    if (rejected) return rejected;
     const runId = typeof parsed.data.runId === 'string' ? parsed.data.runId.trim() : '';
     if (runId) {
       const ensured = await manager.ensure(runId, { resume: parsed.data.resume });
@@ -562,6 +755,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    if (manager.isVisibleRun(parsed.data.runId)) return visibleTurnEntryUnsupported();
     const started = await manager.startTurnStream(parsed.data.runId, {
       message: parsed.data.message,
       ...(typeof parsed.data.displayMessage === 'string' ? { displayMessage: parsed.data.displayMessage } : {}),
@@ -575,6 +769,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamStartV2RequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    if (manager.isVisibleRun(parsed.data.runId)) return visibleTurnEntryUnsupported();
     const started = await manager.startTurnStream(parsed.data.runId, {
       message: parsed.data.message,
       ...(typeof parsed.data.displayMessage === 'string' ? { displayMessage: parsed.data.displayMessage } : {}),
@@ -589,6 +784,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunUserTranscriptCommitRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    if (manager.isVisibleRun(parsed.data.runId)) return visibleTurnEntryUnsupported();
     const committed = await manager.commitUserTranscript(parsed.data.runId, {
       message: parsed.data.message,
       ...(typeof parsed.data.displayMessage === 'string' ? { displayMessage: parsed.data.displayMessage } : {}),
@@ -602,6 +798,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamReadRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    if (manager.isVisibleRun(parsed.data.runId)) return visibleTurnEntryUnsupported();
     const read = await manager.readTurnStream(parsed.data.runId, {
       streamId: parsed.data.streamId,
       cursor: parsed.data.cursor,
@@ -615,6 +812,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamCancelRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    if (manager.isVisibleRun(parsed.data.runId)) return visibleTurnEntryUnsupported();
     const cancelled = await manager.cancelTurnStream(parsed.data.runId, { streamId: parsed.data.streamId });
     if (!cancelled.ok) return { ok: false, error: cancelled.error, errorCode: cancelled.errorCode };
     return { ok: true };
@@ -624,7 +822,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStopRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    const stopped = await manager.stop(parsed.data.runId);
+    const stopped = await manager.stop(parsed.data.runId, parsed.data.reason);
     if (!stopped.ok) return { ok: false, error: stopped.error ?? 'Stop failed', errorCode: stopped.errorCode ?? 'execution_run_failed' };
     return { ok: true };
   });
@@ -645,5 +843,9 @@ export function registerExecutionRunHandlers(
     };
   });
 
-  return { dispose: () => manager.dispose() };
+  return {
+    dispose: () => manager.dispose(),
+    notifyParentInputBound: (localIds) => manager.notifyParentInputBound(localIds),
+    rehydrateVisibleRuns: (markers) => manager.rehydrateVisibleRuns(markers),
+  };
 }

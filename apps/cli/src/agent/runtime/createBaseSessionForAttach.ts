@@ -35,13 +35,16 @@ export async function createBaseSessionForAttach(opts: Readonly<{
       ? Math.trunc(attach.lastObservedMessageSeq)
       : undefined;
   const wakeDeliveryAfterSeq = initialTranscriptAfterSeq ?? legacyAttachAfterSeq;
+  // The handed-off retained role is the base until a server snapshot replaces the metadata, so the
+  // first launch (and a resume whose snapshot is unavailable) keeps it.
+  const metadata = attach.sessionRoleV1 ? { ...opts.metadata, sessionRoleV1: attach.sessionRoleV1 } : opts.metadata;
   if (attach.encryptionMode === 'plain') {
     return {
       id: existingSessionId,
       seq,
       ...(wakeDeliveryAfterSeq !== undefined ? { initialTranscriptAfterSeq: wakeDeliveryAfterSeq } : {}),
       encryptionMode: 'plain',
-      metadata: opts.metadata,
+      metadata,
       metadataVersion: -1,
       agentState: opts.state,
       agentStateVersion: -1,
@@ -55,7 +58,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
     encryptionMode: 'e2ee',
     encryptionKey: attach.encryptionKey,
     encryptionVariant: attach.encryptionVariant,
-    metadata: opts.metadata,
+    metadata,
     metadataVersion: -1,
     agentState: opts.state,
     agentStateVersion: -1,

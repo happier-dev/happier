@@ -1,6 +1,6 @@
 import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
 import React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -19,8 +19,7 @@ import {
     isAvatarStyleId,
     normalizeAvatarStyleId,
 } from '@/components/ui/avatar/avatarStyleOptions';
-import { getGeneratedAvatarComponentForStyle } from '@/components/ui/avatar/avatarComponentRegistry';
-import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
+import { AvatarStylePreviewIcon } from '@/components/settings/appearance/AvatarStylePreviewIcon';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
 import {
@@ -72,20 +71,6 @@ const isUiItemDensity = (value: string): value is UiItemDensity => (
 const isDetailsPaneTabsBehavior = (value: string): value is DetailsPaneTabsBehavior => (
     value === 'preview' || value === 'persistent'
 );
-
-function AvatarStylePreviewIcon(props: Readonly<{ styleId: AvatarStyleId }>) {
-    const AvatarStyleComponent = getGeneratedAvatarComponentForStyle(props.styleId);
-
-    return (
-        <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-            <AvatarStyleComponent
-                id={`settings-avatar-style-preview-${props.styleId}`}
-                styleId={props.styleId}
-                size={28}
-            />
-        </View>
-    );
-}
 
 export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();

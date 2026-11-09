@@ -1,5 +1,6 @@
 import React from 'react';
 import { Platform } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     FEATURE_IDS,
@@ -33,6 +34,7 @@ import {
 
 export default React.memo(function FeaturesSettingsScreen() {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const [experiments, setExperiments] = useSettingMutable('experiments');
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
@@ -442,21 +444,31 @@ export default React.memo(function FeaturesSettingsScreen() {
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);
 
                         return (
-                            <Item
-                                key={d.featureId}
-                                title={t(d.titleKey)}
-                                subtitle={t(d.subtitleKey)}
-                                icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
-                                rightElement={
-                                    <Switch
-                                        testID={`settings-feature-toggle-${d.featureId}`}
-                                        value={enabled}
-                                        disabled={blockedByDependencies}
-                                        onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
+                            <React.Fragment key={d.featureId}>
+                                <Item
+                                    title={t(d.titleKey)}
+                                    subtitle={t(d.subtitleKey)}
+                                    icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
+                                    rightElement={
+                                        <Switch
+                                            testID={`settings-feature-toggle-${d.featureId}`}
+                                            value={enabled}
+                                            disabled={blockedByDependencies}
+                                            onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
+                                        />
+                                    }
+                                    showChevron={false}
+                                />
+                                {d.featureId === 'sessions.lineageAppearancePresets' && enabled ? (
+                                    <Item
+                                        testID="settings-features-lineage-appearance-entry"
+                                        title={t('settingsSession.lineageAppearance.title')}
+                                        subtitle={t('settingsSession.lineageAppearance.subtitle')}
+                                        icon={<Icon name="git-branch" size={29} color={theme.colors.accent.indigo} />}
+                                        onPress={() => router.push('/settings/session/lineage-appearance')}
                                     />
-                                }
-                                showChevron={false}
-                            />
+                                ) : null}
+                            </React.Fragment>
                         );
                     })}
                 </ItemGroup>

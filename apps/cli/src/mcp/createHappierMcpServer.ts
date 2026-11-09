@@ -24,7 +24,7 @@ import {
   getActionSpec,
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   createMcpActionApprovalRequirement,
   createMcpActionEnablement,
@@ -105,6 +105,9 @@ export function createHappierMcpServer(
       normalizeExecutionRunRpcPayload(
         await (client.executionRuns?.start?.(request) ?? sessionScopedRpc('execution.run.start', request)),
       ),
+    // The exact visible or role-bearing start; the local runner owns the method, with no fallback.
+    startV2: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc(SESSION_RPC_METHODS.EXECUTION_RUN_START_V2, request)),
     list: async (request: unknown) =>
       normalizeExecutionRunRpcPayload(
         await (client.executionRuns?.list?.(request) ?? sessionScopedRpc('execution.run.list', request)),
@@ -187,6 +190,9 @@ export function createHappierMcpServer(
         return { ok: true as const, sessionId: normalizedSessionId, title: normalizedTitle };
       },
       executionRunStart: async (sessionId, request) => await runForSession(sessionId, async () => await executionRuns.start(request)),
+      executionRunStartV2: async (sessionId, request) => await runForSession(sessionId, async () => await executionRuns.startV2(request)),
+      // Owner run defaults come from the runner's already-loaded account settings: no extra read per start.
+      readVisibleAgentsSettings: async () => opts?.getAccountSettings?.() ?? opts?.accountSettings ?? null,
       executionRunList: async (sessionId, request) => await runForSession(sessionId, async () => await executionRuns.list(request)),
       executionRunGet: async (sessionId, request) => await runForSession(sessionId, async () => await executionRuns.get(request)),
       executionRunSend: async (sessionId, request) => await runForSession(sessionId, async () => await executionRuns.send(request)),

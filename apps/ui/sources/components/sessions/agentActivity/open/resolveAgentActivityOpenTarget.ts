@@ -53,6 +53,7 @@ export type AgentActivityOpenTargetEntry = Readonly<{
     runId?: string | null;
     sidechainId?: string | null;
     subagentId?: string | null;
+    sessionId?: string | null;
 }>;
 
 export type AgentActivityOpenTarget =
@@ -72,6 +73,12 @@ export type AgentActivityOpenTarget =
         entryId: string;
         title: string;
         sidechainId: string;
+    }>
+    | Readonly<{
+        kind: 'child_session';
+        entryId: string;
+        title: string;
+        sessionId: string;
     }>;
 
 export function resolveAgentActivityOpenTarget(params: Readonly<{
@@ -84,6 +91,14 @@ export function resolveAgentActivityOpenTarget(params: Readonly<{
 
     const { entry, subagent } = params;
     const title = entry.title?.trim() ?? '';
+
+    if (entry.kind === 'child_session') {
+        const childSessionId = normalizeId(entry.sessionId);
+        if (childSessionId) {
+            return { kind: 'child_session', entryId: entry.id, title, sessionId: childSessionId };
+        }
+        return null;
+    }
 
     if (subagent) {
         // The full route rather than `capabilities.canOpen`: it is the target that exists on every
@@ -130,8 +145,8 @@ export function resolveAgentActivityOpenTarget(params: Readonly<{
  */
 export function isNavigableAgentActivityOpenTarget(
     target: AgentActivityOpenTarget | null,
-): target is Extract<AgentActivityOpenTarget, { kind: 'subagent' }> {
-    return target?.kind === 'subagent';
+): target is Exclude<AgentActivityOpenTarget, { kind: 'sidechain' }> {
+    return target?.kind === 'subagent' || target?.kind === 'child_session';
 }
 
 function normalizeId(value: string | null | undefined): string | null {

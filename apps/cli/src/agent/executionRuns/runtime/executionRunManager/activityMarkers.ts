@@ -1,3 +1,4 @@
+import { buildVisibleRunMarkerV1 } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunMarker';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
@@ -76,6 +77,7 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
         run.launch.connectedServicesRegistration,
       ),
     } : {}),
+    ...(ctrl.kind === 'session' ? { visibleRunV1: buildVisibleRunMarkerV1(run, ctrl) } : {}),
     ...(typeof run.summary === 'string' && run.summary.trim().length > 0 ? { summary: run.summary } : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
     resumeHandle: (() => {

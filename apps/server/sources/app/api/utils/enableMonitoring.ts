@@ -9,8 +9,12 @@ import {
     sendLivenessResponse,
 } from "@/app/monitoring/readiness";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
+import type { ApiStartupIdentityHolder } from "@/app/runtime/startupReceipt";
 
-export function enableMonitoring(app: Fastify) {
+export function enableMonitoring(
+    app: Fastify,
+    { apiStartupIdentity = null }: Readonly<{ apiStartupIdentity?: ApiStartupIdentityHolder | null }> = {},
+) {
     // Add metrics hooks
     app.addHook('onRequest', async (request, reply) => {
         request.startTime = Date.now();
@@ -37,7 +41,9 @@ export function enableMonitoring(app: Fastify) {
     };
 
     const readinessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
-        await sendDatabaseReadinessResponse(reply);
+        await sendDatabaseReadinessResponse(reply, {
+            apiStartupInstanceId: apiStartupIdentity?.read()?.instanceId ?? null,
+        });
     };
 
     app.get('/health', livenessHandler);

@@ -31,6 +31,34 @@ describe('mergeSessionMetadataForStartup', () => {
             .toEqual(next.sessionRepositoryV1);
     });
 
+    it.each(['start', 'attach'] as const)('keeps the persisted role (or its absence) during %s and never re-applies a launch role', (mode) => {
+        const directories = { homeDir: '/home', happyHomeDir: '/home/.happier', happyLibDir: '/lib', happyToolsDir: '/tools' };
+        const origin = { v: 1 as const, kind: 'agent' as const, creatorSessionId: 'planner' };
+        const kept = mergeSessionMetadataForStartup({
+            current: { ...directories, path: '/repo', host: 'h', sessionOriginV1: origin, sessionRoleV1: { v: 1, role: 'reviewer' } },
+            next: { ...directories, path: '/repo', host: 'h', sessionRoleV1: { v: 1, role: 'delegate' } },
+            nowMs: 1, mode,
+        });
+        expect(kept.sessionRoleV1).toEqual({ v: 1, role: 'reviewer' });
+        expect(kept.sessionOriginV1).toEqual(origin);
+        const cleared = mergeSessionMetadataForStartup({
+            current: { ...directories, path: '/repo', host: 'h' },
+            next: { ...directories, path: '/repo', host: 'h', sessionRoleV1: { v: 1, role: 'delegate' } },
+            nowMs: 1, mode,
+        });
+        expect(cleared).not.toHaveProperty('sessionRoleV1');
+    });
+
+    it.each(['start', 'attach'] as const)('retains original creator provenance during %s, even when runtime identity changes', (mode) => {
+        const origin = { v: 1 as const, kind: 'agent' as const, creatorSessionId: 'actual-planner' };
+        const directories = { homeDir: '/home', happyHomeDir: '/home/.happier', happyLibDir: '/lib', happyToolsDir: '/tools' };
+        const merged = mergeSessionMetadataForStartup({
+            current: { ...directories, path: '/old', host: 'old', sessionOriginV1: origin },
+            next: { ...directories, path: '/new', host: 'new', sessionOriginV1: { ...origin, creatorSessionId: 'later-runtime' } },
+            nowMs: 1, mode, metadataKeysToUnsetOnAttach: ['sessionOriginV1'], attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        });
+        expect(merged.sessionOriginV1).toEqual(origin);
+    });
     it('clears the MCP restart marker after startup applies the desired selection', () => {
         const merged = mergeSessionMetadataForStartup({
             current: {

@@ -335,6 +335,13 @@ export function mergeSessionMetadataForStartup(opts: {
         }
     }
 
+    // A later runtime attachment is not a new creation event, even when its identity changes.
+    if (opts.current.sessionOriginV1 !== undefined) merged.sessionOriginV1 = opts.current.sessionOriginV1;
+    else delete merged.sessionOriginV1;
+    // Role is mutable and owned by the persisted session; a launch/respawn role only seeds creation.
+    if (opts.current.sessionRoleV1 !== undefined) merged.sessionRoleV1 = opts.current.sessionRoleV1;
+    else delete merged.sessionRoleV1;
+
     const perm = resolvePermissionModeForStartup({
         current: opts.current,
         next: opts.next,

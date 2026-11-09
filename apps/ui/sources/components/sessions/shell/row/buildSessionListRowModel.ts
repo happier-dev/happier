@@ -32,6 +32,14 @@ import {
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
+import { readSessionOriginV1, readSessionRoleAssignmentV1, SessionRoleBadgeColorV1Schema, SessionRoleSchema, type SessionRole } from '@happier-dev/protocol';
+import { resolveSessionRoleDisplayColor, resolveSessionRoleDisplayName } from '@/components/sessions/roles/sessionRoleLabels';
+import {
+    readExecutionRunLinkPresentationSource,
+    resolveExecutionRunDeliveryState,
+    resolveExecutionRunTurnState,
+    shouldShowExecutionRunLinkPresentation,
+} from '@/sync/domains/session/executionRunLinkPresentation';
 import { resolveEffectiveSessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { sessionTagKey } from '../sessionTagUtils';
 import { treeRowId } from '../drop-resolution/treeRowId';
@@ -39,6 +47,7 @@ import {
     resolveSessionRowAttentionState,
     resolveSessionRowPresentation,
 } from './resolveSessionRowPresentation';
+import { resolveSessionLineageBaseDensity, resolveSessionLineageRowAppearance } from './resolveSessionLineageRowAppearance';
 import type {
     SessionListRowModel,
     SessionListRowPresentationSettings,
@@ -110,6 +119,18 @@ function resolveLatestPendingMessageCreatedAt(snapshot: Partial<SessionListRowSt
         latest = latest === null ? createdAt : Math.max(latest, createdAt);
     }
     return latest;
+}
+
+/** Store renderables carry the projected role; raw sessions carry `sessionRoleV1` metadata. */
+function resolveSessionListRowRole(metadata: unknown): Readonly<{ role: SessionRole | null; name: string | null; color: `#${string}` | null }> {
+    if (metadata && typeof metadata === 'object' && 'sessionRole' in metadata) {
+        const role = SessionRoleSchema.safeParse(metadata.sessionRole);
+        const name = 'sessionRoleName' in metadata && typeof metadata.sessionRoleName === 'string' ? metadata.sessionRoleName.trim() || null : null;
+        const color = 'sessionRoleColor' in metadata ? SessionRoleBadgeColorV1Schema.safeParse(metadata.sessionRoleColor) : { success: false as const };
+        return { role: role.success ? role.data : null, name, color: color.success ? color.data.toLowerCase() as `#${string}` : null };
+    }
+    const assignment = readSessionRoleAssignmentV1(metadata);
+    return { role: assignment?.role ?? null, name: assignment?.name ?? null, color: assignment?.color ?? null };
 }
 
 function resolveSessionListRowSession(
@@ -306,6 +327,17 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     });
     const pendingCount = readPendingCount(input.state ?? {}, resolvedSession);
     const pendingBlockedCount = readPendingBlockedCount(input.state ?? {}, resolvedSession);
+    const executionRunLink = readExecutionRunLinkPresentationSource(resolvedSession.metadata);
+    const executionRunStatus = shouldShowExecutionRunLinkPresentation(resolvedSession.metadata)
+        ? {
+            turnState: resolveExecutionRunTurnState({
+                latestTurnStatus: resolvedSession.latestTurnStatus,
+                pendingCount: Math.max(pendingCount, pendingBlockedCount),
+                hasPendingRequests: status.state === 'permission_required' || status.state === 'action_required',
+            }),
+            deliveryState: resolveExecutionRunDeliveryState(executionRunLink),
+        } as const
+        : null;
     const hasUnreadMessages = resolveHasUnreadMessages(input.state ?? {}, resolvedSession);
     const attentionState = deriveSessionListAttentionState({
         hasUnreadMessages,
@@ -358,6 +390,14 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     const presentsAttentionStanding = item.attentionPromotionReason === 'standing';
     const secondaryLineGroupKind = item.groupKind === 'folder' ? 'project' : item.groupKind;
     const secondaryLineMode = resolveSessionListSecondaryLineMode({ groupKind: secondaryLineGroupKind });
+    const lineageAppearance = resolveSessionLineageRowAppearance({
+        enabled: settings.lineageAppearanceEnabled === true,
+        nestingDepth: item.nestingDepth ?? 0,
+        hasChildren: item.hasChildren === true,
+        baseDensity: resolveSessionLineageBaseDensity(settings),
+        presets: settings.lineageAppearancePresets ?? {},
+    });
+    const effectiveDensity = lineageAppearance.rowDensity;
     const { subtitle, subtitleEllipsizeMode } = resolveRowSubtitle({
         rowKey,
         settings,
@@ -365,7 +405,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     });
     const presentation = resolveSessionRowPresentation({
         attentionState: rowAttentionState,
-        density: settings.density,
+        density: effectiveDensity,
         requestedSecondaryLineMode: secondaryLineMode,
         hasPathSubtitle: subtitle.trim().length > 0,
         workingRetained: presentsRetainedWorking,
@@ -398,6 +438,17 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     // standing session that is currently placed for being unread must still offer to be removed.
     const isAttentionStanding = resolveSessionAttentionStanding(settings.attentionStandingPolicy, rowKey, settings.runtimeNowMs);
     const title = getSessionName(resolvedSession);
+    const role = resolveSessionListRowRole(resolvedSession.metadata);
+    const roleName = role.role ? resolveSessionRoleDisplayName({
+        role: role.role,
+        snapshotName: role.name,
+        sessionRoleProfilesV1: settings.sessionRoleProfilesV1,
+    }) : null;
+    const roleColor = role.role ? resolveSessionRoleDisplayColor({
+        role: role.role,
+        snapshotColor: role.color,
+        sessionRoleProfilesV1: settings.sessionRoleProfilesV1,
+    }) : null;
 
     return {
         rowKey,
@@ -455,6 +506,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         hasUnreadMessages,
         pendingCount,
         pendingBlockedCount,
+        executionRunStatus,
         draft: input.state?.draft ?? null,
         agentActivityLabel,
         tags: settings.sessionTagsByKey[rowKey] ?? [],
@@ -462,9 +514,19 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         tagsEnabled: settings.tagsEnabled,
         currentUserId: settings.currentUserId,
         showServerBadge: isPinned ? settings.showPinnedServerBadge : settings.showServerBadge,
-        compact: settings.compact,
-        compactMinimal: settings.compactMinimal,
+        compact: effectiveDensity !== 'default',
+        compactMinimal: effectiveDensity === 'minimal',
         identityDisplay: settings.identityDisplay,
+        avatarStyle: lineageAppearance.avatarStyle,
+        appearancePresentationSupported: settings.appearancePresentationSupported === true,
+        agentStarted: Boolean(readSessionOriginV1(resolvedSession.metadata)) && item.identityOverride !== 'independent',
+        role: role.role,
+        roleName,
+        roleColor,
+        parentSessionId: item.parentSessionId,
+        nestingDepth: item.nestingDepth ?? 0,
+        hasChildren: item.hasChildren === true,
+        childrenCollapsed: item.childrenCollapsed === true,
         activeColorMode: settings.activeColorMode,
         workingIndicatorMode: settings.workingIndicatorMode,
         hideInactiveSessions: settings.hideInactiveSessions,

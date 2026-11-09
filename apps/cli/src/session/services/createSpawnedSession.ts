@@ -1,10 +1,14 @@
 import type {
   AcpConfigOptionOverridesV1,
+  FreshAssignableSessionRoleV1,
   BackendTargetRefV1,
   ConnectedServiceBindingsV1,
   SessionMcpSelectionV1,
   SessionSpawnSourceContextV1,
+  SessionOriginV1,
+  ExecutionRunLinkV1,
 } from '@happier-dev/protocol';
+import { FreshAssignableSessionRoleV1Schema } from '@happier-dev/protocol';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createPendingFirstInput } from '@/daemon/spawn/pendingFirstInput';
@@ -86,6 +90,12 @@ export type ReplaySeededSessionCreationV1 = Readonly<{
 }>;
 
 export type CreateSpawnedSessionParams = Readonly<{
+  /** Trusted Action execution context, never a public spawn tool argument. */
+  sessionOriginV1?: SessionOriginV1;
+  /** Explicit role only; never inferred from the creator, title, provider, or delegation. */
+  sessionRoleV1?: FreshAssignableSessionRoleV1;
+  /** Visible-run link seeded before the child's first turn (spawn ingress, child env, initial metadata). */
+  executionRunLinkV1?: ExecutionRunLinkV1;
   credentials: Credentials;
   directory: string;
   machineId?: string;
@@ -352,6 +362,8 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       flavor: replaySeededCreation.agentId,
       ...replaySeededCreation.metadata,
       ...connectedServiceChildLaunch.metadata,
+      ...(params.sessionOriginV1 ? { sessionOriginV1: params.sessionOriginV1 } : {}),
+      ...(params.sessionRoleV1 ? { sessionRoleV1: params.sessionRoleV1 } : {}),
     },
     agentState: null,
   });
@@ -483,8 +495,20 @@ export async function createSpawnedSession(
     : null;
   const spawnNonce = callerOwnedSpawnNonce ?? randomUUID();
   const exactMachineId = params.machineId?.trim();
+  if (params.sessionRoleV1 && !FreshAssignableSessionRoleV1Schema.safeParse(params.sessionRoleV1).success) {
+    throw createCodedError(
+      'Role-at-creation requires a complete retained instruction snapshot',
+      SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    );
+  }
   if (params.machineId !== undefined && !exactMachineId) {
     throw createCodedError('Machine id is required', SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST);
+  }
+  if (params.sessionRoleV1 && !exactMachineId && !params.directTransport) {
+    throw createCodedError(
+      'The selected daemon cannot prove role-at-creation support; update or reconnect the CLI before retrying',
+      SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    );
   }
   const callSpawnRpc = async (request: SpawnDaemonSessionRequest): Promise<unknown> => {
     const call = (method: string) => callExactMachineRpc({
@@ -495,6 +519,17 @@ export async function createSpawnedSession(
       timeoutMs: DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS,
     });
     try {
+      if (params.sessionRoleV1) {
+        try {
+          return await call(RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1);
+        } catch (error) {
+          if (!isRpcMethodNotAvailableError(error) && !isRpcMethodNotFoundError(error)) throw error;
+          throw createCodedError(
+            'The selected daemon cannot create a role-assigned session; update or reconnect the CLI before retrying',
+            SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          );
+        }
+      }
       try {
         return await call(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
       } catch (error) {
@@ -569,6 +604,11 @@ export async function createSpawnedSession(
       ? { connectedServicesUpdatedAt: params.connectedServicesUpdatedAt }
       : {}),
     ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
+    ...(params.sessionRoleV1 ? { sessionRoleV1: params.sessionRoleV1 } : {}),
+    // Seeded into the child's initial metadata by the spawn core, so creation never depends on a
+    // post-creation write and the link exists before the first turn.
+    ...(params.sessionOriginV1 ? { sessionOriginV1: params.sessionOriginV1 } : {}),
+    ...(params.executionRunLinkV1 ? { executionRunLinkV1: params.executionRunLinkV1 } : {}),
     ...(params.transcriptStorage ? { transcriptStorage: params.transcriptStorage } : {}),
     ...(params.terminal ? { terminal: params.terminal } : {}),
     ...(params.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode } : {}),
@@ -700,7 +740,7 @@ export async function createSpawnedSession(
 
   const normalizedTitle = typeof params.title === 'string' ? params.title.trim() : '';
   const normalizedTag = typeof params.tag === 'string' ? params.tag.trim() : '';
-  if (normalizedTitle || normalizedTag) {
+  if (normalizedTitle || normalizedTag || params.sessionOriginV1) {
     await updateSessionMetadataWithRetry({
       token: params.credentials.token,
       credentials: params.credentials,
@@ -708,6 +748,9 @@ export async function createSpawnedSession(
       rawSession,
       updater: (metadata) => ({
         ...metadata,
+        // Retry/rejoin must never replace creation provenance already persisted by an earlier operation.
+        // A daemon that predates the ingress origin field strips it; this never-replace write is its backstop.
+        ...(params.sessionOriginV1 && metadata.sessionOriginV1 === undefined ? { sessionOriginV1: params.sessionOriginV1 } : {}),
         ...(normalizedTag ? { tag: normalizedTag } : {}),
         ...(normalizedTitle
           ? {

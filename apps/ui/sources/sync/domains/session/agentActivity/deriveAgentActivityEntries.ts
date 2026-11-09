@@ -123,6 +123,7 @@ function toHeadlineOnlyEntry(entry: AgentActivityHeadlineEntry): AgentActivityEn
         runId: entry.runId ?? null,
         sidechainId: entry.sidechainId ?? null,
         subagentId: null,
+        sessionId: null,
     };
 }
 
@@ -145,6 +146,7 @@ function toLocalOnlyEntry(entry: AgentActivityLocalEntry): AgentActivityEntry {
         runId: entry.runId ?? null,
         sidechainId: entry.sidechainId ?? null,
         subagentId: entry.subagentId ?? entry.id,
+        sessionId: entry.sessionId ?? null,
     };
 }
 
@@ -173,6 +175,7 @@ function toMergedEntry(
         runId: local.runId ?? headline.runId ?? null,
         sidechainId: local.sidechainId ?? headline.sidechainId ?? null,
         subagentId: local.subagentId ?? local.id,
+        sessionId: local.sessionId ?? null,
     };
 }
 

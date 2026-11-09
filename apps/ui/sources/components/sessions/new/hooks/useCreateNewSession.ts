@@ -1,3 +1,5 @@
+import type { AssignableSessionRole } from '@happier-dev/protocol';
+import { resolveSessionRoleAssignmentSnapshot } from '@/sync/ops/sessionRoleAssignment';
 import * as React from 'react';
 
 import { t } from '@/text';
@@ -250,6 +252,8 @@ export function useCreateNewSession(params: Readonly<{
     agentType: AgentId;
     backendTarget?: BackendTargetRefV1;
     transcriptStorage?: 'persisted' | 'direct';
+    /** Explicit role chosen in the composer; never inferred. */
+    sessionRole?: AssignableSessionRole | null;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
     /**
@@ -851,6 +855,16 @@ export function useCreateNewSession(params: Readonly<{
             let shouldPreserveLaunchAttemptForSpawnRetry = false;
 
             if (shouldSpawnForNewSessionLaunchAttempt(launchAttempt)) {
+                // Resolve the role snapshot from the target account before any checkout is created.
+                const sessionRoleAssignment = current.sessionRole
+                    ? await resolveSessionRoleAssignmentSnapshot({ role: current.sessionRole, serverId: resolvedTargetServerId ?? null })
+                    : null;
+                if (current.sessionRole && !sessionRoleAssignment) {
+                    launchAttemptRef.current = null;
+                    Modal.alert(t('common.error'), t('sessionRole.profilesUnavailable'));
+                    current.setIsCreating(false);
+                    return;
+                }
                 launchAttempt = markNewSessionLaunchAttemptSpawning(launchAttempt);
                 launchAttemptRef.current = launchAttempt;
 
@@ -887,6 +901,8 @@ export function useCreateNewSession(params: Readonly<{
                         sourceContext: current.sourceContext ?? null,
                     }),
                     ...spawnSessionExtras,
+                    // The resolved snapshot seeds initial metadata, so the first provider prompt carries it.
+                    ...(sessionRoleAssignment ? { sessionRoleAssignment } : {}),
                     spawnNonce: launchAttempt.spawnNonce,
                     userAttemptId: launchAttempt.attemptId,
                     firstTurnLocalId: launchAttempt.firstTurnLocalId,

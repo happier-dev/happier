@@ -295,6 +295,38 @@ describe('createHappierMcpServer', () => {
     expect(invokeLocal).toHaveBeenCalledWith('execution.run.list', { status: 'running' });
   });
 
+  it('routes visible or role-bearing starts only to the local execution.run.start.v2 handler and reads run defaults in memory', async () => {
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@happier-dev/protocol', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+      return {
+        ...actual,
+        createActionExecutor: (deps: any) => {
+          captured.deps = deps;
+          return {} as any;
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+
+    const invokeLocal = vi.fn(async (_method: string, params: unknown) => params);
+    const accountSettings = { visibleAgentsV1: { v: 1, defaultVisibilityByIntent: { delegate: 'session' } } } as any;
+    createHappierMcpServer({
+      sessionId: 'sess_mcp_v2',
+      rpcHandlerManager: { invokeLocal },
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    } as any, { getAccountSettings: () => accountSettings });
+
+    await captured.deps.executionRunStartV2('sess_mcp_v2', { intent: 'delegate', visibility: 'session' });
+    expect(invokeLocal).toHaveBeenCalledTimes(1);
+    expect(invokeLocal).toHaveBeenCalledWith('execution.run.start.v2', { intent: 'delegate', visibility: 'session' });
+    await expect(captured.deps.readVisibleAgentsSettings()).resolves.toBe(accountSettings);
+    expect(invokeLocal).toHaveBeenCalledTimes(1);
+  });
+
   it('prefers the session execution-run service when the client provides one', async () => {
     const captured: { deps?: any } = {};
 

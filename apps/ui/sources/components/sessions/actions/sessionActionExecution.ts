@@ -211,7 +211,7 @@ async function executeArchiveAction(target: SessionActionTarget, context?: Sessi
     if (isSessionArchivePending(target.sessionId, target.serverId)) return false;
 
     if (target.isActive || target.hasStoppableTerminalHost) {
-        if (!await confirmSessionStop()) return false;
+        if (context?.archiveConfirmation !== 'already-confirmed' && !await confirmSessionStop()) return false;
         return await runStopArchiveFlow({ target, context, archiveAfterStop: 'always' });
     }
 
@@ -225,7 +225,7 @@ async function executeArchiveAction(target: SessionActionTarget, context?: Sessi
         if (isSessionActiveArchiveResult(result)) {
             // The server may know the session is active before this client does.
             // Waiving reversible archive confirmation never waives stopping it.
-            if (!await confirmSessionStop()) return false;
+            if (context?.archiveConfirmation !== 'already-confirmed' && !await confirmSessionStop()) return false;
             return await runStopArchiveFlow({ target, context, archiveAfterStop: 'always' });
         }
         throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
@@ -248,7 +248,7 @@ export async function executeSessionAction(params: Readonly<{
         if (!policy.enabled) return false;
         const willStop = params.actionId === SESSION_ACTION_ARCHIVE_ID
             && (params.target.isActive || params.target.hasStoppableTerminalHost);
-        if (policy.requiresConfirmation && !willStop) {
+        if (policy.requiresConfirmation && !willStop && params.context?.archiveConfirmation !== 'already-confirmed') {
             const isArchive = params.actionId === SESSION_ACTION_ARCHIVE_ID;
             const confirmed = await Modal.confirm(
                 isArchive ? t('sessionInfo.archiveSession') : t('sessionInfo.unarchiveSession'),

@@ -28,13 +28,23 @@ export type ActionOptionSourceRoute =
       kind: 'spawnDiscovery';
       depsKey: 'sessionsSpawnProfilesList' | 'sessionsSpawnConnectedServicesList' | 'sessionsSpawnMcpServersPreview';
       unsupportedActionId: 'sessions.spawn.profiles.list' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview';
+    }>
+  | Readonly<{
+      id: string;
+      kind: 'sessionRoles';
+      includeNone: boolean;
     }>;
+
+export const SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID = 'session.roles.assignable';
+export const SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID = 'session.roles.assignable_or_clear';
 
 const ACTION_OPTION_SOURCE_ROUTES = [
   { id: 'execution.backends.enabled', kind: 'executionBackends' },
   { id: 'agents.backends.enabled', kind: 'executionBackends' },
   { id: 'review.engines.available', kind: 'reviewEngines' },
   { id: 'session.modes.available', kind: 'sessionModes' },
+  { id: SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID, kind: 'sessionRoles', includeNone: false },
+  { id: SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID, kind: 'sessionRoles', includeNone: true },
   {
     id: 'agents.models.available',
     kind: 'agentInventory',

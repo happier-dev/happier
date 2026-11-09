@@ -203,6 +203,8 @@ export async function runGemini(opts: {
     flavor: 'gemini',
     machineId,
     startedBy: opts.startedBy,
+    // Terminal starts snapshot the standalone default from loaded settings; daemon starts use the child env.
+    ...(opts.startedBy !== 'daemon' && !opts.existingSessionId?.trim() && !opts.resume?.trim() ? { accountSettings } : {}),
     terminalRuntime: opts.terminalRuntime ?? null,
     permissionMode: initialPermissionMode,
     permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),

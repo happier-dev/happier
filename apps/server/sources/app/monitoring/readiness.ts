@@ -65,6 +65,11 @@ export function createHealthyMonitoringResponse() {
     };
 }
 
+export type DatabaseReadinessResponseOptions = Readonly<{
+    /** Only the API that listened passes this, so other `/ready` routes cannot carry its identity. */
+    apiStartupInstanceId?: string | null;
+}>;
+
 export function createShuttingDownMonitoringResponse() {
     return {
         status: 'error',
@@ -144,7 +149,10 @@ function resolveDbReadinessLogContext(error: unknown): Readonly<{ errorName?: st
     };
 }
 
-export async function sendDatabaseReadinessResponse(reply: FastifyReply): Promise<void> {
+export async function sendDatabaseReadinessResponse(
+    reply: FastifyReply,
+    { apiStartupInstanceId = null }: DatabaseReadinessResponseOptions = {},
+): Promise<void> {
     if (isShutdown()) {
         reply.code(503).send(createShuttingDownMonitoringResponse());
         return;
@@ -154,7 +162,10 @@ export async function sendDatabaseReadinessResponse(reply: FastifyReply): Promis
     try {
         await checkDatabaseReadiness();
         recordDbReadinessTelemetry("ok", "none", startedAtMs);
-        reply.send(createHealthyMonitoringResponse());
+        reply.send({
+            ...createHealthyMonitoringResponse(),
+            ...(apiStartupInstanceId ? { apiStartupIdentity: { instanceId: apiStartupInstanceId } } : {}),
+        });
     } catch (error) {
         const reason = classifyDbReadinessReason(error);
         recordDbReadinessTelemetry("error", reason, startedAtMs);

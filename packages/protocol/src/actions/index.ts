@@ -36,6 +36,7 @@ export {
   SessionEventsGetInputSchema,
   SessionForkActionInputSchema,
   SessionSpawnNewInputSchema,
+  SessionSpawnRecoverInputSchema,
   SessionTranscriptGetInputSchema,
   ActionInputFieldHintSchema,
   ActionInputHintsSchema,
@@ -67,6 +68,7 @@ export {
   type SessionEventsGetOutput,
   type SessionForkActionInput,
   type SessionSpawnNewInput,
+  type SessionSpawnRecoverInput,
   type SessionTranscriptGetInput,
   type SessionTranscriptGetItem,
   type SessionTranscriptGetOutput,
@@ -110,6 +112,10 @@ export {
 } from './actionExecutor.js';
 
 export { resolveEffectiveActionInputFields, type EffectiveActionInputField } from './actionInputHintsRuntime.js';
+export {
+  SESSION_ROLE_ASSIGNABLE_OPTIONS_SOURCE_ID,
+  SESSION_ROLE_ASSIGNABLE_OR_CLEAR_OPTIONS_SOURCE_ID,
+} from './actionOptionSources.js';
 export { buildActionDraftSeedInput } from './actionDraftSeed.js';
 export {
   describeActionInputFieldForVoice,

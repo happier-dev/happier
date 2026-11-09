@@ -682,3 +682,20 @@ test('listListenPidsWithStatus distinguishes command failure from an empty liste
   assert.deepEqual(out.pids, []);
   assert.equal(out.reason, 'listener-discovery-error');
 });
+
+test('listListenPidsWithStatus excludes Windows connection rows that netstat mislabels as LISTENING', async () => {
+  const { listListenPidsWithStatus } = await import('./ports.mjs');
+  const observation = await listListenPidsWithStatus(53944, {
+    platform: 'win32',
+    resolveCommandPathImpl: async () => 'C:\\Windows\\System32\\netstat.exe',
+    runCaptureImpl: async () => [
+      '  TCP    127.0.0.1:53944        127.0.0.1:0            LISTENING       111',
+      '  TCP    127.0.0.1:53944        127.0.0.1:62454        LISTENING       222',
+      '  TCP    [::1]:53944            [::1]:0                LISTENING       333',
+      '  TCP    0.0.0.0:53944          0.0.0.0:0              LISTENING       444',
+      '  TCP    [::]:53944             [::]:0                 LISTENING       555',
+    ].join('\n'),
+  });
+
+  assert.deepEqual(observation, { status: 'ok', supported: true, pids: [444, 555] });
+});

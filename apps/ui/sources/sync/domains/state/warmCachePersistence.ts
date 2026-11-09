@@ -1,10 +1,14 @@
 import { MMKV } from 'react-native-mmkv';
 import {
+    ExecutionRunLinkV1Schema,
     parseSessionRuntimeActivityProjectionFields,
     PrimaryTurnStatusV1Schema,
     SessionOrganizationSnapshotSchema,
     SessionRuntimeActivityStateSchema,
     SessionRuntimeIssueV1Schema,
+    SessionOriginV1Schema,
+    SessionRoleBadgeColorV1Schema,
+    SessionRoleSchema,
     PendingActivationAuthorizationV1Schema,
     type SessionOrganizationSnapshot,
 } from '@happier-dev/protocol';
@@ -25,7 +29,13 @@ function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v1';
+// v3 resets trust in projections that can match metadataVersion after the
+// execution-run delivery link was discarded. Both earlier projections rebuild once.
+const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v3';
+const LEGACY_SESSION_LIST_WARM_CACHE_PREFIXES = [
+    'session-list-warm-cache-v1',
+    'session-list-warm-cache-v2',
+] as const;
 const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
 const SESSION_ORGANIZATION_WARM_CACHE_PREFIX = 'session-organization-warm-cache-v2';
 /**
@@ -73,6 +83,7 @@ function sharedDefaultStorageId(storageScope: string | null): string {
  */
 const LEGACY_PLAINTEXT_WARM_CACHE_PREFIXES: readonly string[] = [
     SESSION_LIST_WARM_CACHE_PREFIX,
+    ...LEGACY_SESSION_LIST_WARM_CACHE_PREFIXES,
     MACHINE_DISPLAY_WARM_CACHE_PREFIX,
     UNPROVEN_SESSION_ORGANIZATION_WARM_CACHE_PREFIX,
     LEGACY_SESSION_LIST_PINNED_IDS_WARM_CACHE_PREFIX,
@@ -262,6 +273,11 @@ export const SessionListCacheEntryV1Schema = z.object({
         providerId: z.string().optional(),
     }).nullable().optional(),
     hiddenSystemSession: z.boolean().optional(),
+    sessionOriginV1: SessionOriginV1Schema.nullable().optional(),
+    executionRunLinkV1: ExecutionRunLinkV1Schema.nullable().optional(),
+    sessionRole: SessionRoleSchema.nullable().optional(),
+    sessionRoleName: z.string().nullable().optional(),
+    sessionRoleColor: SessionRoleBadgeColorV1Schema.nullable().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),
     hasPendingUserActionRequests: z.boolean().optional(),
     hasUnreadMessages: z.boolean().optional(),
@@ -389,6 +405,20 @@ function loadScopedRecord<T>(
     }
 }
 
+function retireLegacySessionListWarmCache(
+    serverId: string | null | undefined,
+    accountId: string | null | undefined,
+): void {
+    const storage = getWarmCacheStorage();
+    if (!storage) return;
+    for (const legacyPrefix of LEGACY_SESSION_LIST_WARM_CACHE_PREFIXES) {
+        const legacyKey = buildScopedKey(legacyPrefix, serverId, accountId);
+        if (!legacyKey || storage.getString(legacyKey) === undefined) continue;
+        storage.delete(legacyKey);
+        persistedSessionListBaseline.forget(legacyKey);
+    }
+}
+
 function saveScopedRecord<T extends Record<string, unknown>>(key: string | null, value: T): void {
     if (!key) return;
     const storage = getWarmCacheStorage();
@@ -401,6 +431,10 @@ function saveScopedRecord<T extends Record<string, unknown>>(key: string | null,
 }
 
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {
+    // Earlier writers could persist a projection that had already lost role,
+    // origin, or execution-run delivery while retaining the current metadataVersion.
+    // Retire those projections and rebuild once from decrypted session metadata.
+    retireLegacySessionListWarmCache(serverId, accountId);
     const key = buildScopedKey(SESSION_LIST_WARM_CACHE_PREFIX, serverId, accountId);
     const loaded = loadScopedRecord(key, SessionListCacheEntriesSchema);
     if (!key) return loaded ?? {};

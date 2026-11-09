@@ -5,6 +5,7 @@ import {
   serializeActionFieldOptions,
   serializeActionSpec,
 } from './actionCatalog.js';
+import type { AssignableSessionRole } from '../sessionMetadata/sessionRole.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveActionOptionSourceRoute } from './actionOptionSources.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
@@ -57,6 +58,16 @@ import {
 } from './sessionSpawnConfigOptions.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from './executionRunActionPermissionMode.js';
 import { isRpcError, readRpcErrorCode } from '../rpcErrors.js';
+import { RPC_ERROR_CODES, isRpcMethodNotFoundResult } from '../rpc.js';
+import {
+  isExecutionRunVisibleIntent,
+  resolveExecutionRunStartV2UnsupportedErrorCodeV1,
+  verifyExecutionRunStartV2EchoV1,
+  type ExecutionRunRole,
+  type ExecutionRunStartV2Request,
+  type ExecutionRunVisibility,
+} from '../executionRunStartV2.js';
+import { resolveExecutionRunVisibleDefaultsV1 } from '../account/settings/visibleAgentsSettingsV1.js';
 import { lazySchema } from '../lazySchema.js';
 
 /**
@@ -176,7 +187,12 @@ export type ActionExecutorContext = Readonly<{
    */
   actionsSettings?: ActionsSettingsV1 | null;
 
-  /** Stable identity for one externally retryable action invocation. */
+  /**
+   * Caller correlation id for one action invocation. Stable only when the caller supplies it
+   * deliberately (for example CLI `--action-request-id`); agent tool bridges derive it from
+   * tool-call or MCP JSON-RPC ids, which are not unique across client connections. Actions that
+   * resolve a prior attempt do so only with `resumeActionRequest`.
+   */
   actionRequestId?: string | null;
 
   /** Resolve the existing action attempt without repeating its outward write. */
@@ -203,6 +219,16 @@ type SessionStopActionDependencyResult = Readonly<{
 export type ActionExecutorDeps = Readonly<{
   // Execution runs (session-scoped RPC)
   executionRunStart: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  /**
+   * Exact visible or role-bearing start (`execution.run.start.v2`), with no fallback to
+   * `executionRunStart`. Absent: such starts fail closed with a typed error.
+   */
+  executionRunStartV2?: (sessionId: string, request: ExecutionRunStartV2Request, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  /**
+   * Account settings carrying the owner's run defaults (`visibleAgentsV1`). Return null rather than
+   * throw when settings are unavailable; absent or null means the shipped defaults (hidden, no role).
+   */
+  readVisibleAgentsSettings?: () => Promise<unknown>;
   executionRunList: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunGet: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunSend: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
@@ -234,6 +260,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   sessionSpawnNew: (args: SessionSpawnNewActionExecutionInput) => Promise<unknown>;
+  sessionSpawnRecover?: (args: Readonly<{ spawnNonce: string }>) => Promise<unknown>;
   sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>) => Promise<unknown>;
 
   // Local inventory + discovery (voice)
@@ -245,6 +272,7 @@ export type ActionExecutorDeps = Readonly<{
   agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
   agentsConfigOptionsList?: (args: Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
   agentsSessionModesList?: (args: Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
+  sessionRolesList?: (args: Readonly<{ sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
   sessionsSpawnProfilesList?: (args: Readonly<{
     agentId?: string;
     backendTargetKey?: string;
@@ -288,6 +316,20 @@ export type ActionExecutorDeps = Readonly<{
     callerPermissionMode?: string | null;
   }>) => Promise<unknown>;
   sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
+  /** `role: null` is an explicit clear. */
+  /**
+   * `actionRequestId` is correlation, recorded on the assignment. Without `resumeActionRequest` every
+   * call is a new visible role change; with it, the call only resolves that request's retained
+   * current change and never writes over a later one.
+   */
+  sessionRoleSet?: (args: Readonly<{
+    sessionId: string;
+    role: AssignableSessionRole | null;
+    serverId?: string | null;
+    actionRequestId?: string;
+    /** Resolve that request's recorded change only; never write over a later role change. */
+    resumeActionRequest?: boolean;
+  }>) => Promise<unknown>;
   sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null; context?: ActionExecutorContext }>) => Promise<SessionStopActionDependencyResult>;
   sessionPermissionModeSet?: (args: Readonly<{
     sessionId: string;
@@ -300,6 +342,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionArchiveSet?: (args: Readonly<{ sessionId: string; archived: boolean; serverId?: string | null }>) => Promise<unknown>;
   sessionStatusGet?: (args: Readonly<{ sessionId: string; live?: boolean; serverId?: string | null }>) => Promise<unknown>;
+  /** The live runner's prompt preview (session RPC `session.promptPreview.get.v1`). */
+  sessionPromptPreviewGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionWorkStateGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionGoalGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionGoalSet?: (args: Readonly<{
@@ -989,6 +1033,22 @@ async function resolveDynamicActionOptions(params: Readonly<{
     return { ok: false, errorCode: 'options_source_not_supported', error: 'options_source_not_supported' };
   }
 
+  if (route.kind === 'sessionRoles') {
+    if (!deps.sessionRolesList) {
+      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.roles.list' };
+    }
+    const sessionId = resolveSessionIdFromInput(input, ctx);
+    const result = await deps.sessionRolesList({
+      ...(sessionId ? { sessionId } : {}),
+      ...(ctx.serverId !== undefined ? { serverId: ctx.serverId } : {}),
+    });
+    const options = normalizeResolvedOptions(result);
+    return {
+      ok: true,
+      result: route.includeNone ? [...options, { value: 'none', label: 'No role' }] : options,
+    };
+  }
+
   if (route.kind === 'executionBackends') {
     const result = await deps.agentsBackendsList({
       ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : { includeDisabled: false }),
@@ -1075,7 +1135,134 @@ type FanoutResultItem = Readonly<{
   result?: unknown;
   errorCode?: string;
   error?: string;
+  /** A run the host started but the caller must not use (for example a mismatched v2 echo). */
+  runId?: string;
 }>;
+
+/** Surfaces that may start visible or role-bearing runs in v1; every other surface gets a typed error. */
+const EXECUTION_RUN_VISIBLE_START_SURFACES: ReadonlySet<string> = new Set(['session_agent', 'mcp', 'cli']);
+
+/** The v2-only fields of a visible or role-bearing start; null means the released hidden start. */
+type ExecutionRunVisibleStartFields = Readonly<{
+  visibility: ExecutionRunVisibility;
+  role?: ExecutionRunRole;
+  roleSource?: 'explicit' | 'settings';
+  targetSessionId?: string;
+}>;
+
+/** Action-input fields that are not intent input; they never reach `intentInput`. */
+function omitVisibleStartInputFields<T extends Record<string, unknown>>(input: T): T {
+  if (!('visibility' in input) && !('role' in input) && !('targetSessionId' in input)) return input;
+  const { visibility: _visibility, role: _role, targetSessionId: _targetSessionId, ...rest } = input;
+  return rest as T;
+}
+
+/**
+ * The one executor decision between the released hidden start and `execution.run.start.v2`.
+ * Explicit fields are gated by surface and intent. A start that does not ask for visibility keeps
+ * the released hidden start; account settings can only fill the role of an explicit visible start.
+ */
+async function resolveExecutionRunVisibleStart(params: Readonly<{
+  deps: ActionExecutorDeps;
+  ctx: ActionExecutorContext;
+  intent: string;
+  input: Readonly<Record<string, unknown>>;
+  targetCount: number;
+}>): Promise<
+  | Readonly<{ ok: true; fields: ExecutionRunVisibleStartFields | null }>
+  | Readonly<{ ok: false; errorCode: string; error: string }>
+> {
+  const requestedVisibility = params.input.visibility as ExecutionRunVisibility | undefined;
+  const requestedRole = params.input.role as ExecutionRunRole | undefined;
+  const targetSessionId = typeof params.input.targetSessionId === 'string' ? params.input.targetSessionId.trim() : undefined;
+  const wantsVisible = requestedVisibility === 'session' || targetSessionId !== undefined;
+  const explicit = wantsVisible || requestedRole !== undefined;
+  const unsupportedCode = resolveExecutionRunStartV2UnsupportedErrorCodeV1(params.input);
+  const surfaceAllowed = typeof params.ctx.surface === 'string' && EXECUTION_RUN_VISIBLE_START_SURFACES.has(params.ctx.surface);
+  if (explicit && !surfaceAllowed) {
+    return { ok: false, errorCode: unsupportedCode, error: 'Visible and role-bearing runs are available only on the session_agent, mcp, and cli surfaces' };
+  }
+  if (!isExecutionRunVisibleIntent(params.intent)) {
+    if (explicit) return { ok: false, errorCode: unsupportedCode, error: 'Only review, plan, and delegate runs may be visible or role-bearing' };
+    return { ok: true, fields: null };
+  }
+  if (!surfaceAllowed) return { ok: true, fields: null };
+
+  const defaultsCanApply = requestedVisibility === 'session' && requestedRole === undefined;
+  const settings = defaultsCanApply && params.deps.readVisibleAgentsSettings
+    ? await params.deps.readVisibleAgentsSettings()
+    : null;
+  const resolved = resolveExecutionRunVisibleDefaultsV1({
+    settings,
+    intent: params.intent,
+    requested: {
+      ...(requestedVisibility !== undefined ? { visibility: requestedVisibility } : {}),
+      ...(requestedRole !== undefined ? { role: requestedRole } : {}),
+    },
+  });
+  if (targetSessionId !== undefined && resolved.visibility !== 'session') {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'targetSessionId requires visibility "session"' };
+  }
+  if (targetSessionId !== undefined && params.targetCount !== 1) {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'targetSessionId binds one child; select exactly one backend target' };
+  }
+  if (resolved.visibility === 'hidden' && resolved.role === undefined) return { ok: true, fields: null };
+  if (!params.deps.executionRunStartV2) {
+    return {
+      ok: false,
+      errorCode: resolveExecutionRunStartV2UnsupportedErrorCodeV1(resolved),
+      error: 'This host cannot start visible or role-bearing runs (execution.run.start.v2 is unavailable)',
+    };
+  }
+  return {
+    ok: true,
+    fields: {
+      visibility: resolved.visibility,
+      ...(resolved.role !== undefined && resolved.roleSource !== 'none' ? { role: resolved.role, roleSource: resolved.roleSource } : {}),
+      ...(targetSessionId !== undefined ? { targetSessionId } : {}),
+    },
+  };
+}
+
+function isRpcMethodNotFoundError(error: unknown): boolean {
+  return isRpcError(error) && readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_FOUND;
+}
+
+/**
+ * Starts one run through the exact method its fields require. A hidden roleless start keeps the
+ * released request; any other start goes only to `execution.run.start.v2` and must echo what was
+ * requested. There is no fallback in either direction.
+ */
+async function startExecutionRunForAction(params: Readonly<{
+  deps: ActionExecutorDeps;
+  sessionId: string;
+  request: Record<string, unknown>;
+  visible: ExecutionRunVisibleStartFields | null;
+  opts?: Readonly<{ serverId?: string | null }>;
+}>): Promise<unknown> {
+  if (!params.visible) return await params.deps.executionRunStart(params.sessionId, params.request, params.opts);
+  const unsupportedCode = resolveExecutionRunStartV2UnsupportedErrorCodeV1(params.visible);
+  const unsupported = (error: string) => ({ ok: false as const, errorCode: unsupportedCode, error });
+  if (!params.deps.executionRunStartV2) {
+    return unsupported('This host cannot start visible or role-bearing runs (execution.run.start.v2 is unavailable)');
+  }
+  const request = { ...params.request, ...params.visible } as ExecutionRunStartV2Request;
+  let raw: unknown;
+  try {
+    raw = await params.deps.executionRunStartV2(params.sessionId, request, params.opts);
+  } catch (error) {
+    if (isRpcMethodNotFoundError(error)) return unsupported('The target runner does not support execution.run.start.v2');
+    throw error;
+  }
+  if (isRpcMethodNotFoundResult(raw)) return unsupported('The target runner does not support execution.run.start.v2');
+  const start = normalizeSuccessfulFanoutStartResult(raw);
+  if (start && typeof start === 'object' && (start as { ok?: unknown }).ok === false) return raw;
+  const verified = verifyExecutionRunStartV2EchoV1({ request, response: start });
+  if (!verified.ok) {
+    return { ok: false, errorCode: verified.errorCode, error: verified.error, ...(verified.runId ? { runId: verified.runId } : {}) };
+  }
+  return raw;
+}
 
 function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
   if (
@@ -1090,7 +1277,7 @@ function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
   return result;
 }
 
-function readFanoutStartError(result: unknown): { errorCode?: string; error: string } {
+function readFanoutStartError(result: unknown): { errorCode?: string; error: string; runId?: string } {
   const errorCode =
     result
     && typeof result === 'object'
@@ -1111,9 +1298,13 @@ function readFanoutStartError(result: unknown): { errorCode?: string; error: str
         && typeof (result as any).message === 'string'
           ? String((result as any).message)
           : 'execution_run_failed';
+  const runId = result && typeof result === 'object' && typeof (result as any).runId === 'string'
+    ? String((result as any).runId)
+    : undefined;
   return {
     error,
     ...(errorCode ? { errorCode } : {}),
+    ...(runId ? { runId } : {}),
   };
 }
 
@@ -1161,6 +1352,8 @@ async function composeExecutionRunStartResult(params: Readonly<{
   rawStart: unknown;
   sessionId: string;
   permissionMode: string;
+  /** A verified v2 echo reports the effective permission mode; keep it instead of the requested one. */
+  keepEchoedPermissionMode?: boolean;
   waitForCompletion: boolean;
   waitTimeoutSeconds?: number;
   opts?: Readonly<{ serverId?: string | null }>;
@@ -1191,9 +1384,12 @@ async function composeExecutionRunStartResult(params: Readonly<{
     }
   }
 
+  const echoedPermissionMode = params.keepEchoedPermissionMode === true && typeof (start as any).permissionMode === 'string'
+    ? String((start as any).permissionMode)
+    : null;
   const enrichedStart = {
     ...(start as Record<string, unknown>),
-    permissionMode: params.permissionMode,
+    permissionMode: echoedPermissionMode ?? params.permissionMode,
     ...(params.waitForCompletion ? { wait } : {}),
   };
   if (
@@ -1620,7 +1816,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const serverId = resolveServerIdForSession(deps, ctx, sessionId);
         const opts = serverId ? { serverId } : undefined;
 
-        const reviewInput = parsed.data as ReviewStartInput;
+        const reviewStartInput = parsed.data as ReviewStartInput;
+        const reviewInput = omitVisibleStartInputFields(reviewStartInput);
         const engineIds = reviewInput.engineIds;
         const instructions = reviewInput.instructions.trim();
         const permissionDecision = resolveSessionAgentPermission(
@@ -1638,6 +1835,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const runLocation = reviewInput.runLocation;
 
         if (runLocation === 'current_session') {
+          if (reviewStartInput.visibility === 'session' || reviewStartInput.role !== undefined || reviewStartInput.targetSessionId !== undefined) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'An inline review cannot be visible or role-bearing; use runLocation "execution_run"' };
+          }
           if (engineIds.length !== 1) {
             return {
               ok: false,
@@ -1667,12 +1867,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result };
         }
 
+        const visibleStart = await resolveExecutionRunVisibleStart({
+          deps,
+          ctx,
+          intent: 'review',
+          input: reviewStartInput as Record<string, unknown>,
+          targetCount: engineIds.length,
+        });
+        if (!visibleStart.ok) return { ok: false, errorCode: visibleStart.errorCode, error: visibleStart.error };
+
         const results = await fanoutStarts({
           keys: engineIds,
           startOne: async (engineId) =>
-            deps.executionRunStart(
+            startExecutionRunForAction({
+              deps,
               sessionId,
-              {
+              request: {
                 intent: 'review',
                 backendTarget: parseBackendTargetKey(normalizeExecutionBackendOptionValue(engineId)),
                 instructions,
@@ -1684,8 +1894,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 launchOrigin: resolveExecutionRunLaunchOrigin(ctx),
                 intentInput: { ...intentInputBase, engineId },
               },
+              visible: visibleStart.fields,
               opts,
-            ),
+            }),
         });
 
         return { ok: true, result: { intent: 'review', sessionId, results } };
@@ -1755,8 +1966,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const {
           waitForCompletion: _waitForCompletion,
           waitTimeoutSeconds: _waitTimeoutSeconds,
-          ...intentInput
+          ...intentInputWithVisibleFields
         } = parsed.data as any;
+        const intentInput = omitVisibleStartInputFields(intentInputWithVisibleFields);
+        const visibleStart = await resolveExecutionRunVisibleStart({
+          deps,
+          ctx,
+          intent,
+          input: parsed.data as Record<string, unknown>,
+          targetCount: backendTargetKeys.length,
+        });
+        if (!visibleStart.ok) return { ok: false, errorCode: visibleStart.errorCode, error: visibleStart.error };
 
         const results = await fanoutStarts({
           keys: backendTargetKeys,
@@ -1764,9 +1984,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const targetSelection = connectedServicesByTarget.get(backendTargetKey);
             const connectedServices = targetSelection?.bindings;
             const connectedServicesDefaultServiceIds = targetSelection?.defaultServiceIds ?? [];
-            const rawStart = await deps.executionRunStart(
+            const rawStart = await startExecutionRunForAction({
+              deps,
               sessionId,
-              {
+              visible: visibleStart.fields,
+              opts,
+              request: {
                 intent,
                 ...(ctx.actionRequestId
                   ? { startRequestId: `${ctx.actionRequestId}:${backendTargetKey}` }
@@ -1788,12 +2011,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   : {}),
                 intentInput: { ...intentInput, backendTargetKey },
               },
-              opts,
-            );
+            });
             return await composeExecutionRunStartResult({
               rawStart,
               sessionId,
               permissionMode,
+              keepEchoedPermissionMode: visibleStart.fields !== null,
               waitForCompletion: (parsed.data as any).waitForCompletion === true,
               ...(typeof (parsed.data as any).waitTimeoutSeconds === 'number'
                 ? { waitTimeoutSeconds: (parsed.data as any).waitTimeoutSeconds }
@@ -1927,8 +2150,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             sessionId: _ignored,
             waitForCompletion,
             waitTimeoutSeconds,
+            visibility: _visibility,
+            role: _role,
+            targetSessionId: _targetSessionId,
             ...request
           } = parsed.data as any;
+          const visibleStart = await resolveExecutionRunVisibleStart({
+            deps,
+            ctx,
+            intent: String(request.intent ?? ''),
+            input: parsed.data as Record<string, unknown>,
+            targetCount: 1,
+          });
+          if (!visibleStart.ok) return { ok: false, errorCode: visibleStart.errorCode, error: visibleStart.error };
           request.launchOrigin = resolveExecutionRunLaunchOrigin(ctx);
           // Model + config-option (reasoning effort) selection: merge the `configOptions` shorthand
           // into the canonical `sessionConfigOptionOverrides` using the SAME owner as session spawn.
@@ -1982,11 +2216,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (ctx.actionRequestId) {
             request.startRequestId = ctx.actionRequestId;
           }
-          const rawStart = await deps.executionRunStart(sessionId, request, opts);
+          const rawStart = await startExecutionRunForAction({ deps, sessionId, request, visible: visibleStart.fields, opts });
+          const failure = visibleStart.fields ? readActionExecuteFailure(rawStart) : null;
+          if (failure) return { ok: false, ...failure, ...(typeof (rawStart as any)?.runId === 'string' ? { runId: (rawStart as any).runId } : {}) } as ActionExecuteResult;
           const result = await composeExecutionRunStartResult({
             rawStart,
             sessionId,
             permissionMode: request.permissionMode,
+            keepEchoedPermissionMode: visibleStart.fields !== null,
             waitForCompletion: waitForCompletion === true,
             ...(typeof waitTimeoutSeconds === 'number' ? { waitTimeoutSeconds } : {}),
             opts,
@@ -2165,6 +2402,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'session.spawn_recover') {
+          if (!deps.sessionSpawnRecover) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_recover' };
+          }
+          const spawnNonce = normalizeId((parsed.data as { spawnNonce?: unknown }).spawnNonce);
+          if (!spawnNonce) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.sessionSpawnRecover({ spawnNonce });
+          if (res && typeof res === 'object' && 'ok' in res && res.ok === false) {
+            const record = res as { errorCode?: unknown; error?: unknown };
+            return {
+              ok: false,
+              errorCode: typeof record.errorCode === 'string' ? record.errorCode : 'spawn_recovery_failed',
+              error: typeof record.error === 'string' ? record.error : 'spawn_recovery_failed',
+            };
+          }
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'session.spawn_picker') {
           const res = await deps.sessionSpawnPicker({
             ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
@@ -2265,10 +2520,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.message.send') {
           const messageKind = parsed.data.kind === 'notice' ? 'notice' : parsed.data.kind === 'user' ? 'user' : undefined;
           const from = typeof parsed.data.from === 'string' ? parsed.data.from : undefined;
-          // Only the CLI surface exposes display-only notice authoring in 0.2.
-          // Other surfaces must not silently reinterpret it as a prompt.
-          if ((messageKind === 'notice' || from !== undefined) && ctx.surface !== 'cli') {
-            return { ok: false, errorCode: 'unsupported_action', error: 'Notices are currently CLI-only' };
+          // Display-only notices are authored on the CLI and by session agents; on the session_agent
+          // surface the host composes the sender from the calling session (never trusting the label).
+          // Other surfaces must not silently reinterpret a notice as a prompt.
+          if ((messageKind === 'notice' || from !== undefined) && ctx.surface !== 'cli' && ctx.surface !== 'session_agent') {
+            return { ok: false, errorCode: 'unsupported_action', error: 'Notices are available on the CLI and session-agent surfaces' };
           }
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -2331,6 +2587,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionTitleSet({ sessionId, title, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.role.set') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionRoleSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.role.set' };
+          }
+          const requested = (parsed.data as { role: AssignableSessionRole | 'none' }).role;
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const actionRequestId = normalizeId(ctx.actionRequestId);
+          const res = await deps.sessionRoleSet({
+            sessionId,
+            role: requested === 'none' ? null : requested,
+            ...(serverId ? { serverId } : {}),
+            ...(actionRequestId ? { actionRequestId } : {}),
+            ...(actionRequestId && ctx.resumeActionRequest === true ? { resumeActionRequest: true } : {}),
+          });
+          if (res && typeof res === 'object' && (res as { ok?: unknown }).ok === false) {
+            const failure = res as { errorCode?: unknown; error?: unknown };
+            const errorCode = typeof failure.errorCode === 'string' && failure.errorCode ? failure.errorCode : 'session_role_set_failed';
+            return { ok: false, errorCode, error: typeof failure.error === 'string' && failure.error ? failure.error : errorCode, details: res };
+          }
           return { ok: true, result: res };
         }
 
@@ -2436,6 +2716,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const live = (parsed.data as any).live === true;
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionStatusGet({ sessionId, live, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.prompt_preview.get') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionPromptPreviewGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.prompt_preview.get' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionPromptPreviewGet({ sessionId, ...(serverId ? { serverId } : {}) });
+          const failure = readActionExecuteFailure(res);
+          if (failure) return { ok: false, ...failure };
           return { ok: true, result: res };
         }
 

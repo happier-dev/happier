@@ -1,4 +1,6 @@
 import { buildSessionListRenderableMetadata } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListViewData } from '@/sync/domains/session/listing/sessionListViewData';
+import { applySessionParentPlacementToSessionListViewData } from '@/sync/domains/session/listing/sessionParentPlacement';
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 
@@ -170,6 +172,85 @@ function createSettings(
 }
 
 describe('buildSessionListRowModel', () => {
+    it('feeds parent and nested-child presets through the canonical row presentation while feature-off inherits the list', () => {
+        const settings = createSettings({
+            density: 'minimal',
+            baseDensity: 'narrow',
+            lineageAppearanceEnabled: true,
+            lineageAppearancePresets: {
+                parent: { density: 'detailed', avatarStyle: 'gradient' },
+                child: { density: 'narrow', avatarStyle: 'pixelated' },
+            },
+        });
+        const parent = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('parent'), { nestingDepth: 0, hasChildren: true }),
+            settings, isFirst: true, isLast: false, isSingle: false,
+        });
+        const nestedParent = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('nested-parent'), { nestingDepth: 1, hasChildren: true }),
+            settings, isFirst: false, isLast: true, isSingle: false,
+        });
+        const disabled = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('disabled-child'), { nestingDepth: 1 }),
+            settings: { ...settings, lineageAppearanceEnabled: false },
+            isFirst: true, isLast: true, isSingle: true,
+        });
+
+        expect(parent).toMatchObject({ compact: false, compactMinimal: false, avatarStyle: 'gradient' });
+        expect(nestedParent).toMatchObject({
+            hasChildren: true,
+            compact: true,
+            compactMinimal: true,
+            avatarStyle: 'pixelated',
+        });
+        expect(disabled).toMatchObject({ compact: true, compactMinimal: true, avatarStyle: null });
+    });
+
+    it('nests and marks only an agent-started blank child, independently of transcript ancestry', () => {
+        const metadata = { path: '/repo', host: 'host', version: '1' };
+        const sessions = [
+            createRenderable('parent', { metadata: buildSessionListRenderableMetadata(metadata) }),
+            createRenderable('agent-child', { metadata: buildSessionListRenderableMetadata({
+                ...metadata,
+                sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'parent' },
+                sessionRoleV1: { v: 1, role: 'delegate' },
+            }) }),
+            createRenderable('user-fork', { metadata: buildSessionListRenderableMetadata({
+                ...metadata,
+                forkV1: { v: 1, parentSessionId: 'parent', parentCutoffSeqInclusive: 0, createdAtMs: 1, strategy: 'replay' },
+            }) }),
+            createRenderable('unrelated', { metadata: buildSessionListRenderableMetadata({ ...metadata, sessionRoleV1: { v: 9, role: 'delegate' } }) }),
+        ];
+        const rows = applySessionParentPlacementToSessionListViewData(buildSessionListViewData(Object.fromEntries(sessions.map(session => [session.id, session])), {}, {
+            groupInactiveSessionsByProject: false,
+            serverScope: { serverId: 'server-a' },
+        })).filter(item => item.type === 'session');
+        expect(rows.map(item => ({ id: item.session.id, parent: item.parentSessionId ?? null })))
+            .toEqual([
+                { id: 'parent', parent: null },
+                { id: 'agent-child', parent: 'parent' },
+                { id: 'unrelated', parent: null },
+                { id: 'user-fork', parent: null },
+            ]);
+        for (const item of rows) {
+            const model = buildSessionListRowModel({ item, settings: createSettings(), isFirst: false, isLast: false, isSingle: false });
+            expect(model).toMatchObject({ agentStarted: item.session.id === 'agent-child', role: item.session.id === 'agent-child' ? 'delegate' : null });
+        }
+    });
+
+    it('projects a self-contained custom role snapshot for rows after its catalog profile is gone', () => {
+        const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        const item = createSessionItem(createRenderable('custom-role', {
+            metadata: buildSessionListRenderableMetadata({
+                path: '/repo',
+                host: 'host',
+                sessionRoleV1: { v: 1, role: customRole, name: 'Architect', color: '#123456', instructions: 'Design.' },
+            }),
+        }));
+        expect(buildSessionListRowModel({ item, settings: createSettings(), isFirst: true, isLast: true, isSingle: true }))
+            .toMatchObject({ role: customRole, roleName: 'Architect', roleColor: '#123456' });
+    });
+
     it('uses the maintained unread watermark in a row without a store renderable', () => {
         let historicalVisits = 0;
         const message: Message = {
@@ -1173,6 +1254,96 @@ describe('buildSessionListRowModel', () => {
                 isSingle: true,
                 settings: createSettings({ agentActivityCountEnabled: true }),
             }).agentActivityLabel).toBeNull();
+        });
+    });
+
+    describe('visible-run turn and delivery state (R21)', () => {
+        it('keeps a completed turn distinct from verified delivery', () => {
+            const session = createRenderable('linked-child', {
+                latestTurnStatus: 'completed',
+                metadata: buildSessionListRenderableMetadata({
+                    path: '/repo',
+                    host: 'host',
+                    sessionOriginV1: {
+                        v: 1,
+                        kind: 'agent',
+                        creatorSessionId: 'lead',
+                        via: { kind: 'execution_run', runId: 'run-1' },
+                    },
+                    executionRunLinkV1: {
+                        v: 1,
+                        parentSessionId: 'lead',
+                        runId: 'run-1',
+                        turnEpoch: 7,
+                        report: { turnEpoch: 7, ack: 'accepted', reportedAt: 100, attempts: 1 },
+                    },
+                }),
+            });
+            const model = buildSessionListRowModel({
+                item: createSessionItem(session),
+                isFirst: true,
+                isLast: true,
+                isSingle: true,
+                settings: createSettings(),
+            });
+
+            expect(model.executionRunStatus).toEqual({
+                turnState: 'finished',
+                deliveryState: 'reported',
+            });
+        });
+
+        it('does not call a completed turn finished while a message remains pending', () => {
+            const session = createRenderable('pending-child', {
+                latestTurnStatus: 'completed',
+                metadata: buildSessionListRenderableMetadata({
+                    path: '/repo',
+                    host: 'host',
+                    executionRunLinkV1: {
+                        v: 1,
+                        parentSessionId: 'lead',
+                        runId: 'run-1',
+                        turnEpoch: 7,
+                    },
+                }),
+            });
+            const model = buildSessionListRowModel({
+                item: createSessionItem(session),
+                state: { pending: createPending([NOW_MS]) },
+                isFirst: true,
+                isLast: true,
+                isSingle: true,
+                settings: createSettings(),
+            });
+
+            expect(model.executionRunStatus).toEqual({
+                turnState: 'existing',
+                deliveryState: 'not_sent',
+            });
+        });
+
+        it('shows an unbound assembled placeholder as not sent without inventing a link', () => {
+            const session = createRenderable('placeholder', {
+                metadata: buildSessionListRenderableMetadata({
+                    path: '/repo',
+                    host: 'host',
+                    sessionOriginV1: {
+                        v: 1,
+                        kind: 'agent',
+                        creatorSessionId: 'lead',
+                        via: { kind: 'team_assembly', assignmentId: 'team-1' },
+                    },
+                }),
+            });
+            const model = buildSessionListRowModel({
+                item: createSessionItem(session),
+                isFirst: true,
+                isLast: true,
+                isSingle: true,
+                settings: createSettings(),
+            });
+
+            expect(model.executionRunStatus?.deliveryState).toBe('not_sent');
         });
     });
 });

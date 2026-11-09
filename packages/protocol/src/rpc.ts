@@ -1,6 +1,7 @@
 export const RPC_METHODS = {
   SPAWN_HAPPY_SESSION: 'spawn-happy-session',
   SPAWN_HAPPY_SESSION_PROVIDER_SAFE: 'spawn-happy-session.provider-safe.v1',
+  SPAWN_HAPPY_SESSION_ROLE_V1: 'spawn-happy-session.role-v1',
   STOP_SESSION: 'stop-session',
   STOP_DAEMON: 'stop-daemon',
   DAEMON_SPAWN_SESSION_RESOLVE: 'daemon.spawnSession.resolve',
@@ -211,6 +212,7 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION_METHODS = new Set<string>([
 const SOCKET_RPC_PROVIDER_STARTING_METHODS = new Set<string>([
   RPC_METHODS.SPAWN_HAPPY_SESSION,
   RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+  RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1,
   RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
   RPC_METHODS.SESSION_FORK,
   RPC_METHODS.SESSION_AGENT_TRANSITION,
@@ -311,6 +313,8 @@ export const SESSION_RPC_METHODS = {
   SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL: 'session.usageLimit.waitResume.cancel',
   SESSION_USAGE_LIMIT_CHECK_NOW: 'session.usageLimit.checkNow',
   EXECUTION_RUN_START: 'execution.run.start',
+  /** Exact visible or role-bearing start; no fallback to `execution.run.start`. */
+  EXECUTION_RUN_START_V2: 'execution.run.start.v2',
   EXECUTION_RUN_ENSURE: 'execution.run.ensure',
   EXECUTION_RUN_ENSURE_OR_START: 'execution.run.ensureOrStart',
   EXECUTION_RUN_SEND: 'execution.run.send',
@@ -324,6 +328,10 @@ export const SESSION_RPC_METHODS = {
   EXECUTION_RUN_GET: 'execution.run.get',
   EXECUTION_RUN_WAIT: 'execution.run.wait',
   EXECUTION_RUN_ACTION: 'execution.run.action',
+  /** Wake-up from a visible run's linked child to the parent runner. */
+  SESSION_EXECUTION_RUN_CHILD_TURN_REPORT_V1: 'session.executionRun.childTurn.report.v1',
+  /** The live runner's actual coding prompt for this session. */
+  SESSION_PROMPT_PREVIEW_GET_V1: 'session.promptPreview.get.v1',
   SESSION_ROLLBACK: 'session.rollback',
   EPHEMERAL_TASK_RUN: 'ephemeral.task.run',
 } as const;

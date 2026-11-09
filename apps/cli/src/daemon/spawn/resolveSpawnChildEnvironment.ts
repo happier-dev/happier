@@ -1,4 +1,5 @@
 import type { Credentials } from '@/persistence';
+import { EXECUTION_RUN_LINK_V1_ENV_KEY, STANDALONE_SESSION_PROMPT_V1_ENV_KEY, resolveStandaloneSessionPromptV1 } from '@happier-dev/protocol';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveProfileForBackendTarget } from '@/settings/profiles/resolveProfileForAgent';
 import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
@@ -277,6 +278,22 @@ export async function resolveSpawnChildEnvironment(params: {
   }
   if (params.options.mcpSelection) {
     extraEnvForChild.HAPPIER_SESSION_MCP_SELECTION_JSON = JSON.stringify(params.options.mcpSelection);
+  }
+  if (params.options.sessionRoleV1) {
+    extraEnvForChild.HAPPIER_SESSION_ROLE_V1_JSON = JSON.stringify(params.options.sessionRoleV1);
+  }
+  if (params.options.sessionOriginV1) {
+    extraEnvForChild.HAPPIER_SESSION_ORIGIN_V1_JSON = JSON.stringify(params.options.sessionOriginV1);
+  }
+  if (params.options.executionRunLinkV1) {
+    extraEnvForChild[EXECUTION_RUN_LINK_V1_ENV_KEY] = JSON.stringify(params.options.executionRunLinkV1);
+  }
+  // A fresh roleless session snapshots the owner's standalone default at creation (plan 2I).
+  if (!params.options.existingSessionId && !params.options.sessionRoleV1) {
+    const standalonePrompt = resolveStandaloneSessionPromptV1(params.accountSettings ?? null);
+    if (standalonePrompt.text.trim()) {
+      extraEnvForChild[STANDALONE_SESSION_PROMPT_V1_ENV_KEY] = JSON.stringify(standalonePrompt);
+    }
   }
   if (params.options.sessionConfigOptionOverrides) {
     extraEnvForChild.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON = JSON.stringify(params.options.sessionConfigOptionOverrides);

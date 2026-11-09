@@ -3,6 +3,7 @@ import chalk from 'chalk';
 
 import { readCredentials, readSettings, type Credentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
+import { readSessionRoleForAttachPayload } from '@/agent/runtime/sessionAttachPayload';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
@@ -258,7 +259,7 @@ export async function handleResumeCommand(
   const attach = await createSessionAttachFile({
     happySessionId: rawSession.id,
     payload: rowModel.encryptionMode === 'plain'
-      ? { v: 2, encryptionMode: 'plain' }
+      ? { v: 2, encryptionMode: 'plain', ...readSessionRoleForAttachPayload(sessionMetadata) }
       : (() => {
         const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
   requireEncryptedSessionContext(ctx);
@@ -267,6 +268,7 @@ export async function handleResumeCommand(
           encryptionMode: 'e2ee' as const,
           encryptionKeyBase64: encodeBase64(ctx.encryptionKey, 'base64'),
           encryptionVariant: ctx.encryptionVariant,
+          ...readSessionRoleForAttachPayload(sessionMetadata),
         };
       })(),
   });
