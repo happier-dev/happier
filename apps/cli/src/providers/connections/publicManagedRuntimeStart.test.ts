@@ -238,9 +238,10 @@ it('records only closed broker and Provider reasons when source custody acquisit
   });
 });
 
-it.each([2, 3])('preserves a transient Home failure at explicit Start purpose read %s and recovers the same connection', async failedRead => {
+it.each([['selection', 1], ['admission', 2]] as const)('preserves a transient Home failure during explicit Start %s and recovers the same connection', async (_phase, failedRead) => {
   await withConfiguredDaemonTestHome({ prefix: 'gateway-start-home-outage-' }, async ({ homeDir }) => {
     let reads = 0;
+    const resolvedAccounts: string[] = [];
     let unavailable = true;
     let changePurpose = () => {};
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
@@ -251,6 +252,7 @@ it.each([2, 3])('preserves a transient Home failure at explicit Start purpose re
           code: 'project_requester_home_unavailable', retryable: true, message: 'Requester Home unavailable',
         });
         changePurpose();
+        if (target.kind === 'account') resolvedAccounts.push(target.account.accountId);
         return target.kind === 'account' ? { account: target.account, displayName: 'Upstream' } : null;
       },
     });
@@ -285,7 +287,11 @@ it.each([2, 3])('preserves a transient Home failure at explicit Start purpose re
           } } },
         })) });
       };
-      expect(await start()).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+      // The selected policy snapshot was admitted before the binding changed.
+      expect(await start()).toMatchObject({ status: 'success', phase: 'running' });
+      const beforeNextAdmission = resolvedAccounts.length;
+      expect(await start()).toMatchObject({ status: 'success', phase: 'running' });
+      expect(resolvedAccounts.slice(beforeNextAdmission)).toContain('other-account');
     } finally { await fixture.cleanup(); }
   });
 });
@@ -444,7 +450,7 @@ it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained 
       process.kill(originalPid, 'SIGTERM');
       expect(await waitForProcessExit(originalPid)).toBe(true);
       const interruptedResponse = await interrupted;
-      expect(interruptedResponse.status).toBe(403);
+      expect(interruptedResponse.status).toBe(503);
       expect(JSON.parse(interruptedResponse.body)).toMatchObject({
         error: { type: 'permission_error', code: 'broker_unavailable' },
       });

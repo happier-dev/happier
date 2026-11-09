@@ -492,14 +492,13 @@ describe('managed Provider catalog runtime composition', () => {
 
     invalidateAuthorizationDuringStart = true;
     await expect(services.probe(identity)).resolves.toMatchObject({
-      status: 'error',
-      error: { code: 'provider_authorization_changed' },
+      status: 'success',
     });
     expect(start).toHaveBeenCalledTimes(4);
     expect(successorStart).not.toHaveBeenCalled();
     expect(acquireManagedProviderRuntime).toHaveBeenCalledTimes(6);
     expect(createManagedProviderRuntimeInvocationServices).toHaveBeenCalledTimes(4);
-    expect(endpointAccessCleanup).toHaveBeenCalledTimes(2);
+    expect(endpointAccessCleanup).toHaveBeenCalledTimes(3);
     expect(invocationCleanup).toHaveBeenCalledTimes(4);
     expect(releaseRegistryLease).toHaveBeenCalledTimes(5);
     expect(disposeService).toHaveBeenCalledTimes(4);
