@@ -1132,9 +1132,10 @@ export async function sessionRespondToPermissionWithServerAccountScope(
 }
 
 function assertSessionInteractionResponseApplied(result: unknown): void {
-    // The receiver's established success result is void. A structured success is
-    // also accepted; transport delivery alone cannot admit an invalid result.
-    if (result === undefined) return;
+    // The receiver's established success result is void. Plain Socket.IO ACKs
+    // serialize its positional undefined as null; E2EE retains undefined inside
+    // the response envelope. Structured success is also accepted.
+    if (result === undefined || result === null) return;
     if (result && typeof result === 'object' && 'ok' in result) {
         if (result.ok === true) return;
         if (result.ok === false && 'errorCode' in result

@@ -35,7 +35,7 @@ import { AccountSubscriptionLine, useConnectedAccountSubscription } from '../usa
 import { UsageMeterRow, UsageMeterStack, type UsageMeterSize } from '../usage/UsageMeterRow';
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { presentConnectedAccountAccessMode, type ConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
-import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
+import { projectConnectedAccountSubscriptionFacts, resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 import { projectIndexMeters, type ConnectedAccountIndexMeter } from './projectIndexMeters';
 import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 export { projectIndexMeters, type ConnectedAccountIndexMeter } from './projectIndexMeters';
@@ -376,10 +376,13 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
         : quota.loading ? { kind: 'loading' }
             : quota.error ? { kind: 'error', retry }
                 : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
+    const subscriptionFacts = projectConnectedAccountSubscriptionFacts(
+        billedPerUse ? { kind: 'apiKey', keySuffix: null } : null,
+        { planLabel: snapshot?.planLabel ?? null, subscription },
+    );
     return {
         usage,
-        planLabel: billedPerUse ? null : snapshot?.planLabel ?? null,
-        subscription,
+        ...subscriptionFacts,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
         fetchedAt: snapshot?.fetchedAt ?? null,
         staleSince: snapshot && now - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
@@ -428,7 +431,7 @@ export type ConnectedAccountIndexIdentity =
 type LiveProps = Readonly<{
     identity: ConnectedAccountIndexIdentity;
     status: unknown;
-    /** Keys and tokens that report no limits say so; other kinds stay quiet. */
+    /** Explicit API-key accounts with no reported limits say so. */
     billedPerUse: boolean;
     /** Tools and code hosts never report usage. */
     showsUsage: boolean;

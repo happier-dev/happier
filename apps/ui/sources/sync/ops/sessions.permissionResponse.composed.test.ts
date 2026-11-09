@@ -115,7 +115,7 @@ describe('permission response admission through real Home and Account owners', (
         expect(storage.getState().sessions[session.id]).toBe(before);
         expect(storage.getState().sessions[session.id]?.thinking).toBe(true);
     });
-    it.each([undefined, { ok: true }])('retains established permission success %j', async (reply) => {
+    it.each([undefined, null, { ok: true }])('retains established permission success %j', async (reply) => {
         const { network, storage, home, session, sessionRespondToPermission } = await arrangePermission();
         network.setRpcResponder(async () => reply);
         await expect(sessionRespondToPermission(session.id, {

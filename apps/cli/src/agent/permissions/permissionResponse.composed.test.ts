@@ -14,6 +14,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState } from '@/api/types';
+import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcRequest } from '@/api/rpc/types';
 import { ProviderEnforcedPermissionHandler } from './providerEnforced/handler';
@@ -24,7 +25,7 @@ import { registerSocketRpcHandlers } from '../../../../server/sources/app/api/so
 import { evaluateAccountStoredContentSocketCompatibility } from '../../../../server/sources/app/clientCompatibility/accountStoredContentCompatibility';
 import { createSessionMachineAccessKeyInTx } from '../../../../server/sources/app/accessKeys/sessionMachineAccessKeyMutations';
 import { resolveSessionScopedSocketBinding } from '../../../../server/sources/app/api/socket/sessionScopedBinding';
-import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, pressTestInstanceAsync, standardCleanup } from '../../../../ui/sources/dev/testkit';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '../../../../ui/sources/dev/testkit';
 import { installPermissionShellCommonModuleMocks } from '../../../../ui/sources/components/tools/shell/permissions/permissionShellTestHelpers';
 import { createNativeAgentCurrentSessionUiServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
@@ -57,7 +58,6 @@ installDisconnectedServerSocketBoundary();
 // Only platform boundaries use the canonical UI mocks; keep the real store.
 installPermissionShellCommonModuleMocks({ storage: async importOriginal => await importOriginal() });
 await loadSyncSingletonForTests();
-const { PermissionFooter } = await import('../../../../ui/sources/components/tools/shell/permissions/PermissionFooter');
 const { PermissionPromptCard } = await import('../../../../ui/sources/components/tools/shell/permissions/PermissionPromptCard');
 const { createAppSessionTranscriptActions } = await import('../../../../ui/sources/components/sessions/transcript/source/appSessionTranscriptActions');
 const { storage } = await import('../../../../ui/sources/sync/domains/state/storage');
@@ -83,24 +83,28 @@ describe('Session permission responses through production UI Actions and the aut
         installHomeGovernanceBoundaries(homes);
         setActiveAccountSettingsSnapshot({ scopeKey: 'edit-seam', source: 'network', settingsVersion: 1,
         settings: accountSettingsParse({}), rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
-        promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+        promptLibraryCatalog: { status: 'ready', rows: [
+            { record: { key: 'role-overrides', value: { v: 1, overrides: {} } }, revision: 0 },
+        ], tombstones: [], diagnostics: [] } });
     });
     afterEach(() => resetActiveAccountSettingsSnapshotForTests());
     afterEach(standardCleanup);
 
-    it.each(['allowOnce', 'acceptEdits', 'nativeAllowOnce', 'nativeBashPlugin', 'misboundAction', 'mcpAlwaysAllow'] as const)('delivers %s through the production Action and relay', async button => {
-        const isNative = button === 'nativeAllowOnce' || button === 'nativeBashPlugin';
+    it.each(['allowOnce', 'acceptEdits', 'nativeAllowOnce', 'nativeReusableGrantRefusal', 'nativeBashPlugin', 'misboundAction', 'mcpAlwaysAllow'] as const)('delivers %s through the production Action and relay', async button => {
+        const isNative = button === 'nativeAllowOnce' || button === 'nativeReusableGrantRefusal' || button === 'nativeBashPlugin';
         const isMcp = button === 'mcpAlwaysAllow';
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const row = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}' } });
-        await expect(createSessionMachineAccessKeyInTx(db, {
+        await expect(inTx(tx => createSessionMachineAccessKeyInTx(tx, {
             accountId: account.id, sessionId: row.id, machineId: machine.id, data: 'fixture-access-key',
-        })).resolves.toMatchObject({ ok: true });
+        }))).resolves.toMatchObject({ ok: true });
         const binding = await resolveSessionScopedSocketBinding({ userId: account.id, sessionId: row.id, machineId: machine.id });
         if (!binding.ok) throw new Error('Missing admitted Session publisher binding');
         const manager = new RpcHandlerManager({ scopePrefix: row.id, encryptionMode: 'plain', logger: () => {} });
         let state: AgentState = { requests: {}, completedRequests: {} };
+        const agentStateLock = new AsyncLock();
+        const permissionPublished = createDeferred<void>();
         // Session persistence is the boundary fixture; the request coordinator,
         // projection, UI codecs, Socket.IO relay and permission handler are real.
         const session = {
@@ -108,11 +112,13 @@ describe('Session permission responses through production UI Actions and the aut
             rpcHandlerManager: manager,
             getAgentStateSnapshot: () => state,
             getMetadataSnapshot: () => null,
-            updateAgentState: async (update: (previous: AgentState) => AgentState) => {
+            // ApiSessionClient serializes this boundary with its metadataLock.
+            updateAgentState: (update: (previous: AgentState) => AgentState) => agentStateLock.inLock(async () => {
                 const next = update(state);
                 await db.session.update({ where: { id: row.id }, data: { agentState: JSON.stringify(next) } });
                 state = next;
-            },
+                if (Object.keys(next.requests ?? {}).length > 0) permissionPublished.resolve();
+            }),
         };
         let catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'github-catalog', name: 'github', title: 'GitHub', transport: 'stdio',
             stdio: { command: 'fixture-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
@@ -141,9 +147,12 @@ describe('Session permission responses through production UI Actions and the aut
         // The runtime context is a boundary fixture; its exercised interaction
         // service, native Claude producer and host presentation owner are real.
         const nativeContext = { services: { interactions } } as unknown as AgentRuntimeContext;
+        const nativeApplications: unknown[] = [];
         const pending = isNative
             ? createClaudeNativePermissionEngine(nativeContext).canCallTool(toolName, input)
             : handler.handleToolCall(requestId, toolName, input, permissionContext);
+        // Claude's SDK consumes this hook return as its native application boundary.
+        if (isNative) void pending.then(result => { nativeApplications.push(result); }, () => {});
         void pending.catch(() => {});
         let failCatalogSave = isMcp;
         const catalogSaveStarted = createDeferred<void>();
@@ -201,14 +210,24 @@ describe('Session permission responses through production UI Actions and the aut
         }
         try {
             if (isNative) {
-                await vi.waitFor(() => expect(Object.keys(state.requests ?? {})).toHaveLength(1));
+                await Promise.race([permissionPublished.promise, pending.then(result => {
+                    throw new Error(`Native permission settled before publication: ${JSON.stringify(result)}`);
+                })]);
+                expect(Object.keys(state.requests ?? {})).toHaveLength(1);
                 requestId = Object.keys(state.requests!)[0]!;
                 expect(state.requests![requestId]).toMatchObject({ source: 'native_tool_approval_once', turnId });
             }
             await vi.waitFor(() => expect(state.requests?.[requestId]?.turnId).toBe(turnId));
             const persisted = await db.session.findUniqueOrThrow({ where: { id: row.id }, select: { agentState: true } });
             const projection = createReducer();
-            const { messages } = reducer(projection, [], AgentStateSchema.parse(JSON.parse(persisted.agentState!)));
+            const persistedState = AgentStateSchema.parse(JSON.parse(persisted.agentState!));
+            expect(persistedState.requests?.[requestId]).toMatchObject({ tool: toolName, turnId });
+            const { messages } = reducer(projection, [], persistedState);
+            expect(messages).toEqual(expect.arrayContaining([expect.objectContaining({
+                kind: 'tool-call', tool: expect.objectContaining({ id: requestId,
+                    permission: expect.objectContaining({ status: 'pending', turnId }),
+                }),
+            })]));
             const projectedMessage = messages.find(message => message.kind === 'tool-call');
             const permission = projectedMessage?.kind === 'tool-call' ? projectedMessage.tool.permission : null;
             if (!permission) throw new Error('Pending permission was not projected');
@@ -224,6 +243,7 @@ describe('Session permission responses through production UI Actions and the aut
             const token = homes.findByServerUrl(url)?.token;
             if (!token) throw new Error('Missing synthetic Home Account credential');
             const rpcReplies: unknown[] = [];
+            const rpcCompletions: Promise<unknown>[] = [];
             const emittedMethods: string[] = [];
             const emittedCarriers: ReturnType<typeof SessionPermissionRespondRpcParamsV1Schema.parse>[] = [];
             connection = await restoreServerAccountForTest({ serverUrl: url, credentials: { token }, request: homes.request,
@@ -242,13 +262,17 @@ describe('Session permission responses through production UI Actions and the aut
                         const carrier = SessionPermissionRespondRpcParamsV1Schema.parse(wire.params);
                         emittedCarriers.push(carrier);
                         emittedMethods.push(wire.method);
-                        const response = await caller.timeout(5_000).emitWithAck(event, ...args);
-                        rpcReplies.push(response);
-                        return response;
+                        const completion = caller.timeout(5_000).emitWithAck(event, ...args).then(response => {
+                            rpcReplies.push(response);
+                            return response;
+                        });
+                        rpcCompletions.push(completion);
+                        return await completion;
                     };
                 },
             });
             installHomeGovernanceBoundaries(homes);
+            const requestsBeforeArrival = homes.requests.length;
             const uiSession = installSessionActionFixture({ homes, storage, serverId, session: { id: row.id,
                 agentState: button === 'nativeBashPlugin' ? AgentStateSchema.parse(JSON.parse(persisted.agentState!)) : null,
                 encryptionMode: 'plain', metadata: { path: '/fixture', host: 'fixture', machineId: machine.id, flavor: 'claude' } } });
@@ -273,9 +297,14 @@ describe('Session permission responses through production UI Actions and the aut
                 });
                 const identity = permission.mcpTool;
                 if (!identity) throw new Error('Real permission producer omitted MCP identity');
+                let answerFailure: string | undefined;
                 const hook = await renderHook(() => useMcpAlwaysAllow({ requestId, turnId, identity, scope: { serverId, accountId: account.id },
-                    canWriteCatalog: true, answerForSession: () => answerSessionPermission({ requestId, turnId, toolName,
-                        answer: 'allowForSession', policy: { protocol: 'standard', usePermissionUpdates: false }, respondToPermission: actions.respondToPermission }) }));
+                    canWriteCatalog: true, answerForSession: async () => {
+                        try {
+                            await answerSessionPermission({ requestId, turnId, toolName,
+                                answer: 'allowForSession', policy: { protocol: 'standard', usePermissionUpdates: false }, respondToPermission: actions.respondToPermission });
+                        } catch (error) { answerFailure = String(error); throw error; }
+                    } }));
                 await vi.waitFor(() => expect(hook.getCurrent().available).toBe(true));
                 let save!: Promise<void>;
                 let phase: 'catalog' | 'settled' = 'settled';
@@ -283,7 +312,7 @@ describe('Session permission responses through production UI Actions and the aut
                     save = hook.getCurrent().allow();
                     phase = await Promise.race([catalogSaveStarted.promise.then(() => 'catalog' as const), save.then(() => 'settled' as const)]);
                 });
-                expect(phase, JSON.stringify({ state: hook.getCurrent(), emittedMethods, rpcReplies,
+                expect(phase, JSON.stringify({ state: hook.getCurrent(), answerFailure, emittedMethods, rpcReplies,
                     requests: homes.requests.map(({ path, input }) => ({ path, input })) })).toBe('catalog');
                 expect(hook.getCurrent().status).toBe('saving');
                 await expect(pending).resolves.toMatchObject({ decision: 'approved' });
@@ -315,14 +344,21 @@ describe('Session permission responses through production UI Actions and the aut
                 await hook.unmount();
                 return;
             }
-            if (button === 'nativeAllowOnce') {
+            if (button === 'nativeReusableGrantRefusal') {
                 // Real Action producer -> exact strict native consumer. An
                 // unsupported reusable grant must leave the request pending.
+                expect(state.requests?.[requestId])
+                    .toMatchObject({ source: 'native_tool_approval_once', turnId });
+                expect(nativeApplications).toEqual([]);
                 await expect(actions.respondToPermission({ id: requestId, turnId, approved: true, mode: 'acceptEdits',
                     updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
                 })).rejects.toMatchObject({ code: 'permission_response_invalid' });
                 expect(rpcReplies.at(-1)).toMatchObject({ ok: true, result: { ok: false, errorCode: 'permission_response_invalid' } });
-                expect(state.requests?.[requestId]).toMatchObject({ source: 'native_tool_approval_once', turnId });
+                expect(state.requests?.[requestId])
+                    .toMatchObject({ source: 'native_tool_approval_once', turnId });
+                expect(nativeApplications).toEqual([]);
+                expect(state.completedRequests?.[requestId]).toBeUndefined();
+                return;
             }
             const source = createTestSessionTranscriptSource({ sessionId: row.id, serverId, agentState: null,
                 interaction: { canApprovePermissions: true, canSendMessages: true },
@@ -335,11 +371,11 @@ describe('Session permission responses through production UI Actions and the aut
                 sessionId: row.id, request: pendingRequest, location: null, metadata: uiSession.metadata,
                 canApprovePermissions: true,
             }), source);
-            const renderedFooter = screen.findAll(node => node.type === PermissionFooter)[0];
-            if (!renderedFooter) throw new Error('The production prompt did not render its permission footer');
-            const grants = renderedFooter.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'button'
-                && typeof node.props.onPress === 'function' && node.props.testID === undefined);
-            expect(grants).toHaveLength(isNative ? 0 : 1);
+            if (isNative) {
+                expect(screen.findHostByTestId('permission-footer.allow')).toBeNull();
+                expect(screen.findHostByTestId('permission-footer.allow-all-edits')).toBeNull();
+            }
+            expect(emittedMethods).toEqual([]);
             if (button === 'nativeBashPlugin') {
                 const lifetime = captureActiveServerAccountScopeLifetime();
                 if (!lifetime) throw new Error('Missing restored plugin Account lifetime');
@@ -355,36 +391,58 @@ describe('Session permission responses through production UI Actions and the aut
                 });
                 try {
                     const read = await adapter.api.readSession(row.id);
-                    expect(read?.pendingPermissions).toEqual([expect.objectContaining({ requestId, toolName: 'Bash', answers: ['allowOnce', 'deny'] })]);
+                    expect(read?.pendingPermissions).toEqual([expect.objectContaining({ requestId, toolName: 'Bash',
+                        answers: [], nativeChoices: permission.nativeChoices })]);
+                    const offered = read?.pendingPermissions?.[0]?.nativeChoices;
+                    const allowOnce = offered?.choices.find(choice => choice.scope === 'once' && choice.decision === 'approved');
+                    if (!offered || !allowOnce) throw new Error('Plugin Session read omitted the native allow-once choice');
                     await expect(adapter.api.respondToSessionPermission({ sessionId: row.id, requestId, answer: 'allowForSession' }))
                         .resolves.toEqual({ status: 'refused', reason: 'answerUnavailable' });
                     expect(emittedMethods).toEqual([]);
-                    await expect(adapter.api.respondToSessionPermission({ sessionId: row.id, requestId, answer: 'allowOnce' }))
+                    await expect(adapter.api.respondToSessionPermission({ sessionId: row.id, requestId,
+                        nativeChoice: { requirementId: offered.requirementId, choiceId: allowOnce.id } }))
                         .resolves.toEqual({ status: 'answered' });
                 } finally { adapter.dispose(); controller.dispose(); }
             } else if (button === 'acceptEdits') {
-                await pressTestInstanceAsync(grants[0]!, 'all edits');
+                await screen.pressByTestIdAsync('permission-footer.allow-all-edits');
+            } else if (isNative) {
+                const allowOnce = permission.nativeChoices?.choices.find(choice => choice.scope === 'once' && choice.decision === 'approved');
+                if (!allowOnce) throw new Error('The native producer omitted its allow-once choice');
+                await screen.pressByTestIdAsync(`permission-footer.choice.${allowOnce.id}`);
             } else {
                 await screen.pressByTestIdAsync('permission-footer.allow');
             }
+            // Footer presses issue their Action without awaiting its RPC. Let
+            // the real acknowledgement and its UI result commit before reading.
+            await act(async () => { await Promise.all(rpcCompletions); });
             if (button === 'misboundAction') {
                 // The same footer and real executor are deliberately bound to
                 // another admitted Session, which has no responding publisher.
                 expect(emittedMethods).toEqual([`${actionSessionId}:session.permission.respond`]);
                 expect(rpcReplies.at(-1)).toMatchObject({ ok: false });
-                expect(screen.findHostByTestId('permission-footer.action-error')).not.toBeNull();
+                // The existing transport classifies this unreserved relay
+                // refusal as unconfirmed; keep its error visible and prevent a
+                // blind second answer while the actual request remains pending.
+                await vi.waitFor(() => expect(screen.findHostByTestId('permission-footer.answer-unconfirmed')).not.toBeNull());
+                expect(screen.findHostByTestId('permission-footer.allow')?.props.accessibilityState).toMatchObject({ disabled: true });
                 expect(state.requests?.[requestId]).toMatchObject({ turnId });
                 expect(state.completedRequests?.[requestId]).toBeUndefined();
                 return;
             }
+            await expect(pending).resolves.toMatchObject(isNative
+                ? { behavior: 'allow', updatedInput: input } : { decision: 'approved' });
             expect(emittedMethods.at(-1)).toBe(`${row.id}:session.permission.respond`);
             expect(['ios', 'android', 'web']).toContain(Platform.OS);
             expect(emittedCarriers.at(-1)).toMatchObject({ id: requestId, turnId, answeringClientCategory: Platform.OS });
             if (button === 'acceptEdits') expect(emittedCarriers.at(-1)?.mode).toBe('acceptEdits');
             expect(rpcReplies.at(-1)).toMatchObject({ ok: true, result: null });
             expect(screen.findHostByTestId('permission-footer.action-error')).toBeNull();
-            await expect(pending).resolves.toMatchObject(isNative
-                ? { behavior: 'allow', updatedInput: input } : { decision: 'approved' });
+            if (isNative) {
+                expect(emittedMethods).toEqual([`${row.id}:session.permission.respond`]);
+                expect(nativeApplications).toEqual([expect.objectContaining({ behavior: 'allow', updatedInput: input })]);
+                expect(homes.requests.slice(requestsBeforeArrival).filter(request => request.method === 'GET'
+                    && /^\/v\d+\/account(?:\/|$)/.test(request.path))).toEqual([]);
+            }
             const completed = await db.session.findUniqueOrThrow({ where: { id: row.id }, select: { agentState: true } });
             expect(JSON.parse(completed.agentState!).completedRequests[requestId]).toMatchObject({
                 status: 'approved', turnId, answeringClientCategory: Platform.OS,
