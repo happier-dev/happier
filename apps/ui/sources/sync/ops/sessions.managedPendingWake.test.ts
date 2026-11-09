@@ -69,7 +69,7 @@ afterEach(async () => {
 });
 
 describe('accepted managed input native prerequisite', () => {
-    it.each(['booting-clone', 'stopped', 'running', 'shared-running', 'shared-native-unready', 'rejected', 'admitted-context', 'admitted-direct', 'admitted-wrong-target', 'runtime-refused', 'runtime-forbidden', 'runtime-forbidden-thrown', 'runtime-unknown'] as const)('keeps real Send acceptance before native prerequisites (%s)', async (power) => {
+    it.each(['cold-send-now', 'booting-clone', 'stopped', 'running', 'shared-running', 'shared-native-unready', 'rejected', 'admitted-context', 'admitted-direct', 'admitted-wrong-target', 'runtime-refused', 'runtime-forbidden', 'runtime-forbidden-thrown', 'runtime-unknown'] as const)('keeps real Send acceptance before native prerequisites (%s)', async (power) => {
         runtimeRefusal = power === 'runtime-refused' ? 'definite' : power === 'runtime-forbidden' ? 'forbidden'
             : power === 'runtime-forbidden-thrown' ? 'forbidden-thrown' : power === 'runtime-unknown' ? 'unknown' : null;
         const profileId = 'server-a';
@@ -93,7 +93,8 @@ describe('accepted managed input native prerequisite', () => {
         // Lume VM can share host/home strings while the exact guest is booting.
         if (power === 'booting-clone') session.pendingActivationAuthorization = undefined;
         let guestReady = power !== 'booting-clone';
-        const machineRow = (id: string) => power !== 'booting-clone' ? { ...createPlainMachineRowFixture({ id, accountId }),
+        const machineRow = (id: string) => power !== 'booting-clone' ? { ...createPlainMachineRowFixture({ id, accountId,
+            ...(power === 'cold-send-now' ? { machine: createMachineFixture({ id, active: false, activeAt: 0 }) } : {}) }),
             managedMachineRef: { homeId: 'srv_home_a', managedId: 'managed-a' },
             managedInputRuntime: ManagedMachineInputRuntimeV1Schema.parse({ nativeReady: power !== 'shared-native-unready' && observedPower === 'running',
                 wakeState: observedPower === 'stopped' ? 'asleep' : null, acceptedInputWakeOwner: controller ? 'home' : 'caller' }) }
@@ -207,7 +208,7 @@ describe('accepted managed input native prerequisite', () => {
         // not the alias by which this Home was originally added.
         const scope = account.accountLifetime.scope;
         await sync.refreshMachines({ serverId: scope.serverId });
-        observeMachinePresenceForTest(scope, power === 'booting-clone' ? ['older-guest'] : ['guest-a']);
+        observeMachinePresenceForTest(scope, power === 'booting-clone' ? ['older-guest'] : power === 'cold-send-now' ? [] : ['guest-a']);
         expect(scope.accountId).toBe(accountId);
         const beforeAdmission = storage.getState().sessions[session.id];
         if (!beforeAdmission) throw new Error('Real Session route did not hydrate the submitted Session');
@@ -343,6 +344,7 @@ describe('accepted managed input native prerequisite', () => {
             const result = await submitAppSessionComposerMessage(port, {
                 sessionId: session.id, session: beforeAdmission, serverId: scope.serverId, accountLifetime: account.accountLifetime,
                 text: 'Original queued input', localId: 'request-a', configuredMode: 'agent_queue',
+                ...(power === 'cold-send-now' ? { requestedAction: { v: 1 as const, kind: 'send_now' as const } } : {}),
                 sessionInactiveResumePolicy: 'online_only', resumeCapabilityOptions: {},
                 resumeTargetOverride: { machineId: 'guest-a', directory: '/project' }, nowMs: 10,
             });
@@ -357,7 +359,7 @@ describe('accepted managed input native prerequisite', () => {
             expect(result.errorCode, JSON.stringify(result)).toBeUndefined();
             expect(result.errorMessage, JSON.stringify(result)).toBeUndefined();
             expect(admitted, JSON.stringify({ result, paths })).toBe(true);
-            const nativePending = power === 'stopped' || power === 'shared-native-unready';
+            const nativePending = power === 'stopped' || power === 'cold-send-now' || power === 'shared-native-unready';
             expect(result).toMatchObject(nativePending
                 ? { type: 'wake_pending', persistence: 'pending', localId: 'request-a', wake: { attempted: false, state: 'pending' } }
                 : { type: 'success', persistence: 'pending', localId: 'request-a', wake: { attempted: true, state: 'started' } });

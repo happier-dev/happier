@@ -321,6 +321,13 @@ describe('useNewSessionAgentInputPresentation', () => {
         if (typeof renderContent !== 'function') throw new Error('Expected current MCP popover content');
         expect(renderContent({ requestClose: vi.fn(), maxHeight: 300 })).toBe('Second account');
         expect(hook.getCurrent().agentInputExtraActionChips).not.toBe(firstChips);
+        activeAt = 0;
+        initialParams.selectedMachine = { ...initialParams.selectedMachine!, active: false,
+            managedInputRuntime: { nativeReady: false, wakeState: 'asleep', newSessionWake: { kind: 'available' } } };
+        await hook.rerender();
+        expect(hook.getCurrent().connectionStatus?.text).toBe('managedWake.startsOnSend');
+        expect(hook.getCurrent().connectionStatus?.recovery).toBeUndefined();
+        await hook.unmount();
     });
 
     it('exposes automation controls via an action chip (no inline automation section)', async () => {

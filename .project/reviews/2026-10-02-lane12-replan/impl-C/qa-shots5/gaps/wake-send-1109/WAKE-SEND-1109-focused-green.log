@@ -1,0 +1,20 @@
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+HSTACK_PLACEMENT_EXCLUDED target=mac3-linux reason=not-in-command-pool class=validation
+HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=not-in-command-pool class=validation
+[preferred-execution] selected nl3 (load=0.284471, active=12, effective=0.378221, fresh)
+Forcing synchronization cycle for session sync_PHTlkBkPwgfMKBJLMzSaHdFKGO1Ff8tEu                                                                                pnpm 12.14.0 ready
+[preferred-execution] admitted on nl3
+
+ RUN  v3.2.4 /home/happier/happier-dev/apps/ui
+
+ ✓ sources/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState.test.tsx (78 tests | 71 skipped) 1002ms
+ ✓ sources/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation.test.tsx (5 tests | 4 skipped) 499ms
+ ✓ sources/components/sessions/new/modules/canCreateNewSession.test.ts (13 tests | 12 skipped) 451ms
+
+ Test Files  3 passed (3)
+      Tests  9 passed | 87 skipped (96)
+   Start at  21:05:21
+   Duration  148.08s (transform 80.51s, setup 1.70s, collect 142.21s, tests 1.95s, environment 1ms, prepare 195ms)
+
+[preferred-execution] custody_signal {"at":"2026-11-09T20:07:50Z","execution_id":"native-72vPbg-7-1794254696","initiating_execution_id":"native-72vPbg-7-1794254696","reason":"completed","signal":"TERM","target_kind":"pid","target_id":4064604,"members":["4064604:70440128"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl3/tmp/hstack-JFJONh (106496 allocated bytes)

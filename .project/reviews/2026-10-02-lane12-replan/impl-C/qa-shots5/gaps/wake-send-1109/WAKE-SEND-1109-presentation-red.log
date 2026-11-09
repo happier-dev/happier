@@ -1,0 +1,38 @@
+[preferred-execution] explicit --local bypasses automatic load distribution; use it only when the command must run on the authoritative machine
+[preferred-execution] waiting for local validation preparation (kind=source-test, component=apps/ui); payload admission follows preparation
+[preferred-execution] local validation preparation ready (kind=source-test, component=apps/ui)
+
+ RUN  v3.2.4 /home/leeroy.guest/.happier-stack/workspace/0.3/apps/ui
+
+ ❯ sources/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation.test.tsx (5 tests | 1 failed | 4 skipped) 806ms
+   ↓ useNewSessionAgentInputPresentation > stays quiet for an online machine, even while exact spawn readiness is unknown, and speaks only when it cannot start
+   × useNewSessionAgentInputPresentation > keeps connection status stable when only machine heartbeat timestamps change 58ms
+     → expected 'machineRequester.keyPending(machine=h…' to be 'managedWake.startsOnSend' // Object.is equality
+   ↓ useNewSessionAgentInputPresentation > exposes automation controls via an action chip (no inline automation section)
+   ↓ useNewSessionAgentInputPresentation > adds a link-file chip that appends the selected file path into the draft prompt
+   ↓ useNewSessionAgentInputPresentation > keeps extra action chips stable when only the draft prompt changes
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation.test.tsx > useNewSessionAgentInputPresentation > keeps connection status stable when only machine heartbeat timestamps change
+AssertionError: expected 'machineRequester.keyPending(machine=h…' to be 'managedWake.startsOnSend' // Object.is equality
+
+Expected: "managedWake.startsOnSend"
+Received: "machineRequester.keyPending(machine=host-⁠1)"
+
+ ❯ sources/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation.test.tsx:327:58
+    325|             managedInputRuntime: { nativeReady: false, wakeState: 'asl…
+    326|         await hook.rerender();
+    327|         expect(hook.getCurrent().connectionStatus?.text).toBe('managed…
+       |                                                          ^
+    328|         expect(hook.getCurrent().connectionStatus?.recovery).toBeUndef…
+    329|         await hook.unmount();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  20:58:12
+   Duration  117.11s (transform 83.19s, setup 902ms, collect 114.47s, tests 806ms, environment 0ms, prepare 70ms)
+

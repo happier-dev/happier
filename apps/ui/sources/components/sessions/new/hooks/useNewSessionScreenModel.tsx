@@ -93,6 +93,7 @@ import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS } from '@/agents/registry/agentSc
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import { NewSessionActionDefaults } from '@/components/sessions/new/components/NewSessionActionDefaults';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import { normalizeOptionalParam } from '@/profileRouteParams';
@@ -222,7 +223,6 @@ import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { useNewSessionDraftActions } from './screenModel/useNewSessionDraftActions';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
-import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useHasMachineForGettingStartedGuidance } from '@/components/sessions/guidance/useHasMachineForGettingStartedGuidance';
 import { resolveNewSessionFolderChipState } from '@/components/sessions/new/modules/newSessionFolderChipState';
 import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -384,7 +384,8 @@ function buildNewSessionScreenAuthoringDraftSignature(draft: NewSessionDraft | n
         // hook tree on each keystroke while authoring/routing changes still hydrate it.
         const screenAuthoringDraft = Object.fromEntries(
             Object.entries(draft).filter(([field]) => (
-                field !== 'input'
+                field !== 'actionDefault'
+                && field !== 'input'
                 && field !== 'sessionName'
                 && field !== 'instructionsDraft'
                 && field !== 'promptStack'
@@ -392,7 +393,9 @@ function buildNewSessionScreenAuthoringDraftSignature(draft: NewSessionDraft | n
                 && field !== 'updatedAt'
             )),
         );
-        return JSON.stringify(screenAuthoringDraft) ?? 'null';
+        return JSON.stringify({ ...screenAuthoringDraft, actionDefault: draft.actionDefault ? {
+            pluginId: draft.actionDefault.pluginId, configuredActionId: draft.actionDefault.configuredActionId,
+        } : undefined }) ?? 'null';
     } catch {
         return 'unserializable';
     }
@@ -642,9 +645,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const instructionsStackRef = React.useRef(persistedDraft?.promptStack ?? tempSessionData?.promptStack);
     const instructionsTitleStore = useComposerTextStore(() => instructionsDraftRef.current?.title ?? '');
     const instructionsMarkdownStore = useComposerTextStore(() => instructionsDraftRef.current?.markdown ?? '');
-    const instructionsExecution = useMountedActionExecution(draftScope);
+    const authoringExecution = useMountedActionExecution(draftScope);
     const instructionsApprovalPendingRef = React.useRef(false);
-    instructionsApprovalPendingRef.current = instructionsExecution.approval.approvalPending;
+    instructionsApprovalPendingRef.current = authoringExecution.approval.approvalPending;
     // The Instructions leaf subscribes here: attaching or authoring re-renders it, never this model.
     const [instructionsListeners] = React.useState(() => new Set<() => void>());
     const publishInstructions = React.useCallback(() => {
@@ -669,7 +672,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [draftScope, draftId, instructionsTitleStore, instructionsMarkdownStore, publishInstructions, tempSessionData?.instructionsDraft, tempSessionData?.promptStack]);
     const getInstructionsDraft = React.useCallback(() => instructionsDraftRef.current, []);
     const getInstructionsApprovalPending = React.useCallback(() => instructionsApprovalPendingRef.current, []);
-    React.useEffect(publishInstructions, [instructionsExecution.approval.approvalPending, publishInstructions]);
+    React.useEffect(publishInstructions, [authoringExecution.approval.approvalPending, publishInstructions]);
     const getInstructionsEntry = React.useCallback(() => instructionsStackRef.current
         ?.find(entry => entry.id === 'session.instructions' && entry.ref.kind === 'doc') ?? null, []);
     const getInstructionsPromptStack = React.useCallback(() => instructionsStackRef.current, []);
@@ -696,7 +699,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         if (!draft || !draftScope) return null;
         const capturedEntry = stableJsonStringify(getInstructionsEntry());
         const created = await sessionInstructionsActions.create(draftScope.serverId, draft, undefined, draftScope.accountId,
-            instructionsExecution.execute);
+            authoringExecution.execute);
         if (created.createdRef) {
             const current = readNewSessionDraftFromRepository({ scope: draftScope, draftId });
             if (!current) return created;
@@ -714,7 +717,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             writeNewSessionInstructionsToRepository({ scope: draftScope, draftId, instructionsDraft, promptStack });
         }
         return created;
-    }, [draftScope, draftId, getInstructionsEntry, instructionsExecution.execute]);
+    }, [draftScope, draftId, getInstructionsEntry, authoringExecution.execute]);
     const instructionsCreation = React.useMemo<NewSessionInstructionsCreationModel>(() => ({
         titleStore: instructionsTitleStore, markdownStore: instructionsMarkdownStore,
         getDraft: getInstructionsDraft, getEntry: getInstructionsEntry, getApprovalPending: getInstructionsApprovalPending, subscribe: subscribeInstructions,
@@ -770,7 +773,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     useNewSessionHappyRouteFlag(pathname);
 
     const sessionPromptInputMaxHeight = undefined;
-    const useProfiles = useSetting('useProfiles');
+    const profilesPresentationEnabled = useSetting('useProfiles');
+    // Explicit authoring remains meaningful when Profile presentation is off.
+    const [authoredProfileId, setAuthoredProfileId] = React.useState<string | null | undefined>(undefined);
     const secrets = useSavedSecretCatalogPersonalSecrets();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
@@ -1069,25 +1074,30 @@ export function useNewSessionScreenModel(input?: Readonly<{
         serverId: targetServerId,
         activeServerId: activeServerSource.activeServerId,
     });
+    const hasActionDefault = persistedDraft?.actionDefault !== undefined;
+    const useProfiles = profilesPresentationEnabled || hasActionDefault
+        || typeof authoredProfileId === 'string'
+        || typeof hydratedTempAuthoringDraft?.profileId === 'string'
+        || typeof hydratedPersistedAuthoringDraft?.profileId === 'string';
     const initialImplicitProfileId = React.useMemo(() => {
-        if (!useProfiles) {
-            return null;
-        }
         const tempProfileId = typeof hydratedTempAuthoringDraft?.profileId === 'string'
             ? hydratedTempAuthoringDraft.profileId.trim()
             : '';
         if (tempProfileId.length > 0) {
             return tempProfileId;
         }
+        if (tempSessionData?.selectedProfileId === null) {
+            return null;
+        }
         const draftProfileId = hydratedPersistedAuthoringDraft?.profileId;
-        if (draftProfileId) {
+        if (draftProfileId !== undefined) {
             return draftProfileId;
         }
-        if (lastUsedProfile) {
+        if (profilesPresentationEnabled && lastUsedProfile) {
             return lastUsedProfile;
         }
         return null;
-    }, [hydratedPersistedAuthoringDraft?.profileId, hydratedTempAuthoringDraft?.profileId, lastUsedProfile, useProfiles]);
+    }, [hydratedPersistedAuthoringDraft?.profileId, hydratedTempAuthoringDraft?.profileId, lastUsedProfile, profilesPresentationEnabled, tempSessionData?.selectedProfileId]);
     const initialProfileAuthoringIntent = React.useMemo(() => {
         return resolveLaunchProfileAuthoringIntent({
             profileId: initialImplicitProfileId,
@@ -1095,11 +1105,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             migration: providerSettingsForProfileIntent.migration,
         });
     }, [initialImplicitProfileId, launchProfiles, providerSettingsForProfileIntent.migration]);
-
-    // Wizard state
-    // Untouched selection follows the normalized draft/default intent. Only an explicit
-    // selection is stored; catalog reconciliation below derives its effective value.
-    const [authoredProfileId, setAuthoredProfileId] = React.useState<string | null | undefined>(undefined);
 
     const emptyAutocompleteKinds = NEW_SESSION_COMPOSER_SUGGESTION_KINDS;
 
@@ -1198,6 +1203,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineHomeDir: requesterMachineHomeDir,
         ownIsolation,
         directoryPreflight,
+        managedWake,
         selectedMachineSentenceName,
         agentCatalogMachineId,
         setSelectedMachineId,
@@ -4176,20 +4182,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // The one folder chip: its state comes from the directory-intent owner and the machine's own
     // availability; a fixed intent (embed) renders no folder control at all.
     const pathPopover = directoryIntentFixed ? undefined : composerPathPopover;
-    const machineUnavailableReason = selectedMachineId !== null
-        && selectedMachine != null
-        && !canAttemptMachineSpawn({ selectedMachineId, machine: selectedMachine, spawnReadiness: selectedMachineSpawnReadiness, scope: temporaryComputerTargetScope })
-        ? (connectionStatus?.text ?? null)
-        : null;
+    const machineUnavailableReason = connectionStatus?.recovery === 'machine' ? connectionStatus.text : null;
     const folderChipState = React.useMemo(() => resolveNewSessionFolderChipState({
         directoryKind,
         selectedPath,
         lastKnownPath: rememberedPath || displayedMachineHomeDir,
         machineHomeDir: displayedMachineHomeDir,
         machineUnavailableReason,
-        directoryReadFailure: ownIsolation.failed ? t('newSession.requesterFoldersFailed') : null,
+        directoryReadFailure: !managedWake && ownIsolation.failed ? t('newSession.requesterFoldersFailed') : null,
         launchPreparable: ownIsolation.launchPreparable,
-    }), [directoryKind, displayedMachineHomeDir, machineUnavailableReason, ownIsolation.failed, ownIsolation.launchPreparable, rememberedPath, selectedPath]);
+    }), [directoryKind, displayedMachineHomeDir, machineUnavailableReason, managedWake, ownIsolation.failed, ownIsolation.launchPreparable, rememberedPath, selectedPath]);
     const removeFolder = offersNoFolder ? selectNoFolder : undefined;
 
     // Auto-persist watches the composer text out of render: a keystroke re-arms the debounce
@@ -4276,6 +4278,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         () => instructionsChip ? [...agentInputExtraActionChips, instructionsChip] : agentInputExtraActionChips,
         [agentInputExtraActionChips, instructionsChip],
     );
+    const composerBottomContent = React.useMemo(() => draftScope && hasActionDefault ? <>
+        {input?.composerBottomContent}
+        <NewSessionActionDefaults key={draftId} scope={draftScope} draftId={draftId}
+            getCurrentDraft={buildCurrentPersistedDraft} execute={authoringExecution.executeValue} onProfileSaved={setSelectedProfileId} />
+    </> : input?.composerBottomContent, [authoringExecution.executeValue, buildCurrentPersistedDraft, draftId, draftScope, hasActionDefault, input?.composerBottomContent, setSelectedProfileId]);
+
     const composerTopContent = input?.composerTopContent;
 
     const {
@@ -4443,7 +4451,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             connectionStatus: composerConnectionStatus,
             statusBadges: composerStatusBadges,
             composerTopContent,
-            composerBottomContent: input?.composerBottomContent,
+            composerBottomContent,
             statusTrailingActions,
             machinePopover,
             pathPopover,
@@ -4500,7 +4508,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             sessionPromptInputMaxHeight,
             statusBadges: composerStatusBadges,
             composerTopContent,
-            composerBottomContent: input?.composerBottomContent,
+            composerBottomContent,
             statusTrailingActions,
         },
         agent: {

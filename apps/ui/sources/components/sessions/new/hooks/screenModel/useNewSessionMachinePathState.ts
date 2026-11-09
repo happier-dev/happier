@@ -10,6 +10,7 @@ import type {
 import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 
 import { resolvePreferredLaunchMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
@@ -224,6 +225,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     getRequestedPath: () => string;
     getBestPathForMachine: (machineId: string | null) => string;
     directoryPreflight: NewSessionDirectoryPreflight;
+    managedWake: 'asleep' | 'starting' | undefined;
 }> {
     const { binding } = useServerCredentialAccountScopeBinding(params.serverId);
     const scope = binding?.isCurrent() ? binding.scope : null;
@@ -375,6 +377,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
         ? selectedMachineSnapshot && isMachineVisibleForSelection(selectedMachineSnapshot) ? selectedMachineSnapshot : null
         : readMachines().find(machine => machine.id === selectedMachineId) ?? null;
     const isolationPolicy = readMachineAgentIsolationPolicyV1(selectedMachine?.metadata);
+    const destination = resolveMachineDestinationPurposeEligibility('session', undefined, selectedMachine ?? undefined, scope);
+    const managedWake = destination.eligible ? destination.managedWake : undefined;
     const memberPlacement = isolationPolicy.status === 'ready' && resolveMachineAgentExecutionPlacementV1({
         policy: isolationPolicy.policy, platform: selectedMachine?.metadata?.platform ?? '',
     }) === 'member';
@@ -626,6 +630,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const setDirectoryIntent = React.useCallback((intent: SessionDirectoryIntentV1) => {
         if (fixedDirectoryIntent) return;
         if (intent.kind === 'managed') {
+            hasCommittedExactTargetRef.current = executionTargetRef.current !== null;
+            setExecutionTarget(executionTargetRef.current);
             setDirectoryKindState('managed');
             return;
         }
@@ -903,7 +909,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
         return path ? { kind: 'path', path } : null;
     }, [directoryKind, fixedDirectoryIntent, selectedPath, selectedTargetInCurrentHome]);
     const scopedDirectoryPreflight = useNewSessionDirectoryPreflight({ machineId: scopedSelectedMachineId, binding,
-        enabled: memberPlacement && !ownIsolation.launchPreparable && directoryIntent?.kind === 'path',
+        // The accepted-input owner wakes first, then prepares/validates this exact directory.
+        enabled: !managedWake && memberPlacement && !ownIsolation.launchPreparable && directoryIntent?.kind === 'path',
         requesterReady: ownIsolation.status?.protection === 'member_separated',
         path: directoryIntent?.kind === 'path' ? directoryIntent.path : '',
     });
@@ -940,6 +947,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         machineHomeDir,
         ownIsolation,
         directoryPreflight,
+        managedWake,
         agentCatalogMachineId,
         setSelectedMachineId,
         setSelectedMachineTarget,

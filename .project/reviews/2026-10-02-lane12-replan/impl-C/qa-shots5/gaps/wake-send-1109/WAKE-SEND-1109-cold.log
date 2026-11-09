@@ -1,0 +1,66 @@
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=focused-validation-ui
+HSTACK_PLACEMENT_EXCLUDED target=mac3-linux reason=not-in-command-pool class=focused-validation-ui
+HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=not-in-command-pool class=focused-validation-ui
+[preferred-execution] selected windows2-linux (load=7.974006, active=3, effective=8.224006, fresh)
+Forcing synchronization cycle for session sync_cQSrARPoKjAudJQYDaRUKy2p01D47O4pO                                                                                pnpm 12.14.0 ready
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=2, ahead=1, waiting=2)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=1, ahead=0, waiting=4)
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-T7i06s-5-1794254256
+[preferred-execution] custody_signal {"at":"2026-11-09T19:58:55Z","execution_id":"native-T7i06s-5-1794254256","initiating_execution_id":"native-T7i06s-5-1794254256","reason":"completed","signal":"TERM","target_kind":"pid","target_id":1389894,"members":["1389894:85012227"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/windows2-linux/tmp/hstack-XBe5wp (106496 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=focused-validation-ui
+HSTACK_PLACEMENT_EXCLUDED target=mac3-linux reason=not-in-command-pool class=focused-validation-ui
+HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=not-in-command-pool class=focused-validation-ui
+[preferred-execution] selected nl3 (load=0.703281, active=16, effective=0.828281, fresh)
+Forcing synchronization cycle for session sync_PHTlkBkPwgfMKBJLMzSaHdFKGO1Ff8tEu                                                                                pnpm 12.14.0 ready
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=9, ahead=8, waiting=9)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=8, ahead=7, waiting=9)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=7, ahead=6, waiting=9)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=6, ahead=5, waiting=9)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=5, ahead=4, waiting=8)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=4, ahead=3, waiting=7)
+[preferred-execution] waiting for admission (class=source-bundle, floorKiB=12582912, position=3, ahead=2, waiting=6)
+[preferred-execution] admitted on nl3
+
+ RUN  v3.2.4 /home/happier/happier-dev/apps/ui
+
+stderr | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+[session-consumption] session_consumption_invalid_ack
+
+stdout | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+📝 Fetching todos...
+📰 Fetching feed...
+📰 Fetching feed: /v1/feed?limit=100
+
+stdout | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+🖥️ fetchMachines completed - rendered 1 machine display rows and completed selective hydration
+
+stdout | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+📰 fetchFeed completed - loaded 0 compatible items (0 filtered)
+
+stdout | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+📝 Todos loaded
+
+stdout | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+🖥️ fetchMachines completed - rendered 1 machine display rows and completed selective hydration
+
+stderr | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+[SessionDisplay] Owner display maintenance deferred; readable full Session retained
+
+stderr | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+[SessionDisplay] Owner display maintenance deferred; readable full Session retained
+
+stderr | sources/sync/ops/sessions.managedPendingWake.test.ts > accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)
+[SessionDisplay] Owner display maintenance deferred; readable full Session retained
+
+ ✓ sources/sync/ops/sessions.managedPendingWake.test.ts (14 tests | 13 skipped) 1952ms
+   ✓ accepted managed input native prerequisite > keeps real Send acceptance before native prerequisites (cold-send-now)  570ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 13 skipped (14)
+   Start at  21:00:43
+   Duration  108.24s (transform 77.87s, setup 690ms, collect 104.78s, tests 1.95s, environment 0ms, prepare 68ms)
+
+[preferred-execution] custody_signal {"at":"2026-11-09T20:02:32Z","execution_id":"native-g4h0Xo-7-1794254339","initiating_execution_id":"native-g4h0Xo-7-1794254339","reason":"completed","signal":"TERM","target_kind":"pid","target_id":4004830,"members":["4004830:70404612"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl3/tmp/hstack-4ovsJa (106496 allocated bytes)

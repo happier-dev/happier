@@ -23,6 +23,7 @@ import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modu
 import { t } from '@/text';
 import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/agentInput/definitions/createLinkedFilesActionChip';
 import { canAttemptMachineSpawn, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { resolveMachineDestinationPurposeEligibility, describeMachineDestinationWorkerFacts } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -127,12 +128,21 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     });
     // The sentence names the machine, or says "this machine" while its details are locked or loading; never its id.
     const selectedMachineLabel = getMachineSentenceName(params.selectedMachine);
+    const destination = resolveMachineDestinationPurposeEligibility('session', undefined, params.selectedMachine ?? undefined, scope);
+    const wakeDescription = destination.eligible && destination.managedWake
+        ? describeMachineDestinationWorkerFacts(destination, undefined, 'session', selectedMachineLabel) : undefined;
     // The composer's status line speaks only when the machine cannot take the session: a ready machine
     // is already named by its chip, and healthy state stays quiet (DESIGN "Status and badges", lab
     // `.l12-sr`). A green "Online" beside a blocked-launch badge contradicted it.
     const connectionStatus = React.useMemo(() => {
         if (!params.selectedMachineId) return undefined;
         if (hostResolvedMachine) return undefined;
+        if (wakeDescription) return {
+            text: wakeDescription,
+            color: params.theme.colors.state.success.foreground,
+            dotColor: params.theme.colors.state.success.foreground,
+            isPulsing: false,
+        };
         if (!params.selectedMachine || selectedMachineReachability === 'unknown') {
             return {
                 text: t('newSession.machineUnavailableStatus'),
@@ -156,10 +166,12 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         params.selectedMachine?.id,
         params.selectedMachineId,
         hostResolvedMachine,
+        wakeDescription,
         selectedMachineReachability,
         selectedMachineReadinessStatus,
         selectedMachineLabel,
         params.theme.colors.state.danger.foreground,
+        params.theme.colors.state.success.foreground,
         canAttemptSpawn,
     ]);
 

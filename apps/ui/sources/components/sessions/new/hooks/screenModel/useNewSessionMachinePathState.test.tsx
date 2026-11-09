@@ -110,6 +110,27 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it.each(['asleep', 'starting'] as const)('defers separated-folder preflight for an admitted %s Machine until it is online', async wakeState => {
+        const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: `wake-folder-${wakeState}` });
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
+        const machine = createMachineFixture({ id: `wake-folder-${wakeState}`, active: false, activeAt: 0,
+            isShared: true, access: { custodian: { accountId: 'owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            metadata: { platform: 'linux', homeDir: '/owner', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } },
+            managedInputRuntime: { nativeReady: false, wakeState, newSessionWake: { kind: 'available' } } });
+        network.respond('machines.agentIsolation.status', { protection: 'member_separated', status: { kind: 'effective', platform: 'linux' } });
+        network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: false, code: 'invalid_directory' });
+        const props = { serverId, machines: [machine], recentMachinePaths: [], sessions: [], machineIdParam: machine.id, pathParam: '/chosen' };
+        const hook = await renderMachinePathState(props);
+        try {
+            expect(hook.getCurrent().selectedPath).toBe('/chosen');
+            expect(hook.getCurrent().directoryPreflight).toEqual({ ready: true, code: null });
+            expect(network.requests.filter(request => request.method === 'daemon.sessionCreation.directoryPreflight.v1')).toHaveLength(0);
+            await hook.rerender({ ...props, machines: [{ ...machine, active: true, activeAt: Date.now() }] });
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().directoryPreflight, value => value.code === 'invalid_directory');
+            expect(hook.getCurrent().directoryPreflight.ready).toBe(false);
+        } finally { await hook.unmount(); }
+    });
     it('persists authored placement rather than copying a managed default across reopen', async () => {
         const props: HookParams = { machines: toMachines({ id: 'automatic' }, { id: 'team-a' }, { id: 'team-b' }, { id: 'chosen' }),
             recentMachinePaths: [{ machineId: 'team-a', path: '/team-a-project' }, { machineId: 'team-b', path: '/team-b-project' }],
