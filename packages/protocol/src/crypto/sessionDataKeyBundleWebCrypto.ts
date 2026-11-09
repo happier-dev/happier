@@ -8,7 +8,7 @@ import {
   type SessionDataKeyOpenResult,
 } from './sessionDataKeyBundleV0.js';
 
-async function importAesGcmKey(keyBytes: Uint8Array): Promise<CryptoKey> {
+async function importAesGcmKey(keyBytes: Uint8Array) {
   return await globalThis.crypto.subtle.importKey('raw', new Uint8Array(keyBytes), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 

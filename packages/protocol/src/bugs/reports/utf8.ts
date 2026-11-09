@@ -1,4 +1,4 @@
-function tryCreateTextEncoder(): TextEncoder | null {
+function tryCreateTextEncoder(): InstanceType<typeof TextEncoder> | null {
   const TeCtor = (globalThis as any).TextEncoder;
   if (typeof TeCtor !== 'function') return null;
   try {

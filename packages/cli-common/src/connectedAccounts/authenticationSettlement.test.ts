@@ -74,7 +74,7 @@ describe('admitted authentication settlement', () => {
             attemptAddresses: { acknowledge: async () => ({ expiresAtMs: 60000 }), read: async () => null, clear: async () => {} },
             accounts: { readExact: async () => {
                 counts.credentialReads++;
-                return stored ? { account, authenticationModeId: 'manual', credentialRevision: stored.credentialRevision,
+                return stored?.revisionSemantics === 'revisioned' ? { account, authenticationModeId: 'manual', credentialRevision: stored.credentialRevision,
                     configurationRevision: null } : null;
             } }, configuration,
             runtime: {
@@ -93,7 +93,7 @@ describe('admitted authentication settlement', () => {
             expect((intent === 'connect' ? await owner.beginConnect({ service, modeId: 'manual' })
                 : await owner.beginReconnect({ account })).status).toBe('awaitingManual');
             const admittedReads = { configuration: counts.configurationReads, credential: counts.credentialReads };
-            if (fault === 'credential-replaced' && stored) stored = { ...stored, credentialRevision: after };
+            if (fault === 'credential-replaced' && stored?.revisionSemantics === 'revisioned') stored = { ...stored, credentialRevision: after };
             faultActive = fault !== 'none';
             const first = await owner.submitManual({ attemptId: 'attempt-one', fields: { token: 'verified' } });
             expect(first.status).toBe(fault === 'credential-replaced' ? 'conflict'

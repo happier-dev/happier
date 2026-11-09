@@ -68,7 +68,7 @@ const MENTION_REF_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*$/;
 const MENTION_REF_PERCENT_ESCAPE = /^%[0-9A-Fa-f]{2}/;
 
 /** One encoder for every call: refs are parsed on each composer keystroke, once per reference. */
-let utf8Encoder: TextEncoder | null = null;
+let utf8Encoder: InstanceType<typeof TextEncoder> | null = null;
 const encodeUtf8 = (value: string): Uint8Array => (utf8Encoder ??= new TextEncoder()).encode(value);
 
 export function encodeMentionRefComponent(value: string): string {
