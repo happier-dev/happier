@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeNativeSdkQueryContext } from '../sdk/nativeExec.js';
-import { createClaudeNativePermissionEngine } from '../permissions/nativePermissionEngine.js';
+import { requestClaudeNativePermissionDecision } from '../permissions/nativePermissionEngine.js';
 import { isAskUserQuestionToolName } from '../permissions/askUserQuestion.js';
 import { CLAUDE_NATIVE_QUESTION_REQUEST_SOURCE, type ClaudePermissionDecision } from '../permissions/createClaudePermissionEngine.js';
 import { readClaudeCodeNativeCredentialPayload } from '../auth/services/native/credentials.js';
@@ -125,29 +125,7 @@ export function createClaudeNativeGoalWorkStatePublisher(
   };
 }
 
-function readUpdatedPermissions(
-  value: unknown,
-): readonly Readonly<Record<string, unknown>>[] | undefined {
-  return Array.isArray(value)
-    && value.every((entry) => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
-    ? value as readonly Readonly<Record<string, unknown>>[]
-    : undefined;
-}
-
-function readStructuredQuestionAnswers(
-  value: unknown,
-): Readonly<Record<string, readonly string[]>> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const answers: Record<string, readonly string[]> = {};
-  for (const [question, answer] of Object.entries(value)) {
-    if (typeof answer !== 'string' || answer.length === 0) continue;
-    answers[question] = [answer];
-  }
-  return Object.keys(answers).length > 0 ? answers : undefined;
-}
-
 function createNativePermissionDecisionAdapter(context: AgentSessionRuntimeContext) {
-  const engine = createClaudeNativePermissionEngine(context);
   return {
     async settleObservedDecision(request: Parameters<NonNullable<SessionPermissionsService['settleObservedDecision']>>[0]): Promise<boolean> {
       const permissions = context.services.sessions.current?.permissions;
@@ -169,29 +147,9 @@ function createNativePermissionDecisionAdapter(context: AgentSessionRuntimeConte
       }
       const requestId = typeof request.requestId === 'string' ? request.requestId : null;
       const toolUseId = typeof request.toolCallId === 'string' ? request.toolCallId : null;
-      const result = await engine.canCallTool(toolName, request.input, {
-        requestId,
-        toolUseId,
-        signal: options?.signal,
+      const decision = await requestClaudeNativePermissionDecision(context, toolName, request.input, {
+        requestId, toolUseId, signal: options?.signal,
       });
-      const updatedPermissions = result.behavior === 'allow'
-        ? readUpdatedPermissions(result.updatedPermissions)
-        : undefined;
-      const answers = result.behavior === 'allow'
-        ? readStructuredQuestionAnswers(result.updatedInput?.answers)
-        : undefined;
-      const decision: ClaudePermissionDecision = result.behavior === 'allow'
-        ? {
-            decision: 'approved',
-            updatedInput: result.updatedInput,
-            ...(answers ? { answers } : {}),
-            ...(updatedPermissions ? { updatedPermissions } : {}),
-          }
-        : {
-            decision: 'denied',
-            rationale: result.message,
-          };
-      await options?.acknowledgeDecisionApplication?.(decision);
       return decision;
     },
   };

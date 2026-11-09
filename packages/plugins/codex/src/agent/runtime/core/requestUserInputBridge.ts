@@ -2,6 +2,7 @@ import type { SessionPermissionsService as SessionPermissionsServiceV1 } from '@
 
 import {
   looksLikeCodexApprovalRequestUserInput,
+  buildCodexApprovalQuestionChoices,
   resolveCodexApprovalQuestionChoice,
   type CodexApprovalOutcome,
 } from './requestUserInputQuestions.js';
@@ -117,6 +118,7 @@ export function createCodexRequestUserInputBridge(opts: {
             toolCallId: callId,
             toolName,
             input: toolInput,
+            nativeChoices: buildCodexApprovalQuestionChoices(callId, questions),
           });
           const choice = resolveApprovalChoiceLabel({ decision: result.decision, questions, logger: opts.logger });
           if (!choice) return;

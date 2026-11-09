@@ -52,6 +52,12 @@ describe('createCodexRequestUserInputBridge', () => {
     expect(requestPermissionDecision).toHaveBeenCalledWith({
       toolCallId: 'call_1',
       toolName: 'mcp__playwright__browser_navigate',
+      nativeChoices: expect.objectContaining({ requirementId: 'call_1', source: 'codex',
+        choices: expect.arrayContaining([
+          expect.objectContaining({ id: 'Approve Once', decision: 'approved', scope: 'once' }),
+          expect.objectContaining({ id: 'Deny', decision: 'denied', scope: 'once' }),
+        ]),
+      }),
       input: expect.objectContaining({
         url: 'https://example.com',
         requestUserInput: expect.any(Object),

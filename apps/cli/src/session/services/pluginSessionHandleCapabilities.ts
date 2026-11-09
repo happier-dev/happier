@@ -11,10 +11,11 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod/mini';
-import { StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 import type { StoredCredentials } from '@/persistence';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
 import { createSessionHandleAuthService } from '@/plugins/runtime/context/session/services/auth';
 import { createSessionScopedMcpServices } from '@/plugins/runtime/context/session/services/mcp';
 import { hostSubagentStore } from '@/session/subagents/hostSubagentStore';
@@ -33,6 +34,7 @@ export type PluginSessionLiveCapabilities = Readonly<{
   permissionHandler?: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'> & Partial<Pick<ProviderEnforcedPermissionHandler, 'settleObservedDecision'>>;
   interactions?: InteractionsService;
   readPermissionMode: () => string;
+  applyPermissionModeIntent?: (mode: NonNullable<PermissionResult['mode']>) => Promise<void>;
   media?: SessionMediaService;
   signal?: AbortSignal;
   isCurrent?: () => boolean;
@@ -92,10 +94,26 @@ const observedDecisionSchema = z.strictObject({
   source: z.string(),
   decision: z.enum(['approved', 'denied', 'abort']),
   answers: z.optional(StructuredQuestionAnswersV1Schema),
+  answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
 });
 
 function permissionUnavailable(code: string): never {
   throw new PluginError({ code, message: 'Session permission scope is unavailable' });
+}
+
+export function createNativePermissionDecisionApplication(params: Readonly<{
+  acknowledgeDecisionApplication?: (decision: PermissionResult) => Promise<void>;
+  applyPermissionModeIntent?: PluginSessionLiveCapabilities['applyPermissionModeIntent'];
+}>): (decision: PermissionResult) => Promise<void> {
+  return async decision => {
+    if (decision.mode !== undefined && !params.applyPermissionModeIntent) {
+      return permissionUnavailable('plugin_session_permission_scope_unavailable');
+    }
+    await params.acknowledgeDecisionApplication?.(decision);
+    if (decision.mode !== undefined && params.applyPermissionModeIntent) {
+      await params.applyPermissionModeIntent(decision.mode);
+    }
+  };
 }
 
 export function createPluginSessionHandleCapabilitiesFactory(
@@ -235,6 +253,12 @@ export function createPluginSessionHandleCapabilitiesFactory(
           || `plugin-session-permission:${randomUUID()}`;
         const permissionContext = readActiveTurnPermissionContext(live);
         const occurrenceQuestion = isAgentStructuredQuestionToolName(toolName);
+        const acknowledgeDecisionApplication = request.nativeChoices
+          ? createNativePermissionDecisionApplication({
+            acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
+            applyPermissionModeIntent: live.applyPermissionModeIntent,
+          })
+          : options?.acknowledgeDecisionApplication;
         const result = await live.permissionHandler.handleToolCall(
           requestId,
           toolName,
@@ -244,9 +268,11 @@ export function createPluginSessionHandleCapabilitiesFactory(
             ...permissionContext,
             ...(occurrenceQuestion ? { origin: 'host_occurrence_question' as const, lifetime: 'occurrence' as const } : {}),
             ...(request.source?.trim() ? { source: request.source.trim() } : {}),
+            ...(request.traceSummary ? { traceSummary: request.traceSummary } : {}),
+            ...(request.nativeChoices ? { nativeChoices: request.nativeChoices } : {}),
             signal: operationSignal(live, options?.signal),
-            ...(options?.acknowledgeDecisionApplication
-              ? { acknowledgeDecisionApplication: options.acknowledgeDecisionApplication }
+            ...(acknowledgeDecisionApplication
+              ? { acknowledgeDecisionApplication }
               : {}),
           },
         );
@@ -256,6 +282,12 @@ export function createPluginSessionHandleCapabilitiesFactory(
         return Object.freeze({
           decision: result.decision,
           ...(result.answers ? { answers: result.answers } : {}),
+          ...(result.answerDetails === undefined ? {} : { answerDetails: result.answerDetails }),
+          ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}),
+          ...(result.mode !== undefined ? { mode: result.mode } : {}),
+          ...(result.allowedTools !== undefined ? { allowedTools: result.allowedTools } : {}),
+          ...(result.updatedPermissions !== undefined ? { updatedPermissions: result.updatedPermissions } : {}),
+          ...(result.execPolicyAmendment !== undefined ? { execPolicyAmendment: result.execPolicyAmendment } : {}),
         });
       },
       getMode() {

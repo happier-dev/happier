@@ -9,6 +9,8 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createSessionClientExecutionRunService } from '@/api/session/client/executionRuns/createSessionClientExecutionRunService';
 import { createPluginSessionHandleCapabilitiesFactory } from '@/session/services/pluginSessionHandleCapabilities';
+import { applyPermissionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import type {
     HostSessionApprovalRequest,
     HostSessionConfirmationRequest,
@@ -113,6 +115,100 @@ const questionsRequest: HostSessionQuestionsRequest = {
 };
 
 describe('native Agent current-session interactions', () => {
+    it('requires an offered native selection even inside a reviewed parent operation', async () => {
+        const fixture = createFixture({ interactionDeadlineMs: undefined });
+        const interactions = createPluginInteractionsService({
+            currentSession: { interactions: fixture.current },
+            reviewedParent: { actionId: 'deployments.deploy', input: {} },
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+        });
+        await expect(interactions.requestApproval(approvalRequest)).resolves.toMatchObject({ status: 'approved' });
+        const nativeChoices = { requirementId: 'reviewed-native', source: 'test-agent', choices: [{
+            id: 'opaque:stop', label: 'Stop', decision: 'abort' as const, scope: 'once' as const,
+            response: { approved: false, decision: 'abort' as const },
+        }] };
+        const pending = interactions.requestApproval({ ...approvalRequest, nativeChoices });
+        const { id, request } = await fixture.publishedRequest();
+        expect(request.nativeChoices).toEqual(nativeChoices);
+        const nativeChoice = { requirementId: 'reviewed-native', choiceId: 'opaque:stop' };
+        await fixture.respond({ id, nativeChoice }, 'permission');
+        await expect(pending).resolves.toMatchObject({ status: 'userCancelled', nativeChoice });
+    });
+    it('applies an offered read-only stop through the current Session mode owner', async () => {
+        const fixture = createFixture({ interactionDeadlineMs: undefined,
+            applyPermissionModeIntent: async permissionMode => {
+                fixture.session.updateMetadata(metadata => metadata
+                    ? applyPermissionModeIntentSessionMetadata(metadata, { permissionMode, updatedAt: 42 }) : metadata);
+            },
+        });
+        fixture.session.__setMetadata(createTestMetadata({ permissionMode: 'default' }));
+        const pending = fixture.current.request({ ...approvalRequest, nativeChoices: {
+            requirementId: 'mode-stop', source: 'native-test', choices: [{
+                id: 'opaque:stop', label: 'Stop', decision: 'abort', scope: 'once',
+                response: { approved: false, decision: 'abort', mode: 'read-only' },
+            }],
+        } });
+        const { id } = await fixture.publishedRequest();
+        await fixture.respond({ id, nativeChoice: { requirementId: 'mode-stop', choiceId: 'opaque:stop' } }, 'permission');
+        await expect(pending).resolves.toMatchObject({ status: 'userCancelled' });
+        expect(fixture.session.__getMetadata()).toMatchObject({ permissionMode: 'read-only' });
+    });
+    it('keeps custom text equal to a choice label distinct and preserves the answer note', async () => {
+        const fixture = createFixture({ interactionDeadlineMs: undefined });
+        const pending = fixture.current.request({
+            kind: 'questions', title: 'Choose', questions: [{
+                id: 'selection', prompt: 'Choose', type: 'multipleChoice', allowCustom: true,
+                minSelections: 1, maxSelections: 2, allowNote: true,
+                choices: [{ id: 'selected', label: 'Selected' }, { id: 'other', label: 'Custom text' }],
+            }],
+        });
+        const { id, request } = await fixture.publishedRequest();
+        expect(request.arguments).toMatchObject({ questions: [{ minSelections: 1, maxSelections: 2, allowNote: true }] });
+        await fixture.respond({ id, approved: true, answers: { selection: ['selected'] },
+            answerDetails: { selection: { freeText: 'Custom text', note: 'Additional context' } } });
+        await expect(pending).resolves.toMatchObject({ kind: 'questions', status: 'answered', answers: {
+            selection: { kind: 'multipleChoice', answers: [
+                { kind: 'choice', choiceId: 'selected' }, { kind: 'custom', value: 'Custom text' },
+            ], note: 'Additional context' },
+        } });
+    });
+
+    it('accepts a note without selections when the question explicitly permits zero', async () => {
+        const fixture = createFixture({ interactionDeadlineMs: undefined });
+        const pending = fixture.current.request({ kind: 'questions', questions: [{
+            id: 'selection', prompt: 'Choose', type: 'multipleChoice', minSelections: 0,
+            allowNote: true, choices: [{ id: 'selected', label: 'Selected' }],
+        }] });
+        const { id } = await fixture.publishedRequest();
+        await fixture.respond({ id, approved: true, answers: { selection: [] },
+            answerDetails: { selection: { note: 'None apply' } } });
+        await expect(pending).resolves.toMatchObject({ kind: 'questions', status: 'answered', answers: {
+            selection: { kind: 'multipleChoice', answers: [], note: 'None apply' },
+        } });
+    });
+
+    it.each([
+        { decision: 'abort', status: 'userCancelled' },
+        { decision: 'denied', status: 'declined' },
+        { decision: 'approved', status: 'approved' },
+        { decision: 'approved_execpolicy_amendment', status: 'approved' },
+    ] as const)('preserves an offered native choice through canonical permission settlement ($decision)', async ({ decision, status }) => {
+        const fixture = createFixture({ interactionDeadlineMs: undefined });
+        const nativeChoices = { requirementId: 'native-occurrence', source: 'test-agent', choices: [{
+            id: 'opaque:selection', label: 'Native selection', decision,
+            scope: decision === 'approved_execpolicy_amendment' ? 'localPersistent' as const : 'once' as const,
+            response: { approved: decision === 'approved' || decision === 'approved_execpolicy_amendment', decision,
+                ...(decision === 'approved_execpolicy_amendment' ? { execPolicyAmendment: { command: ['git', 'fetch'] } } : {}),
+            },
+        }] };
+        const pending = fixture.current.request({ ...approvalRequest, nativeChoices });
+        const { id, request } = await fixture.publishedRequest();
+        expect(request.nativeChoices).toEqual(nativeChoices);
+        const nativeChoice = { requirementId: 'native-occurrence', choiceId: 'opaque:selection' };
+        await fixture.respond({ id, nativeChoice }, 'permission');
+        await expect(pending).resolves.toMatchObject({ kind: 'approval', status, nativeChoice });
+    });
     it('escalates a public permission request containing a Date mutated during the reviewer wait', async () => {
         const fixture = createFixture({ interactionDeadlineMs: undefined });
         fixture.session.__setMetadata(createTestMetadata({ approvalReviewerEnabled: true }));
@@ -563,7 +659,8 @@ it('settles a runtime-native question through the guarded public Session handle'
     expect(id).toBe('native-question-A');
     expect(request).toMatchObject({ source, lifetime: 'occurrence', kind: 'user_action' });
     const answers = { 'Continue?': ['No'] };
-    await expect(permissions.settleObservedDecision({ requestId: id, source, decision: 'approved', answers })).resolves.toBe(true);
-    await expect(pending).resolves.toEqual({ decision: 'approved', answers });
-    expect(fixture.session.__getAgentState().completedRequests?.[id]).toMatchObject({ status: 'approved', structuredAnswersV1: answers });
+    const answerDetails = { 'Continue?': { note: 'Answered in the native terminal' } };
+    await expect(permissions.settleObservedDecision({ requestId: id, source, decision: 'approved', answers, answerDetails })).resolves.toBe(true);
+    await expect(pending).resolves.toEqual({ decision: 'approved', answers, answerDetails });
+    expect(fixture.session.__getAgentState().completedRequests?.[id]).toMatchObject({ status: 'approved', structuredAnswersV1: answers, answerDetails });
 });

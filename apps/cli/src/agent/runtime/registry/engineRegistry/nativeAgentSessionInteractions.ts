@@ -19,6 +19,7 @@ import {
     type PluginMachineMaterializationRefV1,
 } from '@happier-dev/protocol';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
 import { toStructuredQuestionPermissionInput } from '@/agent/permissions/structuredQuestionPermissionInput';
 import { normalizeQuestionAnswers, type QuestionAnswerWireValue } from '@/agent/permissions/structuredQuestionAnswers';
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -32,7 +33,7 @@ import {
     createPluginSessionsInventory,
     readPluginSessionsSubagentObservation,
 } from '@/session/services/pluginSessionsInventory';
-import { createPluginSessionHandleCapabilitiesFactory } from '@/session/services/pluginSessionHandleCapabilities';
+import { createNativePermissionDecisionApplication, createPluginSessionHandleCapabilitiesFactory } from '@/session/services/pluginSessionHandleCapabilities';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -110,11 +111,13 @@ export type NativeAgentSessionInteractionParams = Readonly<{
     /** The daemon's already-retained snapshot for this exact Home. */
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
     readPermissionMode?: () => string;
+    applyPermissionModeIntent?: (mode: NonNullable<PermissionResult['mode']>) => Promise<void>;
     media?: SessionMediaService;
     presentation?: HostCurrentSessionUiServices['presentation'];
     currentSessionUi?: HostCurrentSessionUiServices;
     resolveCallerMaterialization?(): PluginMachineMaterializationRefV1 | null;
     readActiveTurnAdmissionWitness?(): AgentInvocationTurnAdmissionWitness | null;
+    onUnavailable?(): void;
 }>;
 
 export type NativeAgentExecutionRunInteractionParams = Omit<
@@ -195,6 +198,7 @@ async function presentBoundPermissionRequest(
         request: InteractionTransientRequestV1;
         signal: AbortSignal;
         permissionContext?: HostSessionInteractionOptions['permissionContext'];
+        applyPermissionModeIntent?: NativeAgentSessionInteractionParams['applyPermissionModeIntent'];
     }>,
 ): Promise<InteractionTransientResultV1> {
     const { request } = params;
@@ -206,6 +210,9 @@ async function presentBoundPermissionRequest(
     const toolName = request.kind === 'approval'
         ? request.subject.name
         : 'AskUserQuestion';
+    const acknowledgeDecisionApplication = createNativePermissionDecisionApplication({
+        applyPermissionModeIntent: params.applyPermissionModeIntent,
+    });
     let result: Awaited<ReturnType<ProviderEnforcedPermissionHandler['handleToolCall']>>;
     try {
         result = await params.permissionHandler.handleToolCall(
@@ -217,6 +224,8 @@ async function presentBoundPermissionRequest(
                     ? { source: request.allowedPersistenceScopes?.includes('session') === true
                         ? NATIVE_TOOL_APPROVAL_REQUEST_SOURCE : NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE }
                     : {}),
+                ...(request.kind === 'approval' && request.nativeChoices !== undefined
+                    ? { nativeChoices: request.nativeChoices } : {}),
                 ...(request.kind === 'questions' && permissionContext?.lifetime === 'occurrence'
                     ? { origin: 'host_occurrence_question' as const }
                     : permissionContext?.origin ? { origin: permissionContext.origin } : {}),
@@ -235,6 +244,7 @@ async function presentBoundPermissionRequest(
                     runtimeId: request.requester.invocationId,
                 },
                 signal: params.signal,
+                ...(acknowledgeDecisionApplication ? { acknowledgeDecisionApplication } : {}),
             },
         );
     } catch (error) {
@@ -244,12 +254,16 @@ async function presentBoundPermissionRequest(
     if (!result || typeof result !== 'object' || typeof result.decision !== 'string') {
         return unavailable(request, request.requestId);
     }
-    if (result.execPolicyAmendment !== undefined) return unavailable(request, request.requestId);
+    if (result.execPolicyAmendment !== undefined && !(request.kind === 'approval' && result.nativeChoice)) {
+        return unavailable(request, request.requestId);
+    }
     const decision = result.decision;
     if (request.kind === 'approval') {
-        if (decision === 'abort') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'userCancelled' });
-        if (decision === 'denied') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'declined' });
-        if (decision !== 'approved' && decision !== 'approved_for_session') {
+        const nativeAnswer = result.nativeChoice ? { nativeChoice: result.nativeChoice } : {};
+        if (decision === 'abort') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'userCancelled', ...nativeAnswer });
+        if (decision === 'denied') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'declined', ...nativeAnswer });
+        if (decision !== 'approved' && decision !== 'approved_for_session'
+            && !(decision === 'approved_execpolicy_amendment' && result.nativeChoice)) {
             return unavailable(request, request.requestId);
         }
         const canPersistSession = decision === 'approved_for_session'
@@ -262,6 +276,7 @@ async function presentBoundPermissionRequest(
             kind: 'approval',
             status: 'approved',
             persistence: canPersistSession ? 'session' : 'once',
+            ...nativeAnswer,
         });
     }
     if (decision === 'abort' || decision === 'denied') {
@@ -288,6 +303,7 @@ async function presentBoundPermissionRequest(
     const answers = normalizeQuestionAnswers(
         interactionQuestions(request),
         Object.fromEntries(answerEntries) as Record<string, QuestionAnswerWireValue>,
+        result.answerDetails,
     );
     if (!answers) return unavailable(request, request.requestId);
     if (request.kind === 'questions') {
@@ -324,12 +340,11 @@ function createNativeCurrentSessionInteractionOwner(
             permissionHandler,
             request,
             signal: options.signal,
+            applyPermissionModeIntent: params.applyPermissionModeIntent,
             ...(options.presentationContext === undefined
                 ? {}
                 : {
-                    permissionContext: (
-                        options.presentationContext as NativePermissionPresentationContext
-                    ).permissionContext,
+                    ...options.presentationContext as NativePermissionPresentationContext,
                 }),
         }),
     });
@@ -355,12 +370,11 @@ function createNativeCurrentExecutionRunInteractionOwner(
             permissionHandler,
             request,
             signal: options.signal,
+            applyPermissionModeIntent: params.applyPermissionModeIntent,
             ...(options.presentationContext === undefined
                 ? {}
                 : {
-                    permissionContext: (
-                        options.presentationContext as NativePermissionPresentationContext
-                    ).permissionContext,
+                    ...options.presentationContext as NativePermissionPresentationContext,
                 }),
         }),
     });
@@ -371,7 +385,7 @@ class NativeAgentCurrentSessionInteractionAdapter implements PluginCurrentSessio
     private readonly owner: CurrentSessionInteractionOwner;
     private readonly requester: InteractionTransientRequesterV1;
 
-    constructor(params: NativeAgentSessionInteractionParams) {
+    constructor(private readonly params: NativeAgentSessionInteractionParams) {
         this.owner = createNativeCurrentSessionInteractionOwner(params);
         this.requester = defaultRequester(params);
     }
@@ -383,13 +397,15 @@ class NativeAgentCurrentSessionInteractionAdapter implements PluginCurrentSessio
         request: PluginSessionApprovalRequest | PluginSessionQuestionsRequest | PluginSessionConfirmationRequest,
         options?: HostSessionInteractionOptions,
     ): Promise<InteractionResult> {
-        return await this.owner.request(request, {
+        const result = await this.owner.request(request, {
             requester: options?.requester ?? this.requester,
             ...(options?.signal ? { signal: options.signal } : {}),
             ...(options?.permissionContext === undefined
                 ? {}
                 : { presentationContext: Object.freeze({ permissionContext: options.permissionContext }) }),
         }) as InteractionResult;
+        if (result.status === 'unavailable') this.params.onUnavailable?.();
+        return result;
     }
 }
 
@@ -397,7 +413,7 @@ class NativeAgentCurrentExecutionRunInteractionAdapter implements PluginCurrentS
     private readonly owner: CurrentSessionInteractionOwner;
     private readonly requester: InteractionTransientRequesterV1;
 
-    constructor(params: NativeAgentExecutionRunInteractionParams) {
+    constructor(private readonly params: NativeAgentExecutionRunInteractionParams) {
         this.owner = createNativeCurrentExecutionRunInteractionOwner(params);
         this.requester = defaultRequester(params);
     }
@@ -409,13 +425,15 @@ class NativeAgentCurrentExecutionRunInteractionAdapter implements PluginCurrentS
         request: PluginSessionApprovalRequest | PluginSessionQuestionsRequest | PluginSessionConfirmationRequest,
         options?: HostSessionInteractionOptions,
     ): Promise<InteractionResult> {
-        return await this.owner.request(request, {
+        const result = await this.owner.request(request, {
             requester: options?.requester ?? this.requester,
             ...(options?.signal ? { signal: options.signal } : {}),
             ...(options?.permissionContext === undefined
                 ? {}
                 : { presentationContext: Object.freeze({ permissionContext: options.permissionContext }) }),
         }) as InteractionResult;
+        if (result.status === 'unavailable') this.params.onUnavailable?.();
+        return result;
     }
 }
 
@@ -547,6 +565,7 @@ export function createNativeAgentSessionServices(params: NativeAgentSessionInter
                                         ...(permissionHandler ? { permissionHandler } : {}),
                                         interactions,
                                         readPermissionMode: params.readPermissionMode ?? (() => 'unavailable'),
+                                        ...(params.applyPermissionModeIntent ? { applyPermissionModeIntent: params.applyPermissionModeIntent } : {}),
                                         ...(params.readActiveTurnAdmissionWitness
                                             ? { readActiveTurnAdmissionWitness: params.readActiveTurnAdmissionWitness }
                                             : {}),

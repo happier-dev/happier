@@ -8,13 +8,10 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     nameKey: 'agentInput.agent.codex',
     subtitleKey: 'profiles.aiBackend.codexSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
+    permissions: { promptProtocol: 'codexDecision' },
     availability: { experimental: false },
     connectedService: { serviceId: 'openai', labelKey: 'agentInput.connectedServiceLabel.codex', connectRoute: null },
     flavorAliases: ['codex', 'codex-acp', 'codex-mcp', 'openai', 'gpt'],
-    permissions: {
-      modeGroup: 'codexLike',
-      promptProtocol: 'codexDecision',
-    },
     resume: {
       uiVendorResumeIdLabelKey: 'sessionInfo.codexSessionId',
       uiVendorResumeIdCopiedKey: 'sessionInfo.codexSessionIdCopied',
@@ -36,6 +33,28 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'codex' },
   },
   behavior: {
+    accountingSourcePresentation: [
+      {
+        sourceId: 'codex-app-server-token-usage',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'Codex'
+          }
+        }
+      },
+      {
+        sourceId: 'codex-native-accounting',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'Codex'
+          }
+        }
+      }
+    ],
     guidance: { includeInSessionGettingStartedCliExamples: true },
     // Cold-start context windows use the RAW catalog `context_window` values (see
     // ~/.codex/models_cache.json: 372k for the 5.6 family, 272k for 5.5/5.4). These are only
@@ -108,14 +127,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         },
       },
     },
-    permissions: {
-      footer: {
-        usePermissionUpdates: false,
-        forceReadOnlyAfterStop: false,
-        supportsExecPolicyAmendment: true,
-        stopHandling: 'denyOnly',
-      },
-    },
     workState: {
       editableGoals: {
         capabilityDriven: true,
@@ -186,6 +197,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
   },
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'codex' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

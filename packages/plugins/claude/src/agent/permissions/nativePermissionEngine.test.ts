@@ -4,6 +4,15 @@ import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/
 import { createClaudeNativePermissionEngine } from './nativePermissionEngine.js';
 
 describe('createClaudeNativePermissionEngine', () => {
+  it('delivers selected native feedback to Claude when a tool is declined', async () => {
+    // The public host interaction service is the plugin's process boundary.
+    const context = { services: { interactions: { requestApproval: async () => ({
+      requestId: 'approval-feedback', kind: 'approval', status: 'declined',
+      nativeChoice: { requirementId: 'tool-feedback', choiceId: 'deny', feedback: 'Use the read-only inspection tool.' },
+    }) } } } as unknown as AgentSessionRuntimeContext;
+    await expect(createClaudeNativePermissionEngine(context).canCallTool('ExitPlanMode', {}, { toolUseId: 'tool-feedback' }))
+      .resolves.toMatchObject({ behavior: 'deny', message: 'Use the read-only inspection tool.' });
+  });
   it('keeps an MCP Session grant on the host while returning only a native once decision', async () => {
     const engine = createClaudeNativePermissionEngine({ services: { interactions: {
       requestApproval: async (request: { allowSessionPersistence?: boolean }) => request.allowSessionPersistence === true
@@ -92,6 +101,14 @@ describe('createClaudeNativePermissionEngine', () => {
     expect(requestApproval).toHaveBeenCalledWith({
       kind: 'approval',
       title: 'Claude permission',
+      nativeChoices: {
+        requirementId: 'toolu-approval', source: 'claude',
+        choices: [
+          { id: 'allow', label: expect.any(String), decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+          { id: 'deny', label: expect.any(String), decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+          { id: 'stop', label: expect.any(String), decision: 'abort', scope: 'session', response: { approved: false, decision: 'abort', mode: 'read-only' } },
+        ],
+      },
       subject: {
         kind: 'tool',
         name: 'mcp__happier__action_execute',

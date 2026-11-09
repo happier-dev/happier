@@ -9,6 +9,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     nameKey: 'agentInput.agent.claude',
     subtitleKey: 'profiles.aiBackend.claudeSubtitle',
     permissionModeI18nPrefix: 'agentInput.permissionMode',
+    permissions: { promptProtocol: 'claude' },
     availability: { experimental: false },
     connectedService: {
       serviceId: 'anthropic',

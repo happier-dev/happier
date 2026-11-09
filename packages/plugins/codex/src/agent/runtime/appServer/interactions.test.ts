@@ -111,6 +111,86 @@ function createUi(overrides?: Partial<PluginInteractions>): PluginInteractions {
 }
 
 describe('Codex app-server canonical interaction bridge', () => {
+  it('preserves an offered cancellation-only native command response', async () => {
+    const fixture = createFixture();
+    const requestApproval: PluginInteractions['requestApproval'] = async request => {
+      expect(request.nativeChoices?.choices.map(choice => choice.id)).toEqual(['cancel']);
+      return { requestId: 'stop-only', kind: 'approval', status: 'userCancelled', nativeChoice: {
+        requirementId: request.nativeChoices!.requirementId, choiceId: 'cancel',
+      } };
+    };
+    registerCodexAppServerInteractionHandlers({ client: fixture.client,
+      ui: createUi({ requestApproval }), getThreadId: () => 'thread-1' });
+    await expect(fixture.invoke('item/commandExecution/requestApproval', {
+      threadId: 'thread-1', itemId: 'stop-only', availableDecisions: ['cancel'],
+    })).resolves.toEqual({ decision: 'cancel' });
+  });
+  it.each([
+    { method: 'item/commandExecution/requestApproval', choiceId: 'execpolicy:0',
+      input: { availableDecisions: [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'fetch'] } }, 'decline'] },
+      reply: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'fetch'] } } } },
+    { method: 'item/fileChange/requestApproval', choiceId: 'cancel', input: {}, reply: { decision: 'cancel' } },
+    { method: 'item/permissions/requestApproval', choiceId: 'acceptForSession', input: { permissions: { network: { enabled: true } } },
+      reply: { permissions: { network: { enabled: true } }, scope: 'session' } },
+    { method: 'item/tool/requestUserInput', choiceId: 'Approve this Session', input: { questions: [{
+      id: 'mcp_tool_call_approval_wire', header: 'Approve app tool call?', question: 'Allow this action?',
+      options: [{ label: 'Approve Once' }, { label: 'Approve this Session' }, { label: 'Deny' }, { label: 'Cancel' }],
+    }] }, reply: { answers: { mcp_tool_call_approval_wire: { answers: ['Approve Once'] } } } },
+  ])('returns the selected $method native response', async ({ method, choiceId, input, reply }) => {
+    const fixture = createFixture();
+    const requestApproval: PluginInteractions['requestApproval'] = async (request) => {
+      const choice = request.nativeChoices?.choices.find(item => item.id === choiceId);
+      expect(choice).toBeDefined();
+      if (!choice || !request.nativeChoices) throw new Error('Expected offered choice');
+      const nativeChoice = { requirementId: request.nativeChoices.requirementId, choiceId };
+      return choice.decision === 'abort'
+        ? { requestId: 'wire', kind: 'approval', status: 'userCancelled', nativeChoice }
+        : { requestId: 'wire', kind: 'approval', status: 'approved',
+            persistence: choice.decision === 'approved_for_session' ? 'session' : 'once', nativeChoice };
+    };
+    registerCodexAppServerInteractionHandlers({ client: fixture.client,
+      ui: createUi({ requestApproval }), getThreadId: () => 'thread-1' });
+    await expect(fixture.invoke(method, { threadId: 'thread-1', itemId: 'wire', ...input }, 'native-wire')).resolves.toEqual(reply);
+  });
+
+  it('offers command grants and cancellation from the native producer', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn<PluginInteractions['requestApproval']>(async () => approvalResult('approved', 'once'));
+    registerCodexAppServerInteractionHandlers({ client: fixture.client,
+      ui: createUi({ requestApproval }), getThreadId: () => 'thread-1' });
+    await fixture.invoke('item/commandExecution/requestApproval', {
+      threadId: 'thread-1', itemId: 'command-1', command: 'git status',
+      availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'],
+    });
+    expect(requestApproval.mock.calls[0]?.[0]).toMatchObject({
+      nativeChoices: { requirementId: expect.any(String), source: 'codex', choices: [
+        expect.objectContaining({ id: 'accept', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } }),
+        expect.objectContaining({ id: 'acceptForSession', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session' } }),
+        expect.objectContaining({ id: 'decline', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } }),
+        expect.objectContaining({ id: 'cancel', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } }),
+      ] },
+    });
+  });
+
+  it('returns the selected native exec-policy amendment without reducing it to allow-once', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn<PluginInteractions['requestApproval']>(async request => ({
+      requestId: 'policy', kind: 'approval', status: 'approved', persistence: 'once',
+      nativeChoice: { requirementId: request.nativeChoices!.requirementId, choiceId: 'execpolicy:0' },
+    }));
+    registerCodexAppServerInteractionHandlers({ client: fixture.client,
+      ui: createUi({ requestApproval }), getThreadId: () => 'thread-1' });
+    const amendment = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'fetch'] } };
+    await expect(fixture.invoke('item/commandExecution/requestApproval', {
+      threadId: 'thread-1', itemId: 'policy-command', availableDecisions: [amendment, 'decline'],
+    })).resolves.toEqual({ decision: amendment });
+    expect(requestApproval.mock.calls[0]?.[0].nativeChoices?.choices).toEqual([
+      expect.objectContaining({ id: 'execpolicy:0', scope: 'localPersistent', decision: 'approved_execpolicy_amendment',
+        response: { approved: true, decision: 'approved_execpolicy_amendment', execPolicyAmendment: { command: ['git', 'fetch'] } } }),
+      expect.objectContaining({ id: 'decline', decision: 'denied' }),
+    ]);
+  });
+
   it('maps async multi-question agent messages through shared interactions and sends one Codex reply', async () => {
     const fixture = createFixture();
     const askQuestions = vi.fn<PluginInteractions['askQuestions']>(async () => ({
@@ -270,6 +350,7 @@ describe('Codex app-server canonical interaction bridge', () => {
     const requestApproval = vi.fn()
       .mockResolvedValueOnce(approvalResult('approved', 'session'))
       .mockResolvedValueOnce(approvalResult('declined'))
+      .mockResolvedValueOnce(approvalResult('approved', 'once'))
       .mockResolvedValueOnce(approvalResult('approved', 'once'));
     const ui = createUi({ requestApproval });
     registerCodexAppServerInteractionHandlers({
@@ -371,7 +452,7 @@ describe('Codex app-server canonical interaction bridge', () => {
         'decline',
       ],
     })).resolves.toEqual({ decision: 'decline' });
-    expect(requestApproval).toHaveBeenCalledTimes(3);
+    expect(requestApproval).toHaveBeenCalledTimes(4);
   });
 
   it('prompts for a session-only command decision and never emits a disallowed accept-once', async () => {

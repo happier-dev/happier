@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions';
 
 import type { PermissionResult } from '../sdk/types.js';
+import { buildClaudePermissionChoices } from './permissionChoices.js';
 import {
     isAskUserQuestionToolName,
     normalizeAskUserQuestionInputForPublication,
@@ -92,6 +93,21 @@ function resolveAllowUpdatedPermissions(
     return undefined;
 }
 
+/** Translate a host-validated selection at Claude's native response boundary. */
+export function resolveClaudePermissionResult(
+    toolName: string,
+    input: unknown,
+    result: ClaudePermissionDecision,
+): PermissionResult {
+    if (result.decision === 'approved' || result.decision === 'approved_for_session'
+        || result.decision === 'approved_execpolicy_amendment') {
+        const updatedPermissions = resolveAllowUpdatedPermissions(toolName, result);
+        return { behavior: 'allow', updatedInput: resolveAllowedToolInput(toolName, normalizeToolInput(input), result),
+            ...(updatedPermissions ? { updatedPermissions } : {}) };
+    }
+    return { behavior: 'deny', message: result.nativeChoice?.feedback || result.rationale || 'Permission denied', interrupt: true };
+}
+
 /** Native acceptance completes the saved Plan intent without guessing its next permission policy. */
 export async function completeClaudePlanModeBestEffort(ctx: ClaudePermissionContext, toolName: string): Promise<void> {
     if (!isExitPlanModeToolName(toolName)) return;
@@ -121,6 +137,9 @@ export function createClaudePermissionEngine(ctx: ClaudePermissionContext): Clau
                 toolCallId: requestId,
                 toolName,
                 input: publishedInput,
+                ...(!isAskUserQuestionToolName(toolName) ? { nativeChoices: buildClaudePermissionChoices({
+                    requestId, toolName, toolInput: publishedInput,
+                }) } : {}),
             }, { signal: options.signal });
             if (
                 result.decision === 'approved'
@@ -128,18 +147,8 @@ export function createClaudePermissionEngine(ctx: ClaudePermissionContext): Clau
                 || result.decision === 'approved_execpolicy_amendment'
             ) {
                 await completeClaudePlanModeBestEffort(ctx, toolName);
-                const updatedPermissions = resolveAllowUpdatedPermissions(toolName, result);
-                return {
-                    behavior: 'allow',
-                    updatedInput: resolveAllowedToolInput(toolName, normalizedInput, result),
-                    ...(updatedPermissions ? { updatedPermissions } : {}),
-                };
             }
-            return {
-                behavior: 'deny',
-                message: result.rationale || 'Permission denied',
-                interrupt: true,
-            };
+            return resolveClaudePermissionResult(toolName, normalizedInput, result);
         },
     });
 }

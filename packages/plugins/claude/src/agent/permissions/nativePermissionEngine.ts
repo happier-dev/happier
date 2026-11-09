@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
@@ -7,7 +8,8 @@ import type {
 
 import type { PermissionResult } from '../sdk/types.js';
 import { isAskUserQuestionToolName } from './askUserQuestion.js';
-import type { ClaudePermissionEngine } from './createClaudePermissionEngine.js';
+import { resolveClaudePermissionResult, type ClaudePermissionEngine, type ClaudePermissionDecision } from './createClaudePermissionEngine.js';
+import { buildClaudePermissionChoices } from './permissionChoices.js';
 
 type QuestionRecord = Readonly<{
   id: string;
@@ -150,42 +152,47 @@ async function answerClaudeQuestions(
 }
 
 export function allowsClaudeNativeSessionPersistence(toolName: string): boolean {
-  return toolName.startsWith('mcp__') && !toolName.startsWith('mcp__happier__') && !toolName.startsWith('mcp__happy__');
+  // Explicit next-mode operations last for the Session; ordinary native tool grants remain once-only.
+  return toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode'
+    || toolName.startsWith('mcp__') && !toolName.startsWith('mcp__happier__') && !toolName.startsWith('mcp__happy__');
 }
 
-export function createClaudeNativePermissionEngine(
+export async function requestClaudeNativePermissionDecision(
   context: AgentRuntimeContext,
-): ClaudePermissionEngine {
+  toolName: string,
+  input: unknown,
+  options: Parameters<ClaudePermissionEngine['canCallTool']>[2] = {},
+): Promise<ClaudePermissionDecision> {
+  const toolInput = AgentRuntimeJsonValueSchema.safeParse(isRecord(input) ? input : {});
+  if (!toolInput.success) return { decision: 'denied', rationale: 'Claude supplied invalid tool input' };
+  const toolCallId = options.toolUseId ?? options.requestId;
+  const nativeChoices = buildClaudePermissionChoices({
+    requestId: toolCallId ?? randomUUID(), toolName, toolInput: input,
+    allowSessionPersistence: allowsClaudeNativeSessionPersistence(toolName),
+    sessionRuleApplication: 'host',
+  });
+  const result = await context.services.interactions.requestApproval({
+    kind: 'approval', title: 'Claude permission', nativeChoices,
+    subject: { kind: 'tool', name: toolName, input: toolInput.data,
+      ...(toolCallId ? { toolCallId } : {}),
+    },
+    // Session grants stay with the host; next-mode operations carry explicit setMode updates.
+    ...(allowsClaudeNativeSessionPersistence(toolName) ? { allowSessionPersistence: true } : {}),
+  }, options.signal ? { signal: options.signal } : undefined);
+  const selected = result.nativeChoice
+    ? nativeChoices.choices.find((choice) => choice.id === result.nativeChoice?.choiceId) : undefined;
+  return selected
+    ? { ...selected.response, decision: selected.decision, nativeChoice: result.nativeChoice }
+    : { decision: result.status === 'approved' ? 'approved' : result.status === 'userCancelled' ? 'abort' : 'denied',
+        ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}) };
+}
+
+export function createClaudeNativePermissionEngine(context: AgentRuntimeContext): ClaudePermissionEngine {
   return Object.freeze({
     async canCallTool(toolName, input, options = {}) {
-      if (isAskUserQuestionToolName(toolName)) {
-        return await answerClaudeQuestions(context, input, options.signal);
-      }
-      const toolInput = AgentRuntimeJsonValueSchema.safeParse(isRecord(input) ? input : {});
-      if (!toolInput.success) {
-        return { behavior: 'deny', message: 'Claude supplied invalid tool input', interrupt: true };
-      }
-      const toolCallId = options.toolUseId ?? options.requestId;
-      const result = await context.services.interactions.requestApproval({
-        kind: 'approval',
-        title: 'Claude permission',
-        subject: { kind: 'tool', name: toolName, input: toolInput.data,
-          ...(toolCallId ? { toolCallId } : {}),
-        },
-        // The host owns MCP session grants; the native reply remains invocation-only.
-        ...(allowsClaudeNativeSessionPersistence(toolName)
-          ? { allowSessionPersistence: true } : {}),
-      }, options.signal ? { signal: options.signal } : undefined);
-      return result.status === 'approved'
-        ? {
-            behavior: 'allow' as const,
-            updatedInput: isRecord(input) ? { ...input } : {},
-          }
-        : {
-            behavior: 'deny' as const,
-            message: 'Permission denied',
-            interrupt: true,
-          };
+      if (isAskUserQuestionToolName(toolName)) return await answerClaudeQuestions(context, input, options.signal);
+      return resolveClaudePermissionResult(toolName, input,
+        await requestClaudeNativePermissionDecision(context, toolName, input, options));
     },
   });
 }

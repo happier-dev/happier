@@ -1,3 +1,5 @@
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+
 type RecordLike = Record<string, unknown>;
 
 type AskUserQuestionOption = Readonly<{
@@ -213,6 +215,19 @@ function findApprovalQuestion(questions: unknown): ApprovalQuestionCandidate | n
       && candidate.labels.some((label) => NEGATIVE_CHOICE_LABEL.test(label))
     ))
     ?? null;
+}
+
+/** Only actual native labels become choices; host session grants still resume with a once-scoped native option. */
+export function buildCodexApprovalQuestionChoices(requirementId: string, questions: unknown): NativePermissionChoicesV1 {
+  const question = findApprovalQuestion(questions);
+  return { requirementId, source: 'codex', choices: (question?.labels ?? []).flatMap((label) => {
+    const decision = POSITIVE_CHOICE_LABEL.test(label)
+      ? SESSION_SCOPED_CHOICE_LABEL.test(label) ? 'approved_for_session' : 'approved'
+      : NEGATIVE_CHOICE_LABEL.test(label) ? 'denied'
+        : CANCELLATION_CHOICE_LABEL.test(label) ? 'abort' : null;
+    return decision ? [{ id: label, label, decision, scope: decision === 'approved_for_session' ? 'session' as const : 'once' as const,
+      response: { approved: decision === 'approved' || decision === 'approved_for_session', decision } }] : [];
+  }) };
 }
 
 /**

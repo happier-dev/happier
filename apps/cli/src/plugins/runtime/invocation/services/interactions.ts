@@ -238,7 +238,7 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
             interactionOptions?: InteractionOptions,
         ): Promise<InteractionTransientApprovalResultV1> {
             const fallbackRequestId = createOperationId();
-            if (params.reviewedParent) {
+            if (params.reviewedParent && request.nativeChoices === undefined) {
                 if (params.signal.aborted || interactionOptions?.signal?.aborted) {
                     return Object.freeze({ requestId: fallbackRequestId, kind: 'approval', status: 'requesterAborted' });
                 }

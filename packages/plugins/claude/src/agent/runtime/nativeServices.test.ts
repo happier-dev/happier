@@ -8,6 +8,68 @@ import {
 import { createClaudePermissionHookHandler } from './shared/permissionHookHandler.js';
 
 describe('createClaudeNativeAgentSdkContext', () => {
+  it('keeps a selected MCP Session grant on the host without installing a native rule', async () => {
+    // The host interaction transport is the external SDK boundary.
+    const requestApproval: AgentSessionRuntimeContext['services']['interactions']['requestApproval'] = async (request) => {
+      const choice = request.nativeChoices?.choices.find((item) => item.id === 'always_allow');
+      expect(choice).toMatchObject({ scope: 'session', response: { allowedTools: ['mcp__docs__mutate'] } });
+      expect(choice?.response.updatedPermissions).toBeUndefined();
+      if (!choice || !request.nativeChoices) throw new Error('Expected offered MCP Session choice');
+      return { requestId: 'mcp-session', kind: 'approval', status: 'approved', persistence: 'session',
+        nativeChoice: { requirementId: request.nativeChoices.requirementId, choiceId: choice.id } };
+    };
+    const context = {
+      services: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+        interactions: { requestApproval },
+      },
+      session: { services: { toolExecution: {
+        before: async (request: { input: Record<string, unknown> }) => ({ status: 'continue' as const, input: request.input }),
+      } } },
+    } as unknown as AgentSessionRuntimeContext;
+    const handler = createClaudePermissionHookHandler(createClaudeNativeAgentSdkContext(context));
+    const response = await handler({ hook_event_name: 'PermissionRequest', tool_name: 'mcp__docs__mutate',
+      tool_use_id: 'mcp-call', tool_input: { page: 'draft' } });
+    expect(response.hookSpecificOutput?.decision).toEqual({ behavior: 'allow' });
+  });
+
+  it.each(['default', 'acceptEdits', 'bypassPermissions', 'stop'] as const)(
+    'applies the offered ExitPlan %s through the real native adapter and hook reply', async (selection) => {
+      // The host interaction transport is the external SDK boundary.
+      const requestApproval: AgentSessionRuntimeContext['services']['interactions']['requestApproval'] = async (request) => {
+        const choiceId = selection === 'stop' ? 'stop' : `approve:${selection}`;
+        const choice = request.nativeChoices?.choices.find((item) => item.id === choiceId);
+        expect(choice).toMatchObject(selection === 'stop'
+          ? { decision: 'abort', scope: 'session', response: { decision: 'abort', mode: 'read-only' } }
+          : { decision: 'approved', scope: 'session', response: { mode: selection,
+              updatedPermissions: [{ type: 'setMode', mode: selection, destination: 'session' }] } });
+        if (!choice || !request.nativeChoices) throw new Error('Expected offered native ExitPlan choice');
+        expect(request.nativeChoices.choices.some((item) => item.decision === 'approved_for_session'
+          || item.response.updatedPermissions?.some((update) => update.type === 'addRules'))).toBe(false);
+        const nativeChoice = { requirementId: request.nativeChoices.requirementId, choiceId };
+        return selection === 'stop'
+          ? { requestId: 'native-mode', kind: 'approval', status: 'userCancelled', nativeChoice }
+          : { requestId: 'native-mode', kind: 'approval', status: 'approved', persistence: 'once', nativeChoice };
+      };
+      const context = {
+        services: {
+          logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+          interactions: { requestApproval },
+        },
+        session: { services: { toolExecution: {
+          before: async (request: { input: Record<string, unknown> }) => ({ status: 'continue' as const, input: request.input }),
+        } } },
+      } as unknown as AgentSessionRuntimeContext;
+      const handler = createClaudePermissionHookHandler(createClaudeNativeAgentSdkContext(context));
+      const transport = { signal: new AbortController().signal };
+      const response = await handler({ hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode', tool_use_id: 'plan-mode', tool_input: {} }, transport);
+      const decision = selection === 'stop'
+        ? { behavior: 'deny', interrupt: true }
+        : { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: selection, destination: 'session' }] };
+      expect(response.hookSpecificOutput?.decision).toMatchObject(decision);
+    },
+  );
+
   it('honors the host native approval through the SDK PermissionRequest hook', async () => {
     // Interception and interaction presentation cross the plugin's host SDK boundary.
     const requestApproval = vi.fn(async () => ({ status: 'approved' as const }));

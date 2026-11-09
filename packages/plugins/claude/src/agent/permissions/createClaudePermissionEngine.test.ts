@@ -31,6 +31,24 @@ function createContextFixture(decision: 'approved' | 'denied' | 'abort') {
 }
 
 describe('createClaudePermissionEngine', () => {
+    it('offers the existing aborting Claude stop outcome', async () => {
+        const { ctx, requestDecision } = createContextFixture('approved');
+        await createClaudePermissionEngine(ctx).canCallTool('Bash', { command: 'pwd' }, { requestId: 'stop-native' });
+        expect(requestDecision.mock.calls[0]?.[0].nativeChoices.choices).toContainEqual(expect.objectContaining({
+            id: 'stop', decision: 'abort', response: { approved: false, decision: 'abort', mode: 'read-only' },
+        }));
+    });
+    it('offers the existing plan approval modes and request-changes feedback from the producer', async () => {
+        const { ctx, requestDecision } = createContextFixture('approved');
+        await createClaudePermissionEngine(ctx).canCallTool('ExitPlanMode', { plan: 'Make the change' }, { requestId: 'plan-modes' });
+        expect(requestDecision.mock.calls[0]?.[0].nativeChoices.choices).toEqual(expect.arrayContaining([
+            ...(['default', 'acceptEdits', 'bypassPermissions'] as const).map(mode => expect.objectContaining({
+                id: `approve:${mode}`, scope: 'session', response: { approved: true, decision: 'approved', mode,
+                    updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] },
+            })),
+            expect.objectContaining({ id: 'deny', decision: 'denied', allowsFeedback: true }),
+        ]));
+    });
     it.each(['ExitPlanMode', 'exit_plan_mode'])('clears the saved Plan selection when %s is approved', async (toolName) => {
         const { ctx } = createContextFixture('approved');
         let selectedMode: string | null = 'plan';
@@ -63,6 +81,22 @@ describe('createClaudePermissionEngine', () => {
         expect(result).toEqual({
             behavior: 'allow',
             updatedInput: { file_path: 'README.md' },
+        });
+    });
+
+    it('offers canonical edit grants and stop outcomes at the producer', async () => {
+        const { ctx, requestDecision } = createContextFixture('approved');
+        await createClaudePermissionEngine(ctx).canCallTool('Edit', { file_path: 'README.md' }, { requestId: 'edit-ask' });
+        const request = requestDecision.mock.calls[0]?.[0];
+        expect(request.nativeChoices).toMatchObject({
+            requirementId: 'edit-ask', source: 'claude',
+            choices: expect.arrayContaining([
+                expect.objectContaining({ id: 'allow_all_edits', decision: 'approved', scope: 'session', response: {
+                    approved: true, decision: 'approved', mode: 'acceptEdits',
+                    updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+                } }),
+                expect.objectContaining({ id: 'stop', decision: 'abort', scope: 'session', response: { approved: false, decision: 'abort', mode: 'read-only' } }),
+            ]),
         });
     });
 

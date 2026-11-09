@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type {
   JsonValue,
 } from '@happier-dev/plugin-sdk';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import {
   AgentRuntimeJsonValueSchema,
   type AgentSessionRuntimeContext,
@@ -21,11 +22,13 @@ import { projectCodexAppServerToolEventsFromNotification } from './projection/to
 import {
   buildCodexAsyncUserInputReply,
   buildCodexRequestUserInputAnswers,
+  buildCodexApprovalQuestionChoices,
   looksLikeCodexApprovalRequestUserInput,
   readCodexAsyncUserInputItem,
   resolveCodexApprovalQuestionChoice,
   type CodexApprovalOutcome,
 } from '../core/requestUserInputQuestions.js';
+import { buildCodexPermissionChoices, resolveCodexNativeCommandDecision } from '../core/permissionChoices.js';
 
 type InteractionUi = Pick<AgentSessionRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
 type SessionMcp = Pick<
@@ -67,19 +70,6 @@ function matchesCurrentThread(
   );
 }
 
-function readCommandApprovalAvailability(record: RecordLike): Readonly<{
-  accept: boolean;
-  acceptForSession: boolean;
-}> {
-  if (!Array.isArray(record.availableDecisions)) {
-    return { accept: true, acceptForSession: true };
-  }
-  return {
-    accept: record.availableDecisions.includes('accept'),
-    acceptForSession: record.availableDecisions.includes('acceptForSession'),
-  };
-}
-
 function mapApprovalDecision(
   result: InteractionTransientApprovalResultV1,
   options?: Readonly<{
@@ -87,14 +77,19 @@ function mapApprovalDecision(
     allowSessionPersistence?: boolean;
   }>,
 ): 'accept' | 'acceptForSession' | 'decline' | 'cancel' {
-  if (result.status === 'approved') {
-    if (result.persistence === 'session') {
-      if (options?.allowSessionPersistence !== false) return 'acceptForSession';
-      return 'decline';
-    }
-    return options?.allowAccept !== false ? 'accept' : 'decline';
+  const outcome = approvalOutcome(result);
+  if (outcome === 'approve_for_session' && options?.allowSessionPersistence === false) return 'decline';
+  if (outcome === 'approve_once' && options?.allowAccept === false) return 'decline';
+  return mapApprovalOutcomeToNativeDecision(outcome);
+}
+
+function mapApprovalOutcomeToNativeDecision(outcome: CodexApprovalOutcome): 'accept' | 'acceptForSession' | 'decline' | 'cancel' {
+  switch (outcome) {
+    case 'approve_once': return 'accept';
+    case 'approve_for_session': return 'acceptForSession';
+    case 'deny': return 'decline';
+    case 'cancel': return 'cancel';
   }
-  return result.status !== 'declined' && result.status !== 'unavailable' ? 'cancel' : 'decline';
 }
 
 async function requestApproval(
@@ -106,6 +101,7 @@ async function requestApproval(
     toolCallId?: string | null;
     params: unknown;
     allowSessionPersistence?: boolean;
+    nativeChoices?: NativePermissionChoicesV1;
   }>,
   signal?: AbortSignal,
 ): Promise<InteractionTransientApprovalResultV1> {
@@ -120,6 +116,7 @@ async function requestApproval(
     return await ui.requestApproval({
       kind: 'approval',
       title: input.title,
+      nativeChoices: input.nativeChoices ?? buildCodexPermissionChoices(randomUUID()),
       ...(input.description ? { description: input.description } : {}),
       subject: {
         kind: 'tool',
@@ -433,8 +430,12 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
     'item/commandExecution/requestApproval',
     async (raw, signal) => {
       if (!matchesCurrentThread(raw, params.getThreadId)) return { decision: 'decline' };
-      const availability = readCommandApprovalAvailability(raw);
-      if (!availability.accept && !availability.acceptForSession) {
+      const nativeChoices = buildCodexPermissionChoices(randomUUID(), raw.availableDecisions);
+      const availability = {
+        accept: nativeChoices.choices.some(choice => choice.decision === 'approved'),
+        acceptForSession: nativeChoices.choices.some(choice => choice.decision === 'approved_for_session'),
+      };
+      if (nativeChoices.choices.length === 0) {
         return { decision: 'decline' };
       }
       const reason = readString(raw.reason);
@@ -442,6 +443,7 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       const cwd = readString(raw.cwd);
       const result = await requestApproval(params.ui, {
         title: 'Allow Codex command execution?',
+        nativeChoices,
         ...(reason ? { description: reason } : {}),
         toolName: 'Bash',
         toolCallId: readString(raw.itemId),
@@ -452,8 +454,10 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
         },
         allowSessionPersistence: availability.acceptForSession,
       }, signal);
+      const selected = result.nativeChoice
+        ? nativeChoices.choices.find(choice => choice.id === result.nativeChoice!.choiceId) : undefined;
       return {
-        decision: mapApprovalDecision(result, {
+        decision: selected ? resolveCodexNativeCommandDecision(selected) : mapApprovalDecision(result, {
           allowAccept: availability.accept,
           allowSessionPersistence: availability.acceptForSession,
         }),
@@ -491,6 +495,16 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       if (!matchesCurrentThread(raw, params.getThreadId)) {
         return { permissions: {}, scope: 'turn' };
       }
+      const requestedPermissions = readRecord(raw.permissions);
+      const permissions = {
+        ...(requestedPermissions?.network ? { network: toJsonValue(requestedPermissions.network) } : {}),
+        ...(requestedPermissions?.fileSystem ? { fileSystem: toJsonValue(requestedPermissions.fileSystem) } : {}),
+      };
+      const replyForOutcome = (outcome: CodexApprovalOutcome) => (
+        outcome === 'approve_once' || outcome === 'approve_for_session'
+          ? { permissions, scope: outcome === 'approve_for_session' ? 'session' : 'turn' }
+          : { permissions: {}, scope: 'turn' }
+      );
       const result = await requestApproval(params.ui, {
         title: 'Allow additional Codex permissions?',
         ...(readString(raw.reason) ? { description: readString(raw.reason)! } : {}),
@@ -498,22 +512,7 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
         params: raw,
         allowSessionPersistence: true,
       }, signal);
-      if (result.status !== 'approved') {
-        return { permissions: {}, scope: 'turn' };
-      }
-      const requestedPermissions = readRecord(raw.permissions);
-      const permissions = {
-        ...(requestedPermissions?.network
-          ? { network: toJsonValue(requestedPermissions.network) }
-          : {}),
-        ...(requestedPermissions?.fileSystem
-          ? { fileSystem: toJsonValue(requestedPermissions.fileSystem) }
-          : {}),
-      };
-      return {
-        permissions,
-        scope: result.persistence === 'session' ? 'session' : 'turn',
-      };
+      return replyForOutcome(approvalOutcome(result));
     },
   );
 
@@ -529,23 +528,23 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       })) {
         const itemKey = toolItemKey(raw, readString(raw.itemId));
         const subject = itemKey ? approvalSubjectsByItem.get(itemKey) : undefined;
+        const replyForOutcome = (outcome: CodexApprovalOutcome) => {
+          const choice = resolveCodexApprovalQuestionChoice({
+            questions: raw.questions, outcome,
+            // The host owns session grants; the native engine receives one tool grant.
+            allowSessionPersistence: false,
+          });
+          return choice ? { answers: { [choice.questionId]: { answers: [choice.label] } } } : { answers: {} };
+        };
         const result = await requestApproval(params.ui, {
           title: 'Codex needs your approval',
+          nativeChoices: buildCodexApprovalQuestionChoices(randomUUID(), raw.questions),
           toolName: subject?.name ?? `codex_request_user_input_approval:${randomUUID()}`,
           ...(subject ? { toolCallId: readString(raw.itemId) } : {}),
           params: subject ? subject.input : raw,
           allowSessionPersistence: true,
         }, signal);
-        const choice = resolveCodexApprovalQuestionChoice({
-          questions: raw.questions,
-          outcome: approvalOutcome(result),
-          // Session persistence belongs to the host's grant owner. A native
-          // MCP grant skips future policy lookups and cannot honor live Off.
-          allowSessionPersistence: false,
-        });
-        return choice
-          ? { answers: { [choice.questionId]: { answers: [choice.label] } } }
-          : { answers: {} };
+        return replyForOutcome(approvalOutcome(result));
       }
       const answers = await askQuestions(params.ui, questions, 'Codex question', signal);
       if (!answers) return { answers: {} };
