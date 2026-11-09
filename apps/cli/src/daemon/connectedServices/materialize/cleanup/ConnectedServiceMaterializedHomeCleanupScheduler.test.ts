@@ -181,58 +181,65 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
-  it('retries failed deletes and then stops retrying an abandoned root in the same daemon', async () => {
+  it('reclaims an eligible root after more than three failed reconciliation passes', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-retry-');
     try {
       const baseDir = join(root, 'materialized');
       const orphanRoot = await createIdentityRoot(baseDir, 'busy-orphan', 'codex');
       await touchOld(orphanRoot, 1_000);
-      const removePath = vi.fn(async () => {
-        throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      let failures = 4;
+      const removePath = vi.fn<typeof rm>(async (path, options) => {
+        if (failures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+        await rm(path, options);
       });
       const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
         baseDir,
         nowMs: () => 10_000,
         orphanTtlMs: 1_000,
         attemptTtlMs: 1_000,
-        maxCleanupRetries: 2,
         removePath,
         getLiveMaterializationKeys: () => [],
         getRetainedMaterializationKeys: async () => [],
       });
 
-      await expect(scheduler.reconcile()).rejects.toMatchObject({ code: 'EBUSY' });
-      await expect(scheduler.reconcile()).rejects.toMatchObject({ code: 'EBUSY' });
+      for (let pass = 0; pass < 4; pass += 1) {
+        await expect(scheduler.reconcile()).rejects.toMatchObject({ code: 'EBUSY' });
+      }
       await expect(scheduler.reconcile()).resolves.toEqual([
         expect.objectContaining({
           path: orphanRoot,
-          cleaned: false,
-          abandoned: true,
+          cleaned: true,
           targetKind: 'identity_root',
         }),
       ]);
 
-      expect(removePath).toHaveBeenCalledTimes(2);
-      await expectExists(orphanRoot);
+      expect(removePath).toHaveBeenCalledTimes(5);
+      await expectMissing(orphanRoot);
+      await expect(scheduler.reconcile()).resolves.toEqual([]);
+      expect(removePath).toHaveBeenCalledTimes(5);
     } finally {
       await removeTempDir(root);
     }
   });
 
-  it('bounds hung path cleanup attempts and then stops retrying the root in the same daemon', async () => {
+  it('reports the default five-second timeout while the underlying deletion can still complete', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-timeout-');
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let deletion: Promise<void> | undefined;
     try {
       const baseDir = join(root, 'materialized');
       const orphanRoot = await createIdentityRoot(baseDir, 'hung-orphan', 'codex');
       await touchOld(orphanRoot, 1_000);
-      const removePath = vi.fn(() => new Promise<never>(() => undefined));
+      const removePath = vi.fn<typeof rm>((path, options) => {
+        deletion = held.then(async () => { await rm(path, options); });
+        return deletion;
+      });
       const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
         baseDir,
         nowMs: () => 10_000,
         orphanTtlMs: 1_000,
         attemptTtlMs: 1_000,
-        maxCleanupRetries: 2,
-        fileOperationTimeoutMs: 25,
         removePath,
         getLiveMaterializationKeys: () => [],
         getRetainedMaterializationKeys: async () => [],
@@ -242,26 +249,17 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
         code: 'ETIMEDOUT',
         operation: 'rm',
         path: orphanRoot,
+        timeoutMs: 5_000,
       });
-
-      await expect(scheduler.reconcile()).rejects.toMatchObject({
-        code: 'ETIMEDOUT',
-        operation: 'rm',
-        path: orphanRoot,
-      });
-
-      await expect(scheduler.reconcile()).resolves.toEqual([
-        expect.objectContaining({
-          path: orphanRoot,
-          cleaned: false,
-          abandoned: true,
-          targetKind: 'identity_root',
-        }),
-      ]);
-
-      expect(removePath).toHaveBeenCalledTimes(2);
       await expectExists(orphanRoot);
+      release();
+      await deletion;
+      await expectMissing(orphanRoot);
+      await expect(scheduler.reconcile()).resolves.toEqual([]);
+      expect(removePath).toHaveBeenCalledTimes(1);
     } finally {
+      release();
+      await deletion;
       await removeTempDir(root);
     }
   });

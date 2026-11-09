@@ -27,7 +27,6 @@ export type ConnectedServiceMaterializedHomeCleanupResult = Readonly<{
   path: string;
   cleaned: boolean;
   retained?: boolean;
-  abandoned?: boolean;
 }>;
 
 type RemovePath = typeof rm;
@@ -117,6 +116,15 @@ async function readDirectoryEntries(path: string, timeoutMs: number): Promise<Re
   }
 }
 
+/** Existing owner-Account materializations, excluding attempts and requester namespaces. */
+export async function listConnectedServiceMaterializedIdentityRoots(
+  baseDir: string,
+  timeoutMs = DEFAULT_FILE_OPERATION_TIMEOUT_MS,
+): Promise<ReadonlyArray<Readonly<{ name: string; path: string }>>> {
+  return (await readDirectoryEntries(baseDir, timeoutMs))
+    .filter(entry => entry.name !== '.attempts' && entry.name !== 'requester-accounts');
+}
+
 async function readDirectoryMtimeMs(path: string, timeoutMs: number): Promise<number | null> {
   try {
     return (await runFileOperationWithTimeout({
@@ -156,12 +164,9 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   readonly #nowMs: () => number;
   readonly #orphanTtlMs: number;
   readonly #attemptTtlMs: number;
-  readonly #maxCleanupRetries: number;
   readonly #fileOperationTimeoutMs: number;
   readonly #removePath: RemovePath;
   readonly #sanitizeRetainedMaterializedHome: ConnectedServiceRetainedMaterializedHomeSanitizer | null;
-  readonly #failedAttemptsByPath = new Map<string, number>();
-  readonly #abandonedPaths = new Set<string>();
 
   constructor(private readonly deps: Readonly<{
     baseDir: string;
@@ -172,7 +177,6 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     sanitizeRetainedMaterializedHome?: ConnectedServiceRetainedMaterializedHomeSanitizer;
     orphanTtlMs?: number;
     attemptTtlMs?: number;
-    maxCleanupRetries?: number;
     fileOperationTimeoutMs?: number;
     removePath?: RemovePath;
   }>) {
@@ -180,7 +184,6 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     this.#nowMs = deps.nowMs;
     this.#orphanTtlMs = Math.max(0, Math.trunc(deps.orphanTtlMs ?? 24 * 60 * 60_000));
     this.#attemptTtlMs = Math.max(0, Math.trunc(deps.attemptTtlMs ?? 60 * 60_000));
-    this.#maxCleanupRetries = Math.max(1, Math.trunc(deps.maxCleanupRetries ?? 3));
     this.#fileOperationTimeoutMs = normalizeFileOperationTimeoutMs(deps.fileOperationTimeoutMs);
     this.#removePath = deps.removePath ?? rm;
     this.#sanitizeRetainedMaterializedHome = deps.sanitizeRetainedMaterializedHome ?? null;
@@ -214,11 +217,10 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     const nowMs = this.#nowMs();
     const targets: MaterializedHomeCleanupTarget[] = [];
     if (retainedSnapshot.identityDeletionAuthority === 'confirmed') {
-      for (const entry of await readDirectoryEntries(this.#baseDir, this.#fileOperationTimeoutMs)) {
+      for (const entry of await listConnectedServiceMaterializedIdentityRoots(this.#baseDir, this.#fileOperationTimeoutMs)) {
         // Requester Account roots are a namespace, not a materialization
         // identity. This Account's Session inventory cannot establish absence
         // for the foreign Sessions beneath it, even before their recovery runs.
-        if (entry.name === '.attempts' || entry.name === 'requester-accounts') continue;
         // ../0.2 may materialize directly under identity.id; current homes use its hash.
         if (retainedSnapshot.retainedSegments.has(entry.name) || retainedSnapshot.retainedKeys.has(entry.name)) continue;
         const mtimeMs = await readDirectoryMtimeMs(entry.path, this.#fileOperationTimeoutMs);
@@ -343,14 +345,6 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   }
 
   async #removeTarget(target: MaterializedHomeCleanupTarget): Promise<ConnectedServiceMaterializedHomeCleanupResult> {
-    if (this.#abandonedPaths.has(target.path)) {
-      return {
-        targetKind: target.targetKind,
-        path: target.path,
-        cleaned: false,
-        abandoned: true,
-      };
-    }
     if (await this.#isRetainedIdentityTarget(target)) {
       return {
         targetKind: target.targetKind,
@@ -367,28 +361,17 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
         retained: true,
       };
     }
-    try {
-      await runFileOperationWithTimeout({
-        operation: 'rm',
-        path: target.path,
-        timeoutMs: this.#fileOperationTimeoutMs,
-        run: async () => await this.#removePath(target.path, { recursive: true, force: true }),
-      });
-      this.#failedAttemptsByPath.delete(target.path);
-      this.#abandonedPaths.delete(target.path);
-      return {
-        targetKind: target.targetKind,
-        path: target.path,
-        cleaned: true,
-      };
-    } catch (error) {
-      const attempts = (this.#failedAttemptsByPath.get(target.path) ?? 0) + 1;
-      this.#failedAttemptsByPath.set(target.path, attempts);
-      if (attempts >= this.#maxCleanupRetries) {
-        this.#abandonedPaths.add(target.path);
-      }
-      throw error;
-    }
+    await runFileOperationWithTimeout({
+      operation: 'rm',
+      path: target.path,
+      timeoutMs: this.#fileOperationTimeoutMs,
+      run: async () => await this.#removePath(target.path, { recursive: true, force: true }),
+    });
+    return {
+      targetKind: target.targetKind,
+      path: target.path,
+      cleaned: true,
+    };
   }
 
   async reconcile(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {

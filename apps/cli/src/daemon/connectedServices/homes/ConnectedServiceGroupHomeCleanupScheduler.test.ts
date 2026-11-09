@@ -197,7 +197,7 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
     }
   });
 
-  it('keeps a failed pending cleanup retryable instead of dropping the target', async () => {
+  it('reclaims a pending group home after more than three failed cleanup passes', async () => {
     const root = await createTempDir('happier-connected-service-group-home-cleanup-retry-');
     try {
       const home = resolveConnectedServiceGroupHomeDir({
@@ -209,9 +209,10 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
       await mkdir(home, { recursive: true });
       let live = true;
       let removeAttempts = 0;
-      const removePath: typeof rm = async () => {
+      const removePath: typeof rm = async (path, options) => {
         removeAttempts += 1;
-        if (removeAttempts === 1) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+        if (removeAttempts <= 4) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+        await rm(path, options);
       };
       const scheduler = new ConnectedServiceGroupHomeCleanupScheduler({
         activeServerDir: root,
@@ -226,13 +227,17 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
       })).resolves.toMatchObject({ cleaned: false, pending: true });
 
       live = false;
-      await expect(scheduler.cleanupPendingDeletedGroupHomes()).rejects.toMatchObject({ code: 'EBUSY' });
-      expect(removeAttempts).toBe(1);
+      for (let pass = 0; pass < 4; pass += 1) {
+        await expect(scheduler.cleanupPendingDeletedGroupHomes()).rejects.toMatchObject({ code: 'EBUSY' });
+      }
 
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([
         expect.objectContaining({ cleaned: true, path: home }),
       ]);
-      expect(removeAttempts).toBe(2);
+      expect(removeAttempts).toBe(5);
+      await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
+      expect(removeAttempts).toBe(5);
     } finally {
       await removeTempDir(root);
     }

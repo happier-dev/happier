@@ -1,7 +1,7 @@
-import { mkdir, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPlainSessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -14,6 +14,13 @@ import type { TrackedSession } from '../../../types';
 import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationKeyForPath';
 import { createConnectedServiceMaterializedHomeCleanupScheduler } from './createConnectedServiceMaterializedHomeCleanupScheduler';
 import { readRetainedConnectedServiceMaterializationKeys } from './readRetainedConnectedServiceMaterializationKeys';
+
+// Inject filesystem failures at the OS boundary while retaining the factory,
+// metadata decoding, retention selection and real eventual deletion.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rm: vi.fn(actual.rm) };
+});
 
 async function createIdentityRoot(baseDir: string, materializationKey: string): Promise<string> {
   const root = join(baseDir, normalizeMaterializationKeyForPath(materializationKey));
@@ -85,7 +92,7 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
-  it('retains live tracked-session and resumable materialization identities', async () => {
+  it('recovers cleanup after four busy passes while preserving decoded live and resumable identities', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-factory-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     try {
@@ -141,7 +148,15 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
         }),
       });
 
-      await scheduler.reconcile();
+      const removePath = vi.mocked(rm);
+      for (let pass = 0; pass < 4; pass += 1) {
+        removePath.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+        await expect(scheduler.reconcile()).rejects.toMatchObject({ code: 'EBUSY' });
+        for (const home of [liveRoot, resumableRoot, predecessorRoot, orphanRoot, predecessorOrphan]) {
+          await expect(stat(home)).resolves.toBeTruthy();
+        }
+      }
+      await scheduler.cleanupPendingMaterializedHomes();
 
       await expect(stat(liveRoot)).resolves.toBeTruthy();
       await expect(stat(resumableRoot)).resolves.toBeTruthy();
@@ -149,6 +164,9 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
       await expect(stat(orphanRoot)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(predecessorOrphan)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
+      vi.mocked(rm).mockReset().mockImplementation(
+        (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm,
+      );
       envScope.restore(); reloadConfiguration();
       await removeTempDir(root);
     }

@@ -42,7 +42,6 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
   sanitizeRetainedMaterializedHome?: ConnectedServiceRetainedMaterializedHomeSanitizer;
   orphanTtlMs?: number;
   attemptTtlMs?: number;
-  maxCleanupRetries?: number;
 }>): ConnectedServiceMaterializedHomeCleanupScheduler {
   return new ConnectedServiceMaterializedHomeCleanupScheduler({
     baseDir: params.baseDir,
@@ -72,6 +71,5 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
     },
     ...(params.orphanTtlMs === undefined ? {} : { orphanTtlMs: params.orphanTtlMs }),
     ...(params.attemptTtlMs === undefined ? {} : { attemptTtlMs: params.attemptTtlMs }),
-    ...(params.maxCleanupRetries === undefined ? {} : { maxCleanupRetries: params.maxCleanupRetries }),
   });
 }

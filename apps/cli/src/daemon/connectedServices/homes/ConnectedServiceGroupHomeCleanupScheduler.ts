@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { AGENT_IDS } from '@happier-dev/agents';
@@ -8,13 +8,13 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
+import { listExistingConnectedServiceHomeSelections, readConnectedServiceHomeDirectoryNames } from './inventory';
 
 type DeletedGroupCleanupTarget = Readonly<{
   serviceId: ConnectedServiceId;
   groupId: string;
   agentId: CatalogAgentId;
   path: string;
-  cleanupAttempts?: number;
 }>;
 
 type DeletedGroupCleanupResult = Readonly<{
@@ -53,17 +53,6 @@ function targetKey(input: Readonly<{
   return `${input.serviceId}\0${input.groupId}\0${input.agentId}`;
 }
 
-async function readDirectoryNames(path: string): Promise<ReadonlyArray<string>> {
-  try {
-    const entries = await readdir(path, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
-}
 
 function parseAgentId(value: string): CatalogAgentId | null {
   return (AGENT_IDS as ReadonlyArray<string>).includes(value) ? value as CatalogAgentId : null;
@@ -79,7 +68,6 @@ function hasNodeErrorCode(error: unknown, code: string): boolean {
 
 export class ConnectedServiceGroupHomeCleanupScheduler {
   private readonly pendingDeletedTargetsByKey = new Map<string, DeletedGroupCleanupTarget>();
-  private readonly maxCleanupRetries: number;
   private readonly removePath: RemoveGroupHomePath;
   private readonly renamePath: typeof rename;
   private readonly nowMs: () => number;
@@ -94,12 +82,10 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     }>): boolean;
     groupExists?: GroupExists;
     resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
-    maxCleanupRetries?: number;
     removePath?: RemoveGroupHomePath;
     renamePath?: typeof rename;
     nowMs?: () => number;
   }>) {
-    this.maxCleanupRetries = deps.maxCleanupRetries ?? 3;
     this.renamePath = deps.renamePath ?? rename;
     this.nowMs = deps.nowMs ?? (() => Date.now());
     this.removePath = deps.removePath ?? (async (path) => {
@@ -129,12 +115,7 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
       await this.removePath(target.path, { recursive: true, force: true });
       this.pendingDeletedTargetsByKey.delete(key);
     } catch (error) {
-      const cleanupAttempts = (target.cleanupAttempts ?? 0) + 1;
-      if (cleanupAttempts <= this.maxCleanupRetries) {
-        this.pendingDeletedTargetsByKey.set(key, { ...target, cleanupAttempts });
-      } else {
-        this.pendingDeletedTargetsByKey.delete(key);
-      }
+      this.pendingDeletedTargetsByKey.set(key, target);
       throw error;
     }
   }
@@ -169,19 +150,14 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
   }
 
   private async listExistingGroupHomeTargets(): Promise<ReadonlyArray<GroupHomeTarget>> {
-    const homesRoot = join(this.deps.activeServerDir, 'daemon', 'connected-services', 'homes');
     const targets: GroupHomeTarget[] = [];
-    for (const serviceDirName of await readDirectoryNames(homesRoot)) {
-      const serviceId = ConnectedServiceIdSchema.safeParse(serviceDirName);
+    for (const selection of await listExistingConnectedServiceHomeSelections(this.deps.activeServerDir)) {
+      if (selection.kind !== 'group') continue;
+      const serviceId = ConnectedServiceIdSchema.safeParse(selection.serviceDirectoryName);
       if (!serviceId.success) continue;
-      const groupsRoot = join(homesRoot, serviceDirName, '__groups');
-      for (const groupId of await readDirectoryNames(groupsRoot)) {
-        const groupRoot = join(groupsRoot, groupId);
-        for (const agentDirName of await readDirectoryNames(groupRoot)) {
-          const agentId = parseAgentId(agentDirName);
-          if (!agentId) continue;
-          targets.push({ serviceId: serviceId.data, groupId, agentId });
-        }
+      for (const agentDirName of await readConnectedServiceHomeDirectoryNames(selection.directory)) {
+        const agentId = parseAgentId(agentDirName);
+        if (agentId) targets.push({ serviceId: serviceId.data, groupId: selection.selectionId, agentId });
       }
     }
     return targets;
@@ -209,10 +185,6 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     const cleaned: Array<Readonly<{ cleaned: true; path: string }>> = [];
     for (const [key, target] of this.pendingDeletedTargetsByKey.entries()) {
       if (this.hasLiveTarget(target)) continue;
-      if (target.cleanupAttempts !== undefined && target.cleanupAttempts >= this.maxCleanupRetries) {
-        this.pendingDeletedTargetsByKey.delete(key);
-        continue;
-      }
       if (this.deps.resolveGroupDeletionAuthority) {
         const authority = await this.deps.resolveGroupDeletionAuthority(target);
         if (authority.status === 'exists') {

@@ -1360,11 +1360,6 @@ export async function startDaemon(
         60 * 60_000,
         { min: 60_000, max: 7 * 24 * 60 * 60_000 },
       ),
-      maxCleanupRetries: resolvePositiveIntEnv(
-        process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_CLEANUP_MAX_RETRIES,
-        3,
-        { min: 1, max: 20 },
-      ),
       getRetainedMaterializationKeys: async () => await readRetainedConnectedServiceMaterializationKeys({
         credentials,
       }).catch((error) => {
