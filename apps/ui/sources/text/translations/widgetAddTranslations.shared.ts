@@ -1,3 +1,4 @@
+import type { SessionBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 
 
 export type WidgetAddTranslation = Readonly<{
@@ -25,12 +26,7 @@ export type WidgetAddTranslation = Readonly<{
     sessionDetails: string;
     prompts: Readonly<{ project: string; projects: string; session: string; workspace: string; checkout: string; machine: string }>;
     inputLabels: Readonly<Record<'session' | 'metric' | 'breakdown' | 'groupBy' | 'apiEquivalent' | 'agent' | 'model' | 'project' | 'workspace' | 'backendMode' | 'source' | 'machine', string>>;
-    nativeDescriptions: Readonly<{
-        session_summary: string;
-        agent_plan: string;
-        changes: string;
-        local_services: string;
-    }>;
+    nativeDescriptions: Readonly<Record<SessionBuiltinWidgetIdV1, string>>;
     noMatch: (params: Readonly<{ query: string }>) => string;
     pickTitle: string;
     pickHint: string;
@@ -176,6 +172,10 @@ export const widgetAddTranslationsEnglish = { en: {
             agent_plan: 'Follow the agent’s plan for the session you choose.',
             changes: 'Review file changes in the session you choose.',
             local_services: 'Open local services running for the session you choose.',
+            environment: 'Where the session you choose runs, and what changed.',
+            running: 'What’s running now in the session you choose.',
+            usage: 'Context and usage for the session you choose.',
+            links: 'Pull requests and links for the session you choose.',
         },
         noMatch: ({ query }) => `No widgets match “${query}”`,
         pickTitle: 'Pick a widget to see it here',

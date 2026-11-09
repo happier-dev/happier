@@ -2,7 +2,7 @@ import type { ConnectedAccountUiProjectionEntryV1} from '@happier-dev/protocol/c
 import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginJsonSchemaV2} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import type { PluginProjectedResourceV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { WidgetPublicSnapshotPresentationV1Schema, type WidgetPublicSnapshotPresentationV1 } from '@happier-dev/protocol/widgets';
+import { WidgetPublicSnapshotPresentationV1Schema, type SessionBuiltinWidgetIdV1, type WidgetPublicSnapshotPresentationV1 } from '@happier-dev/protocol/widgets';
 import { readWidgetInputTargetV1, WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionAuthorV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -148,7 +148,7 @@ function describeBuiltinWidgetCandidate(descriptor: BuiltinWidgetDescriptorV1): 
     // A built-in with no purpose of its own has none: its title is never repeated as its description.
     const description = descriptor.descriptionKey ? t(descriptor.descriptionKey)
         : readWidgetInputTargetV1(descriptor).kind !== 'session' ? null
-        : t(`widgetAdd.nativeDescriptions.${descriptor.definition.id as 'session_summary' | 'agent_plan' | 'changes' | 'local_services'}`);
+        : t(`widgetAdd.nativeDescriptions.${descriptor.definition.id as SessionBuiltinWidgetIdV1}`);
     return Object.freeze({ ...descriptor, title: t(descriptor.titleKey),
         inputs: descriptor.inputs ? localizeBuiltinInputHints(descriptor.inputs) : undefined,
         ...(description === null ? {} : { description }),

@@ -61,6 +61,11 @@ describe('Widget Add candidates', () => {
         expect(checkouts?.title).toBeTruthy();
         expect(checkouts?.description).toBeUndefined();
     });
+    it('describes every Session built-in in words, never with its raw translation key', () => {
+        const sessionBuiltins = selectBuiltinWidgetCandidates().filter(candidate => candidate.target === 'session');
+        expect(sessionBuiltins.length).toBeGreaterThan(0);
+        for (const candidate of sessionBuiltins) expect(candidate.description ?? '').not.toMatch(/^widgetAdd\.|^$/);
+    });
     it('offers native glances through the universal catalog without a plugin occurrence or a fake plugin identity', () => {
         const candidates = selectUniversalWidgetCandidates(null);
         expect(candidates.filter(candidate => candidate.target === 'session')).toMatchObject([
@@ -68,6 +73,10 @@ describe('Widget Add candidates', () => {
             { definition: { kind: 'builtin', id: 'agent_plan' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
             { definition: { kind: 'builtin', id: 'changes' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
             { definition: { kind: 'builtin', id: 'local_services' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'environment' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'running' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'usage' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'links' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
         ]);
         expect(candidates.some(candidate => 'surface' in candidate)).toBe(false);
     });
