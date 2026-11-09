@@ -2064,9 +2064,11 @@ export function useSessionVisibleReadSeq(
         ?? session?.latestReadyEventSeq
         ?? renderable?.latestReadyEventSeq
         ?? null;
+      const latestNonRenderableMessageSeq = sessionMessages.latestNonRenderableMessageSeq ?? null;
       if (
         readableActivity?.latestCommittedMessageSeq == null
         && latestReadyEventSeq == null
+        && latestNonRenderableMessageSeq == null
         && !(hasTerminalPrimaryTurnStatus(latestTurnStatus) && sessionSeq != null)
       ) {
         previousResult = null;
@@ -2077,6 +2079,9 @@ export function useSessionVisibleReadSeq(
         latestReadyEventSeq,
         latestTurnStatus,
       }, readableActivity);
+      if (latestNonRenderableMessageSeq !== null) {
+        previousResult = Math.max(previousResult ?? 0, latestNonRenderableMessageSeq);
+      }
       return previousResult;
     };
   }, [activeServerId, latestTurnStatus, normalizedSessionId, sessionSeq]);
@@ -3825,10 +3830,10 @@ export function useIsSessionDraftsReady(): boolean {
   return getStorage()((state) => state.isSessionDraftsReady);
 }
 
-export function useProfile<T>(select: (profile: StorageState['profile']) => T): T;
+export function useProfile<T>(select: (profile: StorageState['profile']) => T, keys?: readonly (keyof StorageState['profile'])[]): T;
 export function useProfile(): StorageState['profile'];
-export function useProfile(select?: (profile: StorageState['profile']) => unknown) {
-  return getStorage()(useShallow((state) => select ? select(state.profile) : state.profile));
+export function useProfile(select?: (profile: StorageState['profile']) => unknown, keys?: readonly (keyof StorageState['profile'])[]) {
+  return getStorage()(useShallow((state) => select ? select(state.profile) : state.profile), keys === undefined ? undefined : { profile: keys });
 }
 
 /** Explicit Home readers follow the applied runtime; unscoped Settings retain their Profile scope. */
