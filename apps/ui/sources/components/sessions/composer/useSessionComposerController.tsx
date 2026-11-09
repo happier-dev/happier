@@ -1970,7 +1970,6 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
         agentId,
         activeModelId: providerModelSelection?.ref.modelId ?? modelMode,
-        connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts,
     });
     const {
         quotaProfileIdentity: connectedServiceQuotaProfileIdentity,

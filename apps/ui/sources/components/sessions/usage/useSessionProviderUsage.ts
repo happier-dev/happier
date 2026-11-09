@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readProviderAccountUsageRecordIdsFromMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
 
@@ -32,9 +31,6 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { useProfile, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-
-const NO_CONNECTED_ACCOUNTS: readonly PluginProjectedAgentConnectedAccountPurposeV2[] =
-  Object.freeze([]);
 
 const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormatter =
   {
@@ -91,10 +87,6 @@ export type SessionProviderUsageInput = Readonly<{
   agentId: string | null;
   /** The Session's active model: its model selection, else its composer model mode. */
   activeModelId: string | null | undefined;
-  /** The Session Agent's catalog account declarations, when the caller resolved its catalog entry. */
-  connectedAccounts:
-    | readonly PluginProjectedAgentConnectedAccountPurposeV2[]
-    | undefined;
 }>;
 
 /**
@@ -105,8 +97,17 @@ export type SessionProviderUsageInput = Readonly<{
  */
 export function useSessionProviderUsage(input: SessionProviderUsageInput) {
   const { session, serverId, agentId, activeModelId } = input;
-  const connectedAccounts = input.connectedAccounts ?? NO_CONNECTED_ACCOUNTS;
   const ownerMetadata = readSessionOwnerMetadataView(session);
+  const machineId =
+    useSessionReachableMachineTarget(session.id, serverId)?.machineId ??
+    ownerMetadata?.machineId ??
+    null;
+  const catalogIdentity = useSessionAgentCatalogIdentity({
+    agentId: agentId ?? '',
+    machineId: typeof machineId === 'string' ? machineId : null,
+    serverId,
+  });
+  const connectedAccounts = catalogIdentity.entry.connectedAccounts;
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
   // Only the connected-service facts usage reads; a timestamp-only Account update leaves it still.
   const accountProfile = useProfile((profile) => ({
@@ -414,20 +415,10 @@ export function useSessionProviderUsageGauge(
   const activeModelId =
     composerOptionsInput?.modelSelectionIntentV1?.selection?.modelId ??
     composerSubject.modelMode;
-  const machineId =
-    useSessionReachableMachineTarget(session.id, serverId)?.machineId ??
-    ownerMetadata?.machineId ??
-    null;
-  const catalogIdentity = useSessionAgentCatalogIdentity({
-    agentId: composerSubject.agentId ?? '',
-    machineId: typeof machineId === 'string' ? machineId : null,
-    serverId,
-  });
   return useSessionProviderUsage({
     session,
     serverId,
     agentId: composerSubject.agentId,
     activeModelId,
-    connectedAccounts: catalogIdentity.entry.connectedAccounts,
   }).gauge;
 }

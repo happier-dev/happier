@@ -108,4 +108,21 @@ describe('useSessionProviderUsageGauge', () => {
     expect(hook.getCurrent()).toBeNull();
     await hook.unmount();
   });
+
+  it('resolves account declarations at the usage owner so a caller cannot select a different gauge source', async () => {
+    const { useSessionProviderUsage, useSessionProviderUsageGauge } = await import('./useSessionProviderUsage');
+    const session = connectedCodexSession();
+    const serverId = getActiveServerSnapshot().serverId;
+    // A stale caller's entry may differ from the inert Session catalog summary.
+    const composerInput = { session, serverId, agentId: 'codex', activeModelId: null,
+      connectedAccounts: [{ purpose: 'model_upstream', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } }] } as const;
+    const hook = await renderHook(() => ({
+      composer: useSessionProviderUsage(composerInput).gauge,
+      companion: useSessionProviderUsageGauge({ session, serverId }),
+    }), { wrapper: Wrapper });
+    await flushHookEffects({ cycles: 12, turns: 12 });
+    expect(hook.getCurrent().companion).toMatchObject({ serviceId: 'openai-codex', remainingPct: 60 });
+    expect(hook.getCurrent().composer).toEqual(hook.getCurrent().companion);
+    await hook.unmount();
+  });
 });
