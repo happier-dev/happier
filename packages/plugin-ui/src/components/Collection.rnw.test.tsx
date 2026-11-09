@@ -3549,6 +3549,28 @@ describe('the search field', () => {
     view.unmount();
   });
 
+  it('keeps the search field, its focus and caret while the window crosses the phone breakpoint (QB80)', async () => {
+    // Live READY159 (QA-COLLECTION r159): typing at 1440, then 390, the query and caret stayed but focus was lost.
+    const view = mount({
+      search: { label: 'Search entries', value: '1998', onValueChange: () => undefined, testID: 'search' },
+      // The shared toolbar composes the search at both widths, as the PRs & Issues page does.
+      header: (slots) => <CollectionToolbar slots={slots} lens={<Text testID="lens">Mine</Text>} />,
+    });
+    view.measure(1440);
+    const field = () => (view.query('search')!.matches('input') ? view.query('search')! : view.query('search')!.querySelector('input'))!;
+    const before = field();
+    await act(async () => { before.focus(); before.setSelectionRange(1, 1); });
+    expect(document.activeElement).toBe(before);
+    for (const width of [390, 1440, 390]) {
+      view.measure(width);
+      await act(async () => { await Promise.resolve(); });
+      expect(field(), `the field is remounted at ${width}`).toBe(before);
+      expect(document.activeElement, `focus is lost at ${width}`).toBe(before);
+      expect(before.selectionStart).toBe(1);
+    }
+    view.unmount();
+  });
+
   it('draws no token line while nothing narrows the list', () => {
     const view = mount({ search: { label: 'Search entries', value: '', onValueChange: () => undefined, testID: 'search' } });
     view.measure(1440);
@@ -6137,6 +6159,22 @@ describe('the Collection toolbar', () => {
     node.measureInWindow = (callback) => callback(0, y, width, height);
     act(() => node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y, width, height } } }));
   }
+
+  it('keeps the search field mounted and focused while the toolbar folds and unfolds across the width breakpoint', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1440);
+    const input = view.query('search.field')!.querySelector('input')!;
+    act(() => { input.focus(); });
+    expect(document.activeElement).toBe(input);
+    // Typing at a wide window, then the window narrows to a phone: the same field keeps the person's focus.
+    view.measure(390);
+    expect(view.query('search.field')!.querySelector('input')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    view.measure(1440);
+    expect(view.query('search.field')!.querySelector('input')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    view.unmount();
+  });
 
   it.each([false, true])('opens the filters from the funnel at the search field\'s end, with no chip row (folded=%s)', (folded) => {
     const calls: string[] = [];
