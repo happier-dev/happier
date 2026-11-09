@@ -296,6 +296,31 @@ describe('created machine resource rows (UIR5)', () => {
     expect(testIds(healthy, 'managed-machine.observation-check')).toHaveLength(1);
   });
 
+  it('adds no freshness card when a healthy joined machine has nothing to date or check', async () => {
+    const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
+    const machine = await boundMachine({ desired: 'start',
+      observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } });
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ checkNow: vi.fn() }} />);
+    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(0);
+    expect(testIds(screen, 'managed-machine.progress')).toHaveLength(0);
+  });
+
+  it('offers Start on an asleep joined machine, on the row its freshness dates', async () => {
+    const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
+    const start = vi.fn();
+    const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'stopped', storage: 'retained' } });
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start }} />);
+    expect(testIds(screen, 'managed-machine.progress:start')).toHaveLength(1);
+    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
+    await screen.pressByTestIdAsync('managed-machine.progress:start');
+    expect(start).toHaveBeenCalledTimes(1);
+    const { t } = await import('@/text');
+    expect(screen.getTextContent()).toContain(t('managedMachines.actions.start'));
+    // No handler, nothing to offer: the header stays the only word for the state.
+    const noStart = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{}} />);
+    expect(testIds(noStart, 'managed-machine.progress')).toHaveLength(0);
+  });
+
   it('keeps one freshness when the created-machine list could not be re-read: its time, the reason and Retry', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const retry = vi.fn();

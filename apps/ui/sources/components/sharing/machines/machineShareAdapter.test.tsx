@@ -8,7 +8,7 @@ import { ShareSheet } from '../ShareSheet';
 import { MachineAdminPowerSection } from '@/components/machines/security/MachineAdminPowerSection';
 import { Item } from '@/components/ui/lists/Item';
 import { createMachineShareAdapter } from './machineShareAdapter';
-import { useMachineShareController } from './useMachineShareController';
+import { describeMachineRemovalConsequences, useMachineShareController } from './useMachineShareController';
 import { t } from '@/text';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -38,6 +38,29 @@ const initial: MachineAccessGrantsListResponseV1 = {
         audience: [{ accountId: 'bob', displayName: 'Bob', readiness: 'ready', reason: null, canPrepareKeys: false }],
         removal: { losesAccessAccountIds: ['bob'] } }],
 };
+
+describe('Machine removal consequences', () => {
+    const bobGrant = { accountId: 'bob', name: 'Bob' };
+
+    it('names who loses access and the work each of them has running, with the natural boundary', () => {
+        expect(describeMachineRemovalConsequences({ machine: 'Devbox', people: [bobGrant, { accountId: 'cara', name: 'Cara' }],
+            requesters: [{ accountId: 'bob', displayName: 'Bob', sessions: 2, tasks: 1, terminals: 1 },
+                { accountId: 'dana', displayName: 'Dana', sessions: 3, tasks: 0, terminals: 0 }] }))
+            .toEqual([t('machines.sharing.effectiveLoss', { people: 'Bob, Cara', machine: 'Devbox' }),
+                t('machines.sharing.removalWork', { person: 'Bob', work: `${t('machineWork.sessions', { count: 2 })} · ${t('machineWork.tasks', { count: 1 })} · ${t('machineWork.terminals', { count: 1 })}`, machine: 'Devbox' })]);
+    });
+
+    it('claims no running work when it could not be read or there is none', () => {
+        const effect = t('machines.sharing.effectiveLoss', { people: 'Bob', machine: 'Devbox' });
+        expect(describeMachineRemovalConsequences({ machine: 'Devbox', people: [bobGrant], requesters: null })).toEqual([effect]);
+        expect(describeMachineRemovalConsequences({ machine: 'Devbox', people: [bobGrant],
+            requesters: [{ accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 0, terminals: 0 }] })).toEqual([effect]);
+    });
+
+    it('says they keep access another way when nobody loses their last access', () => {
+        expect(describeMachineRemovalConsequences({ machine: 'Devbox', people: [], requesters: null })).toEqual([t('machines.sharing.overlap')]);
+    });
+});
 
 describe('Machine sharing through the canonical controller and sheet', () => {
     it.each(['full', 'inline'] as const)('keeps isolation pending until the supported Machine policy arrives without changing grants (%s)', async (presentation) => {
@@ -238,7 +261,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
     it.each([
         ['machines.access.grant.remove', false], ['machines.access.grant.remove', true],
         ['machines.access.leave', false], ['machines.access.leave', true],
-    ] as const)('applies %s directly with waiver=%s without another local confirmation', async (actionId, waived) => {
+    ] as const)('asks in the row before %s with waiver=%s, then applies once on Confirm', async (actionId, waived) => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
         const leaving = actionId === 'machines.access.leave';
@@ -268,12 +291,21 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const rowId = leaving ? 'machine-share-your-access' : 'machine-share-grant-account:bob';
             await vi.waitFor(() => expect(screen.findByTestId(rowId)).not.toBeNull());
             await screen.pressByTestIdAsync(rowId);
-            // The person leaving reads their own consequence; a manager removing someone reads the census of who loses access.
+            const deletes = () => home.requests.filter(request => request.method === 'DELETE');
+            // At rest the row says nothing about removal; the request opens the review in place and changes nothing.
+            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')).toBeNull();
+            await screen.pressByTestIdAsync('machine-share-remove:account:bob');
+            expect(deletes()).toHaveLength(0);
+            // The person leaving reads their own consequence; a manager removing someone reads who loses access, by name.
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(leaving
                 ? t('machines.sharing.leaveLoss', { machine: 'Devbox' })
-                : `Bob: ${t('machines.sharing.effectiveLoss')}`);
+                : t('machines.sharing.effectiveLoss', { people: 'Bob', machine: 'Devbox' }));
+            await screen.pressByTestIdAsync('machine-share-remove-cancel:account:bob');
+            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')).toBeNull();
+            expect(deletes()).toHaveLength(0);
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
-            await vi.waitFor(() => expect(home.requests.filter(request => request.method === 'DELETE')).toHaveLength(1));
+            await screen.pressByTestIdAsync('machine-share-remove-confirm:account:bob');
+            await vi.waitFor(() => expect(deletes()).toHaveLength(1));
             expect(home.requests.find(request => request.method === 'DELETE')?.body).toEqual(leaving ? {} : { principal: bob });
             expect(Modal.confirm).not.toHaveBeenCalled();
         } finally { await home.dispose(); }
@@ -443,7 +475,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                 .map(node => node.props.children).join(' ');
             expect(consequences).toContain('Bob');
             expect(consequences).not.toContain('Cara');
-            expect(consequences).toContain(t('machines.sharing.effectiveLoss'));
+            expect(consequences).toContain(t('machines.sharing.effectiveLoss', { people: 'Bob', machine: 'Devbox' }));
         } finally { await home.dispose(); }
     });
 
@@ -649,7 +681,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(screen.findByTestId('machine-share-retry:account:bob')).toBeNull();
             expect(screen.findByTestId('machine-share-search')?.props.value).toBe('Bob');
             expect(writes).toEqual([{ principal: bob, level: 'admin' }, { principal: bob, level: 'admin' }]);
-            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(`Bob: ${t('machines.sharing.effectiveLoss')}`);
+            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')).toBeNull();
             expect(screen.findByTestId('machine-share-trusted-os')).not.toBeNull();
             expect(screen.getTextContent()).toContain(t('machines.sharing.recipientTrustLead', { machine: 'Devbox' }));
             // The trust fact is one line at the point of choice; its explanation waits behind Details.
@@ -807,6 +839,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             await screen.pressByTestIdAsync('machine-share-your-access');
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(t('machines.sharing.overlap'));
+            await screen.pressByTestIdAsync('machine-share-remove-confirm:account:bob');
             await vi.waitFor(() => expect(screen.findByTestId('machine-share-retry:account:bob')).not.toBeNull());
             expect(screen.findByTestId('machine-share-remove-confirm:account:bob')).toBeNull();
             failLeave = false;
@@ -835,7 +868,8 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const screen = await renderScreen(<Surface />);
             await vi.waitFor(() => expect(screen.findByTestId('machine-share-your-access')).not.toBeNull());
             await screen.pressByTestIdAsync('machine-share-your-access');
-            // The owner-facing census sentence ("Bob: People losing their last access…") is not how the
+            await screen.pressByTestIdAsync('machine-share-remove:account:bob');
+            // The owner-facing census sentence ("Bob can't start new work…") is not how the
             // person leaving reads their own consequence.
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children)
                 .toBe(t('machines.sharing.leaveLoss', { machine: 'Devbox' }));

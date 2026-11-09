@@ -70,7 +70,7 @@ import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
-import { canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
+import { managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -593,7 +593,7 @@ export function ManagedMachineSections(props: SectionProps) {
         }
     })(), { tag: 'ManagedMachineSections.rebuildReview' });
     // Native controls sit at the receipt's foot, where its cost and launch state the consequence.
-    const receiptActions: NonNullable<ManagedReceiptModel['secondary']> = canManage && bound && machine.archivedAt === undefined ? [
+    const allReceiptActions: NonNullable<ManagedReceiptModel['secondary']> = canManage && bound && machine.archivedAt === undefined ? [
         ...(machine.creationState === 'active' ? managedReceiptPowerIntents(machine, supportedIntents, enrolledMachine && reachabilityScope ? {
             machineId: enrolledMachine.id,
             online: describeMachinePresenceLine(enrolledMachine, presenceNowMs, undefined, reachabilityScope).online,
@@ -629,7 +629,7 @@ export function ManagedMachineSections(props: SectionProps) {
         credentialPresentations: credentialPresentation.presentationsByKey }),
         // A resource that no longer exists neither runs nor bills: its receipt is only the record of how it was made.
         ...(resourceConfirmedAbsent ? { cost: null } : {}),
-        ...(receiptActions.length ? { secondary: receiptActions } : {}) };
+        ...(allReceiptActions.length ? { secondary: allReceiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
     const nativeEndState = resolveManagedNativeEndState({
@@ -658,6 +658,12 @@ export function ManagedMachineSections(props: SectionProps) {
         } } : {}),
         providerAvailable: (!machine.controller || requiredController) && provisionerPresentation.projectionReady ? provisionerPresentation.title !== null : undefined,
         ...(controller && controllerPresence && controllerName !== null ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
+    // Asleep with its disk kept, Start is the next step: it moves to the state row that opens the page, the same action
+    // and the same offer, so it is one press from where the person looks on every width.
+    const startAction = allReceiptActions.find(action => action.testID === 'managed-machine.start' && !action.disabled);
+    const offerStartOnRow = startAction !== undefined && managedCreationState(machine, creationContext).kind === 'stoppedStorage';
+    const receiptActions = offerStartOnRow ? allReceiptActions.filter(action => action !== startAction) : allReceiptActions;
+    const pageReceipt: ManagedReceiptModel = offerStartOnRow ? { ...receipt, secondary: receiptActions } : receipt;
     const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
         // The reviewed facts already say whether it is finite, so the read-only rule keeps the shape it will have.
         finiteOnly: (policyParent?.capabilities ?? machine.reviewedFacts?.retentionCapabilities)?.finiteOnly,
@@ -743,7 +749,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
                         { tag: 'ManagedMachineSections.delete' });
                 } }} /></View> : null;
-    return <ManagedReceiptColumns receipt={receipt} compact={compact} testID="managed-machine.detail" receiptFollowUp={deleteReviewView}>
+    return <ManagedReceiptColumns receipt={pageReceipt} compact={compact} testID="managed-machine.detail" receiptFollowUp={deleteReviewView}>
         {pendingDeleteApprovalId
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}
@@ -759,8 +765,10 @@ export function ManagedMachineSections(props: SectionProps) {
                 `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.serverId)}` as never) } : {})}
             answerPrompt={answerPrompt}
             checking={pending === 'machines.managed.inspect' && inspectPurpose === 'check'}
+            starting={pending === 'machines.managed.power.set'}
             providerAvailable={creationContext.providerAvailable}
             mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current && !resourceConfirmedAbsent ? { checkNow: inspect } : {}),
+            ...(offerStartOnRow ? { start: startAction.onPress } : {}),
             ...(canCancelCreation && canRecoverCreation ? { cancel: cancelCreation } : {}),
             ...(recoveryConsoleUrl ? { openProvider: () => {
                 if (!props.binding?.isCurrent()) return;

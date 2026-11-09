@@ -132,7 +132,10 @@ export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enroll
  * Enrolled healthy or stopped resources use the observation row instead of repeating their state: the page header's
  * presence line already says Stopped or Asleep in the Machines rail's word (`managedMachineHeaderPresence`).
  */
-export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1, 'enrolledMachineId'>, state: ManagedLifecycleState): boolean {
+export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1, 'enrolledMachineId'>, state: ManagedLifecycleState,
+    options?: Readonly<{ offersStart?: boolean }>): boolean {
+    // The header says "Asleep" for a joined machine; the row earns its place only by carrying Start.
+    if (state.kind === 'stoppedStorage' && options?.offersStart === true) return true;
     return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage'
         && state.kind !== 'powerPending' && state.kind !== 'stopPending';
 }

@@ -25,7 +25,7 @@ export const machineSharing = createMachineSharingTranslations({
     leave: 'この共有から退出', inherited: '{audience} 経由のアクセス権が残っています。管理者に変更を依頼してください。', unavailable: '{machine} のアクセス権を確認できませんでした。',
     saveFailed: '{person} の「{draft}」を保存できませんでした。現在も「{current}」のままです。',
     leaveLoss: '退出すると、{machine} で新しい作業を開始できなくなります。受け付け済みのタスクは完了まで実行でき、開いているターミナルは閉じられます。所有者が再び共有した場合にのみ戻れます。',
-    effectiveLoss: '最後のアクセス権を失う人は、新しい作業を開始できなくなります。受け付け済みのタスクは完了まで実行でき、開いているターミナルは閉じられます。Happier の履歴は本人のものとして残り、取得済みのデータは回収できません。',
+    effectiveLoss: "{people} は {machine} で新しい作業を開始できなくなります。実行中の作業は完了し、開いているターミナルは今すぐ閉じられます。Happier の履歴は本人のもののままで、すでに取得されたデータは取り消せません。", removalWork: "{person} は現在 {machine} で {work} を実行しています。",
     overlap: 'チーム経由など、別の方法でまだアクセスできます。作業は続きます。', custodianProtected: '元のマシン所有者はここでは削除・変更できません。',
     unpublished: "{machine} の所有者がまだ共有できる詳細を公開していません。", custodianOnly: "これは {machine} の所有者だけが行えます。管理可能には含まれません。", upgradeRequired: "{machine} の所有者がこのマシンの Happier を更新する必要があります。", unpublishedTag: "詳細は未公開", unpublishedMember: "{machine} の所有者が共有できる詳細を公開するまで、{person} は開けません。",
 });

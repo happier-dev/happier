@@ -25,7 +25,7 @@ export const machineSharing = createMachineSharingTranslations({
     leave: 'Deixa aquesta compartició', inherited: 'Encara tens accés a través de {audience}. Demana al seu gestor que canviï el teu accés.', unavailable: 'No s’ha pogut comprovar l’accés a {machine}.',
     saveFailed: 'No s’ha pogut desar «{draft}» per a {person}. Encara té «{current}».',
     leaveLoss: 'En sortir, no podràs iniciar feina nova a {machine}. Les tasques ja acceptades poden acabar; els terminals oberts es tanquen. Només hi podràs tornar si el propietari te la torna a compartir.',
-    effectiveLoss: 'Qui perdi l’últim accés no podrà iniciar feina nova. Les tasques ja acceptades poden acabar; els terminals oberts es tanquen. L’historial de Happier continua sent seu; les dades ja obtingudes no es poden retirar.',
+    effectiveLoss: "{people} no podrà iniciar feina nova a {machine}. La feina que ja s’executa acabarà; els terminals oberts es tanquen ara. L’historial de Happier continua sent seu; les dades ja obtingudes no es poden retirar.", removalWork: "{person} té {work} a {machine} ara mateix.",
     overlap: 'Encara hi tenen accés d’una altra manera, per exemple a través d’un equip. El seu treball continua.', custodianProtected: 'El propietari original de la màquina no es pot eliminar ni substituir aquí.',
     unpublished: "El propietari de {machine} encara no n'ha publicat detalls que es puguin compartir.", custodianOnly: "Només el propietari de {machine} pot fer això. Pot gestionar no ho inclou.", upgradeRequired: "El propietari de {machine} hi ha d'actualitzar Happier perquè això funcioni.", unpublishedTag: "Detalls encara no publicats", unpublishedMember: "{person} no pot obrir {machine} fins que el propietari en publiqui detalls que es puguin compartir.",
 });

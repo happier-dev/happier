@@ -25,7 +25,7 @@ export const machineSharing = createMachineSharingTranslations({
     leave: 'Opuść udostępnianie', inherited: 'Nadal masz dostęp przez {audience}. Poproś administratora o zmianę dostępu.', unavailable: 'Nie udało się sprawdzić dostępu do {machine}.',
     saveFailed: 'Nie udało się zapisać „{draft}” dla {person}. Nadal obowiązuje „{current}”.',
     leaveLoss: 'Po wyjściu nie możesz rozpoczynać nowej pracy na {machine}. Już przyjęte zadania mogą się zakończyć; otwarte terminale zostaną zamknięte. Wrócisz tylko wtedy, gdy właściciel ponownie Ci ją udostępni.',
-    effectiveLoss: 'Osoby tracące ostatni dostęp nie mogą rozpoczynać nowej pracy. Już przyjęte zadania mogą się zakończyć; otwarte terminale zostaną zamknięte. Historia Happier pozostanie ich własnością; uzyskanych już danych nie można odebrać.',
+    effectiveLoss: "{people} nie może rozpoczynać nowej pracy na {machine}. Trwająca praca się zakończy; otwarte terminale zostaną teraz zamknięte. Historia Happier pozostaje ich własnością; uzyskanych już danych nie można odebrać.", removalWork: "{person} ma teraz {work} na {machine}.",
     overlap: 'Nadal mają dostęp w inny sposób, na przykład przez zespół. Ich praca trwa dalej.', custodianProtected: 'Nie można tutaj usunąć ani zastąpić pierwotnego właściciela maszyny.',
     unpublished: "Właściciel {machine} nie opublikował jeszcze szczegółów, które można udostępnić.", custodianOnly: "Tylko właściciel {machine} może to zrobić. Uprawnienie Może zarządzać tego nie obejmuje.", upgradeRequired: "Właściciel {machine} musi zaktualizować na niej Happier, aby to zadziałało.", unpublishedTag: "Szczegóły jeszcze nieopublikowane", unpublishedMember: "{person} nie otworzy {machine}, dopóki właściciel nie opublikuje szczegółów, które można udostępnić.",
 });

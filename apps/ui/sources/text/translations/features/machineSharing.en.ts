@@ -27,7 +27,7 @@ export const machineSharing = createMachineSharingTranslations({
     leave: 'Leave this share', inherited: 'You still have access through {audience}. Ask its manager to change your access.', unavailable: 'Access to {machine} could not be checked.',
     saveFailed: 'Couldn’t save “{draft}” for {person}. They still have “{current}”.',
     leaveLoss: 'Leaving prevents new work on {machine}. Already accepted tasks can finish; open terminals close. You can come back only if its owner shares it with you again.',
-    effectiveLoss: 'People losing their last access cannot start new work. Already accepted tasks can finish; open terminals close. Their Happier history stays theirs; already obtained data cannot be retracted.',
+    effectiveLoss: "{people} can't start new work on {machine}. Work already running finishes; open terminals there close now. Their Happier history stays theirs, and anything already copied can't be taken back.", removalWork: "{person} has {work} on {machine} right now.",
     overlap: 'They still have access another way, such as through a Team. Their work keeps running.', custodianProtected: 'The original machine owner cannot be removed or replaced here.',
     unpublished: "The owner of {machine} hasn't published details that can be shared yet.", custodianOnly: "Only the owner of {machine} can do this. Can manage doesn't include it.", upgradeRequired: "The owner of {machine} needs to update Happier on it before this works.", unpublishedTag: "Details not published yet", unpublishedMember: "{person} can't open {machine} until its owner publishes details that can be shared.",
 });

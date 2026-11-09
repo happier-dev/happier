@@ -25,7 +25,7 @@ export const machineSharing = createMachineSharingTranslations({
     leave: '退出此共享', inherited: '你仍透過 {audience} 擁有存取權。請聯絡管理者變更權限。', unavailable: '無法檢查 {machine} 的存取權。',
     saveFailed: '無法為 {person} 儲存「{draft}」。目前仍為「{current}」。',
     leaveLoss: '離開後，你無法在 {machine} 上開始新工作。已接受的任務可以執行完畢；開啟的終端機會關閉。只有擁有者再次與你共用，你才能回來。',
-    effectiveLoss: '失去最後一項存取權的人無法開始新工作。已接受的任務可以執行完畢；開啟的終端機會關閉。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。',
+    effectiveLoss: "{people} 無法在 {machine} 上開始新工作。已在執行的工作會完成；開啟的終端機現在關閉。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。", removalWork: "{person} 目前在 {machine} 上有 {work}。",
     overlap: '他們仍可透過其他方式存取，例如透過團隊。他們的工作會繼續執行。', custodianProtected: '無法在這裡移除或取代機器的原始擁有者。',
     unpublished: "{machine} 的擁有者尚未發布可分享的詳細資訊。", custodianOnly: "只有 {machine} 的擁有者可以執行此操作。「可以管理」不包含此權限。", upgradeRequired: "{machine} 的擁有者需要先在這台機器上更新 Happier。", unpublishedTag: "詳細資訊尚未發布", unpublishedMember: "在 {machine} 的擁有者發布可分享的詳細資訊之前，{person} 無法開啟它。",
 });

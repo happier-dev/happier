@@ -142,6 +142,12 @@ describe('managed creation presentation', () => {
     const unjoined = { ...stopped, enrolledMachineId: undefined };
     expect(isManagedCreationStateRowVisible(unjoined, managedCreationState(unjoined))).toBe(true);
   });
+  it('keeps the row of a joined stopped machine when it offers Start', () => {
+    const stopped = { ...machine, enrolledMachineId: 'guest', desired: 'stop' as const,
+      observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' }) };
+    expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped), { offersStart: true })).toBe(true);
+    expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped), { offersStart: false })).toBe(false);
+  });
   it.each(['stopped', 'suspended'] as const)('offers wake after native %s while enrolled presence still says online', power => {
     const parked = { ...machine, enrolledMachineId: 'guest', desired: power === 'stopped' ? 'stop' as const : 'suspend' as const,
       observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 2, power, storage: 'retained' }) };

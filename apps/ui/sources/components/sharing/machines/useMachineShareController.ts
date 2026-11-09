@@ -1,3 +1,6 @@
+import type { MachineWorkSummaryV1 } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
+import { describeMachineWorkCounts } from './MachineWorkSummarySection';
+import { machineWorkSummaryKey, useMachineWorkSummaries } from './machineWorkSummary';
 import { useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
 import * as React from 'react';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -27,7 +30,6 @@ import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/
 import { describeMachineShareTrust } from './machineShareTrust';
 
 export type MachineShareGrantRow = ShareGrantRowModel & Readonly<{
-    removalConsequences: readonly string[];
     readiness: 'ready' | 'key_pending' | 'refused';
     audience: MachineAccessGrantRowV1['audience'];
     canPrepareKeys: boolean;
@@ -72,9 +74,25 @@ function errorCode(value: unknown): string {
     return 'machine_access_request_failed';
 }
 
+/**
+ * What a removal changes, for the row's review (lab m-share R): who loses their last access and what happens at the
+ * natural boundary, then the work each of them has running. Unread work claims nothing, never a reassuring zero.
+ */
+export function describeMachineRemovalConsequences(input: Readonly<{ machine: string;
+    people: readonly Readonly<{ accountId: string; name: string }>[];
+    requesters: Extract<MachineWorkSummaryV1, { kind: 'current' }>['requesters'] | null }>): readonly string[] {
+    if (input.people.length === 0) return [t('machines.sharing.overlap')];
+    const work = (input.requesters ?? []).flatMap(requester => {
+        const person = input.people.find(candidate => candidate.accountId === requester.accountId);
+        const counts = person ? describeMachineWorkCounts(requester) : '';
+        return person && counts ? [t('machines.sharing.removalWork', { person: person.name, work: counts, machine: input.machine })] : [];
+    });
+    return [t('machines.sharing.effectiveLoss', { people: input.people.map(person => person.name).join(', '), machine: input.machine }), ...work];
+}
+
 /** One Machine's permission projection; all reads and writes use canonical Actions. */
-export function useMachineShareController(input: Readonly<{ machineId: string; machineName: string; scope: ServerAccountScope }>) {
-    const { machineId, machineName, scope } = input;
+export function useMachineShareController(input: Readonly<{ machineId: string; machineName: string; scope: ServerAccountScope; online?: boolean | null }>) {
+    const { machineId, machineName, scope, online } = input;
     const viewerProfile = useShareViewerProfile(scope);
     const principal = (ref: PrincipalRefV1, name: string | null) => presentSharePrincipal({ ref, name,
         viewerAccountId: scope.accountId, profile: ref.kind === 'account' && ref.accountId === scope.accountId ? viewerProfile : null });
@@ -261,12 +279,26 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         await settle(result.result);
     }, [target, context, execute, scope, machineName, approval.requestApproval, load, clearProjection]);
 
+    // The Action policy treats a direct press as enough (`uiConfirmation: 'direct'`), so the row owns the review.
+    const [confirmingRemoval, setConfirmingRemoval] = React.useState<string | null>(null);
+    const canRemove = React.useCallback((ref: PrincipalRefV1) => (canWrite || (canLeave && sessionAccessSubjectKey(ref) === ownKey))
+        && !(ref.kind === 'account' && ref.accountId === response?.custodian.accountId), [canWrite, canLeave, ownKey, response]);
     const requestRemove = React.useCallback<ShareSheetActions['requestRemove']>(ref => {
-        if (!canWrite && !(canLeave && sessionAccessSubjectKey(ref) === ownKey)) return;
-        if (ref.kind === 'account' && ref.accountId === response?.custodian.accountId) return;
-        if (sessionAccessSubjectKey(ref) === ownKey && canLeave) void mutate({ actionId: 'machines.access.leave', principal: ref });
-        else if (canWrite) void mutate({ actionId: 'machines.access.grant.remove', principal: ref });
-    }, [canWrite, canLeave, ownKey, response, mutate]);
+        if (canRemove(ref)) setConfirmingRemoval(sessionAccessSubjectKey(ref));
+    }, [canRemove]);
+    const confirmRemove = React.useCallback<ShareSheetActions['confirmRemove']>(ref => {
+        const key = sessionAccessSubjectKey(ref);
+        if (confirmingRemoval !== key || !canRemove(ref)) return;
+        setConfirmingRemoval(null);
+        void mutate(key === ownKey && canLeave ? { actionId: 'machines.access.leave', principal: ref }
+            : { actionId: 'machines.access.grant.remove', principal: ref });
+    }, [confirmingRemoval, canRemove, ownKey, canLeave, mutate]);
+    // The work a removal would touch is read only while its review is open.
+    const workTargets = React.useMemo(() => confirmingRemoval === null ? [] : [{ machineId, scope, online: online ?? null }],
+        [confirmingRemoval === null, machineId, scope.serverId, scope.accountId, online]);
+    const workRead = useMachineWorkSummaries(workTargets);
+    const workState = workTargets[0] ? workRead.states.get(machineWorkSummaryKey(workTargets[0])) : undefined;
+    const workRequesters = workState?.kind === 'summary' && workState.summary.kind === 'current' ? workState.summary.requesters : null;
 
     const actions = React.useMemo<ShareSheetActions>(() => ({
         setQuery, retryDirectory: directory.retry, loadMore: directory.loadMore,
@@ -280,23 +312,21 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             const operation = state.operations[sessionAccessSubjectKey(ref)];
             if (intent && operation?.kind === 'error' && operation.error.retryable && (canWrite || canLeave)) void mutate(intent); },
         requestRemove,
-        confirmRemove: requestRemove,
-        // Machine removal confirmation belongs to the Action policy, not this sheet.
-        cancelRemove: () => undefined,
+        confirmRemove,
+        cancelRemove: () => setConfirmingRemoval(null),
         explain: reason => Modal.alert(t('machines.sharing.title'), reason.message),
-    }), [directory.retry, directory.loadMore, canWrite, canLeave, mutate, state.operations, requestRemove, response]);
+    }), [directory.retry, directory.loadMore, canWrite, canLeave, mutate, state.operations, requestRemove, confirmRemove, response]);
 
-    const removal = (ref: PrincipalRefV1): MachineShareGrantRow['removal'] => {
+    const removal = (ref: PrincipalRefV1, consequences: readonly string[]): MachineShareGrantRow['removal'] => {
         if (ref.kind === 'account' && ref.accountId === response?.custodian.accountId) return { kind: 'blocked',
             reason: { code: 'custodian_protected', message: t('machines.sharing.custodianProtected') } };
-        return { kind: 'allowed' };
+        return confirmingRemoval === sessionAccessSubjectKey(ref) ? { kind: 'confirming', consequences } : { kind: 'allowed' };
     };
     const removalConsequences = (losesAccessAccountIds: readonly string[], audience: MachineAccessGrantRowV1['audience'] = []): readonly string[] => {
-        if (losesAccessAccountIds.length === 0) return [t('machines.sharing.overlap')];
         const audienceNames = new Map(audience.map(member => [member.accountId, member.displayName]));
-        const people = losesAccessAccountIds.map(accountId =>
-            principal({ kind: 'account', accountId }, audienceNames.get(accountId) ?? null).displayName).join(', ');
-        return [`${people}: ${t('machines.sharing.effectiveLoss')}`];
+        return describeMachineRemovalConsequences({ machine: machineName, requesters: workRequesters,
+            people: losesAccessAccountIds.map(accountId => ({ accountId,
+                name: principal({ kind: 'account', accountId }, audienceNames.get(accountId) ?? null).displayName })) });
     };
     const grants = React.useMemo<readonly MachineShareGrantRow[]>(() => (response?.canManage ? response.grants : []).map((row): MachineShareGrantRow => {
         const key = sessionAccessSubjectKey(row.principal);
@@ -309,18 +339,18 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             level: incompatible ? { kind: 'locked', value: row.level,
                 reason: failure('recipient_encryption_incompatible', machineName, row.display.name ?? undefined) }
                 : { kind: 'editable', value: draft?.actionId === 'machines.access.grant.set' ? draft.level : row.level, options: ['view', 'admin'] },
-            removal: removal(row.principal), removalConsequences: removalConsequences(row.removal.losesAccessAccountIds, row.audience), operation };
-    }), [response, state.operations, machineName, scope.accountId, viewerProfile]);
+            removal: removal(row.principal, removalConsequences(row.removal.losesAccessAccountIds, row.audience)), operation };
+    }), [response, state.operations, machineName, scope.accountId, viewerProfile, confirmingRemoval, workRequesters]);
     const inherited = (response?.ownAccessSources ?? []).filter(source => source.principal.kind !== 'account');
     const viewerRow: MachineShareGrantRow | null = response && !isCustodian ? {
         grant: ownPrincipal, principal: principal(ownPrincipal, null), viewer: true,
         readiness: response.access.accessState,
         audience: [], canPrepareKeys: false,
         level: { kind: 'locked', value: response.access.role === 'manage' ? 'admin' : 'view', reason: { code: 'own_access', message: t('machines.sharing.ownHistory', { machine: machineName }) } },
-        removal: response.ownDirectGrant ? removal(ownPrincipal) : { kind: 'blocked',
-            reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
         // Address the person leaving directly, rather than using the owner's audience summary.
-        removalConsequences: inherited.length === 0 ? [t('machines.sharing.leaveLoss', { machine: machineName })] : removalConsequences([]),
+        removal: response.ownDirectGrant ? removal(ownPrincipal, inherited.length === 0
+            ? [t('machines.sharing.leaveLoss', { machine: machineName })] : removalConsequences([])) : { kind: 'blocked',
+            reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
         operation: state.operations[ownKey] ?? IDLE,
     } : null;
     const model: ShareSheetModel<MachineShareGrantRow> = {

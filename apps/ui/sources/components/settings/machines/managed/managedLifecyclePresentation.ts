@@ -60,6 +60,7 @@ export type ManagedLifecycleState =
 export type ManagedLifecycleAction =
   /** Opens the Ask already waiting in Inbox for this resource (its cleanup Delete). */
   | 'review'
+  | 'start'
   | 'checkNow'
   | 'tryAgain'
   | 'openProvider'
@@ -196,11 +197,11 @@ export function describeManagedLifecycleState(
         ['checkNow'],
       );
     case 'stoppedStorage':
-      return present(
+      return { ...present(
         'neutral',
         { detail: t('managedPower.stoppedStorage') },
-        [],
-      );
+        ['start'],
+      ), word: t('managedPower.asleep') };
     case 'storageUnknown':
       return present('warning', { cause: t('managedPower.storageUnknown') }, [
         'checkNow',
@@ -373,6 +374,8 @@ export function managedLifecycleActionLabel(
   switch (action) {
     case 'review':
       return t('managedMachines.actions.review');
+    case 'start':
+      return t('managedMachines.actions.start');
     case 'checkNow':
       return t('managedMachines.inspect.checkNow');
     case 'tryAgain':

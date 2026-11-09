@@ -7,7 +7,7 @@ export type MachineSharingCopy = Readonly<{
     loading: string; readError: string; offline: string; offlineRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
     saved: string; yourAccess: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
-    effectiveLoss: string; leaveLoss: string; overlap: string; custodianProtected: string; revoked: string;
+    effectiveLoss: string; removalWork: string; leaveLoss: string; overlap: string; custodianProtected: string; revoked: string;
     unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
     destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; ownerOnly: string; pendingKey: string; sharedPurposeUnsupported: string }>;
     /** Guest execution without separate users: the people added run as the owner. */
@@ -24,7 +24,7 @@ export type MachineSharingCopy = Readonly<{
 /** Locale-owned templates retain the typed interpolation contract. */
 export function createMachineSharingTranslations(copy: MachineSharingCopy) {
     const format = (value: string, parameters: Readonly<Record<string, string>>) =>
-        value.replace(/\{(machine|person|audience|team|owner|platform|draft|current)\}/g, (match, name: string) => parameters[name] ?? match);
+        value.replace(/\{(machine|person|people|work|audience|team|owner|platform|draft|current)\}/g, (match, name: string) => parameters[name] ?? match);
     const machine = (value: string) => (parameters: Readonly<{ machine: string }>) => format(value, parameters);
     return { machines: { sharing: {
         title: copy.title, description: machine(copy.description), recipientDescription: machine(copy.recipientDescription),
@@ -41,7 +41,9 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         through: (parameters: Readonly<{ audience: string }>) => format(copy.through, parameters),
         leave: copy.leave, inherited: (parameters: Readonly<{ audience: string }>) => format(copy.inherited, parameters),
         unavailable: machine(copy.unavailable),
-        saveFailed: (parameters: Readonly<{ person: string; draft: string; current: string }>) => format(copy.saveFailed, parameters), effectiveLoss: copy.effectiveLoss,
+        saveFailed: (parameters: Readonly<{ person: string; draft: string; current: string }>) => format(copy.saveFailed, parameters),
+        effectiveLoss: (parameters: Readonly<{ people: string; machine: string }>) => format(copy.effectiveLoss, parameters),
+        removalWork: (parameters: Readonly<{ person: string; work: string; machine: string }>) => format(copy.removalWork, parameters),
         leaveLoss: machine(copy.leaveLoss), overlap: copy.overlap,
         revoked: (parameters: Readonly<{ owner: string; machine: string }>) => format(copy.revoked, parameters),
         custodianProtected: copy.custodianProtected,

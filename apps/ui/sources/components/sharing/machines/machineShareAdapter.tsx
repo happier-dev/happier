@@ -54,15 +54,11 @@ export function createMachineShareAdapter(input: Readonly<{
         removalLabels: row => row.viewer ? { request: t('machines.sharing.leave'), confirm: t('machines.sharing.leave') }
             : row.readiness === 'key_pending' ? { request: t('common.cancel'), confirm: t('shareSheet.confirmRemove') } : undefined,
         renderGrantDetails: (row, context) => <View style={styles.details}>
-            {/* Why the tag says so leads; what Remove would do follows. */}
+            {/* Why the tag says so leads; what Remove would do is said in the row's review. */}
             {row.audience.filter(member => member.reason === 'content_unpublished').map(member => <Text key={member.accountId} style={styles.detail}
                 testID={`${context.idPrefix}machine-share-unpublished:${row.principal.key}:${member.accountId}`}>
                 {t('machines.sharing.unpublishedMember', { machine, person: member.displayName || t('shareSheet.person') })}
             </Text>)}
-            {row.removal.kind !== 'blocked' ? row.removalConsequences.map(consequence => <Text key={consequence} style={styles.detail}
-                testID={`${context.idPrefix}machine-share-remove-consequence:${row.principal.key}`}>
-                {consequence}
-            </Text>) : null}
             {row.canPrepareKeys ? <>
                 <Text style={styles.detail} testID={`${context.idPrefix}machine-share-key-pending:${row.principal.key}`} accessibilityLiveRegion="polite">
                     {t('machines.sharing.pending', { machine })}

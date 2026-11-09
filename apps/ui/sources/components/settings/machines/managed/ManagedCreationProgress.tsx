@@ -48,7 +48,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     /** The created-machine list could not be re-read: this is the last answer, and its one freshness says so with Retry. */
     staleRead?: Readonly<{ retry: () => void }>;
     /** Check now is running: its button shows the work until the check settles. */
-    checking?: boolean }>) {
+    checking?: boolean;
+    /** Start is running: its button shows the work. */
+    starting?: boolean }>) {
     const { machine } = props;
     const name = props.title ?? machine.launch.name;
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
@@ -56,7 +58,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const lifecycle = describeManagedLifecycleState(state);
     const nothingCreated = state.kind === 'notCreated';
     const checkNow = nothingCreated ? undefined : props.handlers?.checkNow;
-    const showStateRow = isManagedCreationStateRowVisible(machine, state);
+    const showStateRow = isManagedCreationStateRowVisible(machine, state, { offersStart: Boolean(props.handlers?.start) });
     const operation = currentManagedCreationOperation(machine, props.operation, props);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
     const canRetryInstallation = canRetryManagedInstallation(machine, props.operation, props);
@@ -111,11 +113,13 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         || bootstrapRunning && state.kind === 'observationUnavailable');
     const stateRow = showStateRow && !operationTells;
     const stateRowChecks = stateRow && lifecycle.actions.includes('checkNow') && Boolean(checkNow);
-    // Freshness qualifies the state it dates: on the state row's own sheet, or standing alone with Check now.
+    // Freshness qualifies the state it dates: on the state row's own sheet, or standing alone with Check now or Retry.
+    // With neither there is nothing to date and nothing to do, and it stays off the page.
     // A failed re-read is said here too, not in a second "As of" line above the page: one freshness per page.
     const staleRead = props.staleRead;
     // A failure that can't be retried yet carries Check now itself; the freshness row must not offer it twice.
     const failureChecks = Boolean(failure && !stateRowChecks && !(canRetryInstallation && props.handlers?.reinstall) && checkNow);
+    const observationChecks = !(stateRowChecks || failureChecks || !checkNow || machine.enrolledMachineId && !failure);
     const observationRow = machine.observation || staleRead ? <Item testID="managed-machine.observation" mode="info" showChevron={false}
         title={machine.observation ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) })
             : t('managedMachines.detail.loadFailed')}
@@ -124,7 +128,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         accessoryLayout={staleRead ? 'adaptive' : undefined}
         rightElement={staleRead ? <RoundButton title={t('common.retry')} display="inverted" size="small"
                 testID="managed-machine.observation-retry" onPress={staleRead.retry} />
-            : stateRowChecks || failureChecks || !checkNow || machine.enrolledMachineId && !failure ? undefined
+            : !observationChecks ? undefined
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
                 loading={props.checking === true} testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
@@ -179,6 +183,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             <ManagedMachineStateRow name={lifecycle.word ?? name}
                 mark={props.mark ?? <Icon name="desktop" />}
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
+                pendingAction={props.starting ? 'start' : undefined}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
             {installationRetryOnly && !failure ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
@@ -186,7 +191,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
             {observationRow}
-        </ItemGroup> : observationRow && !operationTells ? <ItemGroup>{observationRow}</ItemGroup> : null}
+        </ItemGroup> : observationRow && !operationTells && (staleRead || observationChecks) ? <ItemGroup>{observationRow}</ItemGroup> : null}
         {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery">
             {machine.resource ? <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}
                 testID="managed-machine.recovery-native" accessoryLayout="stacked" rightElement={

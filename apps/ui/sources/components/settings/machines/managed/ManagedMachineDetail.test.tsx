@@ -3390,14 +3390,16 @@ describe('managed Machine detail', () => {
         });
         const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
             executeAction={executeAction} />);
+        // A stopped, retained resource offers Start on its state row; the receipt keeps the other power verbs.
+        const powerTestID = intent === 'start' ? 'managed-machine.progress:start' : `managed-machine.${intent}`;
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(screen.tree.findAll(node => node.props?.testID === `managed-machine.${intent}`
-                && typeof node.props.onPress === 'function' && node.props.disabled === false)).not.toHaveLength(0);
+            expect(screen.tree.findAll(node => node.props?.testID === powerTestID
+                && typeof node.props.onPress === 'function' && node.props.disabled !== true)).not.toHaveLength(0);
         });
-        const start = screen.tree.findAll(node => node.props?.testID === `managed-machine.${intent}` && typeof node.props.onPress === 'function')[0];
+        const start = screen.tree.findAll(node => node.props?.testID === powerTestID && typeof node.props.onPress === 'function')[0];
         expect(start).toBeDefined();
-        expect(start!.props.disabled).toBe(false);
+        expect(start!.props.disabled).not.toBe(true);
         let outcome: Awaited<ReturnType<typeof realExecute>> | undefined;
         await act(async () => {
             start!.props.onPress();

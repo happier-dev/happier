@@ -39,6 +39,8 @@ export const ManagedMachineStateRow = React.memo(
       /** The provider's name, for "Open Hetzner". */
       provider?: string;
       handlers: ManagedLifecycleHandlers;
+      /** The action its owner is running now; its button shows the work. */
+      pendingAction?: ManagedLifecycleAction;
       /** Mute an ended resource's name and mark; its cause stays readable and its recovery actions stay primary. */
       ended?: boolean;
       testID: string;
@@ -108,6 +110,8 @@ export const ManagedMachineStateRow = React.memo(
         icon={props.ended && props.mark ? <View style={styles.ended}>{props.mark}</View> : props.mark}
         mode="info"
         showChevron={false}
+        // Two actions don't fit beside the row on a phone; they move beneath it.
+        accessoryLayout={actions.length > 1 ? 'adaptive' : undefined}
         rightElement={
           actions.length > 0 ? (
             <View style={styles.actions}>
@@ -118,6 +122,7 @@ export const ManagedMachineStateRow = React.memo(
                   size="small"
                   display={index === 0 ? 'secondary' : 'inverted'}
                   title={managedLifecycleActionLabel(action, props.provider)}
+                  loading={props.pendingAction === action}
                   onPress={props.handlers[action]!}
                 />
               ))}
