@@ -6,7 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher';
+import { createSessionFollowOccurrenceDispatcher as createProductionDispatcher } from './sessionFollowOccurrenceDispatcher';
+import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher.testkit';
 import { createAccountSessionFollowRuleCache } from './accountSessionFollowRuleCache';
 import { SessionFollowRuleSourceOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { SessionFollowPersonalProgressRequestV1Schema, type SessionFollowPersonalProgressRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
@@ -35,7 +36,81 @@ let channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>
 beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
 afterEach(async () => { await channel.close(); vi.restoreAllMocks(); });
 
-it('reads filter facts and Project encryption once for 32 originals in one source pass, then refreshes the next pass', async () => {
+it('admits one source Turn once when source publication overlaps receiver recovery and duplicate delivery', async () => {
+  const sourceSessionId = 'c111111111111111111111111';
+  const destinationSessionId = 'c222222222222222222222222';
+  const sourceTurn = { id: 'one-native-turn', status: 'completed' as const };
+  let currentTurn = sourceTurn;
+  const observation = SessionFollowSessionPendingObservationV1Schema.parse({ sourceSessionId, destinationSessionId,
+    relation: 'follower', policy: { preset: 'quiet' }, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
+    observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, turn: sourceTurn } });
+  const occurrence = { sourceSessionId, sourceTurn,
+    sourcePublisher: { publisherGeneration: '1', machineId: 'machine', committedFenceMs: 1 },
+    evidence: { v: 1 as const, ownerAccountId: 'account-1', event: { kind: 'finished' as const },
+      facts: { serverId: 'home', kind: 'session' as const, startedBy: 'you' as const } } };
+  const rows = new Map<string, unknown>();
+  let admissions = 0;
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200,
+      data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+    if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [] } };
+    if (path === '/v2/account/session-follow-preferences') return { status: 200,
+      data: { assigned: false, direct: false, team: false, group: false } };
+    if (path.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
+    for (const id of [sourceSessionId, destinationSessionId]) if (path === `/v2/sessions/${id}`) return { status: 200,
+      data: { session: { ...createSessionNotificationContextFixture(id), ...createSessionRecordFixture({ id,
+        ownerAccountId: 'account-1', encryptionMode: 'plain', dataEncryptionKey: null, active: true, archivedAt: null,
+        metadata: JSON.stringify({ machineId: 'machine', path: '/work', host: 'host' }), origin: { kind: 'none' }, seq: 0,
+        ...(id === sourceSessionId ? { latestTurnId: currentTurn.id, latestTurnStatus: currentTurn.status } : {}) }) } } };
+    throw new Error(`Unexpected GET ${path}`);
+  });
+  // HTTP is the system boundary: exercise real selection, scheduling and
+  // sendSessionMessage above an idempotent Pending store.
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/follows/occurrence-routes')) return { status: 200,
+      data: { ok: true, v: 1, sourceSessionId, routes: [observation] } };
+    expect(path).toBe(`/v2/sessions/${destinationSessionId}/pending`);
+    if (!body || typeof body !== 'object' || !('localId' in body) || typeof body.localId !== 'string') {
+      throw new Error('Expected Pending original identity');
+    }
+    admissions++;
+    const existing = rows.has(body.localId);
+    rows.set(body.localId, body);
+    return { status: 200, data: existing ? { didWrite: false, terminal: true, message: { localId: body.localId } }
+      : { didWrite: true } };
+  });
+  const input = { accountId: 'account-1', credentials: {
+    token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null }, serverId: 'home',
+    serverHttpBaseUrl: 'http://follow-one-owner.test', machineId: 'machine', installationId: 'installation',
+    signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
+    resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} };
+  // Real daemon requesters have independent source and receiver lifetimes.
+  const receiver = createSessionFollowOccurrenceDispatcher(input);
+  const dispatchReceiverRange = async (...args: Parameters<typeof receiver.dispatchReceiverRange>) => { await receiver.dispatchReceiverRange(...args); };
+  let source = createProductionDispatcher({ ...input, dispatchReceiverRange });
+  const recover = () => receiver.dispatchReceiverRange({ destinationSessionId, sourceSessionId, observations: [observation] });
+  try {
+    await Promise.all([source.dispatch(occurrence), recover()]);
+    expect(rows.size, 'idempotent transport must retain exactly one receiver input').toBe(1);
+    expect(admissions, 'one original must cross Pending admission once across both producers').toBe(1);
+    source.dispose();
+    source = createProductionDispatcher({ ...input, dispatchReceiverRange });
+    await Promise.all([source.dispatch(occurrence), recover(), recover()]);
+    expect(rows.size).toBe(1);
+    expect(admissions, 'duplicate delivery must reuse receiver scheduling custody').toBe(1);
+    currentTurn = { ...sourceTurn, id: 'next-native-turn' };
+    const nextObservation = { ...observation, observed: { ...observation.observed, turn: currentTurn } };
+    await Promise.all([source.dispatch({ ...occurrence, sourceTurn: currentTurn }), receiver.dispatchReceiverRange({
+      destinationSessionId, sourceSessionId, observations: [nextObservation],
+    })]);
+    expect(rows.size, 'a distinct Turn must still reach the receiving Session').toBe(2);
+    expect(admissions).toBe(2);
+  } finally { source.dispose(); receiver.dispose(); }
+});
+
+it.each([undefined, 'checkout'])('reads filter facts and Project encryption once for 32 originals in one source pass, then refreshes the next pass (stamp %s)', async stampedProjectKey => {
   await withConfiguredDaemonTestHome({ prefix: 'follow-pass-facts-' }, async () => {
     const sourceSessionId = 'c111111111111111111111111';
     const destinationSessionId = 'c222222222222222222222222';
@@ -47,7 +122,7 @@ it('reads filter facts and Project encryption once for 32 originals in one sourc
       executionAuthority: 'present_user', requestId: 'held-receiver', requestedAtMs: 1 });
     if (stop.kind !== 'hold') throw new Error('Expected receiver Stop');
     const source = createSessionRecordFixture({ id: sourceSessionId, ownerAccountId: 'account-1',
-      encryptionMode: 'plain', dataEncryptionKey: null, metadata, seq: 32, archivedAt: null, origin: { kind: 'none' },
+      encryptionMode: 'plain', dataEncryptionKey: null, metadata, projectKey: stampedProjectKey, seq: 32, archivedAt: null, origin: { kind: 'none' },
       effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
         capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
     const destination = { ...createSessionNotificationContextFixture(destinationSessionId),

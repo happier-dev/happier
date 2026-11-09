@@ -4,10 +4,15 @@ import { matchSessionListFilterV1, normalizeSessionListFilterV1 } from '@happier
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { readCliSessionListFilterFactsV1 } from './sessionListFilterFacts';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { encodeBase64, encrypt } from '@/api/encryption';
+import { stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
+import { sealSessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 
 const token = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
 const bob = { token: token('bob'), encryption: null };
@@ -23,7 +28,7 @@ const tag = (tagId: string) => normalizeSessionListFilterV1({ homeServerIds: ['h
 const all = normalizeSessionListFilterV1({ homeServerIds: ['home'], startedBy: ['you', 'agents', 'triggers'] });
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 
-function boundary(serverId = ref.serverId, extraRows: readonly ReturnType<typeof createPlainProjectAccountRefRow>[] = []) {
+function boundary(serverId = ref.serverId, extraRows: readonly ProjectAccountRowV1[] = []) {
   const state = { projectKey: 'bob-project', tagIds: ['bob-tag'], folderId: 'section-a' as string | null, unavailable: false };
   // Only Account HTTP is substituted; row admission, snapshots and matching stay real.
   const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
@@ -34,12 +39,11 @@ function boundary(serverId = ref.serverId, extraRows: readonly ReturnType<typeof
     return { status: 200, data: { snapshot: { schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: state.folderId ? [{ sessionId: row.id, folderId: state.folderId }] : [],
       tags: [], tagAssignments: [{ sessionId: row.id, tagIds: state.tagIds }], orderEntries: [], labels: [] } } } as never;
   });
-  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, _body, config) => {
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
     expect(url).toMatch(/\/v1\/account\/project-rows\/list$/);
     if (state.unavailable) return { status: 403, data: { error: 'forbidden' } } as never;
     const projectKey = config?.headers?.Authorization === `Bearer ${alice.token}` ? 'alice-project' : state.projectKey;
-    return { status: 200, data: { status: 'listed', coverage: 'complete',
-      rows: [createPlainProjectAccountRefRow({ ...ref, serverId, projectKey }), ...extraRows] } } as never;
+    return projectAccountRowsReadHttpResponse([createPlainProjectAccountRefRow({ ...ref, serverId, projectKey }), ...extraRows], url, body) as never;
   });
   return { state, get, post };
 }
@@ -50,9 +54,81 @@ function input(filters = [project('bob-project'), tag('bob-tag')]) {
 }
 
 describe('captured Account current filter facts', () => {
-  it('uses the published Project relationship with zero private Project reads even when owner metadata is unavailable', async () => {
+  it.each(['plain', 'e2ee'] as const)('opens source metadata once within one facts preparation (%s)', async mode => {
+    const secret = new Uint8Array(32).fill(7);
+    const metadata = JSON.stringify({ machineId: 'facts-machine', path: '/facts-source', flavor: 'codex' });
+    const serialized = mode === 'plain' ? metadata : stringifySerializedJsonValue(JSON.parse(metadata));
+    const captured = { ...input([all]),
+      credentials: mode === 'plain' ? bob : { token: bob.token, encryption: { type: 'legacy' as const, secret } },
+      accountEncryption: createAccountEncryptionCurrentnessFixture({ mode }),
+      row: { ...row, encryptionMode: mode, metadata: mode === 'plain' ? metadata
+        : encodeBase64(encrypt(secret, 'legacy', JSON.parse(metadata)), 'base64') },
+    };
+    // Transparent observation of the JSON boundary; encryption, admission,
+    // metadata views, awareness and matching all execute their real logic.
+    const parse = vi.spyOn(JSON, 'parse');
+    const facts = await readCliSessionListFilterFactsV1(captured);
+    expect(facts).toMatchObject({ machine: { serverId: 'home', machineId: 'facts-machine' },
+      agent: 'agent:happier.agent.codex/codex', source: 'persisted' });
+    expect(parse.mock.calls.filter(([text]) => text === serialized)).toHaveLength(1);
+    parse.mockClear();
+    expect(await readCliSessionListFilterFactsV1(captured)).not.toBeNull();
+    expect(parse.mock.calls.filter(([text]) => text === serialized), 'the next preparation must open its own current source').toHaveLength(1);
+  });
+  it('carries one opened layout-one owner view without losing shared content on an Account-mode refusal', async () => {
+    const secret = new Uint8Array(32).fill(7);
+    const ownerMetadata = sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
+      ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1,
+        workspace: { machineId: 'facts-private-machine', path: '/private/facts' } }),
+      randomBytes: length => new Uint8Array(length).fill(3) });
+    // Session and owner envelopes have separate mode authorities.
+    const captured = { ...input([all]), credentials: { token: bob.token, encryption: { type: 'legacy' as const, secret } },
+      accountEncryption: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }),
+      row: { ...row, metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), ownerMetadata } };
+    const parse = vi.spyOn(JSON, 'parse');
+    const facts = await readCliSessionListFilterFactsV1(captured);
+    expect(facts?.machine).toEqual({ serverId: 'home', machineId: 'facts-private-machine' });
+    expect(parse.mock.calls.filter(([text]) => text.includes('facts-private-machine'))).toHaveLength(1);
+    const refused = await readCliSessionListFilterFactsV1({ ...captured,
+      credentials: bob, accountEncryption: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) });
+    expect(refused?.machine).toBeUndefined();
+    expect(refused?.projectMetadata).toBeNull();
+    expect(refused?.metadata).toEqual({ v: 1 });
+  });
+  it('reads only same-Home refs once per demanded cycle, regardless of the Account census, and observes moves', async () => {
+    const organizations: ProjectAccountRowV1[] = Array.from({ length: 1024 }, (_, index) => {
+      const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: `other-${index}` };
+      return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+    });
+    const { state, post } = boundary('home', [...organizations,
+      createPlainProjectAccountRefRow({ ...ref, serverId: 'other-home', projectKey: 'foreign-project' })]);
+    for (const projectKey of ['bob-project', 'moved-project']) {
+      state.projectKey = projectKey;
+      const facts = await readCliSessionListFilterFactsV1(input([project(projectKey)]));
+      expect(matchSessionListFilterV1(project(projectKey), facts!)).toBe('match');
+    }
+    expect(post.mock.calls.map(([, body]) => body)).toEqual([
+      { kinds: ['workspace-ref'], serverId: 'home' }, { kinds: ['workspace-ref'], serverId: 'home' },
+    ]);
+    expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
+  });
+  it.each([
+    { stamped: 'checkout', included: ['bob-project'], excluded: [], expected: 'match' },
+    { stamped: 'checkout', included: [], excluded: ['bob-project'], expected: 'miss' },
+    { stamped: 'checkout', included: ['checkout'], excluded: [], expected: 'miss' },
+  ])('matches stamped Project keys through current membership ($included / $excluded)', async ({ stamped, included, excluded, expected }) => {
+    const { post } = boundary();
+    const filter = normalizeSessionListFilterV1({ ...all, projects: {
+      include: included.map(projectKey => ({ serverId: 'home', projectKey })),
+      exclude: excluded.map(projectKey => ({ serverId: 'home', projectKey })),
+    } });
+    const facts = await readCliSessionListFilterFactsV1({ ...input([filter]), row: { ...row, projectKey: stamped } });
+    expect(matchSessionListFilterV1(filter, facts!)).toBe(expected);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it('uses a published Project relationship without private reads when no Project predicate demands membership', async () => {
     const { get, post } = boundary();
-    const facts = await readCliSessionListFilterFactsV1({ ...input([project('bob-project')]),
+    const facts = await readCliSessionListFilterFactsV1({ ...input([all]),
       row: { ...row, projectKey: 'bob-project', metadata: 'unavailable' } });
     expect(matchSessionListFilterV1(project('bob-project'), facts!)).toBe('match');
     expect(post).not.toHaveBeenCalled();
@@ -157,5 +233,36 @@ describe('captured Account current filter facts', () => {
     const implementation = post.getMockImplementation()!;
     post.mockImplementation(async (...args) => { const result = await implementation(...args); current = false; return result; });
     expect(await readCliSessionListFilterFactsV1({ ...input(), isCurrent: async () => current })).toBeNull();
+  });
+  it('opens selected refs in the captured E2EE mode and refuses mode mismatch', async () => {
+    const { get, post } = boundary();
+    get.mockResolvedValue({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
+    const secret = new Uint8Array(32).fill(7);
+    const credentials = { token: bob.token, encryption: { type: 'legacy' as const, secret } };
+    const cipher = createProjectAccountRowCipherV1({ mode: 'e2ee', material: { type: 'legacy', secret },
+      randomBytes: n => new Uint8Array(n).fill(3) });
+    const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
+    let encrypted = true;
+    post.mockImplementation(async (url, body) => projectAccountRowsReadHttpResponse([{ key, revision: 1,
+      content: encrypted ? cipher.seal({ key, value: { ...ref, projectKey: 'bob-project' } })
+        : { t: 'plain', v: { key, value: { ...ref, projectKey: 'bob-project' } } } }], url, body));
+    const captured = { ...input([project('bob-project')]), credentials };
+    expect(matchSessionListFilterV1(project('bob-project'), (await readCliSessionListFilterFactsV1(captured))!)).toBe('match');
+    encrypted = false;
+    expect(matchSessionListFilterV1(project('bob-project'), (await readCliSessionListFilterFactsV1(captured))!)).toBe('unavailable');
+    expect(post.mock.calls.every(([, body]) => JSON.stringify(body) === JSON.stringify({ kinds: ['workspace-ref'], serverId: 'home' }))).toBe(true);
+  });
+  it('carries cancellation through the selected read and accepts no late facts', async () => {
+    const { post } = boundary();
+    const controller = new AbortController();
+    const serve = post.getMockImplementation()!;
+    post.mockImplementation(async (...args) => {
+      expect(args[2]?.signal).toBe(controller.signal);
+      const result = await serve(...args);
+      controller.abort();
+      return result;
+    });
+    expect(await readCliSessionListFilterFactsV1({ ...input([project('bob-project')]), signal: controller.signal })).toBeNull();
+    expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
   });
 });

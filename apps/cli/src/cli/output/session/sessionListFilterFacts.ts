@@ -4,8 +4,8 @@ import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessio
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { tryDecryptSessionOwnerMetadataView, tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
-import { projectCliSessionAwarenessV1, type CliSessionAwarenessParams } from './sessionAwareness';
+import { readSessionMetadataViews } from '@/session/transport/encryption/sessionEncryptionContext';
+import { projectCliSessionAwarenessFromPresentationV1, type CliSessionAwarenessParams } from './sessionAwareness';
 import { fetchSessionOrganizationPlacementBatches } from '@/session/transport/http/sessionsHttp';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -47,15 +47,18 @@ export async function readCliSessionListFilterFactsV1(input: CliSessionAwareness
   const serverId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
   const workspaceContext = { normalizeServerId: (id: string) => id === input.serverId ? serverId : id };
   const knownFacts = projectCliSessionListFilterFactsV1({ ...input, serverId, viewerAccountId: input.accountId, workspaceContext });
-  // Supplemental facts cannot reverse a known conjunctive miss. Unknown
-  // Project/tag facts remain eligible for the same canonical matcher below.
-  const relevantFilters = input.filters.filter(filter => matchSessionListFilterV1(filter, knownFacts) !== 'miss');
+  // Other known conjunctive misses need no supplemental facts. Project membership
+  // needs the census even for stamped keys: joining a checkout can change both
+  // include and exclude matches, in either direction.
+  const relevantFilters = input.filters.filter(filter => matchSessionListFilterV1(
+    filter.projects ? { ...filter, projects: undefined } : filter, knownFacts) !== 'miss');
   const projectHomes = [...new Set(relevantFilters.flatMap(filter => filter.projects
     ? [...filter.projects.include, ...filter.projects.exclude].map(project => project.serverId) : []))];
-  const projectsRequired = input.row.projectKey == null && (await Promise.all(projectHomes.map(home => isServerProfileHomeIdentity(input.serverId, home))))
+  const projectsRequired = (await Promise.all(projectHomes.map(home => isServerProfileHomeIdentity(input.serverId, home))))
     .some(admitted => admitted);
   const [projects, tags] = await Promise.allSettled([
     projectsRequired ? readProjectAccountRows({ credentials: input.credentials, serverId, signal: input.signal,
+      selection: { kinds: ['workspace-ref'], serverId },
       sessionCustody: { accountId: input.accountId, serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl,
         isCurrent: input.isCurrent } }) : Promise.resolve(undefined),
     readCliSessionListOrganizationAssignmentsV1({ ...input, filters: relevantFilters, serverId, sessionIds: [input.row.id] }),
@@ -76,11 +79,11 @@ export function projectCliSessionListFilterFactsV1(input: CliSessionAwarenessPar
   preparedFacts?: PreparedSessionListFilterFacts;
 }>): SessionListFilterFactsV1 {
   const row = input.row;
-  const metadata = tryDecryptSessionPresentationMetadataView({ credentials: input.credentials,
-    accountEncryptionMode: input.accountEncryption.mode, rawSession: row });
-  const ownerMetadata = readSessionAccessProjectionRoleV1(row) === 'owner'
-    ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
-      accountEncryptionMode: input.accountEncryption.mode, rawSession: row }) : null;
+  const views = readSessionMetadataViews({ credentials: input.credentials,
+    accountEncryptionMode: input.accountEncryption.mode,
+    recipientEnvelopeReadiness: input.accountEncryption.recipientEnvelopeReadiness, rawSession: row });
+  const metadata = views.presentation.metadata;
+  const ownerMetadata = readSessionAccessProjectionRoleV1(row) === 'owner' ? views.ownerMetadata : null;
   const linked = ownerMetadata ? resolveLinkedExternalSessionAuthorityV1(ownerMetadata) : null;
   const relevance = row.viewer?.relevance;
   const ownedByViewer = input.viewerAccountId !== undefined && row.ownerAccountId === input.viewerAccountId;
@@ -104,7 +107,7 @@ export function projectCliSessionListFilterFactsV1(input: CliSessionAwarenessPar
     ...(ownerMetadata ? { machine: typeof ownerMetadata.machineId === 'string' && ownerMetadata.machineId.trim()
       ? { serverId: input.serverId, machineId: ownerMetadata.machineId.trim() } : null } : {}),
     ...(agentTarget ? { agent: buildBackendTargetKeyV2(agentTarget) } : {}),
-    status: readSessionAwarenessPresentationV1(projectCliSessionAwarenessV1(input)),
+    status: readSessionAwarenessPresentationV1(projectCliSessionAwarenessFromPresentationV1(input, views.presentation)),
     ...(ownerMetadata ? { source: linked?.ok ? linked.transcriptStorage : 'persisted' } : {}),
     workspaceRefs: input.preparedFacts?.workspaceRefs ?? input.workspaceRefs,
     ...(input.workspaceContext ? { workspaceContext: input.workspaceContext } : {}),

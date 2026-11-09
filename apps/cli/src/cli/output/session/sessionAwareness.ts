@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { readSessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
@@ -131,6 +132,7 @@ function buildCliSessionAwarenessInputFromPresentationV1(
     meaningfulActivityAtMs: readNumber(row.meaningfulActivityAt),
   } as const;
   const runtime = {
+    workStatus: readSessionRuntimeWorkStatusV1(params.agentState?.value),
     presence,
     active,
     lastObservedAtMs: readNumber(row.activeAt),
@@ -192,6 +194,14 @@ export function projectCliSessionAwarenessV1(
   params: CliSessionAwarenessParams,
 ): SessionAwarenessProjectionV1 {
   return projectSessionAwarenessV1(buildCliSessionAwarenessInputV1(params));
+}
+
+/** Consume the same metadata admission as the enclosing finite facts preparation. */
+export function projectCliSessionAwarenessFromPresentationV1(
+  params: Pick<CliSessionAwarenessParams, 'row' | 'nowMs' | 'agentState'>,
+  presentation: SessionPresentationContent,
+): SessionAwarenessProjectionV1 {
+  return projectSessionAwarenessV1(buildCliSessionAwarenessInputFromPresentationV1(params, presentation));
 }
 
 export function projectCliSessionAwarenessFromMaterialV1(params: Readonly<{
