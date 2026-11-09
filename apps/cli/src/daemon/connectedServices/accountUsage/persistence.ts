@@ -15,6 +15,8 @@ import type { AccountEncryptionModeReadOptions } from '@/api/client/connectedSer
 import type { StoredCredentials } from '@/persistence';
 import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/requesterSessionCredentials';
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
+import { createQuotaPersistenceBackoff } from '../quotas/createQuotaPersistenceBackoff';
+import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from '../quotas/resolveConnectedServiceQuotasDaemonOptions';
 import {
   shouldPersistQuotaSnapshot,
   type QuotaPersistenceMaterialState,
@@ -24,8 +26,6 @@ import {
   deriveProviderAccountUsageFingerprintKey,
   type ProviderAccountUsageFingerprintKey,
 } from './fingerprint';
-
-const DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS = 60_000;
 
 type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: (options?: AccountEncryptionModeReadOptions) => Promise<'plain' | 'e2ee' | 'unknown'>;
@@ -213,7 +213,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     0,
     Math.trunc(
       params.minFreshnessMs
-        ?? DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS,
+        ?? DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS,
     ),
   );
   const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState & Readonly<{ subscription?: ProviderAccountSubscriptionV1 }>>();
@@ -287,7 +287,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     run: persistPayload,
     maxConcurrent: 2,
     minKeyIntervalMs: 0,
-    maxConsecutiveFailures: 5,
+    backoff: createQuotaPersistenceBackoff({ now: params.now }),
     now: params.now,
     shouldRetry: (error) =>
       !(error instanceof QualifiedConnectedAccountCompatibilityError)

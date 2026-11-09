@@ -1,10 +1,13 @@
 import {
     buildProviderAccountUsageRecordId,
+    openSealedProviderAccountUsageSnapshot,
     QualifiedProviderAccountUsageWriteV4Schema,
+    SealedProviderAccountUsageSnapshotV1Schema,
     type ConnectedServiceUsageSourceV1,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
+import { getProviderAccountUsageRefreshErrorAt } from '@happier-dev/protocol/connect/account-usage-primitives';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +20,7 @@ import {
 import { createProviderAccountUsageStore } from './store';
 import { matchesCurrentQuotaObservationCredential } from '../quotas/proof/quotaProbeFreshProof';
 import { createProviderAccountUsagePersistenceScheduler, type ProviderAccountUsagePersistenceScheduler } from './persistence';
+import { readProviderAccountUsageQuotaV4 } from './readQuota';
 
 function createRecordKey(accountSubjectId = 'acct_123'): ProviderAccountUsageRecordKeyV1 {
     return {
@@ -119,6 +123,69 @@ function createPersistence(): ProviderAccountUsagePersistenceScheduler {
 }
 
 describe('recordProviderAccountUsageSnapshotForSession', () => {
+    it.each(['plain', 'e2ee'] as const)('recovers unchanged %s usage after six transient Home write failures through the session recorder and quota reader', async mode => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_500);
+        vi.spyOn(Math, 'random').mockReturnValue(0.5);
+        const encryption = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const credentials = { token: 'token', encryption: mode === 'plain' ? null : encryption };
+        let attempts = 0;
+        // Only HTTP is replaced: session admission, queue, envelope, writer and read decoder stay real.
+        vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+            attempts += 1;
+            if (attempts <= 6) throw { response: { status: 503, data: { error: 'temporarily_unavailable' } } };
+            writes.push(QualifiedProviderAccountUsageWriteV4Schema.parse(body));
+            return { status: 200, data: { success: true, source: { status: 'linked' } } };
+        });
+        const snapshot = createSnapshot();
+        const target = createTarget();
+        const persistence = createProviderAccountUsagePersistenceScheduler({
+            api: { getAccountEncryptionMode: async () => mode }, credentials, now: Date.now,
+            fingerprintKey: new Uint8Array(32).fill(3), randomBytes: length => new Uint8Array(length).fill(9),
+        });
+        const store = createProviderAccountUsageStore();
+        const record = () => recordProviderAccountUsageSnapshotForSession({
+            getChildren: () => [{ happySessionId: 'sess_1' }], store, persistence,
+            sessionId: 'sess_1', snapshot, observation: { sources: [profileSource] },
+            credentialFingerprint: 'sha256:deadbeef', verifyCredentialFingerprint: async () => true,
+            resolveAuthoritativeSource: async () => profileSource,
+            resolvePersistenceTargets: async () => [target],
+        });
+        try {
+            expect(await record()).toMatchObject({ persisted: true });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(attempts).toBe(1);
+            await vi.advanceTimersByTimeAsync(999);
+            expect(attempts).toBe(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(attempts).toBe(2);
+            await vi.runAllTimersAsync();
+            expect(writes).toHaveLength(1);
+            expect(attempts).toBe(7);
+            const write = writes[0]!;
+            vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data:
+                String(url).includes('/sources/resolve')
+                    ? { source: target.source, recordId: snapshot.recordId, providerAccountId: 'acct_123', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs }
+                    : { content: mode === 'plain' ? { t: 'plain', v: write.snapshot } : { t: 'encrypted', c: SealedProviderAccountUsageSnapshotV1Schema.parse(write.sealedPayload).ciphertext },
+                        metadata: { fetchedAt: write.fetchedAt, staleAfterMs: write.staleAfterMs, status: write.status }, sources: [target.source] },
+            }));
+            const read = await readProviderAccountUsageQuotaV4({ source: target.source }, {
+                credentials, accountMode: mode, nowMs: Date.now(), includePendingWork: false,
+            });
+            expect(read.current).toEqual(snapshot);
+            expect(await record()).toMatchObject({ persisted: true });
+            await vi.runAllTimersAsync();
+            expect(attempts).toBe(7);
+            // A settled success retires retries; a genuine material change still writes.
+            await persistence.recordInBandSnapshot({ ...snapshot, planLabel: 'changed' }, { targets: [target] });
+            await vi.runAllTimersAsync();
+            expect(attempts).toBe(8);
+        } finally {
+            persistence.dispose();
+            vi.useRealTimers();
+        }
+    });
+
     it('persists the last valid subscription with a failed subscription refresh', async () => {
         const previous = {
             ...createSnapshot(),
@@ -158,6 +225,61 @@ describe('recordProviderAccountUsageSnapshotForSession', () => {
             source: createTarget().source, expectedCredentialRevision: createTarget().expectedCredentialRevision,
             expectedConfigurationRevision: createTarget().expectedConfigurationRevision })]);
         expect(store.resolveRecordId(previous.recordId)?.subscription).toEqual(expectedSubscription);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('preserves the quota failure clock when only subscription freshness advances for %s accounts', async (mode) => {
+        const failure = { kind: 'provider_http', status: 429, observedAtMs: 1_200 } as const;
+        const previous = {
+            ...createSnapshot(),
+            observedAtMs: 1_200,
+            state: 'error_last_known_good' as const,
+            diagnostics: [failure],
+            subscription: {
+                status: 'subscribed' as const, renewal: 'off' as const,
+                observedAtMs: 900, staleAfterMs: 60_000,
+            },
+        };
+        const store = createProviderAccountUsageStore();
+        store.recordSnapshot(previous, { sources: [profileSource] });
+        const refreshed = {
+            ...previous,
+            subscription: { ...previous.subscription, observedAtMs: 2_000 },
+        };
+        const encryption = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const persistence = createProviderAccountUsagePersistenceScheduler({
+            api: { getAccountEncryptionMode: async () => mode },
+            credentials: { token: 'token', encryption: mode === 'plain' ? null : encryption },
+            now: () => 2_000, fingerprintKey: new Uint8Array(32).fill(3),
+            randomBytes: length => new Uint8Array(length).fill(9),
+        });
+        schedulers.push(persistence);
+
+        await recordProviderAccountUsageSnapshotForSession({
+            getChildren: () => [{ happySessionId: 'sess_1' }],
+            store, persistence, sessionId: 'sess_1', snapshot: refreshed,
+            observation: { sources: [profileSource] },
+            credentialFingerprint: 'sha256:deadbeef',
+            verifyCredentialFingerprint: async candidate => matchesCurrentQuotaObservationCredential({
+                ...candidate,
+                credential: { providerAccountId: 'acct_123', providerOrganizationId: null, credentialFingerprint: 'sha256:deadbeef' },
+            }),
+            resolvePersistenceTargets: async () => [createTarget()],
+        });
+        await persistence.flush(1_000);
+
+        expect(store.resolveRecordId(previous.recordId)).toEqual(refreshed);
+        expect(writes).toHaveLength(1);
+        const write = writes[0]!;
+        expect(write).toMatchObject({ status: 'error', fetchedAt: 1_000 });
+        const persisted = mode === 'plain' ? write.snapshot : openSealedProviderAccountUsageSnapshot({
+            material: encryption, sealed: write.sealedPayload!,
+        });
+        expect(persisted).toEqual(refreshed);
+        expect(getProviderAccountUsageRefreshErrorAt(persisted!)).toBe(1_200);
+        // A subscription observed after a new quota request supplies neither a
+        // new quota observation nor a new quota failure that could settle it.
+        expect(persisted).toMatchObject({ fetchedAtMs: 1_000, diagnostics: [failure] });
+        if (mode === 'e2ee') expect(write.sealedPayload?.refreshErrorAt).toBe(1_200);
     });
 
     it.each([

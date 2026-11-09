@@ -2195,8 +2195,8 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
     await runtime.providerAccountUsagePersistence.recordInBandSnapshot(snapshot, { targets });
     await runtime.providerAccountUsagePersistence.flush(1_000);
     if (surface === 'reconnect') {
-      // Flush the retained failure once while transport is still down; the canonical
-      // retry owner then parks it until reconnect, rather than an incidental timer.
+      // Keep failed work in canonical backoff while transport is down; reconnect
+      // explicitly flushes the same retained payload without waiting for its timer.
       await runtime.providerAccountUsagePersistence.flush(1_000);
       expect(writes).toEqual([]);
       bobUnavailable = false;
