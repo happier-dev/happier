@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    buildProviderAccountUsageRecordId,
-    ConnectedServiceQuotaSnapshotV1Schema,
+    buildProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import {
+    ConnectedServiceQuotaSnapshotV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
     QualifiedConnectedAccountQuotaResponseV4Schema,
     QualifiedConnectedAccountQuotaSnapshotV4Schema,
-    type AccountProfile,
     type QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import {
+    type AccountProfile} from '@happier-dev/protocol/account/profile';
 import { createRootLayoutFeaturesResponse, standardCleanup } from '@/dev/testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';

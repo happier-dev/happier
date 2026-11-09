@@ -3,19 +3,17 @@ import { useDestinationRouter } from '@/components/appShell/workspace/Destinatio
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { approveTerminalPairing, resolveTerminalPairingStorageMode } from '@/auth/terminal/approveTerminalPairing';
-import { focusTerminalConnectHome } from '@/auth/terminal/focusTerminalConnectHome';
+import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import { resolveTerminalApprovalTarget } from '@/auth/terminal/resolveTerminalApprovalTarget';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
-import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
+import { clearPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import {
     buildTerminalConnectAuthRedirectHref,
     parseTerminalConnectUrl,
-    resolveTerminalConnectPreAuthTarget,
     type ParsedTerminalConnectUrl,
 } from '@/utils/path/terminalConnectUrl';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
@@ -29,7 +27,7 @@ interface UseConnectTerminalOptions {
     approvalRequest?: ParsedTerminalConnectUrl | null;
 }
 
-type TerminalConnectApprovalDetails =
+export type TerminalConnectApprovalDetails =
     | Readonly<{ kind: 'loading' | 'error' }>
     | Readonly<{ kind: 'needs_sign_in'; homeUrl: string }>
     | Readonly<{ kind: 'ready'; homeUrl: string; storageMode: 'plain' | 'e2ee' }>;
@@ -99,6 +97,10 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         : { kind: 'loading' };
 
     const processParsedAuthUrl = React.useCallback(async (parsed: ParsedTerminalConnectUrl) => {
+        if (resolveTerminalConnectLinkState(parsed) === 'expired') {
+            await Modal.alertAsync(t('modals.authRequestExpired'), t('modals.authRequestExpiredDescription'), [{ text: t('common.ok') }]);
+            return false;
+        }
         if (parsed.compatibility?.admission === 'update_required') {
             const action = await promptLegacyPairingUpdateRequired();
             if (action === 'scan_new_qr') router.push('/scan/terminal');
@@ -115,28 +117,12 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             const activeCredentials = target.credentials;
 
             if (!activeCredentials) {
-                const preAuthTarget = await resolveTerminalConnectPreAuthTarget({
-                    requestedServerUrl: parsed.serverUrl ?? parsed.homeConnectionDescriptor?.canonicalServerUrl,
-                    activeServerUrl: currentServerUrl,
-                    ...(parsed.homeConnectionDescriptor ? { homeConnectionDescriptor: parsed.homeConnectionDescriptor } : {}),
-                    allowLegacyLoopbackOverride: options?.allowLoopbackServerOverride === true,
-                });
+                const preAuthTarget = await prepareTerminalConnect(parsed, options?.allowLoopbackServerOverride === true);
                 if (!preAuthTarget) {
                     throw new Error('Terminal pairing requires a pre-auth target Home');
                 }
                 const pendingServerUrl = preAuthTarget.pendingServerUrl;
-                const pendingConnect: PendingTerminalConnect = {
-                    publicKeyB64Url: parsed.publicKeyB64Url,
-                    serverUrl: pendingServerUrl,
-                    serverIdentityId: parsed.serverIdentityId ?? '',
-                    ...(parsed.pairing ? { pairing: parsed.pairing } : {}),
-                    ...(parsed.supportsTokenOnly ? { supportsTokenOnly: true } : {}),
-                    ...(parsed.homeConnectionDescriptor
-                        ? { homeConnectionDescriptor: parsed.homeConnectionDescriptor }
-                        : {}),
-                };
                 if (preAuthTarget.canNavigateToAuth === false) {
-                    setPendingTerminalConnect(pendingConnect);
                     await Modal.alertAsync(
                         t('welcome.serverUnavailableTitle'),
                         t('welcome.serverUnavailableBody', { serverUrl: pendingServerUrl }),
@@ -161,23 +147,21 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                         clearPendingTerminalConnect();
                         return false;
                     }
-                    setPendingTerminalConnect(pendingConnect);
                     if (parsed.homeConnectionDescriptor) {
-                        const profile = await focusTerminalConnectHome({ descriptor: parsed.homeConnectionDescriptor, refreshAuth: auth.refreshFromActiveServer });
-                        if (!profile) return false;
+                        const focused = await focusTerminalConnectTarget({ request: parsed, serverUrl: pendingServerUrl, refreshAuth: auth.refreshFromActiveServer });
+                        if (!focused) return false;
                     }
                     router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: pendingServerUrl }));
                     return false;
                 }
-                setPendingTerminalConnect(pendingConnect);
                 await Modal.alertAsync(
                     t('terminal.connectTerminal'),
                     t('modals.pleaseSignInFirst'),
                     [{ text: t('common.continue') }],
                 );
                 if (parsed.homeConnectionDescriptor) {
-                    const profile = await focusTerminalConnectHome({ descriptor: parsed.homeConnectionDescriptor, refreshAuth: auth.refreshFromActiveServer });
-                    if (!profile) return false;
+                    const focused = await focusTerminalConnectTarget({ request: parsed, serverUrl: pendingServerUrl, refreshAuth: auth.refreshFromActiveServer });
+                    if (!focused) return false;
                 }
                 router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: pendingServerUrl }));
                 return false;

@@ -1,8 +1,10 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { DaemonFilesystemListDirectoryRequestSchema, type DaemonFilesystemListDirectoryRequest, type DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol/machines/fileBrowser';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { ScmEntryHistoryV1 } from '@happier-dev/protocol/scm';
 import { useWorkspaceRepositoryTreeBrowser } from './useWorkspaceRepositoryTreeBrowser';
 import { useWorkspaceEntryHistory } from './useWorkspaceEntryHistory';
 
@@ -24,6 +26,73 @@ const newHead = 'b'.repeat(40);
 
 describe('workspace browser demanded history', () => {
     beforeEach(() => { historyRpc.mockReset(); directoryRpc.mockReset(); });
+    it('PF4 keeps the Code directory projection stable on equal refreshes with one-row metadata changes live', async () => {
+        const directoryScope = { ...scope, rootPath: '/pf4-code-directory' };
+        let changed = false;
+        directoryRpc.mockImplementation(async () => ({ ok: true, path: directoryScope.rootPath, truncated: false,
+            entries: Array.from({ length: 150 }, (_, index) => ({ name: `file-${index}`, path: `${directoryScope.rootPath}/file-${index}`,
+                type: 'file', size: changed && index === 42 ? 20 : 10, modified: 1000 })) }));
+        let current!: ReturnType<typeof useWorkspaceRepositoryTreeBrowser>;
+        let listRenders = 0;
+        const rowRenders: string[] = [];
+        type Node = typeof current.nodes[number];
+        const Row = React.memo(({ node }: { node: Node }) => { rowRenders.push(node.path); return null; });
+        const List = React.memo(({ nodes }: { nodes: readonly Node[] }) => {
+            listRenders++;
+            return <>{nodes.map(node => <Row key={node.path} node={node} />)}</>;
+        });
+        function Probe({ reloadToken }: { reloadToken: number }) {
+            current = useWorkspaceRepositoryTreeBrowser({ scope: directoryScope, enabled: true, reloadToken });
+            return <List nodes={current.nodes} />;
+        }
+        const screen = await renderScreen(<Probe reloadToken={0} />);
+        await vi.waitFor(() => expect({ loaded: current.rootLoaded, loading: current.rootLoading, count: current.nodes.length })
+            .toEqual({ loaded: true, loading: false, count: 150 }));
+        const before = current.nodes;
+        listRenders = 0;
+        rowRenders.length = 0;
+        await act(async () => { screen.update(<Probe reloadToken={1} />); });
+        await vi.waitFor(() => expect(directoryRpc).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(current.rootLoading).toBe(false));
+        expect({ sameNodes: current.nodes === before, listRenders, rowRenders }).toEqual({ sameNodes: true, listRenders: 0, rowRenders: [] });
+        changed = true;
+        await act(async () => { screen.update(<Probe reloadToken={2} />); });
+        await vi.waitFor(() => expect(current.nodes.find(node => node.path === 'file-42')?.sizeBytes).toBe(20));
+        expect(current.nodes).not.toBe(before);
+        expect({ listRenders, rowRenders }).toEqual({ listRenders: 1, rowRenders: ['file-42'] });
+    });
+    it('PF4 retains equal history entries and renders only the changed entry after a refresh', async () => {
+        const paths = Array.from({ length: 150 }, (_, index) => `file-${index}`);
+        let changed = false;
+        historyRpc.mockImplementation(async () => ({ success: true, headOid: newHead,
+            entries: paths.map(path => ({ path, kind: 'commit', commit: { oid: newHead,
+                subject: changed && path === 'file-42' ? 'Changed' : 'Original', authorName: 'A', committedAt: 1000 } })) }));
+        const renders: string[] = [];
+        const Entry = React.memo(({ entry }: { entry: ScmEntryHistoryV1 }) => {
+            renders.push(entry.path);
+            return null;
+        });
+        let current!: ReturnType<typeof useWorkspaceEntryHistory>;
+        function Probe({ reloadToken }: { reloadToken: number }) {
+            current = useWorkspaceEntryHistory({ scope, repoRootPath: scope.rootPath, folder: '', paths,
+                headOid: newHead, enabled: true, reloadToken });
+            return <>{[...current.entries].map(([path, entry]) => <Entry key={path} entry={entry} />)}</>;
+        }
+        const screen = await renderScreen(<Probe reloadToken={0} />);
+        await vi.waitFor(() => expect(current.status).toBe('ready'));
+        const before = current!.entries;
+        renders.length = 0;
+        await act(async () => { screen.update(<Probe reloadToken={1} />); });
+        await vi.waitFor(() => expect(historyRpc).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(current.status).toBe('ready'));
+        expect({ sameEntries: current!.entries === before, renders: renders.length }).toEqual({ sameEntries: true, renders: 0 });
+        changed = true;
+        await act(async () => { screen.update(<Probe reloadToken={2} />); });
+        await vi.waitFor(() => expect(current.entries.get('file-42')).toMatchObject({ commit: { subject: 'Changed' } }));
+        expect(current!.entries).not.toBe(before);
+        expect(renders).toEqual(['file-42']);
+        expect(current!.entries.get('file-149')).toBe(before.get('file-149'));
+    });
     it('maps nested workspace demand into the captured repository and returns only workspace entry identities', async () => {
         const nestedScope = { ...scope, rootPath: '/repository/sub' };
         historyRpc.mockImplementation(async request => {

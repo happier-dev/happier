@@ -1,14 +1,14 @@
 import React from 'react';
-import type { Message } from '@happier-dev/session-core/messages';
-import { useSessionMessagesById, useSessionTranscriptIds } from '@/sync/domains/state/storage';
+import { useSessionUserMessageHistory } from '@/sync/store/hooks';
+import { compareTranscriptMessagesOldestFirst } from '@happier-dev/session-core/messages';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { AgentInputHistoryScope, UserMessageHistoryNavigator } from './userMessageHistory';
 import { DEFAULT_USER_MESSAGE_HISTORY_MAX_ENTRIES, collectUserMessageHistoryEntries, createUserMessageHistoryNavigator } from './userMessageHistory';
-import { useAllSessionMessages, useUserMessageHistoryRemoteEntries, isSessionMessageRoleQuerySupported } from './useUserMessageHistoryEntries';
+import { useUserMessageHistoryRemoteEntries, isSessionMessageRoleQuerySupported } from './useUserMessageHistoryEntries';
 import type { SessionMessageHistoryRemoteRow } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
-export { collectUserTextMessagesBySessionIdFromSessionMessagesState, useUserMessageHistoryRemoteEntries, resetUserMessageHistoryRemoteEntriesForTests, USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS } from './useUserMessageHistoryEntries';
+export { useUserMessageHistoryRemoteEntries, resetUserMessageHistoryRemoteEntriesForTests } from './useUserMessageHistoryEntries';
 export type { UserMessageHistoryRemoteEntriesSnapshot } from './useUserMessageHistoryEntries';
 const USER_MESSAGE_HISTORY_PREFETCH_REMAINING_ENTRIES = 3;
 
@@ -52,9 +52,7 @@ export function useUserMessageHistory(opts: {
     const normalizedSessionId = normalizedSessionIdRaw.length > 0 ? normalizedSessionIdRaw : null;
     // Safe: for null sessionId, subscribe to a non-existent key and get empty arrays.
     const sessionIdForHook = normalizedSessionId ?? '__none__';
-    const { ids: sessionMessageIds } = useSessionTranscriptIds(sessionIdForHook);
-    const sessionMessagesById = useSessionMessagesById(sessionIdForHook);
-    const allSessionMessages = useAllSessionMessages(opts.scope === 'global');
+    const history = useSessionUserMessageHistory(opts.scope === 'perSession' ? sessionIdForHook : null);
     const preferredServerId = usePreferredServerIdForSession({
         serverId: opts.serverId,
         sessionId: sessionIdForHook,
@@ -84,23 +82,9 @@ export function useUserMessageHistory(opts: {
         roleQuerySupported: false,
     });
 
-    const sessionUserMessages = React.useMemo(() => {
-        if (opts.scope !== 'perSession') return [] as Message[];
-        if (!Array.isArray(sessionMessageIds) || sessionMessageIds.length === 0) return [] as Message[];
-        const out: Message[] = [];
-        for (const id of sessionMessageIds) {
-            const m = sessionMessagesById[id];
-            if (!m || m.kind !== 'user-text') continue;
-            out.push(m);
-        }
-        return out;
-    }, [opts.scope, sessionMessageIds, sessionMessagesById]);
-
     const localEntries = React.useMemo(() => {
-        const messagesBySessionId =
-            opts.scope === 'perSession'
-                ? { [sessionIdForHook]: sessionUserMessages as ReadonlyArray<Message> }
-                : allSessionMessages;
+        const messagesBySessionId = Object.fromEntries(Object.entries(history)
+            .map(([id, rows]) => [id, Object.values(rows).sort(compareTranscriptMessagesOldestFirst)]));
 
         return collectUserMessageHistoryEntries({
             scope: opts.scope,
@@ -108,7 +92,7 @@ export function useUserMessageHistory(opts: {
             messagesBySessionId,
             maxEntries: opts.maxEntries,
         });
-    }, [opts.scope, normalizedSessionId, opts.maxEntries, sessionIdForHook, sessionUserMessages, allSessionMessages]);
+    }, [opts.scope, normalizedSessionId, opts.maxEntries, history]);
 
     const entries = React.useMemo(() => mergeHistoryEntries({
         localEntries,
@@ -126,23 +110,23 @@ export function useUserMessageHistory(opts: {
         roleQuerySupported,
     };
 
-    const requestRemoteHistoryPage = React.useCallback(() => {
+    const requestRemoteHistoryPage = React.useCallback((retryFailed = false) => {
         const requestContext = requestContextRef.current;
         if (requestContext.scope !== 'perSession') return;
         if (!requestContext.sessionId || requestContext.roleQuerySupported !== true) return;
-        remoteHistoryRequestNextPageRef.current();
+        remoteHistoryRequestNextPageRef.current(retryFailed);
     }, []);
 
-    const warmup = React.useCallback(() => {
+    const warmup = React.useCallback((retryFailed = false) => {
         if (localEntriesRef.current.length > 0) return;
         if (remoteHistoryRowsLengthRef.current > 0) return;
-        requestRemoteHistoryPage();
+        requestRemoteHistoryPage(retryFailed);
     }, [requestRemoteHistoryPage]);
 
     const maybePrefetchOlder = React.useCallback((state: { index: number; entriesLength: number }) => {
         if (state.entriesLength <= 0) return;
         if (state.index < Math.max(0, state.entriesLength - USER_MESSAGE_HISTORY_PREFETCH_REMAINING_ENTRIES)) return;
-        requestRemoteHistoryPage();
+        requestRemoteHistoryPage(true);
     }, [requestRemoteHistoryPage]);
 
     const navigator = React.useMemo(

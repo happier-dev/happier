@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createLegacyQuotaAuthWrapper, createLegacyQuotaTestHarness, plainQuotaResponse,
     resetConnectedServiceQuotaSnapshotsTestState } from './useConnectedServiceQuotaSnapshots.testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     __resetConnectedServiceQuotaSnapshotStore, buildQuotaSnapshotScopeKey, getQuotaSnapshotEntry,
     refreshQuotaSnapshot, retainQuotaSnapshotPolling, retainQuotaSnapshotOnce, subscribeQuotaSnapshotEntry,
@@ -49,25 +52,38 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         vi.restoreAllMocks();
     });
 
-    it('polls only an explicit pending refresh for a cached observer and cancels on departure', async () => {
+    it('reads an unchanged-material refresh completion on its push and stops on departure', async () => {
         const snapshot = { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
             fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [] };
-        getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(snapshot));
+        let refreshRequestedAt: number | undefined;
+        getSnapshotPlain.mockImplementation(async () => Response.json({ content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: 0, status: 'ok', refreshRequestedAt } }));
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
         const release = retainQuotaSnapshotOnce(key, ctx);
         const unsubscribe = subscribeQuotaSnapshotEntry(key, () => {});
         await vi.advanceTimersByTimeAsync(0);
+        await flushHookEffects();
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         await vi.advanceTimersByTimeAsync(60_000);
+        await flushHookEffects();
         expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
         // A real daemon keeps heartbeating during the idle minute; cached quota reads do not.
         const { storage } = await import('@/sync/domains/state/storageStore');
         storage.getState().applyMachines(Object.values(storage.getState().machines).map(machine => ({
             ...machine, activeAt: Date.now(),
         })), true, { sourceServerId: ctx.serverBasis!.serverId });
+        refreshRequestedAt = snapshot.fetchedAt;
         await refreshQuotaSnapshot(key, ctx);
         await vi.advanceTimersByTimeAsync(60_000);
+        await flushHookEffects();
         expect(getQuotaSnapshotEntry(key).refreshing).toBe(true);
-        expect(getSnapshotPlain.mock.calls.length).toBeGreaterThan(2);
+        expect(getSnapshotPlain).toHaveBeenCalledTimes(2);
+        refreshRequestedAt = undefined;
+        publishHomeAccountChange(ctx.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        await vi.advanceTimersByTimeAsync(0);
+        await flushHookEffects();
+        expect(getSnapshotPlain).toHaveBeenCalledTimes(3);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, refreshing: false, snapshot }));
         unsubscribe();
         expect(getQuotaSnapshotEntry(key).refreshing).toBe(false);
         const reads = getSnapshotPlain.mock.calls.length;
@@ -76,16 +92,42 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         release();
     });
 
+    it.each(['zero', 'missing'] as const)('does not invent healthy reads for a %s predecessor interval', async kind => {
+        // 0.2 V2 maps absent producer staleAfterMs to zero; an absent record is a 404.
+        const snapshot = kind === 'zero' ? { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [] } : null;
+        getSnapshotPlain.mockImplementation(async () => snapshot ? Response.json({
+            content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: 0, status: 'ok' },
+        }) : plainQuotaResponse(null));
+        const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
+        const release = retainQuotaSnapshotPolling(key, ctx);
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            await flushHookEffects();
+            await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
+            expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(60_000);
+            await flushHookEffects();
+            expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
+            publishHomeAccountChange(ctx.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.advanceTimersByTimeAsync(0);
+            await flushHookEffects();
+            expect(getSnapshotPlain).toHaveBeenCalledTimes(2);
+        } finally { release(); }
+    });
 
     it.each(['snapshot', 'error'] as const)('keeps accepted refresh pending beyond the old cutoff until a newer %s arrives', async (outcome) => {
         const snapshot = {
             v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
             fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [],
         };
-        getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(snapshot));
+        getSnapshotPlain.mockImplementation(async () => Response.json({ content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok', refreshRequestedAt: snapshot.fetchedAt } }));
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         void refreshQuotaSnapshot(key, ctx);
         await vi.advanceTimersByTimeAsync(11_000);
         expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
@@ -93,8 +135,9 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         expect(getQuotaSnapshotEntry(key).refreshing).toBe(true);
         if (outcome === 'snapshot') getSnapshotPlain.mockImplementation(async () => plainQuotaResponse({ ...snapshot, fetchedAt: 2 }));
         else getSnapshotPlain.mockImplementation(async () => Response.json({ error: 'Quota read failed' }, { status: 400 }));
-        await vi.advanceTimersByTimeAsync(30_000);
-        expect(getQuotaSnapshotEntry(key).refreshing).toBe(false);
+        publishHomeAccountChange(ctx.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, refreshing: false }));
         expect(getQuotaSnapshotEntry(key).snapshot?.fetchedAt).toBe(outcome === 'snapshot' ? 2 : 1);
         expect(getQuotaSnapshotEntry(key).error === null).toBe(outcome === 'snapshot');
         release();
@@ -110,6 +153,7 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(null));
         void refreshQuotaSnapshot(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
@@ -124,7 +168,8 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
             v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
             fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [],
         };
-        getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(snapshot));
+        getSnapshotPlain.mockImplementation(async () => Response.json({ content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok', refreshRequestedAt: snapshot.fetchedAt } }));
         let finishRequest!: (response: Response) => void;
         requestRefresh.mockReturnValueOnce(new Promise<Response>((resolve) => { finishRequest = resolve; }));
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
@@ -136,7 +181,7 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         const release = retain();
         await vi.advanceTimersByTimeAsync(0);
         const first = refreshQuotaSnapshot(key, ctx);
-        await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(requestRefresh).toHaveBeenCalledTimes(1));
         release();
         const releaseAgain = retain();
         const retry = refreshQuotaSnapshot(key, ctx);
@@ -148,8 +193,9 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         expect(requestRefresh).toHaveBeenCalledTimes(2);
         expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, snapshot, error: null });
         getSnapshotPlain.mockImplementation(async () => plainQuotaResponse({ ...snapshot, fetchedAt: 2 }));
-        await vi.advanceTimersByTimeAsync(30_000);
-        expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: false, snapshot: { fetchedAt: 2 }, error: null });
+        publishHomeAccountChange(ctx.serverBasis.serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, refreshing: false, snapshot: { fetchedAt: 2 }, error: null }));
         releaseAgain();
     });
 
@@ -160,7 +206,7 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
         const first = refreshQuotaSnapshot(key, ctx);
-        await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(requestRefresh).toHaveBeenCalledTimes(1));
         const joined = intent === 'join' ? refreshQuotaSnapshot(key, ctx) : undefined;
         if (intent === 'cancel') release();
         finishRequest(Response.json({ success: true }));
@@ -189,23 +235,28 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         requestRefresh.mockImplementationOnce(async () => Response.json({ error: 'Refresh refused' }, { status: 400 }));
-        void refreshQuotaSnapshot(key, ctx);
-        await vi.advanceTimersByTimeAsync(11_000);
+        await refreshQuotaSnapshot(key, ctx);
         expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: false, error: 'Refresh refused' });
         release();
     });
 
 
     it('stops fetching quota snapshots while the app is backgrounded and refetches on return', async () => {
+        const snapshot = { v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 30_000, planLabel: null, accountLabel: null, meters: [] };
+        getSnapshotPlain.mockImplementation(async () => plainQuotaResponse(snapshot));
         const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
 
         const release = retainQuotaSnapshotPolling(key, ctx);
         await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
         expect(getSnapshotPlain).toHaveBeenCalledTimes(1);
 
         await vi.advanceTimersByTimeAsync(30_000);
-        expect(getSnapshotPlain).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(getSnapshotPlain).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(getQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
 
         documentBoundary.visibilityState = 'hidden';
         documentBoundary.dispatchEvent(new Event('visibilitychange'));
@@ -215,7 +266,7 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
         documentBoundary.visibilityState = 'visible';
         documentBoundary.dispatchEvent(new Event('visibilitychange'));
         await vi.advanceTimersByTimeAsync(0);
-        expect(getSnapshotPlain).toHaveBeenCalledTimes(3);
+        await vi.waitFor(() => expect(getSnapshotPlain).toHaveBeenCalledTimes(3));
 
         release();
     });

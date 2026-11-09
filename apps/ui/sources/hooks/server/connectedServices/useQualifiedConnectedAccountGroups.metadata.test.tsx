@@ -11,8 +11,7 @@ import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-
 import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
-import { resolveConnectedServiceCollapseKey } from '@/sync/domains/connectedServices/resolveConnectedServiceCollapseKey';
-import { collapsedGroupsState, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import type { UseQualifiedConnectedAccountGroupsResult } from './useQualifiedConnectedAccountGroups';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -22,6 +21,8 @@ import { CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+// Load the real cross-program executor during collection, not inside a timed interaction.
+import '@/sync/ops/actions/defaultActionExecutor';
 
 vi.mock('socket.io-client', async importOriginal => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -61,6 +62,13 @@ async function advertiseQualifiedPools(home: ReturnType<typeof createHomeGoverna
     home.answer(serverId, '/v1/features', { body: features });
     home.answer(serverId, '/v1/features/authenticated', { body: features });
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+}
+
+async function publishPoolProfile(scope: { serverId: string; accountId: string }, groups: readonly unknown[]) {
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().activateProfileScope(scope);
+    storage.getState().applyProfileForScope(scope, AccountProfileSchema.parse({ ...profileDefaults,
+        id: scope.accountId, connectedAccountGroupsV4: groups }));
 }
 
 async function publishMountedHomeFixture(home: ReturnType<typeof createHomeGovernanceHarness>) {
@@ -159,7 +167,7 @@ describe('pool deletion through its shared Action owner', () => {
             expect(home.requestsFor(CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1).filter(request => request.input !== null)).toEqual([]);
         } finally { await screen.unmount(); await restoreMountedHome(); await home.reset(); }
     });
-    it('holds a mounted Agent own-login default at Action approval without writing the purpose catalog', async () => {
+    it('admits a mounted Agent own-login default with a cold presentation catalog and holds the write at Action approval', async () => {
         const home = createHomeGovernanceHarness();
         await prepareMountedHomeBoundary(home);
         const serverId = await home.addHome({ name: 'Purpose default', serverUrl: 'https://purpose-default-admission.test',
@@ -169,20 +177,20 @@ describe('pool deletion through its shared Action owner', () => {
             settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
         home.answer(serverId, `GET ${path}`, { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } });
-        home.answer(serverId, `POST ${path}`, { body: { status: 'updated', revision: 2, cursor: 2 } });
+        home.answer(serverId, `POST ${path}`, { select: async input => {
+            const { ConnectedAccountCatalogRowMutationV1Schema } = await import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1');
+            expect(ConnectedAccountCatalogRowMutationV1Schema.parse(input).expectedRevision).toBe(1);
+            return { body: { status: 'updated', revision: 2, cursor: 2 } };
+        } });
         await home.requireUiApproval(serverId, 'connectedServices.accounts.purposeDefault.set');
         const restoreMountedHome = await publishMountedHomeFixture(home);
-        // This contract starts with an admitted catalog, not the catalog loader's separate lifecycle.
-        const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
         const { storage } = await import('@/sync/domains/state/storage');
         const catalogScope = storage.getState().profileScope;
         expect(catalogScope).toMatchObject({ accountId: 'purpose-owner' });
-        applyConnectedAccountCatalogSnapshot(catalogScope!, 'purposes', { status: 'ready', revision: 1,
-            record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true);
         const { useConnectedAccountPurposeDefaults } = await import('./useConnectedAccountPurposeDefaults');
-        const hook = await renderHook(() => useConnectedAccountPurposeDefaults());
+        const hook = await renderHook(() => useConnectedAccountPurposeDefaults(undefined, { enabled: false }));
         try {
-            expect(hook.getCurrent().catalog.status).toBe('ready');
+            expect(hook.getCurrent().catalog.value).toBeNull();
             await waitForHomeGovernance(() => expect(hook.getCurrent().execution.ready).toBe(true));
             const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
             const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
@@ -197,10 +205,11 @@ describe('pool deletion through its shared Action owner', () => {
                     service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, selection: { source: 'native' } } })
                     .then(result => { settled = true; return result; }, error => { settled = true; mutationFailure = error; return false; });
             });
+            expect(mutationFailure).toBeUndefined();
             await waitForHomeGovernance(() => expect(hook.getCurrent().execution.approval.approvalPending).toBe(true));
             expect(settled).toBe(false);
             expect(home.requestsFor(path).filter(request => request.input !== null)).toEqual([]);
-            expect(hook.getCurrent().catalog.value?.bindings).toEqual([]);
+            expect(hook.getCurrent().catalog.value).toBeNull();
             expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
             const artifactId = hook.getCurrent().execution.approval.approvalId!;
             const approvalResult = await decideApprovalAsInbox(serverId, artifactId, 'approve');
@@ -345,9 +354,11 @@ describe('pool deletion through its shared Action owner', () => {
             state: {}, createdAt: 0, updatedAt: 0, members: [] };
         const encodedService = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, service));
         let currentGroup = group;
+        await publishPoolProfile({ serverId, accountId: 'pool-editor' }, [group]);
         home.answer(serverId, `/v4/connect/qualified/groups?service=${encodedService}`, { select: () => ({ body: { groups: [currentGroup] } }) });
-        home.answer(serverId, 'PATCH /v4/connect/qualified/group', { select: () => {
+        home.answer(serverId, 'PATCH /v4/connect/qualified/group', { select: async () => {
             currentGroup = { ...group, displayName: 'Renamed', generation: 3 };
+            await publishPoolProfile({ serverId, accountId: 'pool-editor' }, [currentGroup]);
             return { body: { group: currentGroup } };
         } });
         home.answer(serverId, 'POST /v4/connect/qualified/groups', { body: { group: { ...group, ref: { service, groupId: 'new-pool' } } } });
@@ -450,6 +461,7 @@ describe('pool deletion through its shared Action owner', () => {
             deletionRequests += 1;
             await deletion.promise;
             groupDeleted = true;
+            if (!retireAfterDelete) await publishPoolProfile({ serverId, accountId }, []);
             if (retireAfterDelete) {
                 await home.switchAccount(serverId, 'another-pool-owner');
                 auth.credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
@@ -481,16 +493,7 @@ describe('pool deletion through its shared Action owner', () => {
         home.answer(serverId, `POST ${presentationPath}`, { body: { status: 'updated', revision: 5, cursor: 5 } });
         home.answer(serverId, `POST ${acknowledgementsPath}`, { body: { status: 'updated', revision: 6, cursor: 6 } });
         const { storage } = await import('@/sync/domains/state/storage');
-        const originalLocalKeys = collapsedGroupsState.readAll();
-        const scope = { serverId, accountId };
-        const targetMemberKey = resolveConnectedServiceCollapseKey({ scope, service, profileId: 'work', groupId: ref.groupId });
-        const keptKeys = {
-            [resolveConnectedServiceCollapseKey({ scope, service, profileId: 'work' })]: true,
-            [resolveConnectedServiceCollapseKey({ scope, service, profileId: 'work', groupId: 'unrelated' })]: false,
-            [resolveConnectedServiceCollapseKey({ scope: { ...scope, accountId: 'another-owner' }, service, profileId: 'work', groupId: ref.groupId })]: false,
-            [resolveConnectedServiceCollapseKey({ scope, service: { pluginId: 'custom.safe-profile', localId: service.localId }, profileId: 'work', groupId: ref.groupId })]: false,
-        };
-        replaceCollapsedGroupKeys({ ...originalLocalKeys, ...keptKeys, [targetMemberKey]: false });
+        await publishPoolProfile({ serverId, accountId }, [group]);
         const { useQualifiedConnectedAccountGroups } = await import('./useQualifiedConnectedAccountGroups');
         let unmount: (() => Promise<void>) | undefined;
         let pending: ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']> | undefined;
@@ -526,7 +529,6 @@ describe('pool deletion through its shared Action owner', () => {
             });
             expect(rendered.getCurrent().groups).toHaveLength(1);
             expect(home.requestsFor(presentationPath).filter(record => record.input !== null)).toEqual([]);
-            expect(collapsedGroupsState.read(targetMemberKey)).toBe(false);
             let result: Awaited<ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']>> = false;
             await act(async () => { deletion.resolve(); if (pending) result = await pending; });
             if (retireAfterDelete) {
@@ -535,7 +537,6 @@ describe('pool deletion through its shared Action owner', () => {
                 expect(result).toEqual({ applied: true,
                     metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } });
                 expect(home.requestsFor(presentationPath).filter(record => record.input !== null)).toEqual([]);
-                expect(collapsedGroupsState.read(targetMemberKey)).toBe(false);
                 return;
             }
             if (consumedScreen) {
@@ -553,7 +554,6 @@ describe('pool deletion through its shared Action owner', () => {
             } else expect(result).toEqual({ applied: true, metadataCleanup: partialAcknowledgements
                 ? { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } : { status: 'complete' } });
             expect(rendered.getCurrent().groups).toEqual([]);
-            expect(collapsedGroupsState.readAll()).toEqual({ ...originalLocalKeys, ...keptKeys });
             expect(home.requestsFor(presentationPath).map(record => record.input)).toContainEqual({ expectedRevision: 4,
                 content: { t: 'plain', v: { v: 1, entries: [retainedAccountLabel] } } });
             if (partialAcknowledgements) {
@@ -571,7 +571,6 @@ describe('pool deletion through its shared Action owner', () => {
             await act(async () => { deletion.resolve(); await pending?.catch(() => false); });
             await unmount?.();
             controller?.dispose();
-            replaceCollapsedGroupKeys(originalLocalKeys);
             await home.reset();
         }
     }

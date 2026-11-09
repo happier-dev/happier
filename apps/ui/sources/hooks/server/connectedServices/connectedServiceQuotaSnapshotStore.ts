@@ -19,12 +19,24 @@ import type {
 } from '@/sync/http/client';
 import type { CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
 import type {
-    BuiltInLegacyConnectedAccountOperation,
-    ConnectedServiceId,
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+    BuiltInLegacyConnectedAccountOperation} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type {
+    ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1} from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type {
     ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 import { t } from '@/text';
+import { getLegacyConnectedServiceRegistryEntry, resolveConnectedServicePlanLabel } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+
+function normalizePlanLabel(snapshot: ConnectedServiceQuotaSnapshotV1 | null): ConnectedServiceQuotaSnapshotV1 | null {
+    if (!snapshot) return null;
+    const service = getLegacyConnectedServiceRegistryEntry(snapshot.serviceId).service;
+    if (!service) return snapshot;
+    const planLabel = resolveConnectedServicePlanLabel(service, snapshot.planLabel);
+    return planLabel === snapshot.planLabel ? snapshot : { ...snapshot, planLabel };
+}
 
 /**
  * Shared, module-level loader cache for connected-service quota snapshots.
@@ -272,7 +284,7 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: Abor
                     ...(signal ? { signal } : {}),
                 });
                 if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
-                const opened = read?.snapshot ?? null;
+                const opened = normalizePlanLabel(read?.snapshot ?? null);
                 entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
                 entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
                     legacyStaleAfterMs: read?.metadata.staleAfterMs });
@@ -291,12 +303,12 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext, signal?: Abor
                 ...(signal ? { signal } : {}),
             });
             if (!isCurrent() || !isScopeActive(ctx.credentialScope)) return null;
-            const opened = sealed
+            const opened = normalizePlanLabel(sealed
                 ? openConnectedServiceQuotaViewSnapshot(ctx.credentials, sealed.sealed, {
                     serviceId: ctx.serviceId,
                     profileId: ctx.profileId,
                 })
-                : null;
+                : null);
             entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
             entry.nextFetchAtMs = getUsageProjectionNextReadAtMs({
                 legacyStaleAfterMs: sealed?.metadata.staleAfterMs });

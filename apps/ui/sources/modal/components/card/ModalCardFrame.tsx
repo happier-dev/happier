@@ -10,6 +10,7 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ContainedPageScopeProvider } from '@/components/ui/lists/listPresentation';
+import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ModalCardBody } from './ModalCardBody';
 import { PopoverScrollSourceProvider, usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
 import { ModalCardHeader } from './ModalCardHeader';
@@ -17,6 +18,7 @@ import { SheetGrabber, useSheetDismiss, useSheetDrag } from './sheetDragDismiss'
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 
 type ModalCardFrameProps = Readonly<{
     children: React.ReactNode;
@@ -28,11 +30,15 @@ type ModalCardFrameProps = Readonly<{
     /** `wide`: the band's text and close stand on the content's 24 edge (a phone keeps the page gutter). */
     headerInset?: 'wide';
     leading?: React.ReactNode;
+    /** `above`: on a phone the leading slot takes its own row; the title stands beneath it. */
+    leadingPlacement?: 'above' | null;
     title?: React.ReactNode;
     subtitle?: React.ReactNode;
     /** `1`: the subtitle stays on one line and ends in an ellipsis. */
     subtitleLines?: 1;
     actions?: React.ReactNode;
+    /** A form's completion control in the close control's place (see `ModalCardHeader`). */
+    completion?: React.ReactNode;
     footer?: React.ReactNode;
     scrollHost?: 'overlay' | 'body' | 'bounded';
     bodyScroll?: 'none' | 'auto';
@@ -158,11 +164,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         dragLayout?.(event);
     }, [bounded, dragLayout]);
 
-
     const hasHeader = framed && props.header !== 'none' && (props.leading != null
         || props.title != null
         || props.subtitle != null
         || props.actions != null
+        || props.completion != null
         || typeof props.onClose === 'function');
 
     return (
@@ -207,16 +213,18 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                     paddingBottom: props.safeAreaInsets?.bottom ?? 0,
                     paddingLeft: props.safeAreaInsets?.left ?? 0,
                 } : null,
-                sheet ? [styles.sheetFrame, { paddingBottom: props.sheetBottomInset ?? 0 }] : null,
+                sheet ? styles.sheetFrame : null,
             ]}>
                 {dismiss ? <SheetGrabber onDismiss={dismiss} panHandlers={drag.panHandlers} {...(props.testID ? { testID: `${props.testID}.grabber` } : {})} /> : null}
                 {hasHeader ? (
                     <ModalCardHeader
                         leading={props.leading}
+                        leadingPlacement={props.leadingPlacement}
                         title={props.title}
                         subtitle={props.subtitle}
                         subtitleLines={props.subtitleLines}
                         actions={props.actions}
+                        completion={props.completion}
                         onClose={props.onClose}
                         inset={props.headerInset}
                         titleTestID={props.titleTestID}
@@ -244,7 +252,8 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                     >
                         <PopoverScrollSourceProvider scrollSourceRef={bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
                             <ModalCardBody fill={framed && bodyScroll !== 'auto'} style={props.bodyStyle}>
-                                {props.children}
+                                {/* A card or sheet already draws the surface; a fullscreen page keeps the strip under its header. */}
+                                <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
                             </ModalCardBody>
                         </PopoverScrollSourceProvider>
                     </ScrollView>
@@ -257,8 +266,21 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="normal" presentation="uniform">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
+                {sheet && (props.sheetBottomInset ?? 0) > 0 ? (
+                    <SheetSafeAreaFoot inset={props.sheetBottomInset ?? 0} testID={props.testID ? `${props.testID}.safe-area-foot` : undefined} />
+                ) : null}
                 {framed && !fullscreen ? <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" /> : null}
             </GlassSurface>
         </Animated.View>
     );
+}
+
+/**
+ * The home-indicator strip a phone sheet keeps under its content. A raised keyboard already covers
+ * that strip and the frame rides the keyboard, so the sheet then ends at the keyboard's top instead
+ * of leaving a second edge above it. Its own leaf, so only sheets follow the keyboard.
+ */
+function SheetSafeAreaFoot(props: Readonly<{ inset: number; testID?: string }>): React.ReactElement | null {
+    const keyboardHeight = useKeyboardHeight();
+    return keyboardHeight > 0 ? null : <View testID={props.testID} pointerEvents="none" style={{ height: props.inset }} />;
 }

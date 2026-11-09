@@ -78,6 +78,27 @@ describe('useWebOverlayFocusContainment', () => {
         expect(getElement('overlay-editor').dataset.indents).toBe('1');
     });
 
+    it('wraps Tab to an explicitly focusable SVG canvas while excluding hidden and disabled SVG controls', async () => {
+        function SvgOverlayHarness() {
+            const containerRef = React.useRef<HTMLDivElement>(null);
+            useWebOverlayFocusContainment({ active: true, containerRef, focusReturn: { kind: 'activation-time' } });
+            return <div ref={containerRef} tabIndex={-1}>
+                <svg tabIndex={0} aria-hidden="true" />
+                <svg tabIndex={0} data-testid="overlay-svg-canvas" />
+                <svg tabIndex={0} aria-disabled="true" />
+                <button data-testid="overlay-svg-last">Done</button>
+            </div>;
+        }
+        await mountHarness(() => <SvgOverlayHarness />, undefined);
+        const canvas = document.querySelector<SVGSVGElement>('[data-testid="overlay-svg-canvas"]')!;
+        const lastAction = getElement<HTMLButtonElement>('overlay-svg-last');
+        lastAction.focus();
+        dispatchTab();
+        expect(document.activeElement).toBe(canvas);
+        dispatchTab({ shiftKey: true });
+        expect(document.activeElement).toBe(lastAction);
+    });
+
     it('returns focus to the exact connected trigger when the overlay closes', async () => {
         const harness = await mountHarness((props: OverlayHarnessProps) => <OverlayHarness {...props} />, {
             active: false,

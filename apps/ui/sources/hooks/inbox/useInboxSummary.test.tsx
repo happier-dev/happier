@@ -39,7 +39,7 @@ import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/session
 import { RunFollowOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { SetOtherAccountFollowRequestV1Schema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
-import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,7 +73,7 @@ function seedArtifacts(artifacts: Record<string, DecryptedArtifact>) {
             artifactStore.seedAccountGrant(stored.id, 'account-a', stored.access);
         }
     }
-    storage.setState({ artifacts });
+    seedAdmittedArtifactRows(Object.values(artifacts), storage);
 }
 const followCensusPath = new URL(resolveSessionFollowActionRequest('follow.list', {
     receiver: { kind: 'account' }, direction: 'following',
@@ -363,14 +363,15 @@ describe('useInboxSummary workflow source', () => {
         expect(listRuns.mock.calls[1]?.[0].request).toMatchObject({ attention: 'required', limit: expect.any(Number) });
     });
 
-    it('counts an ordinary Automation failure with Workflows disabled', async () => {
+    it('does not read ordinary failures through the released alias when Workflows is disabled', async () => {
         await getServerFeaturesSnapshot({ serverId: connection!.home.id, force: true });
         workflowsEnabled = false;
         primeServerFeaturesSnapshot({ serverId: connection!.home.id, snapshot: { status: 'ready', features: features() } });
         listAutomationRuns.mockResolvedValue({ runs: [createAutomationRunFixture({ id: 'pre-session', state: 'failed' })], nextCursor: null });
         await renderSummary();
         expect(listRuns).not.toHaveBeenCalled();
-        expect(latest).toEqual({ count: 1, hasContent: true });
+        expect(listAutomationRuns).not.toHaveBeenCalled();
+        expect(latest).toEqual({ count: 0, hasContent: false });
     });
 
     it('lets an answered off-page hold recede on the next Account-change wake', async () => {
@@ -465,7 +466,7 @@ describe('useInboxSummary workflow source', () => {
         const readModel = () => inbox!;
         const item = readModel().items[0]!;
         await screen.pressByTestIdAsync(`inbox.item.${item.key}`);
-        expect(screen.findByTestId('notice-destination')?.props.children).toBe(item.pageRoute);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('notice-destination')?.props.children).toBe(item.pageRoute));
         if (type === 'decision') {
             expect(artifactWrites).toEqual([]);
             expect(readModel().items[0]).toMatchObject({ view: 'needs_you', read: false });
@@ -493,8 +494,10 @@ describe('useInboxSummary workflow source', () => {
         const readModel = () => inbox!;
         const item = readModel().items[0]!;
         await screen.pressByTestIdAsync(`inbox.item.${item.key}`);
-        expect(noticeAlert).toHaveBeenCalled();
-        expect(screen.findByTestId('notice-destination')?.props.children).toBe(item.pageRoute);
+        await waitForHomeGovernance(() => {
+            expect(noticeAlert).toHaveBeenCalled();
+            expect(screen.findByTestId('notice-destination')?.props.children).toBe(item.pageRoute);
+        });
         expect(artifactWrites).toEqual([]);
         expect(readModel().items[0]).toMatchObject({ read: false });
         expect(readModel().openAccountNotices).toHaveLength(1);
@@ -526,10 +529,8 @@ describe('useInboxSummary workflow source', () => {
         const entry = readModel().openUsageNotices[0]!;
         const originalBody = entry.artifact.body;
         if (typeof originalBody !== 'string') throw new Error('Expected a readable usage notice body');
-        const item = readModel().items.find(item => item.source.id === artifactRead.id)!;
-        // The retained closed usage schema has no read field. Opening it must
-        // not invent one or migrate its stored kind/content.
-        await act(async () => { await readModel().markItemOpened(item); });
+        // A usage notice is one Inbox line, its own card: no generic item repeats it.
+        expect(readModel().items.find(item => item.source.id === artifactRead.id)).toBeUndefined();
         expect(artifactWrites).toHaveLength(0);
         await act(async () => { await readModel().dismissUsageNotice(entry); });
         expect(artifactWrites).toHaveLength(1);

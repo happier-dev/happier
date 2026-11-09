@@ -121,7 +121,7 @@ import { createGitSessionRpcHarness, git, initBareRemote, initRepo } from '@/syn
 import { createSaplingSessionRpcHarness, initSaplingRepo, runSapling } from '@/sync/ops/__tests__/saplingRepoHarness';
 import { normalizeWorkingSnapshotForUi } from '@/scm/scmRepositoryService';
 import { useFilesScmOperations } from './useFilesScmOperations';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 

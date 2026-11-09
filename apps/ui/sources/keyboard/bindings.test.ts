@@ -30,6 +30,12 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('keyboard bindings', () => {
+    it('ignores repeated shortcut capture events while keeping Tab bindable', () => {
+        expect(formatKeybindingCaptureEvent({ key: 'h', code: 'KeyH', metaKey: true, repeat: true }, 'macos')).toBeNull();
+        expect(formatKeybindingCaptureEvent({ nativeEvent: { key: 'h', ctrlKey: true, repeat: true } }, 'windows')).toBeNull();
+        expect(formatKeybindingCaptureEvent({ key: 'Tab', code: 'Tab' }, 'macos')).toBe('Tab');
+    });
+
     it('resolves mod to the platform primary modifier', () => {
         expect(resolveModModifier('macos')).toBe('meta');
         expect(resolveModModifier('ios')).toBe('meta');
@@ -105,6 +111,8 @@ describe('keyboard bindings', () => {
     it('formats display labels from the parsed binding and current platform', () => {
         expect(formatKeybindingLabel(parseKeybindingRule('Mod+K'), 'macos')).toBe('Cmd+K');
         expect(formatKeybindingLabel(parseKeybindingRule('Mod+K'), 'windows')).toBe('Ctrl+K');
+        expect(formatKeybindingLabel(parseKeybindingRule('CmdOrCtrl+Shift+2'), 'macos')).toBe('Cmd+Shift+2');
+        expect(formatKeybindingLabel(parseKeybindingRule('CmdOrCtrl+Shift+2'), 'windows')).toBe('Ctrl+Shift+2');
         expect(formatKeybindingLabel(parseKeybindingRule('?'), 'linux')).toBe('?');
     });
 

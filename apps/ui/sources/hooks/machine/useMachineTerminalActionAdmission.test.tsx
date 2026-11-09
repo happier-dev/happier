@@ -94,10 +94,10 @@ describe('Project terminal admission through canonical Machine Actions', () => {
         try {
             await act(async () => hook.getCurrent().onReady(80, 24));
             await vi.waitFor(() => expect(home.artifacts.list()).toHaveLength(1));
-            expect(hook.getCurrent().status).toBe('not-open');
+            expect(hook.getCurrent().status).toBe('connecting');
             acknowledgement.resolve();
             await vi.waitFor(() => expect(hook.getCurrent().approvalPending).toBe(true));
-            expect(hook.getCurrent().status).toBe('not-open');
+            expect(hook.getCurrent().status).toBe('connecting');
             expect(rpc).not.toHaveBeenCalled();
             await home.decline();
             await vi.waitFor(() => expect(hook.getCurrent().status).toBe('not-open'));

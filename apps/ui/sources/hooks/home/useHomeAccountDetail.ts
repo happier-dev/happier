@@ -77,7 +77,7 @@ export function useHomeAccountDetail(
         if (!enabled || !serverId || !accountId) return;
         return subscribeHomeAccountChange((event) => {
             if (event.serverId === serverId && isHomeAdministrationAccountChange(event)) load('refresh');
-        });
+        }, { reconnect: 'refresh' });
     }, [enabled, serverId, accountId, load]);
 
     const reload = React.useCallback(() => { load('refresh'); }, [load]);

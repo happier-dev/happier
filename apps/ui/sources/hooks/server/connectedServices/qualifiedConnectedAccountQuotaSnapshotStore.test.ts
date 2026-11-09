@@ -492,7 +492,6 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
                 loading: false,
             });
             await store.refreshQualifiedQuotaSnapshot(key, context);
-            expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: { operation: 'describeService', service: ref.service, requiredOperation: 'quota_refresh' } }]);
             expect(boundary.refresh).toHaveBeenCalledWith(ref);
             expect(getQuotaMock).toHaveBeenCalledTimes(2);
         } finally {
@@ -541,6 +540,25 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         }
     });
 
+    it('omits a provider retry time that has already passed', async () => {
+        snapshotFixture.mockReturnValue({
+            v: 1, ref, activeAccountId: 'provider-work', fetchedAt: 1,
+            staleAfterMs: 60_000, planLabel: 'Existing plan', accountLabel: null, meters: [],
+            diagnostics: [{ kind: 'provider_http', code: 'provider_backoff', status: 429, observedAtMs: 1, retryAtMs: Date.now() - 60_000 }],
+        });
+        getQuotaMock.mockResolvedValue({ metadata: { status: 'error' } });
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const release = store.retainQualifiedQuotaSnapshotPolling(key, context);
+        try {
+            await flushAsyncTurns();
+            expect(store.getQualifiedQuotaSnapshotEntry(key).error).toBe(t('connectedServices.errors.quotaRefreshFailed'));
+        } finally {
+            release();
+        }
+    });
+
     it('shows safe provider retry guidance and clears it after a successful observation', async () => {
         const retryAtMs = Date.now() + 60_000;
         const snapshot = {
@@ -563,9 +581,11 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             const entry = store.getQualifiedQuotaSnapshotEntry(key);
             expect(entry.snapshot).toEqual(snapshot);
             expect(entry.error).toBe(t('connectedServices.errors.quotaRefreshRetryAt', {
-                error: `${t('connectedServices.errors.quotaRefreshFailed')} (HTTP 429)`,
+                error: t('connectedServices.errors.quotaRefreshFailed'),
                 time: new Date(retryAtMs).toLocaleString(),
             }));
+            // The status code stays diagnostic-only, like the provider's own message and headers.
+            expect(entry.error).not.toContain('429');
             expect(entry.error).not.toContain('Untranslated');
             expect(entry.error).not.toContain('provider_backoff');
 

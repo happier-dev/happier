@@ -289,7 +289,8 @@ describe('machine capabilities cache races at the RPC boundary', () => {
         await vi.waitFor(() => expect(settled).toBe(true));
         await pending;
         expect(transportSignal?.aborted).toBe(true);
-        expect(getMachineCapabilitiesCacheState(target.machineIds[0]!, target.serverId)?.status).toBe('idle');
+        const { MACHINE_UPDATE_FACTS_CACHE_SALT } = await import('@/updates/machineUpdateFacts');
+        expect(getMachineCapabilitiesCacheState(target.machineIds[0]!, target.serverId, MACHINE_UPDATE_FACTS_CACHE_SALT)?.status).toBe('idle');
     });
 
     it('supersedes the mounted reader on explicit refresh so a stalled request can recover', async () => {
@@ -422,6 +423,31 @@ describe('machine capabilities cache races at the RPC boundary', () => {
         expect(getMachineCapabilitiesCacheState(target.machineId, target.serverId)).toMatchObject({ status: 'loaded', snapshot: { response: { results: {
             'cli.codex': { data: { version: 'retained-predecessor' } }, 'cli.claude': { data: { version: 'successor' } },
         } } } });
+    });
+
+    it('settles a failed agent update probe across repeated background demands until its retry cadence or inputs change', async () => {
+        const { ensureMachineUpdateFactsBackground } = await import('@/capabilities/ensureAgentInstallablesBackground');
+        const { buildMachineUpdateFactsRequest } = await import('@/capabilities/requests');
+        const ids = (buildMachineUpdateFactsRequest().requests ?? []).map(({ id }) => id);
+        const answer = (codex: Record<string, unknown>) => ({ protocolVersion: 1, results: Object.fromEntries(ids.map(id => [id,
+            id === 'cli.codex' ? codex : { ok: true, checkedAt: Date.now(), data: { updateSupported: true, latestVersion: '1.0.0', version: '1.0.0' } }])) });
+        // The daemon checked codex and its probe failed: a typed, settled answer.
+        boundary.rpc.mockImplementation(async () => answer({ ok: false, checkedAt: Date.now(), error: { code: 'probe_failed', message: 'Temporarily unavailable' } }));
+        const target = { machineIds: ['cache-updates-failed-probe'], serverId: 'cache-updates-failed-home' };
+        await ensureMachineUpdateFactsBackground(target);
+        expect(boundary.rpc).toHaveBeenCalledTimes(1);
+        // Each Machine wake re-runs the background reader with unchanged inputs.
+        for (let wake = 0; wake < 5; wake += 1) await ensureMachineUpdateFactsBackground(target);
+        expect(boundary.rpc).toHaveBeenCalledTimes(1);
+        // The shared failure cadence, not the wake, decides the next ask.
+        const { LATEST_VERSION_CHECK_RETRY_MS } = await import('@/updates/latestVersionCheckFreshness');
+        const now = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now + LATEST_VERSION_CHECK_RETRY_MS + 1);
+        try {
+            await ensureMachineUpdateFactsBackground(target);
+            await ensureMachineUpdateFactsBackground(target);
+            expect(boundary.rpc).toHaveBeenCalledTimes(2);
+        } finally { clock.mockRestore(); }
     });
 
     it('keeps the successor Account independent and rejects a retired late result', async () => {

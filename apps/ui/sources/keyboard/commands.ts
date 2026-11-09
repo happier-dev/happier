@@ -27,6 +27,19 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         defaultBinding: { binding: 'Shift+F12', allowInEditable: true, nativeConsumable: true },
     },
     { id: 'code.showInfo', settingsTitleKey: 'actionPresentation.titles.code_hover_get' },
+    ...([
+        ['code.goToTypeDefinition', 'goToTypeDefinition', 'Mod+F12'],
+        ['code.goToImplementation', 'goToImplementation', 'Mod+Shift+F12'],
+        ['code.peekReferences', 'peekReferences', 'Alt+F12'],
+        ['code.suggest', 'suggest', 'Mod+Space'],
+        ['code.signatureHelp', 'signatureHelp', 'Mod+Shift+Space'],
+        ['code.format', 'formatDocument', 'Alt+Shift+F'],
+        ['code.expandSelection', 'expandSelection', 'Alt+Shift+ArrowRight'],
+        ['code.shrinkSelection', 'shrinkSelection', 'Alt+Shift+ArrowLeft'],
+    ] as const).map(([id, title, binding]): KeyboardCommand => ({ id, settingsTitleKey: `files.pane.menu.${title}`,
+        defaultBinding: { binding, allowInEditable: true, nativeConsumable: true } })),
+    { id: 'code.formatSelection', settingsTitleKey: 'files.pane.menu.formatSelection' },
+    { id: 'code.organizeImports', settingsTitleKey: 'files.pane.menu.organizeImports' },
     {
         id: 'code.problem.next',
         settingsTitleKey: 'settingsKeyboard.commands.codeProblemNext',
@@ -38,6 +51,7 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         defaultBinding: { binding: 'Shift+F8', allowInEditable: true, nativeConsumable: true },
     },
     { id: 'code.showProblems', settingsTitleKey: 'actionPresentation.titles.code_diagnostics_list' },
+    { id: 'code.checkProjectProblems', settingsTitleKey: 'files.pane.intelligence.checkWholeProject' },
     { id: 'code.restart', settingsTitleKey: 'actionPresentation.titles.code_restart' },
     {
         id: 'code.rename',
@@ -199,11 +213,9 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         },
         when: context => !context.isEditableTarget,
     },
-    // Browser chrome (UB-6). Guest<->host policy: these are HOST shortcuts and fire only while the
-    // app chrome owns the keyboard. A page loaded in the in-app browser lives in a separate frame
-    // or a native child webview, so its key events never reach this document's listener and it can
-    // never be hijacked by them; equally, none of these steal a key from the page while it is
-    // focused. `when: !isEditableTarget` keeps them out of the address bar and any other field.
+    // Browser chrome (UB-6). Embedded engines receive only the active browser command signatures
+    // from the keyboard owner and return matching chords to this same dispatcher. Address and
+    // navigation commands also work from a guest field; unrelated page keys stay with the guest.
     //
     // On the `web` surface (which includes the Tauri desktop app, whose bundle is the web bundle)
     // Mod+L / Mod+R / Mod+[ / Mod+] belong to the HOST browser and are listed in
@@ -212,37 +224,38 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         id: 'browser.address.focus',
         settingsTitleKey: 'settingsKeyboard.commands.browserAddressFocus',
         defaultBindings: [
-            { binding: 'Alt+L', platforms: ['web'] },
-            { binding: 'Mod+L', blockedSurfaces: ['web'] },
+            { binding: 'Mod+L', platforms: ['web'], webHost: 'desktop', allowInEditable: true, nativeConsumable: true },
+            { binding: 'Alt+L', platforms: ['web'], webHost: 'browser', allowInEditable: true, nativeConsumable: true },
+            { binding: 'Mod+L', blockedSurfaces: ['web'], allowInEditable: true, nativeConsumable: true },
         ],
-        when: (context) => !context.isEditableTarget,
+        allowInEditable: true,
     },
     {
         id: 'browser.back',
+        allowInEditable: true,
         settingsTitleKey: 'settingsKeyboard.commands.browserBack',
         defaultBindings: [
-            { binding: 'Alt+[', platforms: ['web'] },
-            { binding: 'Mod+[', blockedSurfaces: ['web'] },
+            { binding: 'Alt+[', platforms: ['web'], nativeConsumable: true },
+            { binding: 'Mod+[', blockedSurfaces: ['web'], nativeConsumable: true },
         ],
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'browser.forward',
+        allowInEditable: true,
         settingsTitleKey: 'settingsKeyboard.commands.browserForward',
         defaultBindings: [
-            { binding: 'Alt+]', platforms: ['web'] },
-            { binding: 'Mod+]', blockedSurfaces: ['web'] },
+            { binding: 'Alt+]', platforms: ['web'], nativeConsumable: true },
+            { binding: 'Mod+]', blockedSurfaces: ['web'], nativeConsumable: true },
         ],
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'browser.reload',
+        allowInEditable: true,
         settingsTitleKey: 'settingsKeyboard.commands.browserReload',
         defaultBindings: [
-            { binding: 'Alt+R', platforms: ['web'] },
-            { binding: 'Mod+R', blockedSurfaces: ['web'] },
+            { binding: 'Alt+R', platforms: ['web'], nativeConsumable: true },
+            { binding: 'Mod+R', blockedSurfaces: ['web'], nativeConsumable: true },
         ],
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'composer.abortConfirm',
@@ -285,6 +298,13 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         id: 'composer.sendInterrupt',
         settingsTitleKey: 'settingsKeyboard.commands.composerSendInterrupt',
         defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true, nativeConsumable: true },
+    },
+    {
+        // New-session composer only: sends the other way round from the "After sending" setting. It
+        // shares its default key with composer.sendInterrupt, which only a Session composer handles.
+        id: 'composer.sendAlternateAfterSend',
+        settingsTitleKey: 'settingsKeyboard.commands.composerSendAlternateAfterSend',
+        defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true, nativeConsumable: true, conflictScope: 'newSessionComposer' },
     },
     {
         id: 'commandPalette.open',
@@ -372,10 +392,10 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         id: 'session.new',
         settingsTitleKey: 'settingsKeyboard.commands.sessionNew',
         defaultBindings: [
-            { binding: 'Alt+N', platforms: ['web'] },
-            { binding: 'Mod+Shift+N', blockedSurfaces: ['web'] },
+            // Alt+letter types a character on many layouts, so only the Mod chord works while typing.
+            { binding: 'Alt+N', platforms: ['web'], allowInEditable: false },
+            { binding: 'Mod+Shift+N', blockedSurfaces: ['web'], allowInEditable: true, nativeConsumable: true },
         ],
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'session.mru.next',
@@ -418,7 +438,7 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     {
         id: 'sessions.row.moveToFolder',
         settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveToFolder',
-        defaultBinding: { binding: 'Alt+Shift+F' },
+        defaultBinding: { binding: 'Alt+Shift+G' },
         when: (context) => !context.isEditableTarget,
     },
     {

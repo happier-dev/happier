@@ -4,9 +4,17 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createAccountNoticeArtifactFixture, createServiceHealthNoticeArtifactFixture, createUsageNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { createAccountNoticeInvestigation } from './accountNoticeInvestigation';
+import { createAccountNoticeInvestigation, failureInvestigationSubjectKey } from './accountNoticeInvestigation';
+import { TriageFailureSubjectV1Schema } from '@happier-dev/triage-protocol/v1';
 
 describe('private notice investigation through the Action front door', () => {
+    it('keeps pending investigations distinct for exact Workflow Runs and Homes', () => {
+        const subject = TriageFailureSubjectV1Schema.parse({ kind: 'workflowRun', serverId: 'home', runId: 'run-a' });
+        expect(failureInvestigationSubjectKey(subject)).not.toBe(failureInvestigationSubjectKey(
+            TriageFailureSubjectV1Schema.parse({ ...subject, runId: 'run-b' })));
+        expect(failureInvestigationSubjectKey(subject)).not.toBe(failureInvestigationSubjectKey(
+            TriageFailureSubjectV1Schema.parse({ ...subject, serverId: 'other-home' })));
+    });
     it('recovers the receipt investigation after its admission owner remounts, without scanning Sessions', async () => {
         const scope = { serverId: 'srv-health-home', accountId: 'account-a' };
         const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'env', deploymentId: 'receipt' } as const;

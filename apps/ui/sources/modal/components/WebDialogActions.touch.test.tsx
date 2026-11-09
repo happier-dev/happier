@@ -29,16 +29,15 @@ async function renderOnPhoneBrowser(
 ) {
   // The primary pointer is a browser boundary: a phone browser reports touch points and no hover.
   vi.stubGlobal('navigator', { maxTouchPoints: 5 });
-  const { resolveMinimumInteractiveTargetSize } =
-    await import('@/components/ui/interactiveTargetSize');
   return {
     screen: await renderScreen(await element()),
-    floor: resolveMinimumInteractiveTargetSize('web'),
+    // A finger's target on iOS and in a phone browser.
+    floor: 44,
   };
 }
 
 describe('web alert and prompt actions under a finger', () => {
-  it('give every alert choice the platform touch floor', async () => {
+  it('keep every alert choice at its row height and reach the touch floor with the hit area', async () => {
     const { screen, floor } = await renderOnPhoneBrowser(async () => {
       const { WebAlertModal } = await import('./WebAlertModal');
       return (
@@ -58,14 +57,15 @@ describe('web alert and prompt actions under a finger', () => {
     });
     expect(floor).toBe(44);
     for (const testID of ['web-modal-cancel', 'web-modal-confirm']) {
-      expect(
-        flattenStyle(screen.findByTestId(testID)?.props.style).minHeight,
-      ).toBeGreaterThanOrEqual(floor);
+      const choice = screen.findByTestId(testID);
+      // A touch target is a hit area, not a drawn size: the choice row keeps its own height.
+      expect(flattenStyle(choice?.props.style).minHeight).toBeUndefined();
+      expect(choice?.props.onLayout, 'the choice measures its row for the hit area').toBeTypeOf('function');
     }
   });
 
-  it('give prompt choices the touch floor and name the prompt field by the dialog title', async () => {
-    const { screen, floor } = await renderOnPhoneBrowser(async () => {
+  it('keep prompt choices at their row height and name the prompt field by the dialog title', async () => {
+    const { screen } = await renderOnPhoneBrowser(async () => {
       const { WebPromptModal } = await import('./WebPromptModal');
       return (
         <WebPromptModal
@@ -86,7 +86,7 @@ describe('web alert and prompt actions under a finger', () => {
     for (const testID of ['web-prompt-cancel', 'web-prompt-confirm']) {
       expect(
         flattenStyle(screen.findByTestId(testID)?.props.style).minHeight,
-      ).toBeGreaterThanOrEqual(floor);
+      ).toBeUndefined();
     }
     // The prompt's field is the shared page field: it is named for assistive technology.
     expect(

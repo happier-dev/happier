@@ -201,7 +201,7 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                         },
                         onFailed: (code, failure) => { settleAssociation(retained.artifactId); callbacks.onApprovalFailed(code, failure); } });
                     if (original.status === 'executed') await continuation.onExecuted(artifact);
-                    else if (original.status === 'canceled' || original.status === 'failed' || original.status === 'rejected') continuation.onTerminal?.(original.status, artifact);
+                    else if (original.status === 'canceled' || original.status === 'failed' || original.status === 'outcome_unknown' || original.status === 'rejected') continuation.onTerminal?.(original.status, artifact);
                     else approval.requestApproval(continuation);
                     return { approvalPending: true as const };
                 }

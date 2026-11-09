@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import {
     resolveMainSelectionFeatureDecision,

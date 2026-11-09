@@ -26,10 +26,12 @@ import { useProfile } from '@/sync/store/hooks';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import type {
-    ConnectedServiceQuotaSnapshotV1,
-    ProviderAccountUsageRecordId,
+    ConnectedServiceQuotaSnapshotV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import type {
     QualifiedConnectedAccountQuotaSnapshotV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useCredentialScopedAccountModeResolver } from './useCredentialScopedAccountModeResolver';

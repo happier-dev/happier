@@ -1,13 +1,14 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
 
+import { getLatestReleaseId } from '@/changelog';
 import { getLegacyChangelogAutoSeenBaseline } from '@/changelog/releaseNotes/storage';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY = 'changelog-last-viewed-release-id';
 
@@ -25,7 +26,6 @@ describe('useChangelog', () => {
     const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
 
     beforeEach(() => {
-        vi.resetModules();
         new MMKV().clearAll();
         delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
     });
@@ -43,6 +43,27 @@ describe('useChangelog', () => {
         } else {
             process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('keeps upgraded users unread, acknowledges across mounted consumers, and stays read after reopening', async () => {
+        new MMKV().set('changelog-last-viewed-version', 1);
+        const { useChangelog } = await import('./useChangelog');
+        const { setLastViewedReleaseId, getLastViewedReleaseId } = await import('@/changelog');
+        let latest: ChangelogSnapshot | null = null;
+        function Probe() {
+            const value = useChangelog();
+            latest = { hasUnread: value.hasUnread, latestReleaseId: value.latestReleaseId };
+            return React.createElement('View');
+        }
+        tree = (await renderScreen(React.createElement(Probe))).tree;
+        expect(getLastViewedReleaseId()).toBe('1');
+        expect(latest).toEqual({ hasUnread: true, latestReleaseId: getLatestReleaseId() });
+        act(() => { setLastViewedReleaseId(getLatestReleaseId()!); });
+        expect(latest).toEqual({ hasUnread: false, latestReleaseId: getLatestReleaseId() });
+        act(() => { tree?.unmount(); });
+        tree = (await renderScreen(React.createElement(Probe))).tree;
+        expect(latest).toEqual({ hasUnread: false, latestReleaseId: getLatestReleaseId() });
+        expect(new MMKV().getNumber('changelog-last-viewed-version')).toBe(1);
     });
 
     it('marks the latest release as read on first install using a release id', async () => {
@@ -72,12 +93,12 @@ describe('useChangelog', () => {
         }
         const latestValue: ChangelogSnapshot = latest;
         expect(latestValue.hasUnread).toBe(false);
-        expect(latestValue.latestReleaseId).toBe('0.2.1');
+        expect(latestValue.latestReleaseId).toBe(getLatestReleaseId());
         expect(storedReleaseIdDuringRender).toBeNull();
         expect(storedBaselineDuringRender).toBeNull();
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe('0.2.1');
-        expect(getLegacyChangelogAutoSeenBaseline()).toBe('0.2.1');
+        expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe(getLatestReleaseId());
+        expect(getLegacyChangelogAutoSeenBaseline()).toBe(getLatestReleaseId());
     });
 
     it('reports unread changelog entries when the last viewed release id differs', async () => {
@@ -100,12 +121,12 @@ describe('useChangelog', () => {
         }
         const latestValue: ChangelogSnapshotWithAction = latest;
         expect(latestValue.hasUnread).toBe(true);
-        expect(latestValue.latestReleaseId).toBe('0.2.1');
+        expect(latestValue.latestReleaseId).toBe(getLatestReleaseId());
 
         act(() => {
             latestValue.markAsRead();
         });
 
-        expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe('0.2.1');
+        expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe(getLatestReleaseId());
     });
 });

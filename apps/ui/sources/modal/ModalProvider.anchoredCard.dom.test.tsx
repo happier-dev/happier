@@ -28,6 +28,32 @@ vi.mock('react-native-keyboard-controller', async () => {
 const { ModalProvider } = await import('./ModalProvider');
 const { Modal } = await import('./ModalManager');
 
+it('keeps an anchored Account sheet presented while its nested picker owns input', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const dismissed = vi.fn();
+    function Picker() { return <button data-testid="account-choice">Previous account</button>; }
+    function AccountSheet() {
+        return <button data-testid="purpose-trigger" onClick={() => Modal.show({ component: Picker,
+            chrome: { kind: 'card', title: 'GitLab account' } })}>Choose account</button>;
+    }
+    try {
+        await act(async () => root.render(<ModalProvider><div /></ModalProvider>));
+        await act(async () => { Modal.show({ component: AccountSheet, onRequestClose: dismissed,
+            chrome: { kind: 'card', title: 'Connect GitLab account', anchor: {
+                kind: 'rect', rect: { left: 100, top: 100, width: 150, height: 30 },
+            } } }); });
+        await act(async () => document.querySelector<HTMLElement>('[data-testid="purpose-trigger"]')!.click());
+        expect(document.querySelector('[data-testid="account-choice"]')).not.toBeNull();
+        expect(dismissed).not.toHaveBeenCalled();
+        expect(document.querySelector('[data-testid="purpose-trigger"]')).not.toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it('hangs a card opened with its trigger anchor from that trigger, without a scrim, and closes it on Escape', async () => {
     const container = document.createElement('div');
     document.body.append(container);

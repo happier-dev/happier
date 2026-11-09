@@ -1,7 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { mergeTurnChangeSets, type SessionChangeSet, type TurnChangeSet } from '@happier-dev/protocol';
+import { mergeTurnChangeSets} from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
+import { type SessionChangeSet, type TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Message } from "@happier-dev/session-core/messages";
@@ -149,8 +150,7 @@ describe('useChangedFilesData', () => {
         const changeSet = mergeTurnChangeSets({ sessionId: 's1', turns });
         let latest: UseChangedFilesDataResult | null = null;
         function Test() {
-            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: null, workspaceTouchedPaths: [],
-                searchQuery: '', showAllRepositoryFiles: false, sessionChangeSet: changeSet });
+            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: null, searchQuery: '', showAllRepositoryFiles: false, sessionChangeSet: changeSet });
             return null;
         }
         const screen = await renderScreen(<Test />);
@@ -176,8 +176,7 @@ describe('useChangedFilesData', () => {
         const changeSet = mergeTurnChangeSets({ sessionId: 's1', turns });
         let latest: UseChangedFilesDataResult | null = null;
         function Test() {
-            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: makeSnapshot(), workspaceTouchedPaths: [],
-                searchQuery: '', showAllRepositoryFiles: false, sessionChangeSet: changeSet });
+            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: makeSnapshot(), searchQuery: '', showAllRepositoryFiles: false, sessionChangeSet: changeSet });
             return null;
         }
         const screen = await renderScreen(<Test />);
@@ -195,8 +194,7 @@ describe('useChangedFilesData', () => {
         const files = turn.files.map((file) => file.source === 'provider_native' ? { ...file, filePath: '/repo/src/a.ts' } : file);
         let latest: UseChangedFilesDataResult | null = null;
         function Test() {
-            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: makeSnapshot(), workspaceTouchedPaths: [],
-                searchQuery: '', showAllRepositoryFiles: false, latestTurnEvidence: { ...turn, files } });
+            latest = useChangedFilesData({ sessionId: 's1', scmSnapshot: makeSnapshot(), searchQuery: '', showAllRepositoryFiles: false, latestTurnEvidence: { ...turn, files } });
             return null;
         }
         const screen = await renderScreen(<Test />);
@@ -254,7 +252,7 @@ describe('useChangedFilesData', () => {
         const result: { latest?: UseChangedFilesDataResult } = {};
         function Test() {
             result.latest = useChangedFilesData({
-                sessionId: 's1', scmSnapshot: makeSnapshot(), workspaceTouchedPaths: [], searchQuery: '',
+                sessionId: 's1', scmSnapshot: makeSnapshot(), searchQuery: '',
                 showAllRepositoryFiles: false, latestTurnEvidence: turns[0], sessionChangeSet,
             });
             return null;
@@ -290,7 +288,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: ['src/a.ts'],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 computeAttribution: false,
@@ -314,41 +311,27 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('keeps workspace fallback visible and explicitly limited', async () => {
+    it('attributes no repository change to the Session without daemon turn evidence', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: ['src/a.ts'],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
             });
             return null;
         }
 
-        let root: renderer.ReactTestRenderer;
-        root = (await renderScreen(<Test />)).tree;
-
-        expect(latest).not.toBeNull();
-        if (!latest) {
-            throw new Error('Expected hook result');
-        }
+        const screen = await renderScreen(<Test />);
+        if (!latest) throw new Error('Expected hook result');
         const result: UseChangedFilesDataResult = latest;
-        expect(result.sessionAttribution).toEqual({ confidence: 'session_possible', reason: 'workspace_touched_path' });
-        expect(result.shouldShowAllFiles).toBe(false);
-        expect(result.showSessionViewToggle).toBe(true);
-        expect(result.sessionAttributedFiles).toHaveLength(1);
-        expect(result.sessionAttributedFiles[0]).toMatchObject({
-            content: { source: 'inferred', confidence: 'best_effort' },
-            attribution: { confidence: 'session_possible', reason: 'workspace_touched_path' },
-            checkpointOverlap: 'unknown',
-            evidence: [{ source: 'inferred', provider: 'workspace' }],
-        });
-        act(() => {
-            root!.unmount();
-        });
+        // Option B: a running turn shows only agent-reported edits; others arrive with turn-end checkpoints.
+        expect(result.sessionAttributedFiles).toHaveLength(0);
+        expect(result.repositoryOnlyFiles).toHaveLength(1);
+        expect(result.showSessionViewToggle).toBe(false);
+        act(() => screen.tree.unmount());
     });
 
     it('prefers provider-backed session change sets over inferred attribution', async () => {
@@ -382,7 +365,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 sessionChangeSet,
@@ -436,7 +418,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet,
@@ -471,7 +452,6 @@ describe('useChangedFilesData', () => {
             latest.current = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnEvidence,
@@ -494,7 +474,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet: unprojectableChangeSet,
@@ -543,7 +522,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 sessionChangeSet,
@@ -571,7 +549,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet: makeProviderChangeSet('/repo/src/a.ts'),
@@ -602,7 +579,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnEvidence: makeMixedTurnChangeSet(),
@@ -650,8 +626,7 @@ describe('useChangedFilesData', () => {
         };
         function Test() {
             latest = useChangedFilesData({
-                sessionId: 's1', scmSnapshot: makeSnapshot(), workspaceTouchedPaths: ['src/a.ts'],
-                searchQuery: '', showAllRepositoryFiles: false, latestTurnEvidence: turn,
+                sessionId: 's1', scmSnapshot: makeSnapshot(), searchQuery: '', showAllRepositoryFiles: false, latestTurnEvidence: turn,
             });
             return null;
         }
@@ -681,7 +656,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: ['src/a.ts'],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet: overriddenProjection,
@@ -729,7 +703,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet: null,
@@ -778,7 +751,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet,
@@ -841,7 +813,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnEvidence: renameTurn,
@@ -896,7 +867,6 @@ describe('useChangedFilesData', () => {
             latest = useChangedFilesData({
                 sessionId: 's1',
                 scmSnapshot: makeSnapshot(),
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnChangeSet: makeProviderChangeSet('src/a.ts'),

@@ -21,6 +21,9 @@ export type FocusReturnMutableRef = React.MutableRefObject<FocusReturnTarget>;
 
 export type NavigationFocusReturnIntent = Readonly<{
     testId: string;
+    /** Pending returns follow the retained destination's Back lineage, not the new page's focus. */
+    sourceId?: string;
+    previous?: NavigationFocusReturnIntent | null;
 }>;
 
 type FocusReturnContextValue = Readonly<{
@@ -80,7 +83,8 @@ function focusTarget(target: FocusReturnTarget): boolean {
 
     if (typeof focus === 'function') {
         try {
-            focus.call(target);
+            if (Platform.OS === 'web') focus.call(target, { preventScroll: true });
+            else focus.call(target);
             physicalFocusSucceeded = true;
         } catch {
             physicalFocusSucceeded = false;

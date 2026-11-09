@@ -1,6 +1,6 @@
 import { useFeatureDecision } from './useFeatureDecision';
 import type { FeatureScopeParams } from './featureScope';
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import { resolveFeatureAvailabilityArm, type FeatureAvailabilityArm } from './resolveFeatureAvailabilityArm';
 
 export type AutomationsSupport = Readonly<{
@@ -14,7 +14,7 @@ export type AutomationsSupport = Readonly<{
 }>;
 
 export function useAutomationsSupport(scope?: FeatureScopeParams): AutomationsSupport {
-    const decision = useFeatureDecision('automations', scope);
+    const decision = useFeatureDecision('workflows', scope);
 
     return {
         loading: decision == null,

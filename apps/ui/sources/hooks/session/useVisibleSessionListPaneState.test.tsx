@@ -100,7 +100,7 @@ describe('useVisibleSessionListPaneState', () => {
             ]),
             hasHiddenInactiveSessions: false,
             filterResult: { matchedCount: 1, coverage: 'complete' },
-
+            
             showLoading: false,
             showEmptyState: false,
             query: undefined,

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
-import { preserveUnchangedSnapshotRows } from '@/sync/domains/scope/preserveUnchangedSnapshotRows';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { loadTeamPageRange, type TeamPageOutcome } from '@/sync/engine/teams/loadTeamPageRange';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -142,7 +142,7 @@ export function useTeamPagedList<TRow>(params: Readonly<{
             inFlight.current = false;
             const incoming = mode === 'more' ? [...base.rows, ...outcome.value.items] : outcome.value.items;
             publish({
-                rows: getRowKey ? preserveUnchangedSnapshotRows(base.rows, incoming, getRowKey) : incoming,
+                rows: getRowKey ? retainKeyedRows(base.rows, incoming, getRowKey) : incoming,
                 status: 'ready',
                 error: null,
                 cursor: outcome.value.nextCursor,
@@ -181,7 +181,7 @@ export function useTeamPagedList<TRow>(params: Readonly<{
             if (event.serverId !== accountChangeServerId) return;
             if (event.entityIds !== undefined && !event.entityIds.includes(accountChangeEntityId)) return;
             void load('refresh');
-        });
+        }, { reconnect: { readNotCurrent: () => stateRef.current.status !== 'ready' } });
     }, [enabled, accountChangeServerId, accountChangeEntityId, load]);
 
     const loadMore = React.useCallback(() => load('more'), [load]);

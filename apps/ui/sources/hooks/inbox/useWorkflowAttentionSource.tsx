@@ -2,14 +2,13 @@ import * as React from 'react';
 
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import type { WorkflowRunListWindowId } from '@/sync/store/domains/workflowRuns';
 
 /**
  * The Inbox's workflow input (ORC R-10; FIN 03 §6.4).
  *
  * Workflow attention has one owner: the server's `attention: 'required'` predicate, held on the
- * client in the canonical `workflowRunListWindows.attention` window that the Workflows column's
+ * client in the canonical Account-scoped `attention` window that the Workflows column's
  * Needs you also reads. Inbox consumes that shared window's read status, membership and paging;
  * it owns neither another loader nor attention policy.
  *
@@ -70,10 +69,8 @@ const WorkflowAttentionSourceContext = React.createContext<Readonly<{
 /** Mounted once by the app shell's Inbox summary owner. */
 export function WorkflowAttentionSourceProvider(props: Readonly<{ children: React.ReactNode }>) {
     const workflows = useWorkflowsAvailability();
-    const automations = useFeatureDecision('automations', { scopeKind: 'runtime' });
     const workflow = useAttentionSource('attention', workflows.available, 'membership');
-    // Ordinary failures remain available when structured Workflows are disabled.
-    const automation = useAttentionSource('automationAttention', automations?.state === 'enabled');
+    const automation = useAttentionSource('automationAttention', workflows.available);
     const source = React.useMemo(() => ({ workflow, automation }), [workflow, automation]);
     return (
         <WorkflowAttentionSourceContext.Provider value={source}>

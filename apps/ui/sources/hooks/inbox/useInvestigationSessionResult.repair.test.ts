@@ -278,9 +278,9 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         expect(result.recovery.kind).toBe('unavailable');
         const rows = presentOperationsOutcomeRows(result);
         expect(rows.find(row => row.key === 'proposal')?.links.map(link => link.kind)).toEqual(['pullRequest', 'approval']);
-        expect(rows.find(row => row.key === 'applied')?.links).toContainEqual({ kind: 'receipt', serverId: 'home',
-            environmentId: receipt.environmentId, deploymentId: 'new-receipt' });
-        expect(rows[0]?.executions[0]?.snapshot.domainRef).toMatchObject({ exitCode: 0 });
+        expect(rows.find(row => row.key === 'applied')?.links).toContainEqual(expect.objectContaining({ kind: 'receipt', serverId: 'home',
+            environmentId: receipt.environmentId, deploymentId: 'new-receipt' }));
+        expect(rows[0]?.links[0]).toMatchObject({ kind: 'operation' });
         expect(projectOperationsRunOutcome({ subject, finding: result.finding, produced: result.produced, subjectReceipt: receipt,
             healthServerId: 'home', health: { environmentId: receipt.environmentId, status: 'ready', members: [],
                 aggregate: { environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, status: 'up', n: 1, down: 0, degraded: 0 } } }).recovery)

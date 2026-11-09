@@ -10,13 +10,14 @@ import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolve
 import { resolveWorkflowRunUnavailableHomes } from '@/sync/domains/session/listing/sessionListWorkFilter';
 
 import {
+    type SessionListRowChanges,
     useSessionListRowsByServerId,
     useSessionOrganizationProjections,
     useSetting,
     useSettingsSelector,
     useActiveServerAccountScope,
 } from '@/sync/domains/state/storage';
-import { computeVisibleSessionListIndex, computeVisibleSessionListProjection, type SessionListWorkMembershipProjection, type VisibleSessionListProjection } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import { computeVisibleSessionListIndex, computeVisibleSessionListProjection, keepVisibleSessionListProjectionForRowChanges, type SessionListWorkMembershipProjection, type VisibleSessionListProjection } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import {
@@ -44,6 +45,7 @@ import {
     type VisibleSessionListSourceStateOptions,
 } from './useVisibleSessionListSourceState';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
 import {
@@ -63,6 +65,7 @@ import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projec
 import { projectSessionListAcceptedProjects } from '@/sync/domains/session/listing/sessionListProjectProjection';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { resolveSessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
+import { useSessionListRecordingPrivacy } from './useSessionListRecordingPrivacy';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type PinnedSessionKeysV1 = ReadonlyArray<string>;
@@ -129,7 +132,7 @@ function reuseStableVisibleSessionListIndex(
     previous: ReadonlyArray<SessionListIndexItem> | null | undefined,
     next: ReadonlyArray<SessionListIndexItem> | null,
 ): ReadonlyArray<SessionListIndexItem> | null {
-    if (!previous || !next) {
+    if (!previous || !next || previous === next) {
         return next;
     }
 
@@ -252,21 +255,47 @@ function areSessionListIndexesEqual(
     return left.every((item, index) => areSessionListIndexItemsEqual(item, right[index]));
 }
 
+type SessionListItemsBySessionId = ReadonlyMap<string, readonly Extract<SessionListIndexItem, { type: 'session' }>[]>;
+// Listed Session items per id, kept with the source array (stable across row writes).
+const sessionItemsBySessionIdBySource = new WeakMap<ReadonlyArray<SessionListIndexItem>, SessionListItemsBySessionId>();
+
+function readSessionItemsBySessionId(source: ReadonlyArray<SessionListIndexItem>): SessionListItemsBySessionId {
+    let bySessionId = sessionItemsBySessionIdBySource.get(source);
+    if (!bySessionId) {
+        const next = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>[]>();
+        for (const item of source) {
+            if (item.type !== 'session') continue;
+            const items = next.get(item.sessionId);
+            if (items) items.push(item);
+            else next.set(item.sessionId, [item]);
+        }
+        bySessionId = next;
+        sessionItemsBySessionIdBySource.set(source, bySessionId);
+    }
+    return bySessionId;
+}
+
 function areSessionListRowSourcesEqual(
     left: ReturnType<typeof useSessionListRowsByServerId>,
     right: ReturnType<typeof useSessionListRowsByServerId>,
     source: ReadonlyArray<SessionListIndexItem>,
+    rowChanges: SessionListRowChanges | null,
 ): boolean {
     if (left === right) return true;
     const resolveScopeId = captureServerProfileScopeResolver();
-    for (const item of source) {
-        if (item.type !== 'session') continue;
-        if (
-            resolveSessionRowFromState(left, item.serverId, item.sessionId, resolveScopeId)
-            !== resolveSessionRowFromState(right, item.serverId, item.sessionId, resolveScopeId)
-        ) {
-            return false;
+    const differs = (item: Extract<SessionListIndexItem, { type: 'session' }>) =>
+        resolveSessionRowFromState(left, item.serverId, item.sessionId, resolveScopeId)
+            !== resolveSessionRowFromState(right, item.serverId, item.sessionId, resolveScopeId);
+    // The store's delta names every row that changed since `left`: only listed ones among them can differ.
+    if (rowChanges?.previousRows === left) {
+        const bySessionId = readSessionItemsBySessionId(source);
+        for (const sessionId of rowChanges.sessionIds) {
+            for (const item of bySessionId.get(sessionId) ?? []) if (differs(item)) return false;
         }
+        return true;
+    }
+    for (const item of source) {
+        if (item.type === 'session' && differs(item)) return false;
     }
     return true;
 }
@@ -299,6 +328,7 @@ function areAttentionStandingPoliciesEqual(
 function areVisibleSessionListProjectionInputsEqual(
     left: VisibleSessionListProjectionInputs,
     right: VisibleSessionListProjectionInputs,
+    rowChanges: SessionListRowChanges | null,
 ): boolean {
     const leftGroupOrder = left.sessionListLayoutChoice === 'projects'
         ? left.normalizedGroupOrder
@@ -321,6 +351,7 @@ function areVisibleSessionListProjectionInputsEqual(
         && sameStrictJsonValue(left.workFilter, right.workFilter)
         && sameStrictJsonValue(left.spaceMembership, right.spaceMembership)
         && sameStrictJsonValue(left.sessionTagIdsBySessionKey, right.sessionTagIdsBySessionKey)
+        && areSetsEqual(left.recordingHiddenSessionKeys, right.recordingHiddenSessionKeys)
         && sameStrictJsonValue(left.conditionValueCountRequest, right.conditionValueCountRequest)
         && areSectionQueryProofsEqual(left.querySectionIdsByServerId, right.querySectionIdsByServerId)
         && left.workspaceRefs === right.workspaceRefs
@@ -329,8 +360,8 @@ function areVisibleSessionListProjectionInputsEqual(
         && left.workflowRuns.every((run, index) => run.serverId === right.workflowRuns[index]?.serverId
             && run.summary === right.workflowRuns[index]?.summary)
         && left.workflowRunUnderSessionId === right.workflowRunUnderSessionId
-        && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.source)
-        && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.attentionSource ?? [])
+        && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.source, rowChanges)
+        && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.attentionSource ?? [], rowChanges)
         && left.hideInactiveSessions === right.hideInactiveSessions
         && areSetsEqual(left.serverFilteredInactiveServerIds, right.serverFilteredInactiveServerIds)
         && left.corpusStorage === right.corpusStorage
@@ -352,6 +383,28 @@ function areVisibleSessionListProjectionInputsEqual(
         && sameStrictJsonValue(left.sessionSections, right.sessionSections)
         && areScalarRecordsEqual(left.sessionFolderAssignmentsBySessionKey, right.sessionFolderAssignmentsBySessionKey)
         && areStringListsEqual(left.retainWorkingSessionKeys, right.retainWorkingSessionKeys);
+}
+
+// The store keeps an unchanged row's identity: after one row write only that row's expiry is derived again.
+const rowNextFreshnessAtMs = new WeakMap<SessionListRenderableSession, Readonly<{ nowMs: number; atMs: number | null }>>();
+
+/** When this row's runtime presentation (or its external agent observation) next changes at the list clock. */
+function readSessionListRowNextFreshnessAtMs(row: SessionListRenderableSession, nowMs: number): number | null {
+    const retained = rowNextFreshnessAtMs.get(row);
+    if (retained?.nowMs === nowMs) return retained.atMs;
+    let atMs: number | null = null;
+    for (const expiresAtMs of readSessionRuntimePresentationFreshnessExpirations(row, nowMs)) {
+        atMs = atMs === null ? expiresAtMs : Math.min(atMs, expiresAtMs);
+    }
+    if (readExternalSessionLink(row.metadata)) {
+        const externalAgentExpiryAtMs = resolveExternalAgentPresentationState(
+            readExternalAgentObservationPresentationInput(row.metadata),
+            nowMs,
+        ).nextExpiryAtMs;
+        if (externalAgentExpiryAtMs !== null) atMs = atMs === null ? externalAgentExpiryAtMs : Math.min(atMs, externalAgentExpiryAtMs);
+    }
+    rowNextFreshnessAtMs.set(row, { nowMs, atMs });
+    return atMs;
 }
 
 function resolveRetainedWorkingSessionKeys(
@@ -383,6 +436,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
     workFilter: SessionListFilterV1;
     spaceMembership?: Parameters<typeof computeVisibleSessionListProjection>[0]['spaceMembership'];
     sessionTagIdsBySessionKey?: Readonly<Record<string, readonly string[]>>;
+    recordingHiddenSessionKeys?: ReadonlySet<string>;
     conditionValueCountRequest?: Parameters<typeof computeVisibleSessionListProjection>[0]['conditionValueCountRequest'];
     previousMembership?: SessionListWorkMembershipProjection;
     groupCoverage?: Parameters<typeof computeVisibleSessionListProjection>[0]['groupCoverage'];
@@ -412,6 +466,12 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
     retainWorkingSessionKeys: ReadonlyArray<string>;
     nowMs: number;
+    /** Only these Sessions' rows changed since `previous` was projected; every other input is the same. */
+    rowChange?: Readonly<{
+        sessionIds: ReadonlySet<string>;
+        previousRows: ReturnType<typeof useSessionListRowsByServerId>;
+        previous: Parameters<typeof keepVisibleSessionListProjectionForRowChanges>[0]['previous'];
+    }>;
 }>): VisibleSessionListProjection {
     const resolveScopeId = captureServerProfileScopeResolver();
     const resolveSessionRow = (
@@ -423,15 +483,18 @@ function buildVisibleSessionListIndex(params: Readonly<{
         sessionId,
         resolveScopeId,
     );
-    const projectSource = projectSessionListAcceptedProjects({
+    const projectSource = () => projectSessionListAcceptedProjects({
         source: params.source, workspaceRefs: params.workspaceRefs,
         censusServerId: params.selection.activeServerId ?? '', resolveSessionRow,
         viewerAccountId: params.viewerAccountIdByServerId?.get(resolveScopeId(params.selection.activeServerId ?? '') || params.selection.activeServerId || ''),
         layoutV1: params.sessionListLayoutChoice, previousIndex: params.previousPresentedIndex,
+        // The membership owner retains one resolver per `workspaceRefs`; reuse it rather than build another.
+        sessionProjectKeyResolver: params.previousMembership && params.previousMembership.workspaceRefs === params.workspaceRefs
+            && params.previousMembership.workspaceRefsServerId === (params.selection.activeServerId ?? undefined)
+            ? params.previousMembership.projectKeyResolver : undefined,
     });
-    const sectionSource = buildSectionSessionListIndex({ ...params, source: projectSource });
-    const projection = computeVisibleSessionListProjection({
-        source: sectionSource.items,
+    const computeParams = (source: ReadonlyArray<SessionListIndexItem>): Parameters<typeof computeVisibleSessionListProjection>[0] => ({
+        source,
         attentionSource: params.attentionSource,
         includeNeedsYouEverywhere: params.includeNeedsYouEverywhere,
         fixedTeam: params.fixedTeam,
@@ -442,6 +505,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
         workFilter: params.workFilter,
         spaceMembership: params.spaceMembership,
         sessionTagIdsBySessionKey: params.sessionTagIdsBySessionKey,
+        recordingHiddenSessionKeys: params.recordingHiddenSessionKeys,
         conditionValueCountRequest: params.conditionValueCountRequest,
         previousMembership: params.previousMembership,
         groupCoverage: params.groupCoverage,
@@ -481,7 +545,21 @@ function buildVisibleSessionListIndex(params: Readonly<{
         },
         storageFilterApplied: params.storageFilter !== 'all',
         nowMs: params.nowMs,
+        rowOnlyChangeSinceMembership: params.rowChange?.sessionIds,
     });
+    if (params.rowChange) {
+        // The projection owner decides whether a known row-level change can keep the arranged list.
+        const kept = keepVisibleSessionListProjectionForRowChanges({
+            params: computeParams(params.source),
+            previous: params.rowChange.previous,
+            changedSessionIds: params.rowChange.sessionIds,
+            resolvePreviousSessionRow: (serverId, sessionId) => resolveSessionRowFromState(
+                params.rowChange!.previousRows, serverId, sessionId, resolveScopeId),
+        });
+        if (kept) return kept;
+    }
+    const sectionSource = buildSectionSessionListIndex({ ...params, source: projectSource() });
+    const projection = computeVisibleSessionListProjection(computeParams(sectionSource.items));
     if (!projection.items || params.storageFilter === 'all') return projection;
     return { ...projection, items: filterSessionListIndexByStorageKind(projection.items, params.storageFilter, resolveSessionRow) };
 }
@@ -700,6 +778,7 @@ export function useVisibleSessionListViewState(
                 && !workflowRunWindow.loadingMore && (sourceUnavailableRunHomes?.length ?? 0) === 0))
         ? 'complete' as const : 'partial' as const;
 
+    const recordingHiddenSessionKeys = useSessionListRecordingPrivacy(organizationListViewState, surfaceDataActive);
 
     const projectionInputs = React.useMemo<Omit<VisibleSessionListProjectionInputs, 'sessionRowStateByServerId'>>(() => ({
         source: source ?? [],
@@ -712,6 +791,7 @@ export function useVisibleSessionListViewState(
         workFilter,
         spaceMembership: options.spaceMembership,
         sessionTagIdsBySessionKey: organizationListViewState.sessionTagIdsBySessionKey,
+        recordingHiddenSessionKeys,
         conditionValueCountRequest: surfaceDataActive ? options.conditionValueCountRequest : undefined,
         groupCoverage,
         querySectionIdsByServerId,
@@ -746,6 +826,7 @@ export function useVisibleSessionListViewState(
         options.corpusStorage,
         options.spaceMembership,
         organizationListViewState.sessionTagIdsBySessionKey,
+        recordingHiddenSessionKeys,
         workflowRunUnderSessionId,
         options.attentionInteractionHeld,
         options.supplementalNeedsYouSessionKeys,
@@ -783,7 +864,7 @@ export function useVisibleSessionListViewState(
     // not execute the list/sidebar subtree merely to discover it is unchanged.
     const selectProjection = React.useMemo(() => {
         let previousIndex = previousVisibleSessionListIndexForRetention;
-        return (sessionRowStateByServerId: ReturnType<typeof useSessionListRowsByServerId>) => {
+        return (sessionRowStateByServerId: ReturnType<typeof useSessionListRowsByServerId>, rowChanges: SessionListRowChanges | null) => {
             const inputs = { ...projectionInputs, sessionRowStateByServerId };
             const cachedProjection = previousIndex
                 ? retainedVisibleSessionListProjections.get(previousIndex)
@@ -794,11 +875,15 @@ export function useVisibleSessionListViewState(
                 && cachedProjection.collapseContextKey === options.collapseContextKey
                 && cachedProjection.dataActive === surfaceDataActive
                 && (cachedProjection.validUntilMs === null || runtimeNowMs < cachedProjection.validUntilMs)
-                && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs, inputs)
+                && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs, inputs, rowChanges)
             ) {
                 syncPerformanceTelemetry.count('sync.sessions.list.visible.retainedProjectionReused', {
                     items: previousIndex.length,
                 });
+                // Equal inputs: keep this projection current at these rows, so the next delta applies to them.
+                if (cachedProjection.inputs.sessionRowStateByServerId !== sessionRowStateByServerId) {
+                    retainedVisibleSessionListProjections.set(previousIndex, { ...cachedProjection, inputs });
+                }
                 return {
                     visibleSessionListIndex: previousIndex,
                     nextRuntimeFreshnessAtMs: cachedProjection.validUntilMs,
@@ -810,9 +895,26 @@ export function useVisibleSessionListViewState(
                     runFactsUnavailable: cachedProjection.membership.runFactsUnavailable,
                 };
             }
+            // A known row-level change: the store's delta names the rows changed since this projection's
+            // rows, and every other input is unchanged. The projection owner then updates per row.
+            const rowChange = previousIndex && cachedProjection && rowChanges
+                && rowChanges.previousRows === cachedProjection.inputs.sessionRowStateByServerId
+                && cachedProjection.collapseContextKey === options.collapseContextKey
+                && cachedProjection.dataActive === surfaceDataActive
+                && (cachedProjection.validUntilMs === null || runtimeNowMs < cachedProjection.validUntilMs)
+                && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs,
+                    { ...inputs, sessionRowStateByServerId: cachedProjection.inputs.sessionRowStateByServerId }, null)
+                ? { sessionIds: rowChanges.sessionIds, previousRows: rowChanges.previousRows, previous: {
+                    // Read-only here: the owner returns it as the kept list, never mutates it.
+                    items: previousIndex as SessionListIndexItem[], membership: cachedProjection.membership, filterResult: cachedProjection.filterResult,
+                    matchedEntityIds: cachedProjection.filterMatchedEntityIds,
+                    attentionSupplementEntityIds: cachedProjection.filterAttentionSupplementEntityIds,
+                    conditionValueCounts: cachedProjection.conditionValueCounts,
+                } } : undefined;
             const projection = !source && (!workflowRunWindow || workflowRunWindow.status === 'loading')
                 ? null : buildVisibleSessionListIndex({
                         ...inputs,
+                        rowChange,
                         previousMembership: cachedProjection?.membership,
                         // Explicit scope/view changes seed a new presentation. Row
                         // updates and interaction changes retain the mounted order.
@@ -848,20 +950,8 @@ export function useVisibleSessionListViewState(
                 if (item.type !== 'session') continue;
                 const row = readSessionListRowForServerId(sessionRowStateByServerId, item.serverId, item.sessionId, resolveScopeId);
                 if (!row) continue;
-                for (const expiresAtMs of readSessionRuntimePresentationFreshnessExpirations(row, runtimeNowMs)) {
-                    nextAtMs = nextAtMs === null ? expiresAtMs : Math.min(nextAtMs, expiresAtMs);
-                }
-                if (readExternalSessionLink(row.metadata)) {
-                    const externalAgentExpiryAtMs = resolveExternalAgentPresentationState(
-                        readExternalAgentObservationPresentationInput(row.metadata),
-                        runtimeNowMs,
-                    ).nextExpiryAtMs;
-                    if (externalAgentExpiryAtMs !== null) {
-                        nextAtMs = nextAtMs === null
-                            ? externalAgentExpiryAtMs
-                            : Math.min(nextAtMs, externalAgentExpiryAtMs);
-                    }
-                }
+                const expiresAtMs = readSessionListRowNextFreshnessAtMs(row, runtimeNowMs);
+                if (expiresAtMs !== null) nextAtMs = nextAtMs === null ? expiresAtMs : Math.min(nextAtMs, expiresAtMs);
             }
             const hasHiddenInactiveSessions = Boolean(source && hideInactiveSessions
                 && countSessionItems(visibleSessionListIndex) === 0

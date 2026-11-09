@@ -11,10 +11,13 @@ import { ModalCloseButton } from './ModalCloseButton';
 
 type ModalCardHeaderProps = Readonly<{
     leading?: React.ReactNode;
+    leadingPlacement?: 'above' | null;
     title?: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleLines?: 1;
     actions?: React.ReactNode;
+    /** A form's completion control (Done) in the close control's place: it keeps the title's row on a phone too. */
+    completion?: React.ReactNode;
     onClose?: () => void;
     /** `wide`: the band stands on the content's 24 edge; a phone keeps the page gutter. */
     inset?: 'wide';
@@ -57,10 +60,11 @@ export function ModalCardHeader(props: ModalCardHeaderProps) {
     return (
         <HappierModalHeader
             leading={props.leading}
+            {...(props.leadingPlacement ? { leadingPlacement: props.leadingPlacement } : {})}
             title={props.title}
             subtitle={props.subtitle}
             actions={props.actions}
-            close={typeof props.onClose === 'function'
+            close={props.completion != null ? props.completion : typeof props.onClose === 'function'
                 ? <ModalCloseButton testID={props.closeButtonTestID} onPress={props.onClose} />
                 : null}
             compact={compact}

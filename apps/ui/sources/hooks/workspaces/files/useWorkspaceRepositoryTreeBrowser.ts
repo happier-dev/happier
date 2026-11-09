@@ -5,6 +5,7 @@ import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult } from '@/hook
 import type { ListRepositoryDirectoryEntriesResult, RepositoryDirectoryEntry } from '@/sync/domains/input/repositoryDirectory';
 import {
     getCachedWorkspaceRepositoryDirectoryEntries,
+    getCachedWorkspaceRepositoryDirectoryMetadata,
     getCachedWorkspaceRepositoryGitIgnoreAvailable,
     listWorkspaceRepositoryDirectoryEntries,
     warmWorkspaceRepositoryDirectoryCache,
@@ -14,6 +15,7 @@ import { useWorkspaceRepositoryDirectoryRevision } from './useWorkspaceRepositor
 
 import { readRepositoryTreeClassification } from '@/hooks/workspaces/files/repositoryTreeClassification';
 import { projectRepositoryTreeNodes } from '@/hooks/workspaces/files/repositoryTreeVisibility';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { useWorkspaceEntryHistory } from './useWorkspaceEntryHistory';
 import { useWorkspaceFileWriteSettlements } from '@/sync/domains/session/changes/hooks/useWorkspaceFileWriteSettlements';
 import { useWorkspaceLiveFileWrites } from '@/sync/domains/session/changes/hooks/useWorkspaceLiveFileWrites';
@@ -45,6 +47,7 @@ function toLazyLoadResult(directoryPath: string, result: ListRepositoryDirectory
     return {
         ok: true,
         entries: toLazyEntries(directoryPath, result.entries),
+        truncated: result.truncated,
     };
 }
 
@@ -89,6 +92,10 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         return toLazyLoadResult(directoryPath, result);
     }, [scope]);
 
+    const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => (
+        getCachedWorkspaceRepositoryDirectoryMetadata({ workspaceCacheKey, directoryPath })
+    ), [workspaceCacheKey]);
+
     const warmDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal) => {
         const result = await warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath, signal });
         return toLazyLoadResult(directoryPath, result);
@@ -103,6 +110,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         onExpandedPathsChange: input.onExpandedPathsChange,
         reloadToken: effectiveReloadToken,
         getCachedEntries,
+        getCachedDirectoryMetadata,
         loadDirectoryEntries,
         warmDirectoryEntries,
         warmChildDirectoriesLimit: 2,
@@ -117,9 +125,15 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     }), input.rootDirectoryPath ?? ''), [tree.nodes, workspaceCacheKey, input.rootDirectoryPath]);
     const gitIgnoreAvailable = classification.available;
     const preservedPaths = input.preservedPaths ?? NO_PRESERVED_PATHS;
-    const nodes = React.useMemo(() => input.visibilityMode === 'project' && gitIgnoreAvailable === true
-        ? projectRepositoryTreeNodes(tree.nodes, classification.ignoredPaths, preservedPaths)
-        : tree.nodes, [tree.nodes, input.visibilityMode, gitIgnoreAvailable, classification.ignoredPaths, preservedPaths]);
+    // Revealing an opened file extends `preservedPaths` on every open; the rows it yields are usually the
+    // same rows, and the virtualized list redraws every mounted row when this array changes.
+    const projectedNodesRef = React.useRef<typeof tree.nodes | undefined>(undefined);
+    const nodes = React.useMemo(() => {
+        const next = input.visibilityMode === 'project' && gitIgnoreAvailable === true
+            ? projectRepositoryTreeNodes(tree.nodes, classification.ignoredPaths, preservedPaths)
+            : tree.nodes;
+        return projectedNodesRef.current = retainShallow(projectedNodesRef.current, next);
+    }, [tree.nodes, input.visibilityMode, gitIgnoreAvailable, classification.ignoredPaths, preservedPaths]);
     const demandedPaths = React.useMemo(() => nodes.filter(node => node.type === 'file' || node.type === 'directory').map(node => node.path), [nodes]);
     const history = useWorkspaceEntryHistory({ scope, folder: input.rootDirectoryPath ?? '', paths: demandedPaths,
         headOid: input.headOid, repoRootPath: input.repoRootPath, enabled: input.enabled && input.historyEnabled === true, reloadToken: input.reloadToken });

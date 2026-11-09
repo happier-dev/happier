@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     resolveSessionCollaborationAvailability,
-    resolveSessionCollaborationDestinationAdmitted,
+    resolveSessionCollaborationDestinationAvailabilityState,
     canCreateSessionWithInitialAccess,
 } from './useSessionCollaborationAvailability';
 
@@ -20,10 +20,16 @@ describe('Session collaboration availability', () => {
     it('admits the destination for a Home that publishes links while named access is off', () => {
         // `sharing.public` has no catalog dependency on `sharing.session`, so this
         // Home is reachable — and publication has no other entry point.
-        expect(resolveSessionCollaborationDestinationAdmitted({ namedAccess: 'unavailable', publicLinkEnabled: true })).toBe(true);
-        expect(resolveSessionCollaborationDestinationAdmitted({ namedAccess: 'available', publicLinkEnabled: false })).toBe(true);
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'unavailable', publicLink: 'available' })).toBe('available');
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'available', publicLink: 'unavailable' })).toBe('available');
     });
     it('hides the destination only when no child intent is supported at all', () => {
-        expect(resolveSessionCollaborationDestinationAdmitted({ namedAccess: 'unavailable', publicLinkEnabled: false })).toBe(false);
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'unavailable', publicLink: 'unavailable' })).toBe('unavailable');
+    });
+    it('keeps the destination loading until both child decisions settle', () => {
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'loading', publicLink: 'unavailable' })).toBe('loading');
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'unavailable', publicLink: 'loading' })).toBe('loading');
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'available', publicLink: 'loading' })).toBe('available');
+        expect(resolveSessionCollaborationDestinationAvailabilityState({ namedAccess: 'unavailable', publicLink: 'unavailable' })).toBe('unavailable');
     });
 });

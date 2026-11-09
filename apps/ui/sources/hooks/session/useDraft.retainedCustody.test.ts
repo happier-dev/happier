@@ -93,25 +93,22 @@ describe('useDraft retained custody', () => {
         const original = owners.repository.getSessionDraftSnapshot(scope, address)?.document;
         if (!original) throw new Error('Expected a genuine retained Session draft');
         const storage = owners.persistence.getSessionDraftPersistenceStorage();
-        const key = owners.scopeKeys.serverAccountScopedStorageKey('session-drafts-repository-v1', scope);
-        const serialized = owners.serialization.parseSerializedSessionDraftScope(storage.getString(key)!);
-        if (!serialized) throw new Error('Expected retained draft envelope');
-        const replica = serialized.replicas[canonicalSessionDraftAddressV1(address)];
+        const key = owners.serialization.sessionDraftRowKey(
+            owners.scopeKeys.serverAccountScopedStorageKey('session-drafts-repository-v1', scope), canonicalSessionDraftAddressV1(address));
+        const replica: unknown = JSON.parse(storage.getString(key)!);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected retained replica');
         const retainedDocument = { ...original, v: 99 };
         const repairableAcknowledgedDraft = seed === 'initial' && !switchSession;
-        storage.set(key, JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [canonicalSessionDraftAddressV1(address)]: { ...replica, localRawDocument: retainedDocument,
-                ...(repairableAcknowledgedDraft ? { baseRevision: 1, baseRawDocument: retainedDocument,
-                    pendingFieldMutations: [], status: 'clean' } : {}),
-            },
-        } }));
+        storage.set(key, JSON.stringify({ ...replica, localRawDocument: retainedDocument,
+            ...(repairableAcknowledgedDraft ? { baseRevision: 1, baseRawDocument: retainedDocument,
+                pendingFieldMutations: [], status: 'clean' } : {}),
+        }));
         owners.repository.resetSessionDraftRepositoryForTests();
         const base = owners.createSessionFixture({ id: address.sessionId, serverId: scope.serverId });
         if (!base.metadata) throw new Error('Expected Session fixture metadata');
         const metadata = seed === 'fork'
             ? (await import('@/sync/domains/sessionFork/forkInitialPromptV1')).writeForkInitialPromptV1({ metadata: base.metadata, text: 'Pending seed', createdAtMs: 1 })
-            : (await import('@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1')).writeSessionInitialPromptV1({ metadata: base.metadata, text: 'Pending seed', mode: 'append', createdAtMs: 1 });
+            : { ...base.metadata, sessionInitialPromptV1: { v: 1, text: 'Pending seed', mode: 'append', createdAtMs: 1 } };
         const target = { ...base, metadata };
         const previous = owners.createSessionFixture({ id: 'previous-session', serverId: scope.serverId });
         sessions.set(target.id, target);

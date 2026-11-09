@@ -7,17 +7,27 @@ export type { FindSurfaceRegistration } from '@happier-dev/plugin-ui/presentatio
 /** One mounted provider owns resolution; models retain all query and result state. */
 export function createFindSurfaceRegistry() {
     const entries = new Map<string, FindSurfaceRegistration>();
+    let lastInteractedId: string | undefined;
     const resolve = (surfaceId?: string): FindSurfaceRegistration | undefined => {
         const surface = surfaceId === undefined
             ? [...entries.values()].reverse().find((entry) => entry.isAvailable?.() !== false && entry.containsFocus())
+                ?? (lastInteractedId === undefined ? undefined : entries.get(lastInteractedId))
             : entries.get(surfaceId);
         return surface?.isAvailable?.() === false ? undefined : surface;
     };
     return {
         resolve,
+        recordInteraction(target: unknown) {
+            lastInteractedId = [...entries.values()].reverse()
+                .find(entry => entry.isAvailable?.() !== false && entry.containsTarget?.(target))?.surfaceId;
+        },
         register(surface: FindSurfaceRegistration) {
             entries.set(surface.surfaceId, surface);
-            return () => { if (entries.get(surface.surfaceId) === surface) entries.delete(surface.surfaceId); };
+            return () => {
+                if (entries.get(surface.surfaceId) !== surface) return;
+                entries.delete(surface.surfaceId);
+                if (lastInteractedId === surface.surfaceId) lastInteractedId = undefined;
+            };
         },
         open(surfaceId?: string): boolean {
             const surface = resolve(surfaceId);

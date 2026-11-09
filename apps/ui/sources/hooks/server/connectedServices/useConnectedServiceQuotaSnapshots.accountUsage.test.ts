@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import { sealProviderAccountUsageSnapshotCiphertext } from '@happier-dev/protocol';
+import { sealProviderAccountUsageSnapshotCiphertext } from '@happier-dev/protocol/connect/accountUsage';
 import { createLegacyQuotaAuthWrapper, createLegacyQuotaTestHarness, makeProviderAccountUsageSnapshot, makeQuotaSnapshot,
     plainQuotaResponse, resetConnectedServiceQuotaSnapshotsTestState } from './useConnectedServiceQuotaSnapshots.testkit';
 

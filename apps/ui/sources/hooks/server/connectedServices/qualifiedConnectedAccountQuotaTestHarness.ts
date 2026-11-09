@@ -1,9 +1,12 @@
 import { vi } from 'vitest';
 import { createMachineFixture, createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -14,16 +17,20 @@ import { ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev
 import {
     ConnectedAccountControlCommandRequestSchema,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
+    type ConnectedAccountDaemonControlResponse} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import {
     QualifiedConnectedAccountQuotaResponseV4Schema,
+    type QualifiedConnectedAccountQuotaSnapshotV4,
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import {
     QualifiedConnectedAccountRefSchema,
-    parseQualifiedConnectedAccountV4StructuredQueryValue,
+    type QualifiedConnectedAccountRef} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import {
+    parseQualifiedConnectedAccountV4StructuredQueryValue} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import {
     buildProviderAccountUsageRecordId,
     ProviderAccountUsageSnapshotV1Schema,
-    type ProviderAccountUsageSnapshotV1,
-    type ConnectedAccountDaemonControlResponse,
-    type QualifiedConnectedAccountRef,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
-} from '@happier-dev/protocol';
+    type ProviderAccountUsageSnapshotV1} from '@happier-dev/protocol/connect/account-usage-primitives';
 
 export const quotaTestRef = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
 export const quotaTestSnapshot: QualifiedConnectedAccountQuotaSnapshotV4 = {
@@ -93,6 +100,14 @@ export async function createQualifiedQuotaTestHarness(options: Readonly<{
         occurrenceId: 'occurrence-1', sourceCustody: { kind: 'managed', immutableGenerationId: 'artifact-1', installSource: 'npm' },
         accounts: [], operationTransport: { kind: 'v4' },
     }));
+    // Sync's initial cursor capture publishes a real coarse wake. Complete that
+    // Account bootstrap before a test starts counting quota demand or its clock.
+    let finishBootstrap!: () => void;
+    const bootstrapReady = new Promise<void>(resolve => { finishBootstrap = resolve; });
+    const detachBootstrap = subscribeHomeAccountChange(event => {
+        if (event.source === undefined && event.entityIds === undefined
+            && areServerProfileIdentifiersEquivalent(event.serverId, serverIdentityId)) finishBootstrap();
+    });
     const account = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId: 'quota-account', credentials: options.credentials,
         configureSocket: options.configureSocket,
         request: async (input, init) => {
@@ -101,6 +116,10 @@ export async function createQualifiedQuotaTestHarness(options: Readonly<{
             if (url.pathname === '/v1/features') return features();
             const customResponse = await options.request?.(input, init);
             if (customResponse) return customResponse;
+            if ((options.accountMode ?? 'plain') === 'plain') {
+                const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(url.pathname);
+                if (currentness) return currentness;
+            }
             // A restored Home can finish reconnect catch-up after the quota read.
             // Serve its real empty frontier so a missing fixture route does not
             // trigger a fallback snapshot refresh and unrelated quota invalidation.
@@ -121,7 +140,7 @@ export async function createQualifiedQuotaTestHarness(options: Readonly<{
             }
             return new Response('{}', { status: 404 });
         },
-    });
+    }).then(async account => { await bootstrapReady; return account; }).finally(detachBootstrap);
     const active = getActiveServerSnapshot();
     storage.getState().activateProfileScope({ serverId: active.serverId, accountId: 'quota-account' });
     await storage.getState().activateSettingsScope({ serverId: active.serverId, accountId: 'quota-account' });

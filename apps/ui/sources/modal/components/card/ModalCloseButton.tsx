@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, type PressableProps } from 'react-native';
+import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -13,7 +13,7 @@ type ModalCloseButtonProps = Readonly<{
     testID?: string;
     accessibilityLabel?: string;
     size?: number;
-}> & Pick<PressableProps, 'hitSlop'>;
+}>;
 
 /** The glyph's breathing room inside the drawn close square (the same square an `IconButton` draws). */
 const CLOSE_SQUARE_PADDING_PX = 4;
@@ -34,7 +34,7 @@ export function ModalCloseButton(props: ModalCloseButtonProps) {
     // touch target through the shared hit area, never by drawing a larger button.
     const square = size + CLOSE_SQUARE_PADDING_PX * 2;
     const squareStyle = React.useMemo(() => ({ width: square, height: square }), [square]);
-    const hitArea = useHappierHitArea({ restingStyle: () => squareStyle, hitSlop: props.hitSlop ?? undefined });
+    const hitArea = useHappierHitArea({ restingStyle: () => squareStyle });
 
     return (
         <Pressable

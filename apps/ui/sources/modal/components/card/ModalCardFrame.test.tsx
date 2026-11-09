@@ -51,7 +51,14 @@ installModalComponentCommonModuleMocks({
     },
 });
 
-afterEach(() => standardCleanup());
+// The platform keyboard adapter (keyboard-controller on native, the visual viewport on web) is the OS boundary.
+const keyboardBoundary = vi.hoisted(() => ({ height: 0 }));
+vi.mock('@/hooks/ui/useKeyboardHeight', () => ({ useKeyboardHeight: () => keyboardBoundary.height }));
+
+afterEach(() => {
+    standardCleanup();
+    keyboardBoundary.height = 0;
+});
 
 describe('ModalCardFrame', () => {
     it.each(['web', 'android'] as const)('retains the edited body and its pending custody when scrolling changes on %s', async (platform) => {
@@ -249,6 +256,25 @@ describe('ModalCardFrame', () => {
             windowState.height = 768;
         }
     });
+    it('keeps a phone form’s completion control on the title row, in the close control’s place', async () => {
+        windowState.width = 390;
+        windowState.height = 844;
+        try {
+            const { renderScreen } = await import('@/dev/testkit');
+            const { ModalCardFrame } = await import('./ModalCardFrame');
+            const screen = await renderScreen(React.createElement(ModalCardFrame, {
+                children: React.createElement('Child'),
+                title: 'Manual',
+                completion: React.createElement('Done'),
+                testID: 'modal-card-frame',
+            }));
+            expect(screen.findByTestId('modal-card-header-actions-row')).toBeNull();
+            expect(screen.findAllByType('Done' as never)).toHaveLength(1);
+        } finally {
+            windowState.width = 1024;
+            windowState.height = 768;
+        }
+    });
 
     it('keeps modal shadows outside the clipped rounded card surface', async () => {
         const { renderScreen } = await import('@/dev/testkit');
@@ -283,6 +309,20 @@ describe('ModalCardFrame', () => {
         expect(hasShadow(clippedSurfaceStyle)).toBe(false);
     });
 
+    it.each([['card', true], ['sheet', true], ['fullscreen', false]] as const)('draws a freshness line in a %s plain on its sheet: %s', async (presentation, plain) => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+        const screen = await renderScreen(<ModalCardFrame presentation={presentation} title="Bots">
+            <SurfaceFreshnessLine testID="line" reason="Some bots couldn't be loaded." />
+        </ModalCardFrame>);
+        const style = flattenStyle(screen.findHostByTestId('line')?.props.style);
+        // A card or sheet already draws the surface: no filled, ruled strip boxed inside it. A fullscreen
+        // page keeps the strip under its header.
+        expect(style.backgroundColor === 'transparent').toBe(plain);
+        expect((style.borderTopWidth ?? 0) === 0).toBe(plain);
+    });
+
     it('renders a flexing body wrapper (so the overlay scroll host can handle overflow)', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
@@ -313,6 +353,22 @@ describe('ModalCardFrame', () => {
                 }),
             ]),
         );
+    });
+
+    it.each([[0, 34], [300, 0]] as const)('pads a sheet by the home indicator only while no keyboard covers it (keyboard %s)', async (keyboard, foot) => {
+        keyboardBoundary.height = keyboard;
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const screen = await renderScreen(React.createElement(ModalCardFrame, {
+            children: React.createElement('Child'), title: 'Model', presentation: 'sheet', sheetBottomInset: 34, testID: 'sheet',
+        }));
+        // The sheet's foot: its own padding plus any spacer it keeps below the content.
+        const padded = screen.findAll((node) => typeof node.type === 'string'
+            && typeof flattenStyle(node.props.style).paddingBottom === 'number')
+            .reduce((sum, node) => sum + (flattenStyle(node.props.style).paddingBottom as number), 0);
+        const spacer = screen.findAllHostsByTestId('sheet.safe-area-foot')
+            .reduce((sum, node) => sum + ((flattenStyle(node.props.style).height as number | undefined) ?? 0), 0);
+        expect(padded + spacer).toBe(foot);
     });
 
     it('renders a close button that calls onClose', async () => {

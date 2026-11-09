@@ -51,7 +51,10 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
     const contextFallbackRef = useFocusReturnFallbackRef<FocusReturnTarget>();
     const returnTargetRef = React.useRef<FocusReturnTarget>(null);
     const fallbackRef = options.fallbackRef ?? contextFallbackRef;
-    const activationTimeFallback = options.focusReturn.kind === 'provided'
+    // Read at release: a modal's content can publish its chrome (and with it this fallback) after the
+    // modal activated, and a policy change must not release and re-take focus from the open overlay.
+    const activationTimeFallbackRef = React.useRef(false);
+    activationTimeFallbackRef.current = options.focusReturn.kind === 'provided'
         && options.focusReturn.fallback === 'activation-time';
     const preMutationFocusReturnRef = options.focusReturn.kind === 'pre-mutation'
         ? options.focusReturn.ref
@@ -72,9 +75,7 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
         const container = options.containerRef.current;
         if (!container || isWithinInertSubtree(container)) return;
 
-        const activationTarget = activationTimeFallback
-            ? readDocumentFocusReturnTarget(document)
-            : null;
+        const activationTarget = readDocumentFocusReturnTarget(document);
         returnTargetRef.current = options.focusReturn.kind === 'activation-time'
             ? readDocumentFocusReturnTarget(document)
             : options.focusReturn.kind === 'provided'
@@ -98,15 +99,15 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
                 // Becoming docked releases containment, not the still-open editor's focus.
                 // A real close (or an inert hidden pane) still restores its opener/fallback.
                 const focused = document.activeElement;
-                if (discardPendingCaptureRef.current && focused instanceof HTMLElement
-                    && container.contains(focused) && isEligibleFocusTarget(focused)) return;
+                if (discardPendingCaptureRef.current && isEligibleFocusTarget(focused)
+                    && container.contains(focused)) return;
                 const eligibleReturnTarget = isEligibleFocusTarget(returnTarget)
                     ? returnTarget
                     : null;
                 const fallbackTarget = isEligibleFocusTarget(fallbackRef?.current)
                     ? fallbackRef.current
                     : null;
-                const eligibleActivationTarget = isEligibleFocusTarget(activationTarget)
+                const eligibleActivationTarget = activationTimeFallbackRef.current && isEligibleFocusTarget(activationTarget)
                     ? activationTarget
                     : null;
                 if (restoreFocusToBestTarget(
@@ -129,7 +130,6 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
         };
     }, [
         fallbackRef,
-        activationTimeFallback,
         options.active,
         options.containerRef,
         options.focusReturn.kind,

@@ -1,10 +1,14 @@
 import * as React from 'react';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { sessionExecutionRunList, type SessionExecutionRunListResult } from '@/sync/ops/sessionExecutionRuns';
+import { storage } from '@/sync/domains/state/storage';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import {
     readRunningExecutionRunRoster,
     refreshRunningExecutionRunRoster,
@@ -22,6 +26,26 @@ export function resolveRunningExecutionRunsFromListResult(
 export async function readSessionRunningExecutionRuns(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
     const result = await sessionExecutionRunList(address.sessionId, {}, { serverId: address.serverId });
     return result.ok === false ? null : resolveRunningExecutionRunsFromListResult(result);
+}
+
+/**
+ * The Home sends live `execution-run-updated` hints to the Session's owner; a
+ * collaborator (finite publication recipient) gets none until the Run's output
+ * is published. Only a locally known owner row proves the push path.
+ */
+export function receivesSessionLiveRunActivity(address: SessionAddress): boolean {
+    const state = storage.getState();
+    const direct = state.sessions[address.sessionId];
+    const session = findSessionListLookupSession(state, address)?.session
+        ?? (direct && areServerProfileIdentifiersEquivalent(direct.serverId ?? getActiveServerSnapshot().serverId, address.serverId)
+            ? direct : undefined);
+    return session !== undefined && isSessionAccessOwner(session.access, session.accessLevel);
+}
+
+/** Every demanded roster subscribes through this one source: the list reader and its live-delivery fact. */
+export function subscribeSessionRunningExecutionRunRoster(address: SessionAddress, listener: () => void): () => void {
+    return subscribeRunningExecutionRunRoster(address, listener, () => readSessionRunningExecutionRuns(address),
+        () => receivesSessionLiveRunActivity(address));
 }
 
 export function useSessionRunningExecutionRuns(params: Readonly<{
@@ -45,7 +69,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
     );
     const subscribe = React.useCallback((listener: () => void) => {
         if (!address) return () => {};
-        return subscribeRunningExecutionRunRoster(address, listener, () => readSessionRunningExecutionRuns(address));
+        return subscribeSessionRunningExecutionRunRoster(address, listener);
     }, [address]);
     const read = React.useCallback(() => readRunningExecutionRunRoster(address), [address]);
     const runningRuns = React.useSyncExternalStore(subscribe, read, read);

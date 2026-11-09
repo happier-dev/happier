@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { vi } from 'vitest';
-import { ConnectedServiceQuotaSnapshotV1Schema, ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId, type ConnectedAccountDaemonControlResponse, type ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import { type ConnectedAccountDaemonControlResponse} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createRootLayoutFeaturesResponse, standardCleanup } from '@/dev/testkit';

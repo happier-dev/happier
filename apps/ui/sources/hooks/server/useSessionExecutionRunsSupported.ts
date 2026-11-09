@@ -2,22 +2,19 @@ import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
-import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
+import { useSessionServerId, useSessionHasExecutionRunSignals } from '@/sync/domains/state/storage';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
-import { deriveExecutionRunPollingRefreshKey } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
-const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
-
 export function useSessionExecutionRunsSupported(sessionId: string, sessionServerId?: string | null): boolean {
-    const session = useSession(sessionId);
+    const storedSessionServerId = useSessionServerId(sessionId);
     const explicitServerId = typeof sessionServerId === 'string' && sessionServerId.trim().length > 0
         ? sessionServerId.trim()
         : null;
     const preferredSessionServerId = usePreferredServerIdForSession({
-        serverId: explicitServerId ?? session?.serverId,
+        serverId: explicitServerId ?? storedSessionServerId,
         sessionId,
     });
     const resolvedSessionServerId = preferredSessionServerId;
@@ -26,7 +23,9 @@ export function useSessionExecutionRunsSupported(sessionId: string, sessionServe
         resolvedSessionServerId ? { scopeKind: 'spawn', serverId: resolvedSessionServerId } : undefined,
     );
     const backends = useExecutionRunsBackendsForSession(sessionId, resolvedSessionServerId);
-    const { messages } = useSessionMessages(sessionId);
+    const transcriptScopeMatches = !resolvedSessionServerId || !storedSessionServerId
+        || areServerProfileIdentifiersEquivalent(storedSessionServerId, resolvedSessionServerId);
+    const transcriptHasExecutionRunSignals = useSessionHasExecutionRunSignals(sessionId, transcriptScopeMatches);
     const supportScopeKey = resolvedSessionServerId
         ? sessionAddressKey({ serverId: resolvedSessionServerId, sessionId })
         : JSON.stringify(['legacy_unscoped_session', sessionId]);
@@ -37,17 +36,6 @@ export function useSessionExecutionRunsSupported(sessionId: string, sessionServe
     const historicalRunsSupported = historicalSupport?.scopeKey === supportScopeKey
         ? historicalSupport.supported
         : false;
-
-    const transcriptHasExecutionRunSignals = React.useMemo(() => {
-        if (
-            resolvedSessionServerId
-            && session?.serverId
-            && !areServerProfileIdentifiersEquivalent(session.serverId, resolvedSessionServerId)
-        ) {
-            return false;
-        }
-        return deriveExecutionRunPollingRefreshKey(messages) !== EMPTY_EXECUTION_RUN_REFRESH_KEY;
-    }, [messages, resolvedSessionServerId, session?.serverId]);
 
     const hasLiveExecutionRunSupport = React.useMemo(() => {
         return Boolean(backends && typeof backends === 'object' && Object.keys(backends).length > 0);

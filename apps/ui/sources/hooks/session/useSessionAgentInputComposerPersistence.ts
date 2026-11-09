@@ -529,18 +529,26 @@ export function useSessionAgentInputComposerPersistence({
         });
     }, [owner, scope, scopeIsCurrent]);
 
-    const initialScrollY = inputState?.scrollY;
-    const selectionStart = inputState?.selection?.start;
-    const selectionEnd = inputState?.selection?.end;
+    // The restore payload is applied when a composer mounts or `restoreToken` changes, never per
+    // value: its scroll/selection are read from this render's state when the input reads them, so
+    // the selection persisted while typing does not hand the memoized input chrome a new prop.
+    const restorePayloadRef = React.useRef(inputState);
+    restorePayloadRef.current = inputState;
     const inputPersistence = React.useMemo(() => ({
-        ...(typeof initialScrollY === 'number' ? { initialScrollY } : {}),
-        ...(selectionStart !== undefined && selectionEnd !== undefined
-            ? { initialSelection: { start: selectionStart, end: selectionEnd } }
-            : {}),
+        get initialScrollY() {
+            const scrollY = restorePayloadRef.current?.scrollY;
+            return typeof scrollY === 'number' ? scrollY : undefined;
+        },
+        get initialSelection() {
+            const selection = restorePayloadRef.current?.selection;
+            return selection?.start !== undefined && selection.end !== undefined
+                ? { start: selection.start, end: selection.end }
+                : undefined;
+        },
         restoreToken: buildRestoreToken(owner, scope, restoreEpoch, restoreBasisAdopted),
         onScrollYChange,
         onSelectionChangePersist,
-    }), [initialScrollY, selectionStart, selectionEnd, onScrollYChange, onSelectionChangePersist, owner, restoreBasisAdopted, restoreEpoch, scope]);
+    }), [onScrollYChange, onSelectionChangePersist, owner, restoreBasisAdopted, restoreEpoch, scope]);
 
     const structuredInputPersistence = React.useMemo<SessionComposerStructuredInputPersistence>(() => ({
         get mentions() {

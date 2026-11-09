@@ -1,4 +1,4 @@
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 
 /**
  * The one classification of a {@link FeatureDecision} into the arms a product

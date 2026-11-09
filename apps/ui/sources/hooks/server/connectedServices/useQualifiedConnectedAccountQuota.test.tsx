@@ -13,7 +13,9 @@ import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccoun
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { t } from '@/text';
+import { readQualifiedConnectedAccountQuota } from '@/sync/api/account/qualifiedConnectedAccountQuotaTransport';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createLegacyQuotaTestHarness, makeQuotaSnapshot, plainQuotaResponse } from './useConnectedServiceQuotaSnapshots.testkit';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -39,6 +41,49 @@ describe('useQualifiedConnectedAccountQuota', () => {
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
         await boundary?.dispose();
         vi.restoreAllMocks();
+    });
+
+    it.each([
+        ['happier.agent.codex', 'openai-codex', 'pro', 'ChatGPT Pro (More)'],
+        ['happier.agent.codex', 'openai-codex', 'promax', 'ChatGPT Pro (Max)'],
+        ['happier.agent.claude', 'claude-subscription', 'max', 'Claude Max'],
+        ['happier.agent.codex', 'openai-codex', 'ChatGPT Pro (Max)', 'ChatGPT Pro (Max)'],
+        ['happier.agent.codex', 'openai-codex', 'Future vendor plan', 'Future vendor plan'],
+    ])('backfills retained %s/%s plan %s on its normal quota read without a Machine effect', async (pluginId, localId, planLabel, label) => {
+        const exactRef = { service: { pluginId, localId }, accountId: ref.accountId };
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...snapshot, ref: exactRef, planLabel })));
+        const result = await readQualifiedConnectedAccountQuota({ ...boundary.context(), ref: exactRef });
+        expect(result?.snapshot?.planLabel).toBe(label);
+        expect(boundary.controls).toEqual([]);
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps an absent retained plan absent instead of inventing a label', async () => {
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...snapshot, planLabel: null })));
+        const result = await readQualifiedConnectedAccountQuota(boundary.context());
+        expect(result?.snapshot?.planLabel).toBeNull();
+        expect(boundary.controls).toEqual([]);
+    });
+
+    it('backfills a retained predecessor plan on a normal plaintext read without refresh effects', async () => {
+        const credentials = { token: boundary.account.credentials.token };
+        await boundary.dispose();
+        const legacy = await createLegacyQuotaTestHarness({ credentials });
+        boundary = legacy;
+        const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+        __resetConnectedServiceQuotaSnapshotStore();
+        try {
+            const retained = { ...makeQuotaSnapshot({ serviceId: 'openai-codex' }), planLabel: 'promax' };
+            legacy.plainRead.mockImplementation(async () => plainQuotaResponse(retained));
+            const { useConnectedServiceQuotaSnapshots } = await import('./useConnectedServiceQuotaSnapshots');
+            const hook = await renderHook(() => useConnectedServiceQuotaSnapshots([{ serviceId: 'openai-codex', profileId: 'work' }]), { wrapper: Wrapper });
+            await vi.waitFor(() => expect(hook.getCurrent().snapshotsByKey['openai-codex/work']?.planLabel).toBe('ChatGPT Pro (Max)'));
+            expect(legacy.control).not.toHaveBeenCalled();
+            expect(legacy.refreshRead).not.toHaveBeenCalled();
+            expect(legacy.plainRead).toHaveBeenCalledTimes(1);
+            expect(legacy.sealedRead).not.toHaveBeenCalled();
+            await hook.unmount();
+        } finally { __resetConnectedServiceQuotaSnapshotStore(); }
     });
 
     it.each([false, true])('parks hidden quota demand and renders while preserving a visible reader=%s and fresh reopen', async shared => {

@@ -17,9 +17,11 @@ describe('media stage keyboard commands', () => {
         ['media.previous', 'ArrowLeft'], ['media.next', 'ArrowRight'],
         ['media.zoomIn', '+'], ['media.zoomOut', '-'],
         ['media.fit', '0'], ['media.actualSize', '1'], ['media.playPause', ' '],
+        ['media.annotate', 'e'], ['annotation.select', 'v'], ['annotation.arrow', 'a'],
+        ['annotation.rectangle', 'r'], ['annotation.text', 't'], ['annotation.blur', 'b'],
     ] as const)('dispatches %s only while a stage handler is registered and yields to text inputs', (id, key) => {
         const run = vi.fn();
-        const code = key === ' ' ? 'Space' : key === '+' ? 'Equal' : /^[01]$/.test(key) ? `Digit${key}` : key;
+        const code = key === ' ' ? 'Space' : key === '+' ? 'Equal' : /^[01]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : key;
         const event: NormalizedKeyboardEvent = { key, code, metaKey: false,
             ctrlKey: false, altKey: false, shiftKey: key === '+', repeat: false, isComposing: false };
         const options = { enabled: true, platform: 'macos' as const, surface: 'web' as const,

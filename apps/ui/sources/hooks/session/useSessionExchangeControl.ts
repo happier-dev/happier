@@ -73,7 +73,7 @@ export function useSessionExchangeControl(address: SessionAddress, originInputLo
             if (event.changeKinds && !event.changeKinds.some(kind => kind === 'session' || kind === 'share')) return;
             if (event.entityIds && !event.entityIds.includes(address.sessionId)) return;
             void read();
-        });
+        }, { reconnect: 'refresh' });
         void read();
         return () => { controller.abort(); retirement.dispose(); unsubscribe(); refreshRef.current = () => Promise.resolve(); };
     }, [address.serverId, address.sessionId, binding, enabled, originInputLocalId]);

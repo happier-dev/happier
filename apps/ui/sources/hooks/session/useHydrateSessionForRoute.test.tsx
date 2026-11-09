@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { useHydrateSessionForRoute } from './useHydrateSessionForRoute';
+import { useHydrateSession, useHydrateSessionForRoute } from './useHydrateSessionForRoute';
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 type ReactActGlobal = typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
@@ -63,9 +64,14 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 
 describe('useHydrateSessionForRoute', () => {
     let previousStorageState: ReturnType<typeof storage.getState>;
+    let previousAppliedHome: ReturnType<typeof getAppliedActiveServerSnapshot>;
+    let previousRuntimeAvailable: boolean;
 
     beforeEach(() => {
         previousStorageState = storage.getState();
+        previousAppliedHome = getAppliedActiveServerSnapshot();
+        previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: 'server-a', serverUrl: 'https://active.example', generation: 1 });
         ensureSessionVisibleForMessageRouteSpy.mockReset();
         getSessionEncryptionSpy.mockReset();
         activeServerSnapshotMock.current = {
@@ -81,6 +87,7 @@ describe('useHydrateSessionForRoute', () => {
         standardCleanup();
         await act(async () => {
             storage.setState(previousStorageState, true);
+            publishAppliedActiveServerSnapshot(previousAppliedHome, previousRuntimeAvailable);
         });
     });
 
@@ -261,6 +268,41 @@ describe('useHydrateSessionForRoute', () => {
         });
     });
 
+    it('keeps an available route available while an update re-opens its owner metadata', async () => {
+        // A permission decision bumps the Session's metadata version; for a few seconds its owner view
+        // still carries the previous revision. The route keeps showing the Session, so the whole
+        // Session surface must not be redrawn through `loading` and back.
+        const owned = {
+            id: 'session-1',
+            metadataLayoutVersion: 1,
+            metadata: { v: 1, summary: { text: 'Shared title', updatedAt: 1 } } as never,
+            ownerMetadataView: { path: '/private/repo', host: 'private-host', machineId: 'private-machine' },
+            encryptionMode: 'plain' as const,
+        };
+        await storeSession(owned);
+        const states: string[] = [];
+        const hook = await renderHook(() => {
+            const state = useHydrateSessionForRoute('session-1', 'route.hydrate');
+            states.push(state.kind);
+            return state;
+        });
+        const available = hook.getCurrent();
+        expect(available).toMatchObject({ kind: 'available', sessionId: 'session-1' });
+
+        const deferred = createDeferred<unknown>();
+        ensureSessionVisibleForMessageRouteSpy.mockReturnValueOnce(deferred.promise);
+        await storeSession({ ...owned, ownerMetadataView: null });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledTimes(1);
+
+        await storeSession(owned);
+        deferred.resolve({ kind: 'available', sessionId: 'session-1' });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(states).not.toContain('loading');
+        expect(hook.getCurrent()).toBe(available);
+    });
+
     it('does not rehydrate a settled owner-metadata-unavailable shell', async () => {
         await storeSession({
             id: 'session-1',
@@ -296,6 +338,25 @@ describe('useHydrateSessionForRoute', () => {
 
         expect(hook.getCurrent()).toBe(initialState);
         expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders a settled reading once: no second render for an empty or already available Session', async () => {
+        await storeSession({
+            id: 'session-1',
+            agentState: { controlledByUser: true },
+            encryptionMode: 'e2ee',
+        });
+        getSessionEncryptionSpy.mockReturnValue({ decryptMetadata: vi.fn() });
+        let emptyRenders = 0;
+        const empty = await renderHook(() => { emptyRenders++; return useHydrateSession('', 'route.hydrate'); });
+        await flushHookEffects();
+        expect(empty.getCurrent()).toMatchObject({ kind: 'missing', cause: 'not_found' });
+        let availableRenders = 0;
+        const available = await renderHook(() => { availableRenders++; return useHydrateSession('session-1', 'route.hydrate'); });
+        await flushHookEffects();
+        expect(available.getCurrent()).toMatchObject({ kind: 'available', sessionId: 'session-1' });
+        // Inbox approval rows read their requester through this hook; an equal re-publish redrew every row.
+        expect({ emptyRenders, availableRenders }).toEqual({ emptyRenders: 1, availableRenders: 1 });
     });
 
     it('treats hydrated encrypted sessions with null agent state as available', async () => {
@@ -342,7 +403,7 @@ describe('useHydrateSessionForRoute', () => {
             sessionId: 'session-1',
             serverId: 'server-b',
         });
-        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b', includeTurnsProjection: true });
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ serverId: 'server-b', includeTurnsProjection: true }));
     });
 
     it('marks terminal missing results without retrying forever', async () => {

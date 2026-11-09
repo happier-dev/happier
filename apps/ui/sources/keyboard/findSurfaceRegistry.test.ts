@@ -72,6 +72,29 @@ describe('mounted Find keyboard resolution', () => {
         expect(find.open('missing')).toBe(false);
     });
 
+    it('keeps interaction ownership local to an available mount and gives actual focus precedence', () => {
+        const find = createFindSurfaceRegistry();
+        const transcript = surfaceFixture('chat'); transcript.state.focused = false;
+        const file = surfaceFixture('file'); file.state.focused = false;
+        let available = true;
+        const release = find.register({ ...transcript.surface, containsTarget: target => target === 'transcript',
+            isAvailable: () => available });
+        find.register({ ...file.surface, containsTarget: target => target === 'file' });
+        find.recordInteraction('transcript');
+        expect(find.resolve()?.surfaceId).toBe('chat');
+        file.state.focused = true;
+        expect(find.resolve()?.surfaceId).toBe('file');
+        file.state.focused = false;
+        available = false;
+        expect(find.resolve()).toBeUndefined();
+        available = true;
+        find.recordInteraction('outside');
+        expect(find.resolve()).toBeUndefined();
+        find.recordInteraction('transcript');
+        release();
+        expect(find.resolve()).toBeUndefined();
+    });
+
     it('does not consume native Return until the Find input owns focus and respects disabling and overrides', () => {
         const options = { enabled: true, platform: 'ios' as const, surface: 'native' as const, singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers: { 'find.next': () => 'handled' as const },

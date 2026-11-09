@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { sessionScmLogList } from '@/sync/ops';
 import { selectScmIncomingLogEntries } from '@/scm/history/gitTimelineProjection';

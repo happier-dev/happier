@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type {
-    BuiltInLegacyConnectedAccountOperation,
+    BuiltInLegacyConnectedAccountOperation} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type {
     ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 
 const {
@@ -67,12 +68,17 @@ async function flushAsyncTurns(turns = 5): Promise<void> {
     for (let index = 0; index < turns; index += 1) await Promise.resolve();
 }
 
+function buildRead(fetchedAt = 1_234) {
+    const snapshot = buildSnapshot(fetchedAt);
+    return { snapshot, metadata: { fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' as const } };
+}
+
 describe('connectedServiceQuotaSnapshotStore', () => {
     beforeEach(async () => {
         const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
         __resetConnectedServiceQuotaSnapshotStore();
         vi.clearAllMocks();
-        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(buildSnapshot());
+        getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(buildRead());
         getConnectedServiceQuotaSnapshotSealedSpy.mockResolvedValue(null);
         requestConnectedServiceQuotaSnapshotRefreshSpy.mockResolvedValue(true);
         requestConnectedServiceQuotaSnapshotRefreshV3Spy.mockResolvedValue(true);
@@ -286,7 +292,7 @@ describe('connectedServiceQuotaSnapshotStore', () => {
         ).not.toHaveBeenCalled();
 
         getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(
-            buildSnapshot(1_235),
+            buildRead(1_235),
         );
         await refreshQuotaSnapshot(key, ctx);
         release();
@@ -307,7 +313,7 @@ describe('connectedServiceQuotaSnapshotStore', () => {
         } = await import('./connectedServiceQuotaSnapshotStore');
         getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(
             async (credentials: Readonly<{ token: string }>) =>
-                buildSnapshot(credentials.token === 'token-a' ? 1_001 : 2_001),
+                buildRead(credentials.token === 'token-a' ? 1_001 : 2_001),
         );
         const createContext = (
             credentialScope: string,
@@ -369,7 +375,7 @@ describe('connectedServiceQuotaSnapshotStore', () => {
         } = await import('./connectedServiceQuotaSnapshotStore');
         getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(
             async (credentials: Readonly<{ token: string }>) =>
-                buildSnapshot(credentials.token === 'token-a' ? 1_001 : 2_001),
+                buildRead(credentials.token === 'token-a' ? 1_001 : 2_001),
         );
         const createContext = (
             credentialScope: string,
@@ -446,7 +452,7 @@ describe('connectedServiceQuotaSnapshotStore', () => {
         getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(
             async () => {
                 calls.push('effect:quota_read');
-                return buildSnapshot();
+                return buildRead();
             },
         );
         requestConnectedServiceQuotaSnapshotRefreshV3Spy.mockImplementation(

@@ -62,12 +62,12 @@ export function useSessionExecutionRunLaunchability(
         && !areServerProfileIdentifiersEquivalent(session.serverId, sessionTargetServerId)
         ? null
         : session;
-    // Settings affect resume admission only for inactive Sessions. Active
-    // launchers must not subscribe to unrelated Account preference changes.
+    // Only backend enablement affects this inactive Session's resume settings.
+    // Active launchers do not need a settings subscription for resume admission.
     const resumeSettings = useSettingsSelector(React.useCallback(
         (settings) => scopedSession?.active === false ? { backendEnabledByTargetKey: settings.backendEnabledByTargetKey } : null,
         [scopedSession?.active],
-    ), ["backendEnabledByTargetKey"]);
+    ), ['backendEnabledByTargetKey']);
     const executionRunsEnabled = useFeatureEnabled(
         'execution.runs',
         sessionTargetServerId ? { scopeKind: 'spawn', serverId: sessionTargetServerId } : undefined,

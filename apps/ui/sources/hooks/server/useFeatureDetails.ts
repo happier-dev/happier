@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { FeatureId, FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import type { FeatureId} from '@happier-dev/protocol/features/catalog';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import {
     useServerFeaturesMainSelectionSnapshot,

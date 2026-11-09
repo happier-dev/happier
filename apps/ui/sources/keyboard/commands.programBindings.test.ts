@@ -26,6 +26,11 @@ describe('Files and Editor program bindings', () => {
           keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {},
         } });
         expect(model.conflicts.filter(conflict => conflict.commandIds.some(isProgramCommand))).toEqual([]);
+        const format = model.commandRows.find(row => row.commandId === 'code.format');
+        const move = model.commandRows.find(row => row.commandId === 'sessions.row.moveToFolder');
+        expect(format?.bindingValue).toBe('Alt+Shift+F');
+        expect(move?.bindingValue).toBe('Alt+Shift+G');
+        expect(model.conflicts.filter(conflict => conflict.commandIds.includes('sessions.row.moveToFolder'))).toEqual([]);
       });
     }
   }
@@ -36,5 +41,12 @@ describe('Files and Editor program bindings', () => {
     expect(defaultKeyboardCommands
       .filter(command => BUILT_IN_SETTINGS_METADATA_V1.filter(setting => setting.anchor === `keyboard.${command.id}`).length !== 1)
       .map(command => command.id)).toEqual([]);
+    for (const command of defaultKeyboardCommands) {
+      const metadata = BUILT_IN_SETTINGS_METADATA_V1.find(setting => setting.anchor === `keyboard.${command.id}`);
+      // A copied sibling id would redirect shortcut edits to a different command.
+      expect(metadata?.storage, command.id).toMatchObject({
+        scope: 'account', kind: 'owner', owner: 'commandStorage', options: [command.id],
+      });
+    }
   });
 });

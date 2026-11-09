@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { act } from 'react-test-renderer';
+import { renderHook } from '@/dev/testkit';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -67,5 +69,22 @@ describe('useFriendsIdentityReadiness', () => {
 
         expect(seen.at(-1)?.reason).toBe('ready');
         expect(seen.at(-1)?.requiredProviderConnected).toBe(true);
+    });
+
+    it('does not re-render for Profile fields the identity gate does not read', async () => {
+        vi.resetModules();
+        storage.getState().applyProfile({ ...profileDefaults, username: 'octocat', linkedProviders: [] });
+        await stubServerFeaturesFetch({ friendsAllowUsername: true, friendsRequiredIdentityProviderId: null });
+        await getServerFeaturesSnapshot({ force: true });
+        const { useFriendsIdentityReadiness } = await import('./useFriendsIdentityReadiness');
+
+        let renders = 0;
+        const harness = await renderHook(() => { renders += 1; return useFriendsIdentityReadiness(); });
+        const settled = renders;
+        await act(async () => {
+            storage.getState().applyProfile({ ...storage.getState().profile, timestamp: storage.getState().profile.timestamp + 1_000 });
+        });
+        expect(renders).toBe(settled);
+        await harness.unmount();
     });
 });

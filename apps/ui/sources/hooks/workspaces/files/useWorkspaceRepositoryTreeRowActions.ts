@@ -5,7 +5,7 @@ import { t } from '@/text';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { workspaceDeletePath, workspaceRenamePath, workspaceStatFile } from '@/sync/ops/workspaceFileSystem';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -83,6 +83,7 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
         workspaceScope,
         writeActionsEnabled,
     } = params;
+    const writeClipboard = useClipboardWrite(workspaceScope?.serverId ?? null);
     const expandedPathsRef = React.useRef(expandedPaths);
     React.useEffect(() => {
         expandedPathsRef.current = expandedPaths;
@@ -102,7 +103,7 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
 
     const performRowMenuAction = React.useCallback(async (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => {
         if (itemId === 'repository-tree-menuitem-copy-path') {
-            const ok = await setClipboardStringSafe(node.path);
+            const ok = await writeClipboard(node.path);
             Modal.alert(
                 ok ? t('common.copied') : t('common.error'),
                 ok
@@ -183,6 +184,9 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
                         ? createActionApprovalContinuation<FilesystemMutationOutput, 'daemon.filesystem.rename'>({
                             artifactId: result.approvalArtifactId, actionId: 'daemon.filesystem.rename', scope: lifetime.scope,
                             refreshAfterExecution: false,
+                            onFailed: (code, failure) => {
+                                if (current()) Modal.alert(t('common.error'), failure?.error || code);
+                            },
                             onSucceeded: value => {
                                 if (!current()) return;
                                 if (value.success) complete();
@@ -224,6 +228,9 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
                         ? createActionApprovalContinuation<FilesystemMutationOutput, 'daemon.filesystem.delete'>({
                             artifactId: result.approvalArtifactId, actionId: 'daemon.filesystem.delete', scope: lifetime.scope,
                             refreshAfterExecution: false,
+                            onFailed: (code, failure) => {
+                                if (current()) Modal.alert(t('common.error'), failure?.error || code);
+                            },
                             onSucceeded: value => {
                                 if (!current()) return;
                                 if (value.success) complete();
@@ -255,6 +262,7 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
         onActionApproval,
         workspaceScope,
         writeActionsEnabled,
+        writeClipboard,
     ]);
 
     const onSelectRowMenuItem = React.useCallback(async (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => {

@@ -6,11 +6,13 @@ import type {
     SessionRouteHydrationState,
 } from '@/sync/domains/session/sessionRouteHydrationState';
 import { storage } from '@/sync/domains/state/storageStore';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { readHydratedRouteSnapshot, readHydratedRouteServerSnapshot, resolveHydratedServerIdForRouteResult, type SessionRouteEncryptionReader } from './routeHydrationSnapshot';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
-import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationPageTitle, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { t } from '@/text';
 
 type SessionRouteHydrationStateRecord = Readonly<{
@@ -95,10 +97,15 @@ export function useHydrateSession(
     const forceRefresh = options?.forceRefresh === true;
     const hydrateMessages = options?.hydrateMessages;
     const includeTurnsProjection = options?.includeTurnsProjection;
+    const destinationVisible = useDestinationVisibility();
+    const turnsDemanded = includeTurnsProjection === true && destinationVisible;
+    const subscribeHydration = React.useCallback((listener: () => void) => storage.subscribe(listener, {
+        sessions: [normalizedSessionId], sessionListRowsByServerId: true,
+    }), [normalizedSessionId]);
     const hasHydratedSession = React.useSyncExternalStore(
-        storage.subscribe,
-        () => readRouteSnapshot(),
-        () => readRouteSnapshot(),
+        subscribeHydration,
+        readRouteSnapshot,
+        readRouteSnapshot,
     );
     const [routeStateRecord, setRouteStateRecord] = React.useState<SessionRouteHydrationStateRecord>(() => ({
         routeKey,
@@ -108,6 +115,13 @@ export function useHydrateSession(
                 ? createAvailableState(normalizedSessionId, routeServerId)
                 : createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'cold'),
     }));
+    // A reading that settles where it already is (an empty request, a Session already available) keeps
+    // its record, so every reader (each Inbox approval row reads its requester here) renders once.
+    const routeStateRecordRef = React.useRef(routeStateRecord);
+    routeStateRecordRef.current = routeStateRecord;
+    const publishRouteState = React.useCallback((next: SessionRouteHydrationStateRecord) => setRouteStateRecord(
+        (current) => current.routeKey === next.routeKey && areSnapshotProjectionsEquivalent(current.state, next.state) ? current : next,
+    ), []);
     const retryCurrent = React.useRef<Readonly<{ routeKey: string; invoke(): void }> | null>(null);
     const retry = React.useCallback(() => {
         if (retryCurrent.current?.routeKey === routeKey) retryCurrent.current.invoke();
@@ -120,19 +134,25 @@ export function useHydrateSession(
         let pending = false;
 
         if (!normalizedSessionId) {
-            setRouteStateRecord({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
+            publishRouteState({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
             return;
         }
         const session = storage.getState().sessions[normalizedSessionId];
-        const needsTurnsProjection = includeTurnsProjection === true
+        const needsTurnsProjection = turnsDemanded
             && session !== undefined
-            && session?.sessionTurns === undefined
+            && !hasCurrentSessionTurnsProjection(session)
             && isSessionContentReadable(readSessionContentAvailability(session));
         const alreadyAvailable = !forceRefresh && hasHydratedSession && !needsTurnsProjection;
+        // An update can leave an already-shown Session briefly behind its observed documents (an owner
+        // view still at the previous metadata revision). Re-reading it is revalidation, not loading:
+        // the route keeps showing the Session, so its surface is not redrawn through `loading` and back.
+        const revalidatingAvailable = !forceRefresh && !needsTurnsProjection
+            && routeStateRecordRef.current.routeKey === routeKey
+            && routeStateRecordRef.current.state.kind === 'available';
         if (alreadyAvailable) {
-            setRouteStateRecord({ routeKey, state: createAvailableState(normalizedSessionId, routeServerId) });
-        } else {
-            setRouteStateRecord({
+            publishRouteState({ routeKey, state: createAvailableState(normalizedSessionId, routeServerId) });
+        } else if (!revalidatingAvailable) {
+            publishRouteState({
                 routeKey,
                 state: createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'store-miss'),
             });
@@ -162,7 +182,7 @@ export function useHydrateSession(
                 .then((result) => {
                     if (canceled) return;
                     if (result.kind === 'missing') {
-                        setRouteStateRecord({
+                        publishRouteState({
                             routeKey,
                             state: createMissingState(
                                 normalizedSessionId,
@@ -170,6 +190,12 @@ export function useHydrateSession(
                                 result.cause,
                             ),
                         });
+                        return;
+                    }
+                    if (result.kind === 'awaiting_push') {
+                        // The canonical owner refused this observation. Retain recovery controls;
+                        // a fresh store publication or explicit retry advances the route, not a timer.
+                        publishRouteState({ routeKey, state: createRetryingState(normalizedSessionId, routeServerId, 'unknown') });
                         return;
                     }
                     if (result.kind === 'available') {
@@ -180,14 +206,14 @@ export function useHydrateSession(
                             hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined,
                         );
                         if (hydratedServerId !== null) {
-                            setRouteStateRecord({
+                            publishRouteState({
                                 routeKey,
                                 state: createAvailableState(normalizedSessionId, hydratedServerId),
                             });
                             return;
                         }
                     }
-                    setRouteStateRecord({
+                    publishRouteState({
                         routeKey,
                         state: createRetryingState(
                             normalizedSessionId,
@@ -205,7 +231,7 @@ export function useHydrateSession(
                 })
                 .catch(() => {
                     if (canceled) return;
-                    setRouteStateRecord({
+                    publishRouteState({
                         routeKey,
                         state: createRetryingState(normalizedSessionId, routeServerId, 'unknown'),
                     });
@@ -226,7 +252,7 @@ export function useHydrateSession(
                 clearTimeout(retryTimeoutId);
                 retryTimeoutId = null;
             }
-            setRouteStateRecord({ routeKey, state: createLoadingState(normalizedSessionId, routeServerId, 'refreshing') });
+            publishRouteState({ routeKey, state: createLoadingState(normalizedSessionId, routeServerId, 'refreshing') });
             attemptHydration(true);
         };
         retryCurrent.current = { routeKey, invoke: retryNow };
@@ -239,7 +265,7 @@ export function useHydrateSession(
                 clearTimeout(retryTimeoutId);
             }
         };
-    }, [forceRefresh, hasHydratedSession, hydrateMessages, includeTurnsProjection, normalizedSessionId, routeKey, routeServerId, tag]);
+    }, [forceRefresh, hasHydratedSession, hydrateMessages, includeTurnsProjection, normalizedSessionId, publishRouteState, routeKey, routeServerId, tag, turnsDemanded]);
 
     const routeState = routeStateRecord.routeKey === routeKey
         ? routeStateRecord.state
@@ -254,7 +280,11 @@ export function useHydrateSession(
         return createAvailableState(normalizedSessionId, hydratedAvailableServerId);
     }, [hydratedAvailableServerId, normalizedSessionId]);
 
-    const currentState = hydratedAvailableState ?? routeState;
+    // The published record wins when it already says the same thing, so a Session that is briefly
+    // re-read (and back) keeps one state identity for every reader.
+    const currentState = hydratedAvailableState === null
+        || (routeState.kind === 'available' && areSnapshotProjectionsEquivalent(routeState, hydratedAvailableState))
+        ? routeState : hydratedAvailableState;
     return React.useMemo(() => ({ ...currentState, retry }), [currentState, retry]);
 }
 

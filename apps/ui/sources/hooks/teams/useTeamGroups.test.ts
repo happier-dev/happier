@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NO_TEAM_GROUP_CAPABILITIES_V1, type TeamGroupV1 } from '@happier-dev/protocol/teams';

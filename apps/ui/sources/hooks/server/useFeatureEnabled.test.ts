@@ -119,10 +119,10 @@ describe('useFeatureEnabled', () => {
         await stubServerFeaturesFetch({ friendsEnabled: true });
         getStorage().getState().applySettingsLocal({
             experiments: false,
-            featureToggles: { 'social.friends': true },
+            featureToggles: { 'execution.runs': true },
         });
 
-        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('social.friends'));
+        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('execution.runs'));
 
         expect(seen.at(-1)).toBe(false);
     });

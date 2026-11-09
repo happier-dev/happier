@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { QualifiedConnectedAccountProfileV4Schema, QualifiedConnectedAccountQuotaSnapshotV4Schema } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountProfileV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountQuotaSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';

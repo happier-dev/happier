@@ -47,6 +47,17 @@ async function resolveHome(serverId: string) {
 }
 
 describe('useAutomationsSupport', () => {
+    it('requires the Workflows bit even when a Home advertises the released Automations alias', async () => {
+        const serverId = await addHome(true);
+        const body = buildServerFeaturesResponse({ automationsEnabled: true });
+        body.features.workflows.enabled = false;
+        homes.answer(serverId, '/v1/features', { body });
+        homes.answer(serverId, '/v1/features/authenticated', { body });
+        await resolveHome(serverId);
+        const hook = await renderHook(() => useAutomationsSupport({ scopeKind: 'spawn', serverId }));
+        expect(hook.getCurrent()).toMatchObject({ enabled: false, loading: false, discoverable: false });
+    });
+
     it('reports loading while the feature decision is unresolved', async () => {
         const serverId = await addHome(true);
         let release!: () => void;

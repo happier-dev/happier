@@ -361,7 +361,14 @@ export function resolveKeyboardPlatform(): KeyboardPlatform {
 /** A retained hidden column may still own document.activeElement after its panel is maximized. */
 export function isKeyboardTargetHidden(target: EventTarget | null): boolean {
     let element = target as HTMLElement | null;
-    const view = element?.ownerDocument?.defaultView;
+    if (element?.nodeType !== 1) return false;
+    // This runs on every keydown, and the composer's editor sits ~70 elements deep. The browser
+    // answers for all ancestors at once: one selector for the attributes, and `checkVisibility` for
+    // display: none on the node or an ancestor and for the node's own computed visibility (which an
+    // ancestor's hidden or collapse is inherited into). Engines without it walk the ancestors.
+    if (element.closest('[hidden],[aria-hidden="true"],[inert]')) return true;
+    if (typeof element.checkVisibility === 'function') return !element.checkVisibility({ visibilityProperty: true });
+    const view = element.ownerDocument?.defaultView;
     while (element?.nodeType === 1) {
         if (element.hidden || element.getAttribute('aria-hidden') === 'true' || element.hasAttribute('inert')) return true;
         const style = view?.getComputedStyle(element);

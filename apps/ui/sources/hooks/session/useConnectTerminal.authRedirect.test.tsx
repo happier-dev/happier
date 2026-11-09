@@ -3,12 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
-    deriveAccountMachineKeyFromRecoverySecret,
-    encodeTerminalConnectLinkV4Payload,
+    deriveAccountMachineKeyFromRecoverySecret} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    encodeTerminalConnectLinkV4Payload} from '@happier-dev/protocol/auth/terminalConnectLinkV4';
+import {
     openTerminalProvisioningV3Payload,
-    openTerminalProvisioningV3Response,
+    openTerminalProvisioningV3Response} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import {
     type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -606,11 +609,12 @@ describe('useConnectTerminal unauthenticated flow', () => {
 describe('useConnectTerminal real approval outcomes', () => {
     it.each(['unavailable', 'obsolete-key'] as const)('refuses currentness %s before issuing a sealed response', async failure => {
         const home = await addHome({ credentials: keyedCredentials('currentness-account') });
+        const onError = vi.fn();
+        // Sign in with valid currentness first; the failure belongs to terminal approval, not fixture authentication.
+        const hook = await renderHook(home, { onError });
         boundary.answer(home.id, '/v1/account/encryption/currentness', failure === 'unavailable'
             ? { status: 404, body: { error: 'not_found' } }
             : { body: currentness(keyedCredentials('currentness-account', 10), 'e2ee') });
-        const onError = vi.fn();
-        const hook = await renderHook(home, { onError });
         const before = await authority();
         expect(await hook.process(link(pairing()))).toBe(false);
         expect(posts()).toHaveLength(0);

@@ -33,6 +33,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 const route = vi.hoisted(() => ({ pathname: '/session/done' }));
@@ -680,8 +681,7 @@ describe('visible session-list retained attention through real state', () => {
         const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
         const { SessionsListViewWithFilterController } = await import('@/components/sessions/shell/SessionsList');
         const { normalizeSessionListFilterV1 } = await import('@happier-dev/protocol/sessions/listFilter/sessionListFilterV1');
-        const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
-        const { areAccountSettingsScopesEqual } = await import('@/sync/domains/settings/scope/accountSettingsScope');
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
         const a = createSessionFixture({ id: 'pane-project-a', serverId, owner: 'u1', projectKey: 'a', createdAt: 20,
             viewer: currentViewer(1, 1), seq: 1, active: false });
         const b = createSessionFixture({ id: 'pane-project-b', serverId, owner: 'u1', projectKey: 'b', createdAt: 10,
@@ -697,15 +697,13 @@ describe('visible session-list retained attention through real state', () => {
                 includeNeedsYouEverywhere: false,
             })) } });
         const scope = { serverId, accountId: 'u1' };
-        const selectSpace = (spaceId: string) => writeCollectionSpaceSelectionV1({ scope, entityKind: 'sessionWork', spaceId,
-            isCurrent: () => areAccountSettingsScopesEqual(storage.getState().settingsScope, scope),
-            readSettings: () => storage.getState().settings });
-        expect(await selectSpace('space-a')).toEqual({ ok: true });
+        const selectSpace = (spaceId: string) => selectCollectionSpace(scope, 'sessionWork', spaceId);
+        expect(await selectSpace('space-a')).toBeUndefined();
         route.pathname = '/';
         mountedRowCost.os = 'ios';
         const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
             <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider>
-                <SessionsListPaneContent storageKind="all" fallbackGuidanceVariant="sidebar" pathname="/" />
+                <SessionsListPaneContent fallbackGuidanceVariant="sidebar" pathname="/" />
             </CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
         </InjectedAuthProvider>);
         const keys = () => {
@@ -725,11 +723,77 @@ describe('visible session-list retained attention through real state', () => {
             });
             await flushHookEffects();
             expect(keys()).toEqual(['a', 'b']);
-            await act(async () => { await selectSpace('space-b'); });
+        await act(async () => { await selectSpace('space-b'); });
             await flushHookEffects();
             expect(screen.root.findByType(SessionsListViewWithFilterController).props.filterController.selectedSpaceId).toBe('space-b');
             expect(keys()).toEqual(['b', 'a']);
         } finally { await screen.unmount(); }
+    });
+
+    it('keeps an idle list off an unrelated Machine grace deadline while presence expires on time', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        // Account restoration returns before locally durable draft hydration settles.
+        // Wait for its real readiness publication before measuring only clock work.
+        const draftsReady = createDeferred<void>();
+        const stopReadiness = storage.subscribe(state => {
+            if (state.isSessionDraftsReady) draftsReady.resolve();
+        });
+        try {
+            if (storage.getState().isSessionDraftsReady) draftsReady.resolve();
+            await draftsReady.promise;
+        } finally { stopReadiness(); }
+        const { settingsVersion, settingsScope } = storage.getState();
+        if (settingsVersion === null) throw new Error('Expected hydrated Account settings before the idle-clock measurement');
+        await getSyncSingleton().refreshAccountSettingsFromServer(
+            settingsVersion, settingsScope,
+        );
+        const now = Date.now();
+        vi.useFakeTimers({ now, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const sessions = Array.from({ length: 128 }, (_, index) => createSessionFixture({
+            id: `idle-clock-row-${index}`, serverId, owner: 'u1', seq: 1, lastViewedSessionSeq: 1,
+            viewer: currentViewer(1, 1), updatedAt: 100, active: false, presence: 0,
+        }));
+        storage.getState().applySessions(sessions);
+        storage.getState().applyServerScopedSessionListRows(serverId,
+            sessions.map(session => storage.getState().sessionListRowsByServerId[serverId]![session.id]!),
+            { source: 'ordinary', mode: 'replace' });
+        route.pathname = '/';
+        const listCounter = createRenderCommitCounter();
+        const machines = [{ active: true, activeAt: now }];
+        function Presence() {
+            const instant = useMachinePresenceNowMs(machines);
+            return React.createElement('machine-presence', { online: isMachineOnline(machines[0], instant) });
+        }
+        function List() {
+            useRenderCommitCounter(listCounter);
+            const state = useVisibleSessionListViewState();
+            return React.createElement('idle-list', { sessionIds: state.visibleSessionListIndex?.flatMap(item =>
+                item.type === 'session' ? [item.sessionId] : []) });
+        }
+        const screen = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(List), React.createElement(Presence)));
+        try {
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            const initialIds = screen.findByType('idle-list').props.sessionIds;
+            expect(initialIds).toHaveLength(128);
+            expect(screen.findByType('machine-presence').props.online).toBe(true);
+            listCounter.reset();
+            const notifications = countStoreNotifications(storage);
+            try {
+                await flushHookEffects({ advanceTimersMs: 120_000, cycles: 1, turns: 2 });
+                expect(screen.findByType('machine-presence').props.online).toBe(true);
+                await act(async () => { publishMachineActivity(machines[0], { active: false, activeAt: Date.now() }, []); });
+                expect(notifications.read()).toEqual([]);
+                expect(screen.findByType('machine-presence').props.online).toBe(false);
+                expect(screen.findByType('idle-list').props.sessionIds).toEqual(initialIds);
+                expect(listCounter.read()).toEqual({ renders: 0, commits: 0 });
+            } finally { notifications.stop(); }
+        } finally {
+            await screen.unmount();
+            vi.useRealTimers();
+        }
     });
 
     it('confines repeated row-content publications to the changed row, without list commits', async () => {

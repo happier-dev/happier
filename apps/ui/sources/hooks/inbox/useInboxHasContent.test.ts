@@ -6,6 +6,7 @@ import { useInboxHasContent } from './useInboxHasContent';
 import { renderScreen as renderScreenBase } from '@/dev/testkit/render/renderScreen';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
@@ -16,7 +17,9 @@ import { MMKV } from 'react-native-mmkv';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import { InboxSummaryProvider } from './useInboxSummary';
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { INBOX_ARTIFACT_KINDS } from '@/sync/domains/artifacts/inboxArtifacts';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -99,6 +102,7 @@ describe('useInboxHasContent', () => {
             sessionListRowsByServerId: {},
             ordinarySessionListMembershipByServerId: {},
             artifacts: {},
+            artifactInventoryKindsLoaded: INBOX_ARTIFACT_KINDS,
             isDataReady: true,
         });
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'social.friends': true } });
@@ -258,24 +262,21 @@ describe('useInboxHasContent', () => {
             actionArgs: {},
             summary: 'Approve',
         });
-        storage.setState({
-            friends: {},
-            feedItems: [],
-            artifacts: {
-                a1: {
-                    id: 'a1',
-                    header: buildApprovalRequestArtifactHeaderV1(request),
-                    title: 'Approve',
-                    body: JSON.stringify(request),
-                    headerVersion: 1,
-                    bodyVersion: 1,
-                    seq: 1,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    isDecrypted: true,
-                },
+        storage.setState({ friends: {}, feedItems: [] });
+        seedAdmittedArtifactRows([
+            {
+                id: 'a1',
+                header: buildApprovalRequestArtifactHeaderV1(request),
+                title: 'Approve',
+                body: JSON.stringify(request),
+                headerVersion: 1,
+                bodyVersion: 1,
+                seq: 1,
+                createdAt: 0,
+                updatedAt: 0,
+                isDecrypted: true,
             },
-        } as any);
+        ], storage);
 
         let latest: boolean | null = null;
         function Test() {

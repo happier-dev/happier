@@ -44,6 +44,7 @@ export function areChromeConfigsEqual(
             && a.subtitle === b.subtitle
             && a.subtitleLines === b.subtitleLines
             && a.leading === b.leading
+            && a.leadingPlacement === b.leadingPlacement
             && a.actions === b.actions
             && a.footer === b.footer
             && a.testID === b.testID
@@ -90,6 +91,7 @@ export function mergeChromeConfig(
             header: override.header !== undefined ? override.header : base.header,
             headerInset: override.headerInset !== undefined ? override.headerInset : base.headerInset,
             leading: override.leading !== undefined ? override.leading : base.leading,
+            leadingPlacement: override.leadingPlacement !== undefined ? override.leadingPlacement : base.leadingPlacement,
             title: override.title !== undefined ? override.title : base.title,
             subtitle: override.subtitle !== undefined ? override.subtitle : base.subtitle,
             subtitleLines: override.subtitleLines !== undefined ? override.subtitleLines : base.subtitleLines,

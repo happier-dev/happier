@@ -18,6 +18,8 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 // Install SDK ports before importing the real app-entry module graph. Collection
 // loads ordinary modules; the runtime bridge and Account lifetimes remain below.
@@ -126,6 +128,105 @@ async function warmLiveSupport(sessionId: string, server = home) {
 }
 
 describe('useSessionExecutionRunsSupported', () => {
+  it('keeps the shell support reader idle for admitted text arrivals while execution-run support stays fresh', async () => {
+    const sessionId = 'session-streaming-support';
+    seedSession(sessionId);
+    storage.getState().applyMessages(sessionId, Array.from({ length: 1_000 }, (_, index): NormalizedMessage => ({
+      id: `prefix-${index}`, localId: null, createdAt: index + 1,
+      isSidechain: false, role: 'agent',
+      content: [{ type: 'text', text: `earlier paragraph ${index}`, uuid: `prefix-${index}`, parentUUID: null }],
+    })));
+    // This boolean is consumed by SessionViewFocusedSurfaceContentBody. Keep the
+    // real store, support hook, capability policy and historical RPC beneath it.
+    const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
+    const counts = createRenderCommitCounter();
+    const hook = await renderHook(() => {
+      useRenderCommitCounter(counts);
+      return useSessionExecutionRunsSupported(sessionId, home.id);
+    });
+    await waitForHomeGovernance(() => { expect(listRequests()).toHaveLength(1); });
+    await act(async () => { await Promise.resolve(); });
+    expect(hook.getCurrent()).toBe(false);
+    counts.reset();
+    const signalMembership = storage.getState().sessionMessages[sessionId]?.executionRunSignalMessageIds;
+    expect(signalMembership?.size).toBe(0);
+    const beforeVersion = storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0;
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        storage.getState().applyMessages(sessionId, [{
+          id: `stream-${index}`, localId: null, createdAt: index + 10,
+          isSidechain: false, role: 'agent',
+          content: [{ type: 'text', text: `paragraph ${index}`, uuid: `stream-${index}`, parentUUID: null }],
+        }]);
+      });
+    }
+    expect(storage.getState().sessionMessages[sessionId]?.messagesVersion).toBe(beforeVersion + 5);
+    expect(counts.read()).toEqual({ renders: 0, commits: 0 });
+    expect(listRequests()).toHaveLength(1);
+
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        storage.getState().applyMessages(sessionId, [{
+          id: 'tail', localId: 'tail', createdAt: 10, isSidechain: false, role: 'agent',
+          content: [{ type: 'text', text: `streamed tail ${index}`, uuid: 'tail', parentUUID: null }],
+          meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'tail',
+            segmentState: 'streaming', startedAtMs: 10, updatedAtMs: index + 11 } },
+        }]);
+      });
+    }
+    expect(storage.getState().sessionMessages[sessionId]?.messagesVersion).toBe(beforeVersion + 10);
+    expect(storage.getState().sessionMessages[sessionId]?.executionRunSignalMessageIds).toBe(signalMembership);
+    expect(counts.read()).toEqual({ renders: 0, commits: 0 });
+
+    await act(async () => {
+      storage.getState().applyMessages(sessionId, [{
+        id: 'run-start', localId: null, createdAt: 30, isSidechain: false, role: 'agent',
+        content: [{ type: 'tool-call', id: 'run-tool', name: 'SubAgentRun', input: { runId: 'run-1' },
+          description: null, uuid: 'run-start', parentUUID: null }],
+      }]);
+    });
+    expect(hook.getCurrent()).toBe(true);
+    expect(counts.read().commits).toBeGreaterThan(0);
+    await act(async () => { storage.getState().replaceSessionMessages(sessionId, []); });
+    expect(hook.getCurrent()).toBe(false);
+    await hook.unmount();
+  });
+
+  it('tracks a late execution-run result and retires its signal with transcript replacement and eviction', async () => {
+    const sessionId = 'session-late-signal';
+    seedSession(sessionId);
+    storage.getState().applyMessages(sessionId, [{
+      id: 'start', localId: null, createdAt: 1, role: 'agent', isSidechain: false,
+      content: [{ type: 'tool-call', id: 'start-tool', name: 'execution_run_start', input: {},
+        description: null, uuid: 'start', parentUUID: null }],
+    }]);
+    const hook = await renderSupport(sessionId, home.id);
+    await waitForHomeGovernance(() => { expect(listRequests()).toHaveLength(1); });
+    await act(async () => { await Promise.resolve(); });
+    expect(hook.getCurrent()).toBe(false);
+    await act(async () => {
+      storage.getState().applyMessages(sessionId, [{
+        id: 'result', localId: null, createdAt: 2, role: 'agent', isSidechain: false,
+        content: [{ type: 'tool-result', tool_use_id: 'start-tool', content: 'started run_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+          is_error: false, uuid: 'result', parentUUID: null }],
+      }]);
+    });
+    expect(hook.getCurrent()).toBe(true);
+    await act(async () => { storage.getState().replaceSessionMessages(sessionId, []); });
+    expect(hook.getCurrent()).toBe(false);
+    await act(async () => {
+      storage.getState().replaceSessionMessages(sessionId, [{
+        id: 'restored', localId: null, createdAt: 3, role: 'agent', isSidechain: false,
+        content: [{ type: 'tool-call', id: 'restored-tool', name: 'SubAgentRun', input: { runId: 'run-restored' },
+          description: null, uuid: 'restored', parentUUID: null }],
+      }]);
+    });
+    expect(hook.getCurrent()).toBe(true);
+    await act(async () => { storage.getState().evictSessionMessages(sessionId); });
+    expect(hook.getCurrent()).toBe(false);
+    await hook.unmount();
+  });
+
   it('returns true immediately when the loaded transcript already contains execution-run signals', async () => {
     seedSession('session-transcript');
     const message = createToolCallMessageFixture();

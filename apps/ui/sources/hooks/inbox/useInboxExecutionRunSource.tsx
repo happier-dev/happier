@@ -9,8 +9,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isAccountFollowConfigurationChangeRelevant } from '@/components/sessions/follow/sessionFollowAccountChange';
-import { readSessionRunningExecutionRuns } from '@/hooks/session/useSessionRunningExecutionRuns';
-import { readRunningExecutionRunRosterSnapshot, subscribeRunningExecutionRunRoster } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { subscribeSessionRunningExecutionRunRoster } from '@/hooks/session/useSessionRunningExecutionRuns';
+import { readRunningExecutionRunRosterSnapshot } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { useExecutionRunHeaders } from '@/hooks/session/useExecutionRunHeaders';
 import { classifyInboxExecutionRun, readInboxExecutionRunOnceDeliveries, type InboxExecutionRun } from '@/components/inbox/inboxItems';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
@@ -117,8 +117,8 @@ function useCreateSource(detailsDemanded: boolean): Source {
     const sessionAddressKeys = JSON.stringify([...sessionAddresses.keys()].sort());
     React.useEffect(() => {
         if (!lifetime?.isCurrent()) return;
-        const disposables = [...sessionAddresses.values()].map(address => subscribeRunningExecutionRunRoster(address,
-            () => publishSource.current(), () => readSessionRunningExecutionRuns(address)));
+        const disposables = [...sessionAddresses.values()].map(address => subscribeSessionRunningExecutionRunRoster(address,
+            () => publishSource.current()));
         const dispose = () => { for (const unsubscribe of disposables) unsubscribe(); };
         const retirement = lifetime.onRetire(dispose);
         return () => { retirement.dispose(); dispose(); };

@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+  REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN} from '@happier-dev/protocol/scm';
+import {
   SCM_OPERATION_ERROR_CODES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/operationError';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmNetworkTestHarness } from '../sourceControl/scmNetworkTestHarness';

@@ -1,35 +1,35 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { FeatureId } from '@happier-dev/protocol';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import {
     getLastViewedReleaseId,
     setLastViewedReleaseId,
     getLatestReleaseId,
+    hasUnreadChangelog,
+    subscribeChangelogReadState,
 } from '@/changelog';
 import { setLegacyChangelogAutoSeenBaseline } from '@/changelog/releaseNotes/storage';
 
 const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
+const subscribeDisabled = () => () => {};
 
 export function useChangelog() {
     const enabled = getFeatureBuildPolicyDecision(CHANGELOG_FEATURE_ID) !== 'deny';
     // MMKV reads are synchronous - no need for useEffect
     const latestReleaseId = enabled ? getLatestReleaseId() : null;
 
-    const [hasUnread, setHasUnread] = useState(() => {
-        if (!enabled || !latestReleaseId) {
-            return false;
-        }
-        const lastViewedReleaseId = getLastViewedReleaseId();
-        if (lastViewedReleaseId === null) {
-            return false;
-        }
-
-        return latestReleaseId !== lastViewedReleaseId;
-    });
+    const getSnapshot = useCallback(
+        () => enabled && hasUnreadChangelog(latestReleaseId),
+        [enabled, latestReleaseId],
+    );
+    const hasUnread = useSyncExternalStore(
+        enabled ? subscribeChangelogReadState : subscribeDisabled,
+        getSnapshot,
+        getSnapshot,
+    );
 
     useEffect(() => {
         if (!enabled || !latestReleaseId) {
-            setHasUnread(false);
             return;
         }
 
@@ -40,11 +40,9 @@ export function useChangelog() {
             // consumers while the pre-auth shell is still rendering.
             setLegacyChangelogAutoSeenBaseline(latestReleaseId);
             setLastViewedReleaseId(latestReleaseId);
-            setHasUnread(false);
             return;
         }
 
-        setHasUnread(latestReleaseId !== lastViewedReleaseId);
     }, [enabled, latestReleaseId]);
 
     const markAsRead = useCallback(() => {
@@ -53,7 +51,6 @@ export function useChangelog() {
         }
 
         setLastViewedReleaseId(latestReleaseId);
-        setHasUnread(false);
     }, [enabled, latestReleaseId]);
 
     return {

@@ -19,8 +19,8 @@ describe('terminal hook request', () => {
         });
         expect(request).toMatchObject({ cwd: 'C:\\repo\\web', launch: { kind: 'package_script', runTargetId: 'web:dev' } });
         expect(request).not.toHaveProperty('initialCommand');
-        expect(buildMachineTerminalSessionRequest({ terminalKey: 'shell', cwd: '/repo', initialCommand: 'echo selected' }))
-            .toMatchObject({ cwd: '/repo', initialCommand: 'echo selected' });
+        expect(buildMachineTerminalSessionRequest({ terminalKey: 'shell', cwd: '/repo' }))
+            .toEqual({ terminalKey: 'shell', cwd: '/repo' });
         expect(buildMachineTerminalSessionRequest({ terminalKey: 'attach', cwd: null, launch: { kind: 'session_attach', sessionId: 'session' } }))
             .not.toHaveProperty('cwd');
     });

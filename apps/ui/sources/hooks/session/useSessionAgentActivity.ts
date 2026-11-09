@@ -246,8 +246,9 @@ function useSessionAgentActivityTranscriptEnrichment(params: Readonly<{
     sessionId: string;
     subagents: readonly SessionSubagent[];
 }>): SessionAgentActivityEnrichment {
-    const { messages } = useSessionMessages(params.sessionId);
-    const reducerState = useSessionMessagesReducerState(params.sessionId);
+    // Pending-attention facts come from tool and request rows; streamed text never changes them.
+    const { messages } = useSessionMessages(params.sessionId, { textUpdates: false });
+    const reducerState = useSessionMessagesReducerState(params.sessionId, { textUpdates: false });
     const { subagents } = params;
 
     return React.useMemo(() => {

@@ -4,6 +4,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
 import { readInboxReadySessionTurn } from '@/activity/presentation/buildInboxReadySessionResult';
 import { useSessionMessages, useTranscriptApprovalArtifactsForSession } from '@/sync/store/hooks';
+import { resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 import { readTranscriptOperationsProducedResults } from '@/components/sessions/transcript/references/transcriptOperationsProducedResults';
 import { EMPTY_OPERATIONS_RUN_PRODUCED_RESULTS } from '@/sync/domains/workflows/operationsRunOutcome';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -55,7 +56,7 @@ export function useInvestigationSessionResult(
         const approvals = new Map(transcriptProduced.approvals.map(value =>
             [JSON.stringify([value.serverId, value.request.artifactId]), value] as const));
         for (const { artifact, approval } of approvalArtifacts) {
-            approvals.set(JSON.stringify([address.serverId, artifact.id]), { serverId: address.serverId,
+            approvals.set(JSON.stringify([address.serverId, artifact.id]), { serverId: address.serverId, status: resolveApprovalDisplayStatus(approval),
                 request: { kind: 'approval_request_created', artifactId: artifact.id, actionId: approval.actionId } });
         }
         return { ...transcriptProduced, approvals: [...approvals.values()] };

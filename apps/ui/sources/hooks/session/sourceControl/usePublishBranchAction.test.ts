@@ -1,9 +1,10 @@
 import { act } from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+    REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN} from '@happier-dev/protocol/scm';
+import {
     SCM_OPERATION_ERROR_CODES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/operationError';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
@@ -58,17 +59,23 @@ describe('usePublishBranchAction', () => {
         expect(publishRequests()).toHaveLength(0);
     });
 
-    it('normalizes session ids and publishes to origin before invalidating branch state', async () => {
+    it('normalizes session ids and replaces Publish with the observed upstream after publishing', async () => {
         publishResponses.mockResolvedValue({ success: true });
+        harness.network.setRpcResponder(async request => {
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: scmNetworkSnapshot };
+            return await publishResponses();
+        });
 
         const { usePublishBranchAction } = await import('./usePublishBranchAction');
-        const hook = await renderHook(() =>
-            usePublishBranchAction({
+        const { useSessionProjectScmSnapshot } = await import('@/sync/domains/state/storage');
+        const hook = await renderHook(() => {
+            const observedSnapshot = useSessionProjectScmSnapshot('s1', harness.serverId);
+            return usePublishBranchAction({
                 sessionId: '  s1  ',
                 serverId: harness.serverId,
                 writeEnabled: true,
                 disabled: false,
-                snapshot: {
+                snapshot: observedSnapshot ?? {
                     ...scmNetworkSnapshot,
                     repo: {
                         ...scmNetworkSnapshot.repo,
@@ -79,8 +86,8 @@ describe('usePublishBranchAction', () => {
                     },
                     branch: { ...scmNetworkSnapshot.branch, upstream: null },
                 },
-            }),
-        );
+            });
+        });
 
         expect(hook.getCurrent().canPublish).toBe(true);
 
@@ -89,7 +96,8 @@ describe('usePublishBranchAction', () => {
         });
 
         expect(publishRequests()).toEqual([expect.objectContaining({ targetId: 'machine-1', payload: expect.objectContaining({ remote: 'origin', cwd: '/repo' }) })]);
-        expect(harness.network.requests.some(request => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toBe(true);
+        expect(harness.storage.getState().getSessionProjectScmSnapshot('s1', harness.serverId)?.branch.upstream).toBe('origin/main');
+        expect(hook.getCurrent().canPublish).toBe(false);
     });
 
     it('publishes to the first configured remote when origin is unavailable', async () => {

@@ -18,19 +18,42 @@ export function useKeyboardShortcutLabel(commandId: KeyboardCommandId | undefine
     return commandId === undefined ? undefined : labels[commandId];
 }
 
-/** "Cmd+Shift+Enter" → ["Cmd", "Shift", "Enter"]; a literal "+" key stays one keycap. */
+/** Mac modifier glyphs, written without separators ("⇧⌘2"). */
+const MODIFIER_GLYPHS = new Set(['⌃', '⌥', '⇧', '⌘']);
+
+/**
+ * "Ctrl+Shift+Enter" → ["Ctrl", "Shift", "Enter"]; "Cmd+Shift+Enter" and "⇧⌘↵" → ["⇧", "⌘", …]: one keycap per key.
+ * A literal "+" key stays one keycap.
+ */
 export function splitKeybindingLabel(label: string): readonly string[] {
     const parts = label.split('+');
     const keys: string[] = [];
     for (let index = 0; index < parts.length; index += 1) {
         const part = parts[index];
-        if (part === '' && index === parts.length - 1 && keys.length > 0) {
-            keys[keys.length - 1] = '+';
+        if (part === '') {
+            if (index === parts.length - 1 && keys.length > 0) keys.push('+');
             continue;
         }
-        if (part !== '') keys.push(part);
+        let rest = part;
+        while (rest.length > 1 && MODIFIER_GLYPHS.has(rest[0])) {
+            keys.push(rest[0]);
+            rest = rest.slice(1);
+        }
+        keys.push(rest);
     }
-    return keys.length > 0 ? keys : [label];
+    return keys.length > 0 ? macModifierGlyphs(keys) : [label];
+}
+
+/** A Mac combination, written in words ("Cmd+Shift+Enter"), as the Mac keyboard prints it: ⇧ ⌘ Enter. */
+const MAC_MODIFIER_WORDS: Readonly<Record<string, string>> = { Ctrl: '⌃', Option: '⌥', Shift: '⇧', Cmd: '⌘' };
+const MAC_MODIFIER_ORDER = ['⌃', '⌥', '⇧', '⌘'];
+
+function macModifierGlyphs(keys: string[]): string[] {
+    // Only a Mac label names Cmd or Option, so their presence is the platform; elsewhere the words stay.
+    if (!keys.includes('Cmd') && !keys.includes('Option')) return keys;
+    const modifiers = keys.filter((key) => key in MAC_MODIFIER_WORDS).map((key) => MAC_MODIFIER_WORDS[key]!);
+    modifiers.sort((left, right) => MAC_MODIFIER_ORDER.indexOf(left) - MAC_MODIFIER_ORDER.indexOf(right));
+    return [...modifiers, ...keys.filter((key) => !(key in MAC_MODIFIER_WORDS))];
 }
 
 const KEYCAP_GLYPHS: Readonly<Record<string, string>> = {

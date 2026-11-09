@@ -33,7 +33,7 @@ describe('daemon-scoped capability currentness', () => {
         await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('loaded'));
         expect(hook.getCurrent().state).toBe(ready);
         expect(machineRpc).not.toHaveBeenCalled();
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId: server.id, machineId: machine.id }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId: server.id, machineId: machine.id }, 'authority'));
         await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ status: 'loaded', snapshot: {
             response: { results: { 'tool.tmux': { data: { available: false } } } },
         } }));

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ScmEntryHistoryV1 } from '@happier-dev/protocol/scm';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { machineScmHistoryEntries } from '@/sync/ops/scm/machineScm';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -72,7 +73,20 @@ export function useWorkspaceEntryHistory(input: Readonly<{
             }
             // An omitted answer is unavailable, not proof that an entry has never been committed.
             for (const path of paths) if (!entries.has(path)) entries.set(path, { path, kind: 'unavailable', reason: 'Missing entry history' });
-            setState({ scopeKey, repoRootPath, value: { status: 'ready', entries, headOid: response.headOid, stale: false } });
+            setState(previous => {
+                // Reconcile the admitted response with this folder's retained facts, not an
+                // empty baseline. Pending/ready still changes; unchanged entry readers do not.
+                const baseline = previous?.scopeKey === scopeKey && previous.repoRootPath === repoRootPath
+                    ? previous.value.entries : EMPTY.entries;
+                let changed = baseline.size !== entries.size;
+                for (const [path, entry] of entries) {
+                    const retained = baseline.get(path);
+                    if (retained && sameStrictJsonValue(retained, entry)) entries.set(path, retained);
+                    else changed = true;
+                }
+                return { scopeKey, repoRootPath, value: { status: 'ready', entries: changed ? entries : baseline,
+                    headOid: response.headOid, stale: false } };
+            });
         }).catch(error => unavailable(error instanceof Error ? error.message : 'History unavailable'));
         return () => controller.abort();
     }, [workspaceKey, scopeKey, scope, input.folder, pathsKey, input.headOid, input.enabled, input.reloadToken, repoRootPath, workspacePrefix]);

@@ -1,20 +1,29 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred, createSessionMessagesFixture, flushHookEffects, renderHook } from '@/dev/testkit';
-import { createReducer } from "@happier-dev/session-core/reducer";
+import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createPlainSessionByIdResponseFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { ComposerSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import type { FetchUserMessageHistoryPageResult } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
+import type { UserMessageHistoryEntriesData } from './useUserMessageHistoryEntries';
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 const account = createProviderSettingsAccountHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { useUserMessageHistoryEntries } = await import('./useUserMessageHistoryEntries');
+const { PromptPickerFooter } = await import('@/components/sessions/agentInput/commandMenu/PromptPickerParts');
+const { TextLinkButton } = await import('@/components/ui/buttons/TextLinkButton');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { registerComposerPresentationTarget } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
 const {
-    USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS,
     resetUserMessageHistoryRemoteEntriesForTests,
     useUserMessageHistory,
     useUserMessageHistoryRemoteEntries,
@@ -35,6 +44,13 @@ const roleQuerySupportedState = {
         primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
     },
 };
+
+function historyComposerSnapshot(instanceId: string) {
+    return ComposerSnapshotV1Schema.parse({ revision: 1, ref: { kind: 'newSession', instanceId }, text: '',
+        references: [], attachments: [], layout: 'wrap',
+        capabilities: { text: true, references: false, attachments: false, submit: true },
+        state: { focused: true, editable: true, submittable: false, submitting: false, running: false } });
+}
 
 function installHistoryHttpPage(sessionId: string) {
     const path = `/v1/sessions/${sessionId}/messages`;
@@ -78,7 +94,6 @@ describe('useUserMessageHistory server role query', () => {
         storage.setState((state) => ({
             ...state,
             profileScope: { serverId, accountId: 'account-1' },
-            sessionMessages: {},
             sessions: { s1: createSessionFixture({ id: 's1', serverId }), s2: createSessionFixture({ id: 's2', serverId }) },
             sessionListRowsByServerId: {},
         }));
@@ -89,18 +104,57 @@ describe('useUserMessageHistory server role query', () => {
         vi.clearAllMocks();
         resetUserMessageHistoryRemoteEntriesForTests();
         roleQuerySupportedState.supported = true;
-        storage.setState((state) => ({
-            ...state,
-            sessionMessages: {},
-        }));
         await account.reset();
+    });
+
+    it('starts exactly one new history read from a real footer Retry press and shows Stop until it settles', async () => {
+        const retriedPage = createDeferred<FetchUserMessageHistoryPageResult>();
+        historyPageHttpReply.mockResolvedValueOnce({ status: 'error' }).mockReturnValueOnce(retriedPage.promise);
+        function HistoryFooter() {
+            const history = useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1', serverId, enabled: true });
+            return <PromptPickerFooter history={history} hardwareKeyboard={false} canSend applyError={false} />;
+        }
+        const screen = await renderScreen(<HistoryFooter />);
+        await screen.pressByTestIdAsync('prompt-picker-history-more');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findAllByType(TextLinkButton).some(button => button.props.label === 'common.retry')).toBe(true);
+        });
+        expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+        const retry = screen.findAllByType(TextLinkButton).find(button => button.props.label === 'common.retry')!;
+        let pressFailure: unknown;
+        await act(async () => {
+            // RN's Pressable forwards a press event; it is not the pager's optional AbortSignal.
+            const result = retry.props.onPress({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} });
+            if (result instanceof Promise) void result.catch(error => { pressFailure = error; });
+            await flushHookEffects();
+        });
+        expect(pressFailure).toBeUndefined();
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(2);
+            expect(screen.findByTestId('prompt-picker-history-stop')).not.toBeNull();
+        });
+        expect(screen.findAllByType(TextLinkButton).some(button => button.props.label === 'common.retry')).toBe(false);
+        await act(async () => {
+            retriedPage.resolve({ status: 'loaded', rows: [{ messageId: 'retried', routeMessageId: 'server:retried',
+                seq: 3, createdAt: 30, role: 'user', text: 'Recovered older prompt' }], hasMore: false, nextBeforeSeq: null });
+            await flushHookEffects();
+        });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId('prompt-picker-history-stop')).toBeNull();
+            expect(screen.findAllByType(TextLinkButton).some(button => button.props.label === 'common.retry')).toBe(false);
+        });
+        expect(historyPageHttpReply).toHaveBeenCalledTimes(2);
+        await screen.unmount();
     });
 
     it('hydrates a list-only Session for Sent before without hydrating its transcript', async () => {
         const sessionId = 'list-only-history';
         const text = 'transcript fixture: a prompt from another Session';
         const session = createSessionFixture({ id: sessionId, serverId });
-        storage.setState({ sessions: {}, sessionMessages: {}, sessionListRowsByServerId: {
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {
             [serverId]: { [sessionId]: createSessionListRenderableSessionFixture({ id: sessionId }) },
         } });
         account.home.answer(serverId, `/v2/sessions/${sessionId}`, {
@@ -124,13 +178,319 @@ describe('useUserMessageHistory server role query', () => {
         await hook.unmount();
     });
 
+    it('reads and pages the mounted Account history through the canonical Action without work while closed', async () => {
+        const executor = createDefaultActionExecutor();
+        const composerRef = { kind: 'newSession' as const, instanceId: 'history-action' };
+        const context = { surface: 'mcp' as const, serverId, expectedAccountId: 'account-1' };
+        const execute = (op: 'read' | 'page' | 'retry' | 'stop') => executor.execute('ui.prompts.history', { op, composerRef }, context);
+        expect(await execute('read')).toEqual({ ok: true, result: { status: 'noEligibleComposer' } });
+        expect(historyPageHttpReply).not.toHaveBeenCalled();
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        let open = true;
+        const snapshot = historyComposerSnapshot(composerRef.instanceId);
+        const port = { select: () => 'notFound' as const, apply: async () => false, history: {
+            read: () => hook.getCurrent(), page: () => hook.getCurrent().loadMore(),
+            retry: () => hook.getCurrent().retry(), stop: () => hook.getCurrent().stop(),
+        } };
+        const target = {
+            readRevision: () => 1,
+            readSnapshot: () => snapshot,
+            replace: () => { throw new Error('History must never edit the draft'); },
+            readScope: () => ({ serverId, accountId: 'account-1' }),
+            readPromptPicker: () => open ? port : null,
+        };
+        const unregister = registerComposerPresentationTarget(composerRef, target);
+        try {
+            expect(await execute('read')).toMatchObject({ ok: true, result: { status: 'ready', entries: [], coverage: 'loaded' } });
+            expect(historyPageHttpReply).not.toHaveBeenCalled();
+            historyPageHttpReply.mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'u9', routeMessageId: 'server:u9', seq: 9, createdAt: 90, role: 'user', text: 'private prompt' },
+                { messageId: 'a10', routeMessageId: 'server:a10', seq: 10, createdAt: 91, role: 'assistant', text: 'private reply' },
+            ], hasMore: true, nextBeforeSeq: 9 });
+            let firstPage: Awaited<ReturnType<typeof execute>> | undefined;
+            await act(async () => { firstPage = await execute('page'); });
+            expect(firstPage).toEqual(await execute('read'));
+            expect(await execute('read')).toMatchObject({ ok: true, result: { status: 'ready', coverage: 'partial',
+                entries: [{ sessionId: 's1', messageId: 'u9', text: 'private prompt' }],
+                progress: { pagesLoaded: 1, sessionsSearched: 1, totalSessions: 2 } } });
+            historyPageHttpReply.mockResolvedValueOnce({ status: 'error' });
+            await act(async () => { await execute('page'); });
+            expect(await execute('read')).toMatchObject({ ok: true, result: { error: true } });
+            historyPageHttpReply.mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'u4', routeMessageId: 'server:u4', seq: 4, createdAt: 40, role: 'user', text: 'older prompt' },
+            ], hasMore: false, nextBeforeSeq: null });
+            await act(async () => { await execute('retry'); });
+            historyPageHttpReply.mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'u1', routeMessageId: 'server:u1', seq: 1, createdAt: 10, role: 'user', text: 'other Session' },
+            ], hasMore: false, nextBeforeSeq: null });
+            await act(async () => { await execute('page'); });
+            const result = await execute('read');
+            expect(result).toMatchObject({ ok: true, result: { status: 'ready', coverage: 'partial', error: false, hasMore: false,
+                entries: [{ sessionId: 's1', messageId: 'u9' }, { sessionId: 's1', messageId: 'u4' }, { sessionId: 's2', messageId: 'u1' }] } });
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(4);
+            expect(historyPageHttpReply).toHaveBeenNthCalledWith(3, 's1', { limit: 40, beforeSeq: 9 });
+            open = false;
+            expect(await execute('page')).toEqual({ ok: true, result: { status: 'notOpen' } });
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(4);
+        } finally { unregister(); await hook.unmount(); }
+        expect(await execute('read')).toEqual({ ok: true, result: { status: 'noEligibleComposer' } });
+        expect(historyPageHttpReply).toHaveBeenCalledTimes(4);
+    });
+
+    it('returns the accepted history projection before React commits the page update', async () => {
+        historyPageHttpReply.mockResolvedValueOnce({ status: 'loaded', rows: [
+            { messageId: 'u1', routeMessageId: 'server:u1', seq: 1, createdAt: 1, role: 'user', text: 'accepted prompt' },
+        ], hasMore: false, nextBeforeSeq: null });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        let page: UserMessageHistoryEntriesData | undefined;
+        try {
+            await act(async () => {
+                page = await hook.getCurrent().loadMore();
+                expect(page).toMatchObject({ entries: [{ messageId: 'u1', text: 'accepted prompt' }], isLoading: false });
+            });
+            const { loadMore: _loadMore, retry: _retry, stop: _stop, ...read } = hook.getCurrent();
+            expect(page).toEqual(read);
+        } finally { await hook.unmount(); }
+    });
+
+    it('stops mounted history publication and refuses a retired Account page through the Action', async () => {
+        const executor = createDefaultActionExecutor();
+        const composerRef = { kind: 'newSession' as const, instanceId: 'history-stop-action' };
+        const ownerServerId = serverId;
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId: ownerServerId }));
+        const snapshot = historyComposerSnapshot(composerRef.instanceId);
+        const port = { select: () => 'notFound' as const, apply: async () => false, history: {
+            read: () => hook.getCurrent(), page: () => hook.getCurrent().loadMore(),
+            retry: () => hook.getCurrent().retry(), stop: () => hook.getCurrent().stop(),
+        } };
+        const target = {
+            readRevision: () => 1,
+            readSnapshot: () => snapshot,
+            replace: () => { throw new Error('History must never edit the draft'); },
+            readScope: () => ({ serverId: ownerServerId, accountId: 'account-1' }),
+            readPromptPicker: () => port,
+        };
+        const unregister = registerComposerPresentationTarget(composerRef, target);
+        const execute = (op: 'read' | 'page' | 'stop') => executor.execute('ui.prompts.history', { op, composerRef },
+            { surface: 'mcp', serverId: ownerServerId, expectedAccountId: 'account-1' });
+        try {
+            const first = createDeferred<FetchUserMessageHistoryPageResult>();
+            historyPageHttpReply.mockReturnValueOnce(first.promise);
+            let pending: ReturnType<typeof execute> | undefined;
+            await act(async () => { pending = execute('page'); await flushHookEffects(); });
+            expect(hook.getCurrent().isLoading).toBe(true);
+            await act(async () => {
+                expect(await execute('stop')).toMatchObject({ ok: true, result: { status: 'ready', isLoading: false } });
+            });
+            await act(async () => {
+                first.resolve({ status: 'loaded', rows: [
+                    { messageId: 'u1', routeMessageId: 'server:u1', seq: 1, createdAt: 1, role: 'user', text: 'stopped prompt' },
+                ], hasMore: false, nextBeforeSeq: null });
+                await pending;
+            });
+            expect(await execute('read')).toMatchObject({ ok: true, result: { entries: [], isLoading: false } });
+            // Explicit demand may adopt the shared completed page after Stop.
+            await act(async () => { await execute('page'); });
+            expect(await execute('read')).toMatchObject({ ok: true, result: { entries: [{ text: 'stopped prompt' }] } });
+            const retired = createDeferred<FetchUserMessageHistoryPageResult>();
+            historyPageHttpReply.mockReturnValueOnce(retired.promise);
+            await act(async () => { pending = execute('page'); await flushHookEffects(); });
+            expect(hook.getCurrent().isLoading).toBe(true);
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(2);
+            let result: Awaited<ReturnType<typeof execute>> | undefined;
+            await act(async () => {
+                await switchAccount('account-2');
+                await hook.rerender();
+                retired.resolve({ status: 'loaded', rows: [
+                    { messageId: 'secret', routeMessageId: 'server:secret', seq: 1, createdAt: 1, role: 'user', text: 'retired Account secret' },
+                ], hasMore: false, nextBeforeSeq: null });
+                result = await pending;
+            });
+            expect(result).toBeDefined();
+            expect(result).not.toMatchObject({ ok: true, result: { status: 'ready' } });
+            expect(JSON.stringify(result)).not.toContain('retired Account secret');
+            expect(hook.getCurrent().entries).toEqual([]);
+        } finally { unregister(); await hook.unmount(); }
+    });
+
+    it('refuses an old history page when the same composer closes and reopens its picker', async () => {
+        const executor = createDefaultActionExecutor();
+        const composerRef = { kind: 'newSession' as const, instanceId: 'history-reopened-action' };
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        const snapshot = historyComposerSnapshot(composerRef.instanceId);
+        let port = { select: () => 'notFound' as const, apply: async () => false, history: {
+            read: () => hook.getCurrent(), page: () => hook.getCurrent().loadMore(),
+            retry: () => hook.getCurrent().retry(), stop: () => hook.getCurrent().stop(),
+        } };
+        const unregister = registerComposerPresentationTarget(composerRef, {
+            readRevision: () => 1, readSnapshot: () => snapshot,
+            replace: () => { throw new Error('History must never edit the draft'); },
+            readScope: () => ({ serverId, accountId: 'account-1' }), readPromptPicker: () => port,
+        });
+        try {
+            const page = createDeferred<FetchUserMessageHistoryPageResult>();
+            historyPageHttpReply.mockReturnValueOnce(page.promise);
+            let pending: ReturnType<typeof executor.execute> | undefined;
+            await act(async () => { pending = executor.execute('ui.prompts.history', { op: 'page', composerRef },
+                { surface: 'mcp', serverId, expectedAccountId: 'account-1' }); await flushHookEffects(); });
+            expect(hook.getCurrent().isLoading).toBe(true);
+            // A new mounted leaf publishes a new stable port at this visual boundary.
+            port = { ...port };
+            await act(async () => {
+                page.resolve({ status: 'loaded', rows: [
+                    { messageId: 'u1', routeMessageId: 'server:u1', seq: 1, createdAt: 1, role: 'user', text: 'retired picker prompt' },
+                ], hasMore: false, nextBeforeSeq: null });
+                expect(await pending).toEqual({ ok: true, result: { status: 'notOpen' } });
+            });
+        } finally { unregister(); await hook.unmount(); }
+    });
+
+    it('lets Stop then Retry supersede a still-stalled shared history cursor without a late checkpoint', async () => {
+        storage.setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId }) }, sessionListRowsByServerId: {} });
+        const executor = createDefaultActionExecutor();
+        const composerRef = { kind: 'newSession' as const, instanceId: 'history-retry-action' };
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        const snapshot = historyComposerSnapshot(composerRef.instanceId);
+        const port = { select: () => 'notFound' as const, apply: async () => false, history: {
+            read: () => hook.getCurrent(), page: () => hook.getCurrent().loadMore(),
+            retry: () => hook.getCurrent().retry(), stop: () => hook.getCurrent().stop(),
+        } };
+        const unregister = registerComposerPresentationTarget(composerRef, {
+            readRevision: () => 1, readSnapshot: () => snapshot, replace: () => 1,
+            readScope: () => ({ serverId, accountId: 'account-1' }), readPromptPicker: () => port,
+        });
+        const stalled = createDeferred<FetchUserMessageHistoryPageResult>();
+        historyPageHttpReply.mockReturnValueOnce(stalled.promise).mockResolvedValueOnce({ status: 'loaded', rows: [
+            { messageId: 'fresh', routeMessageId: 'server:fresh', seq: 9, createdAt: 9, role: 'user', text: 'fresh Retry result' },
+        ], hasMore: false, nextBeforeSeq: null });
+        const execute = (op: 'read' | 'page' | 'stop' | 'retry') => executor.execute('ui.prompts.history', { op, composerRef },
+            { surface: 'mcp', serverId, expectedAccountId: 'account-1' });
+        let stopped: ReturnType<typeof execute> | undefined;
+        let retried: ReturnType<typeof execute> | undefined;
+        try {
+            await act(async () => { stopped = execute('page'); await flushHookEffects(); });
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+            await act(async () => { await execute('stop'); });
+            await act(async () => { retried = execute('retry'); await flushHookEffects(); });
+            await vi.waitFor(async () => { await flushHookEffects(); expect(historyPageHttpReply).toHaveBeenCalledTimes(2); });
+            await act(async () => { await retried; });
+            expect(await stopped).toMatchObject({ ok: true, result: { entries: [], isLoading: false } });
+            expect(await execute('read')).toMatchObject({ ok: true, result: { entries: [{ messageId: 'fresh' }],
+                progress: { pagesLoaded: 1 }, hasMore: false } });
+            await act(async () => {
+                stalled.resolve({ status: 'loaded', rows: [
+                    { messageId: 'retired', routeMessageId: 'server:retired', seq: 1, createdAt: 1, role: 'user', text: 'late old page' },
+                ], hasMore: true, nextBeforeSeq: 1 });
+                await stalled.promise;
+                await flushHookEffects();
+            });
+            expect(await execute('read')).toMatchObject({ ok: true, result: { entries: [{ messageId: 'fresh' }],
+                progress: { pagesLoaded: 1 }, hasMore: false } });
+        } finally {
+            stalled.resolve({ status: 'loaded', rows: [
+                { messageId: 'retired', routeMessageId: 'server:retired', seq: 1, createdAt: 1, role: 'user', text: 'late old page' },
+            ], hasMore: true, nextBeforeSeq: 1 });
+            await act(async () => { await Promise.all([stopped, retried]); });
+            unregister(); await hook.unmount();
+        }
+    });
+
+    it('releases an aborted history Action with a native-compatible signal while its shared HTTP page remains stalled', async () => {
+        const executor = createDefaultActionExecutor();
+        const composerRef = { kind: 'newSession' as const, instanceId: 'history-abort-action' };
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        const snapshot = historyComposerSnapshot(composerRef.instanceId);
+        const port = { select: () => 'notFound' as const, apply: async () => false, history: {
+            read: () => hook.getCurrent(), page: (signal?: AbortSignal) => hook.getCurrent().loadMore(signal),
+            retry: (signal?: AbortSignal) => hook.getCurrent().retry(signal), stop: () => hook.getCurrent().stop(),
+        } };
+        const unregister = registerComposerPresentationTarget(composerRef, {
+            readRevision: () => 1, readSnapshot: () => snapshot, replace: () => 1,
+            readScope: () => ({ serverId, accountId: 'account-1' }), readPromptPicker: () => port,
+        });
+        const stalled = createDeferred<FetchUserMessageHistoryPageResult>();
+        historyPageHttpReply.mockReturnValueOnce(stalled.promise);
+        const controller = new AbortController();
+        // React Native's installed abort-controller signal has events/aborted, without these newer fields.
+        Object.defineProperty(controller.signal, 'throwIfAborted', { value: undefined });
+        Object.defineProperty(controller.signal, 'reason', { value: undefined });
+        let settled = false;
+        let pending: Promise<unknown> | undefined;
+        try {
+            await act(async () => {
+                pending = executor.execute('ui.prompts.history', { op: 'page', composerRef },
+                    { surface: 'mcp', serverId, expectedAccountId: 'account-1', signal: controller.signal })
+                    .then(result => { settled = true; return { result }; }, error => { settled = true; return { error }; });
+                await flushHookEffects();
+            });
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+            await act(async () => { controller.abort(); });
+            await vi.waitFor(async () => { await flushHookEffects(); expect(settled).toBe(true); });
+            expect(await pending).toMatchObject({ error: { name: 'AbortError' } });
+            expect(hook.getCurrent().isLoading).toBe(false);
+            expect(hook.getCurrent().entries).toEqual([]);
+        } finally {
+            stalled.resolve({ status: 'loaded', rows: [], hasMore: false, nextBeforeSeq: null });
+            await act(async () => { await pending; });
+            unregister(); await hook.unmount();
+        }
+    });
+
+    it.each(['history', 'another route'] as const)('lets Retry supersede the history cursor while its list-only Session hydration is stalled (read owner: %s)', async origin => {
+        // Drain the canonical Session queue, not the retained isDataReady flag:
+        // the harness's empty startup census would otherwise retire this fixture.
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshSessions();
+        const sessionId = 'stalled-list-only-history';
+        const session = createSessionFixture({ id: sessionId, serverId });
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {
+            [serverId]: { [sessionId]: createSessionListRenderableSessionFixture({ id: sessionId }) },
+        } });
+        const stalled = createDeferred<void>();
+        let hydrationReads = 0;
+        account.home.answer(serverId, `GET /v2/sessions/${sessionId}`, { select: async () => {
+            hydrationReads += 1;
+            if (hydrationReads === 1) await stalled.promise;
+            return { body: createPlainSessionByIdResponseFixture(session) };
+        } });
+        installHistoryHttpPage(sessionId);
+        historyPageHttpReply.mockResolvedValueOnce({ status: 'loaded', rows: [
+            { messageId: 'fresh', routeMessageId: 'server:fresh', seq: 9, createdAt: 9, role: 'user', text: 'fresh hydrated Retry' },
+        ], hasMore: false, nextBeforeSeq: null });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId }));
+        let initialHydration: Promise<unknown> | undefined;
+        let first: Promise<UserMessageHistoryEntriesData> | undefined;
+        let retry: Promise<UserMessageHistoryEntriesData> | undefined;
+        try {
+            if (origin === 'another route') {
+                await act(async () => { initialHydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { hydrateMessages: false }); await flushHookEffects(); });
+                await vi.waitFor(() => expect(hydrationReads).toBe(1));
+            }
+            await act(async () => { first = hook.getCurrent().loadMore(); await flushHookEffects(); });
+            await vi.waitFor(() => expect(hydrationReads).toBe(1));
+            await act(async () => { hook.getCurrent().stop(); retry = hook.getCurrent().retry(); await flushHookEffects(); });
+            await vi.waitFor(() => expect(hydrationReads).toBe(2));
+            await act(async () => { await retry; });
+            expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+            expect(await retry).toMatchObject({ entries: [{ messageId: 'fresh' }], progress: { pagesLoaded: 1 } });
+            expect(hook.getCurrent().entries).toMatchObject([{ messageId: 'fresh', text: 'fresh hydrated Retry' }]);
+        } finally {
+            stalled.resolve();
+            await act(async () => { await Promise.all([initialHydration, first, retry]); });
+            await hook.unmount();
+        }
+    });
+
     it('opens an unhydrated E2EE Session reader before paging Sent before', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');
         const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const { V2SessionByIdResponseSchema } = await import('@happier-dev/protocol/sessions/control/contract');
         const secret = new Uint8Array(32).fill(7);
-        ({ serverId } = await account.restore({ accountId: 'account-1', e2eeSecret: secret }));
+        // This is a distinct encrypted Account, not an unperformed plain→E2EE migration
+        // of beforeEach's Account. Let its real bootstrap settle before seeding inventory.
+        ({ serverId } = await account.restore({ accountId: 'encrypted-history-account', e2eeSecret: secret }));
+        await vi.waitFor(async () => { await flushHookEffects(); expect(storage.getState().isDataReady).toBe(true); });
         roleQuerySupportedState.supported = true;
         const sessionId = 'encrypted-list-only-history';
         const writer = await Encryption.create(secret);
@@ -155,12 +515,17 @@ describe('useUserMessageHistory server role query', () => {
                 content: { t: 'encrypted', c: await cipher.encryptRaw({ role: 'user', content: { type: 'text', text } }) } }],
             hasMore: false, nextBeforeSeq: null,
         }) });
-        storage.setState({ sessions: {}, sessionMessages: {}, sessionListRowsByServerId: {
-            [serverId]: { [sessionId]: createSessionListRenderableSessionFixture({ id: sessionId, encryptionMode: 'e2ee' }) },
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {
+            [serverId]: { [sessionId]: createSessionListRenderableSessionFixture({ id: sessionId, encryptionMode: 'e2ee',
+                seq: 7, updatedAt: 70, activeAt: 1, metadataVersion: 1, agentStateVersion: 0 }) },
         } });
         const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', enabled: true }));
-        await act(async () => { await hook.getCurrent().loadMore(); });
-        expect(hook.getCurrent().entries.map(row => row.text)).toEqual([text]);
+        let page: UserMessageHistoryEntriesData | undefined;
+        await act(async () => { page = await hook.getCurrent().loadMore(); });
+        expect(account.home.requests.filter(request => request.path.startsWith(`/v1/sessions/${sessionId}/messages?`))).toHaveLength(1);
+        expect(page).toMatchObject({ entries: [{ text }], error: false, hasMore: false,
+            progress: { pagesLoaded: 1, sessionsSearched: 1, totalSessions: 1 } });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().entries.map(row => row.text)).toEqual([text]); });
         expect(hook.getCurrent().error).toBe(false);
         expect(hook.getCurrent().hasMore).toBe(false);
         expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst ?? []).toEqual([]);
@@ -211,6 +576,28 @@ describe('useUserMessageHistory server role query', () => {
         await hook.unmount();
     });
 
+    it('follows meaningful-activity reorder and new Session membership while mounted', async () => {
+        storage.setState({ sessions: {
+            newer: createSessionFixture({ id: 'newer', serverId, createdAt: 1, updatedAt: 20, meaningfulActivityAt: 20 }),
+            older: createSessionFixture({ id: 'older', serverId, createdAt: 1, updatedAt: 10, meaningfulActivityAt: 10 }),
+        }, sessionListRowsByServerId: {} });
+        historyPageHttpReply.mockResolvedValue({ status: 'loaded', rows: [], hasMore: false, nextBeforeSeq: null });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global' }));
+        try {
+            await act(async () => { storage.getState().applySessions([
+                createSessionFixture({ id: 'older', serverId, createdAt: 1, updatedAt: 30, meaningfulActivityAt: 30 }),
+            ]); });
+            await act(async () => { await hook.getCurrent().loadMore(); });
+            expect(historyPageHttpReply).toHaveBeenNthCalledWith(1, 'older', { limit: 40 });
+            await act(async () => { storage.getState().applySessions([
+                createSessionFixture({ id: 's1', serverId, createdAt: 1, updatedAt: 40, meaningfulActivityAt: 40 }),
+            ]); });
+            expect(hook.getCurrent().progress.totalSessions).toBe(3);
+            await act(async () => { await hook.getCurrent().loadMore(); });
+            expect(historyPageHttpReply).toHaveBeenNthCalledWith(2, 's1', { limit: 40 });
+        } finally { await hook.unmount(); }
+    });
+
     it('keeps disabled history inert and Stop rejects late publication while leaving the shared page usable', async () => {
         const page = createDeferred<FetchUserMessageHistoryPageResult>();
         historyPageHttpReply.mockReturnValueOnce(page.promise);
@@ -221,7 +608,7 @@ describe('useUserMessageHistory server role query', () => {
         await act(async () => { await hook.getCurrent().loadMore(); });
         expect(historyPageHttpReply).not.toHaveBeenCalled();
         await hook.rerender({ enabled: true });
-        let pending!: Promise<void>;
+        let pending!: Promise<unknown>;
         await act(async () => { pending = hook.getCurrent().loadMore(); });
         expect(hook.getCurrent().isLoading).toBe(true);
         await act(async () => {
@@ -244,7 +631,7 @@ describe('useUserMessageHistory server role query', () => {
         const page = createDeferred<FetchUserMessageHistoryPageResult>();
         historyPageHttpReply.mockReturnValueOnce(page.promise);
         const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
-        let pending!: Promise<void>;
+        let pending!: Promise<unknown>;
         await act(async () => { pending = hook.getCurrent().loadMore(); });
         await act(async () => {
             await switchAccount('account-2');
@@ -305,11 +692,9 @@ describe('useUserMessageHistory server role query', () => {
     });
 
     it('projects local display text and merges by message identity while old servers remain partial', async () => {
-        storage.setState({ sessionMessages: { s1: createSessionMessagesFixture({
-            messageIdsOldestFirst: ['internal-1'],
-            messagesById: { 'internal-1': { kind: 'user-text', id: 'internal-1', realID: 'm1', localId: null, seq: 1,
-                createdAt: 1, text: 'expanded body', displayText: '  readable prompt\n' } },
-        }) } });
+        storage.getState().applyMessages('s1', [{ id: 'm1', localId: null, seq: 1, createdAt: 1,
+            isSidechain: false, role: 'user', content: { type: 'text', text: 'expanded body' },
+            meta: { displayText: '  readable prompt\n' } }]);
         roleQuerySupportedState.supported = false;
         const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
         await act(async () => { await hook.getCurrent().loadMore(); });
@@ -333,10 +718,9 @@ describe('useUserMessageHistory server role query', () => {
     it('keeps an explicitly addressed Home isolated from another active Home inventory', async () => {
         storage.setState({
             sessions: { s1: createSessionFixture({ id: 's1', serverId }) },
-            sessionMessages: { s1: createSessionMessagesFixture({ messageIdsOldestFirst: ['m1'], messagesById: {
-                m1: { kind: 'user-text', id: 'm1', localId: null, createdAt: 1, text: 'private active Home' },
-            } }) },
         });
+        storage.getState().applyMessages('s1', [{ id: 'm1', localId: null, createdAt: 1,
+            isSidechain: false, role: 'user', content: { type: 'text', text: 'private active Home' } }]);
         const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId: 'server-2' }));
         expect(hook.getCurrent().entries).toEqual([]);
         await act(async () => { await hook.getCurrent().loadMore(); });
@@ -412,7 +796,7 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        expect(hook.getCurrent().first.rows).toEqual([{ messageId: 'm5', routeMessageId: 'server:m5', seq: 5, createdAt: 50, role: 'user' as const, text: 'shared prompt' }]);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().first.rows).toEqual([{ messageId: 'm5', routeMessageId: 'server:m5', seq: 5, createdAt: 50, role: 'user' as const, text: 'shared prompt' }]); });
         expect(hook.getCurrent().second.rows).toEqual([{ messageId: 'm5', routeMessageId: 'server:m5', seq: 5, createdAt: 50, role: 'user' as const, text: 'shared prompt' }]);
         await hook.unmount();
     });
@@ -444,7 +828,7 @@ describe('useUserMessageHistory server role query', () => {
             hook.getCurrent().requestNextPage();
             await flushHookEffects();
         });
-        expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['account one prompt']);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['account one prompt']); });
 
         await act(async () => {
             await switchAccount('account-2');
@@ -457,7 +841,7 @@ describe('useUserMessageHistory server role query', () => {
         });
 
         expect(historyPageHttpReply).toHaveBeenCalledTimes(2);
-        expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['account two prompt']);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['account two prompt']); });
         await hook.unmount();
     });
 
@@ -519,7 +903,7 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        expect(hook.getCurrent().rows.map((entry) => entry.seq)).toEqual([8, 4]);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows.map((entry) => entry.seq)).toEqual([8, 4]); });
         expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['repeat this', 'repeat this']);
         await hook.unmount();
     });
@@ -553,7 +937,7 @@ describe('useUserMessageHistory server role query', () => {
             hook.getCurrent().requestNextPage();
             await flushHookEffects();
         });
-        expect(hook.getCurrent().rows.map((row) => row.text)).toEqual(['first page']);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows.map((row) => row.text)).toEqual(['first page']); });
 
         // Loading older transcript messages moves the cursor the host would seed with.
         await hook.rerender({ initialBeforeSeq: 12 });
@@ -563,7 +947,7 @@ describe('useUserMessageHistory server role query', () => {
         });
 
         expect(historyPageHttpReply).toHaveBeenNthCalledWith(2, 's1', { limit: 40, beforeSeq: 9 });
-        expect(hook.getCurrent().rows.map((row) => row.text)).toEqual(['first page', 'second page']);
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows.map((row) => row.text)).toEqual(['first page', 'second page']); });
         await hook.unmount();
     });
 
@@ -587,7 +971,7 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        expect(hook.getCurrent().moveUp('draft')).toBe('a prompt');
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().moveUp('draft')).toBe('a prompt'); });
         expect(hook.getCurrent().moveUp('a prompt')).toBe('a prompt');
         await hook.unmount();
     });
@@ -622,7 +1006,7 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        expect(hook.getCurrent().moveUp('draft')).toBe('  prompt 3\n');
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().moveUp('draft')).toBe('  prompt 3\n'); });
         expect(hook.getCurrent().moveUp('  prompt 3\n')).toBe('  prompt 2\n');
         expect(hook.getCurrent().moveUp('  prompt 2\n')).toBe('  prompt 1\n');
         await hook.unmount();
@@ -685,7 +1069,7 @@ describe('useUserMessageHistory server role query', () => {
         expect(historyPageHttpReply).toHaveBeenCalledWith('s1', {
             limit: 40,
         });
-        expect(hook.getCurrent().moveUp('draft')).toBe('from server');
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().moveUp('draft')).toBe('from server'); });
         await hook.unmount();
     });
 
@@ -704,9 +1088,8 @@ describe('useUserMessageHistory server role query', () => {
         await hook.unmount();
     });
 
-    it('cools a failing remote history cursor down before retrying it', async () => {
-        // Only the clock is faked: the retry floor is wall-clock based and the rest of the
-        // hook still runs on real microtasks.
+    it('latches a failing cursor across automatic updates and elapsed time, then recovers on Session reopen', async () => {
+        // Advancing the clock must never turn an automatic store update into a retry.
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
         historyPageHttpReply
@@ -747,21 +1130,25 @@ describe('useUserMessageHistory server role query', () => {
         });
         expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
 
-        vi.setSystemTime(Date.now() + USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS);
+        vi.setSystemTime(new Date('2027-01-01T00:00:00.000Z'));
         await act(async () => {
             hook.getCurrent().requestNextPage();
             await flushHookEffects();
         });
 
+        expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+        const reopened = await renderHook(() => useUserMessageHistoryRemoteEntries({ enabled: true, sessionId: 's1' }));
+        await act(async () => { reopened.getCurrent().requestNextPage(); await flushHookEffects(); });
         await vi.waitFor(async () => {
             await flushHookEffects();
-            expect(hook.getCurrent().rows.map((entry) => entry.text)).toEqual(['retried prompt']);
+            expect(reopened.getCurrent().rows.map((entry) => entry.text)).toEqual(['retried prompt']);
         });
         expect(historyPageHttpReply).toHaveBeenCalledTimes(2);
-        await hook.unmount();
+        await reopened.unmount();
     });
 
-    it('cools the cursor down when the remote history request rejects outright', async () => {
+    it('latches the cursor when the remote history request rejects outright', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
         historyPageHttpReply.mockRejectedValueOnce(new Error('offline'));
@@ -794,6 +1181,22 @@ describe('useUserMessageHistory server role query', () => {
         await hook.unmount();
     });
 
+    it('retries a latched failure on ArrowUp while repeated focus warmups remain inert', async () => {
+        historyPageHttpReply.mockResolvedValueOnce({ status: 'error' }).mockResolvedValueOnce({
+            status: 'loaded', rows: [{ messageId: 'recovered', routeMessageId: 'server:recovered', seq: 3,
+                createdAt: 30, role: 'user', text: 'recovered prompt' }], hasMore: false, nextBeforeSeq: null,
+        });
+        const hook = await renderHook(() => useUserMessageHistory({ scope: 'perSession', sessionId: 's1' }));
+        await act(async () => { hook.getCurrent().warmup(); await flushHookEffects(); });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(historyPageHttpReply).toHaveBeenCalledTimes(1); });
+        await act(async () => { hook.getCurrent().warmup(); await flushHookEffects(); });
+        expect(historyPageHttpReply).toHaveBeenCalledTimes(1);
+        await act(async () => { hook.getCurrent().moveUp(''); await flushHookEffects(); });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(historyPageHttpReply).toHaveBeenCalledTimes(2); });
+        expect(hook.getCurrent().moveUp('')).toBe('recovered prompt');
+        await hook.unmount();
+    });
+
     it('prefetches before reaching the oldest loaded user message and stops after exhaustion', async () => {
         historyPageHttpReply
             .mockResolvedValueOnce({
@@ -823,7 +1226,7 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        expect(hook.getCurrent().moveUp('draft')).toBe('ten');
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().moveUp('draft')).toBe('ten'); });
 
         await act(async () => {
             expect(hook.getCurrent().moveUp('ten')).toBe('nine');
@@ -865,40 +1268,8 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
-        storage.setState((state) => ({
-            ...state,
-            sessionMessages: {
-                s2: {
-                    messageIdsOldestFirst: ['s2-user'],
-                    messagesById: {
-                        's2-user': {
-                            kind: 'user-text',
-                            id: 's2-user',
-                            localId: null,
-                            createdAt: 40,
-                            text: 'session two prompt',
-                        },
-                    },
-                    messagesMap: {
-                        's2-user': {
-                            kind: 'user-text',
-                            id: 's2-user',
-                            localId: null,
-                            createdAt: 40,
-                            text: 'session two prompt',
-                        },
-                    },
-                    reducerState: createReducer(),
-                    latestThinkingMessageId: null,
-                    latestThinkingMessageActivityAtMs: null,
-                    latestReadyEventSeq: null,
-                    latestReadyEventAt: null,
-                    messagesVersion: 1,
-                    lastAppliedAgentStateVersion: null,
-                    isLoaded: true,
-                },
-            },
-        }));
+        storage.getState().applyMessages('s2', [{ id: 's2-user', localId: null, createdAt: 40,
+            isSidechain: false, role: 'user', content: { type: 'text', text: 'session two prompt' } }]);
         await hook.rerender({ sessionId: 's2' });
 
         await act(async () => {
@@ -924,30 +1295,10 @@ describe('useUserMessageHistory server role query', () => {
 
     it('keeps active browsing state when role-query support becomes ready', async () => {
         roleQuerySupportedState.supported = false;
-        storage.setState((state) => ({
-            ...state,
-            sessionMessages: {
-                s1: {
-                    messageIdsOldestFirst: ['older', 'newer'],
-                    messagesById: {
-                        older: { kind: 'user-text', id: 'older', localId: null, createdAt: 10, text: 'older prompt' },
-                        newer: { kind: 'user-text', id: 'newer', localId: null, createdAt: 20, text: 'newer prompt' },
-                    },
-                    messagesMap: {
-                        older: { kind: 'user-text', id: 'older', localId: null, createdAt: 10, text: 'older prompt' },
-                        newer: { kind: 'user-text', id: 'newer', localId: null, createdAt: 20, text: 'newer prompt' },
-                    },
-                    reducerState: createReducer(),
-                    latestThinkingMessageId: null,
-                    latestThinkingMessageActivityAtMs: null,
-                    latestReadyEventSeq: null,
-                    latestReadyEventAt: null,
-                    messagesVersion: 1,
-                    lastAppliedAgentStateVersion: null,
-                    isLoaded: true,
-                },
-            },
-        }));
+        storage.getState().applyMessages('s1', [
+            { id: 'older', localId: null, createdAt: 10, isSidechain: false, role: 'user', content: { type: 'text', text: 'older prompt' } },
+            { id: 'newer', localId: null, createdAt: 20, isSidechain: false, role: 'user', content: { type: 'text', text: 'newer prompt' } },
+        ]);
 
         const hook = await renderHook(() =>
             useUserMessageHistory({ scope: 'perSession', sessionId: 's1', maxEntries: 20 }),

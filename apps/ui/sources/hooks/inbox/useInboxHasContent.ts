@@ -7,5 +7,5 @@ import { useSharedInboxSummary } from './useInboxSummary';
  * owning surfaces.
  */
 export function useInboxHasContent(): boolean {
-    return useSharedInboxSummary().hasContent;
+    return useSharedInboxSummary().hasContent !== false;
 }

@@ -1037,6 +1037,14 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             if (path === '/v2/sessions/run-session') return Response.json({
                 session: createPlainSessionCurrentProjectionRecordFixture({ id: 'run-session', active: true }),
             });
+            if (path === '/v2/sessions/shared-session') {
+                // A Session another Account shared with this one (view access).
+                const { ownerMetadata: _ownerMetadata, ...recipient } = createPlainSessionCurrentProjectionRecordFixture({ id: 'shared-session', active: true });
+                const { projectLegacySessionAccessCapabilitiesV1 } = await import('@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1');
+                return Response.json({ session: { ...recipient, share: { accessLevel: 'view', canApprovePermissions: false },
+                    effectiveAccess: { v: 1, level: 'view', sources: [{ kind: 'direct', shareId: 'share-1' }],
+                        capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'view', canApprovePermissions: false }) } } });
+            }
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 experiments: true, featureToggles: { automations: true },
             } }, version: 1 });
@@ -1266,6 +1274,35 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
         await vi.waitFor(() => expect(model!.items.filter(item => item.source.kind === 'execution_run')).toEqual([]));
         expect(summary.current!.count).toBe(0);
+    });
+
+    it('updates a collaborator\'s followed Run row from a published Session page, since the Home sends collaborators no live Run hints', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const base = createRootLayoutFeaturesResponse();
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ ...base,
+            features: { ...base.features, sessions: { ...base.features.sessions, enabled: true, following: { enabled: true } } },
+        }) } });
+        const serverId = appliedSnapshot().serverId;
+        const run = ExecutionRunPublicStateSchema.parse({ runId: 'shared-run', callId: 'call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, display: { title: 'Review the shared changes' },
+            permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            status: 'running', startedAtMs: 100 });
+        // A Session shared with this Account: no owner row is known locally, so
+        // nothing proves this reader receives `execution-run-updated`.
+        executionRunBoundary.follows.mockResolvedValue({ follows: [{ source: { kind: 'execution_run', sessionId: 'shared-session', runId: run.runId },
+            following: true, persistent: true, policy: { preset: 'important' } }] });
+        executionRunBoundary.list.mockResolvedValue({ runs: [run] });
+        function SummaryProbe() { useSharedInboxSummary(); return null; }
+        await renderScreen(<InboxSummaryProvider><SummaryProbe /><InboxModelProvider><Probe /></InboxModelProvider></InboxSummaryProvider>);
+        await vi.waitFor(() => expect(executionRunBoundary.follows).toHaveBeenCalled());
+        await vi.waitFor(() => expect(executionRunBoundary.list).toHaveBeenCalled());
+        await vi.waitFor(() => expect(model!.items.filter(item => item.source.kind === 'execution_run')).toHaveLength(1));
+        const reads = executionRunBoundary.list.mock.calls.length;
+        executionRunBoundary.list.mockResolvedValue({ runs: [{ ...run, status: 'succeeded', finishedAtMs: 200 }] });
+        // The Run's output is published to the collaborator as an ordinary Session content page.
+        await act(async () => { publishHomeAccountChange(serverId, ['shared-session'], { feedPageConsumed: true, changeKinds: ['session'] }); });
+        await vi.waitFor(() => expect(model!.items.filter(item => item.source.kind === 'execution_run')).toEqual([]));
+        expect(executionRunBoundary.list.mock.calls.length - reads).toBe(1);
     });
 
     it.each([false, true])('keeps a delivered terminal Run through a warm source outage and recovers its cold projection (notice degraded: %s)', async degradedNotice => {

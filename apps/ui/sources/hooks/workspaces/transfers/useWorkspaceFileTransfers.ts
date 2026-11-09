@@ -14,17 +14,17 @@ import {
 import { resolveUploadRelativePath } from '@/sync/domains/transfers/uploadRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
-import { createWebDownloadFileSink, type WebDownloadFileSink } from './webDownloadFileSink';
+import { shareNativeCacheFile, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { type WebDownloadFileSink } from './webDownloadFileSink';
+import { createPlatformDownloadFileSink } from '@/sync/runtime/files/platformDownloadFileSink';
 import { resolveWebDownloadMaxBytes } from '@/sync/runtime/files/webFileBufferBudget';
 import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
 import { t } from '@/text';
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { WorkspaceFileUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/workspaceFileTransfers';
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
-import { createDesktopDownloadFileSink, openInDefaultApp } from '@/sync/runtime/files/openInDefaultApp';
+import { openInDefaultApp } from '@/sync/runtime/files/openInDefaultApp';
 import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
-import { sanitizeFileUriSegment } from '@/sync/runtime/files/fileUriPath';
 import { resolveWorkspaceFileDownloadSource, type WorkspaceFileCachedContent } from './workspaceFileDownloadSource';
 export type { WorkspaceFileCachedContent } from './workspaceFileDownloadSource';
 
@@ -742,33 +742,17 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                                 totalBytes: init.sizeBytes,
                             });
 
-                            if (useWebSink) {
-                                try {
-                                    webSinkRef.current = await createWebDownloadFileSink({
-                                        expectedSizeBytes: init.sizeBytes,
-                                        maxBytes: webDownloadMaxBytes,
-                                    });
-                                } catch (error) {
-                                    return {
-                                        success: false,
-                                        error: error instanceof Error ? error.message : 'Download sink unavailable',
-                                    };
-                                }
-                                return;
-                            }
-
-                            const sink = desktopOpening
-                                ? { ok: true as const, ...await createDesktopDownloadFileSink({
-                                    fileName: sanitizeFileUriSegment(init.name, 'download'), invoke: invokeDesktopHost,
-                                }) }
-                                : await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: init.name || 'download' });
-                            if (!sink.ok) {
+                            try {
+                                const allocated = await createPlatformDownloadFileSink({ name: init.name, sizeBytes: init.sizeBytes,
+                                    desktopOpening, webMaxBytes: webDownloadMaxBytes });
+                                if (allocated.kind === 'web') webSinkRef.current = allocated.sink;
+                                else nativeSinkRef.current = allocated.sink;
+                            } catch (error) {
                                 return {
                                     success: false,
-                                    error: sink.error,
+                                    error: error instanceof Error ? error.message : 'Download sink unavailable',
                                 };
                             }
-                            nativeSinkRef.current = sink;
                         },
                         signal: controller.signal,
                         onProgress: updateProgress,

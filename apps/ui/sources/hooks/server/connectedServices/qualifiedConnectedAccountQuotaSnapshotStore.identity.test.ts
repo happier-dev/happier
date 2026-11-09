@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountProfileSchema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createQualifiedQuotaTestHarness, quotaTestResponse, quotaTestSnapshot } from './qualifiedConnectedAccountQuotaTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { flushHookEffects } from '@/dev/testkit';
@@ -21,7 +22,10 @@ let organizationId: string | null;
 let providerAccountId: string | null;
 let credentialFailure: boolean;
 let boundary: Awaited<ReturnType<typeof createQualifiedQuotaTestHarness>>;
-const flush = () => flushHookEffects({ cycles: 8, turns: 8 });
+async function flush(key?: string) {
+    await flushHookEffects();
+    if (key) await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({ loading: false, read: true }));
+}
 function profile(org: string | null, credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS', accountId: string | null = 'provider-work') {
     return AccountProfileSchema.parse({ id: 'quota-account', connectedAccountsV4: [{
         ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
@@ -69,13 +73,13 @@ describe('qualified quota current credential organization', () => {
     it.each(['org-b', null])('never admits cloud usage for a successful current credential context %s', async org => {
         organizationId = org;
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBeNull();
     });
 
     it('retains verified data on credential transport failure and same-organization rotation, but clears changed context before a quota failure', async () => {
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot?.providerOrganizationId).toBe('org-a');
         boundary.read.mockImplementation(async () => Response.json({ error: 'offline' }, { status: 400 }));
         await store.reloadQualifiedQuotaSnapshotAfterRecovery({ ref, serverBasis: context.serverBasis });
@@ -90,7 +94,7 @@ describe('qualified quota current credential organization', () => {
 
     it('retires cache-only data and a held old read as soon as the qualified Profile changes organization', async () => {
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         let finish!: (response: Response) => void;
         boundary.read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
         const pending = store.reloadQualifiedQuotaSnapshotAfterRecovery({ ref, serverBasis: context.serverBasis });
@@ -104,7 +108,7 @@ describe('qualified quota current credential organization', () => {
     it('retires previously verified data when a new Profile credential revision still has unknown organization', async () => {
         storage.getState().applyProfile(profile(null));
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot?.providerOrganizationId).toBe('org-a');
         storage.getState().applyProfile(profile(null, 'csr_1123456789ABCDEFGHJKMNPQRS'));
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBeNull();
@@ -117,7 +121,7 @@ describe('qualified quota current credential organization', () => {
         const { providerOrganizationId: _organizationId, ...accountSnapshot } = snapshot;
         boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(accountSnapshot)));
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot?.activeAccountId).toBe('provider-work');
         storage.getState().applyProfile(profile(null, 'csr_1123456789ABCDEFGHJKMNPQRS',
             change === 'unknown' ? null : change === 'changed' ? 'provider-other' : 'provider-work'));
@@ -132,7 +136,7 @@ describe('qualified quota current credential organization', () => {
         const { providerOrganizationId: _organizationId, ...accountSnapshot } = snapshot;
         boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...accountSnapshot, providerId: 'openai' })));
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot).toBeNull();
         expect(store.getQualifiedQuotaSnapshotEntry(key).usageRecordId).toBeNull();
     });
@@ -144,7 +148,7 @@ describe('qualified quota current credential organization', () => {
         const { providerOrganizationId: _organizationId, ...accountSnapshot } = snapshot;
         boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(accountSnapshot)));
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         expect(store.getQualifiedQuotaSnapshotEntry(key).snapshot?.activeAccountId).toBe('provider-work');
         const receipt = { status: 'connected' as const, attemptId: 'attempt-replacement', account: ref };
         boundary.socket.mockImplementation(async <R>(_machineId: string, method: string): Promise<R> => {
@@ -164,7 +168,7 @@ describe('qualified quota current credential organization', () => {
 
     it.each(['same', 'changed', 'unreadable'] as const)('revalidates an acknowledged %s credential replacement before returning its connected receipt', async change => {
         const context = boundary.context(ref); const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
-        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush();
+        store.loadQualifiedQuotaSnapshotOnce(key, context); await flush(key);
         const receipt = { status: 'connected' as const, attemptId: 'attempt-replacement', account: ref };
         boundary.socket.mockImplementation(async <R>(_machineId: string, method: string): Promise<R> => {
             if (method !== CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD) throw new Error('Unexpected RPC');

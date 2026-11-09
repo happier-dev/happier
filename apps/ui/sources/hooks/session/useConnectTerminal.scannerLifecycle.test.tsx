@@ -45,12 +45,6 @@ installSessionHooksCommonModuleMocks({
                     fontScale: 1,
                 }),
             },
-            useWindowDimensions: () => ({
-                width: screenState.windowDimensions.width,
-                height: screenState.windowDimensions.height,
-                scale: 2,
-                fontScale: 1,
-            }),
         });
     },
     router: async () => {

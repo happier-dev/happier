@@ -276,7 +276,7 @@ describe('the mounted unified list feed', () => {
         const screen = await renderScreen(
             <InjectedAuthProvider credentials={null}>
                 <UniversalSearchRuntimeProvider value={{ open: () => {}, buildCommands: () => [] }}>
-                    <SessionsListPaneContent storageKind="all" fallbackGuidanceVariant="sidebar" pathname="/" />
+                    <SessionsListPaneContent fallbackGuidanceVariant="sidebar" pathname="/" />
                 </UniversalSearchRuntimeProvider>
             </InjectedAuthProvider>,
         );

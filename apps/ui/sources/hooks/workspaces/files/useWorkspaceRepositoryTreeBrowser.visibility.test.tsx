@@ -81,6 +81,27 @@ describe('Project workspace tree', () => {
         expect(api?.nodes.map(n => n.path)).toEqual(['.env.example', 'ignored.log']);
         expect(directoryRpc).not.toHaveBeenCalled();
     });
+    it('keeps one row list when an opened file is revealed but the visible rows do not change', async () => {
+        const revealScope = { ...scope, rootPath: '/reveal-identity' };
+        directoryRpc.mockImplementation(async (_machine, request) => ({ ok: true, path: request.path, truncated: false, gitIgnoreAvailable: true,
+            entries: request.path !== revealScope.rootPath ? [] : [
+                { name: 'ignored.log', path: `${revealScope.rootPath}/ignored.log`, type: 'file', gitIgnored: true },
+                { name: 'a.ts', path: `${revealScope.rootPath}/a.ts`, type: 'file', gitIgnored: false },
+                { name: 'b.ts', path: `${revealScope.rootPath}/b.ts`, type: 'file', gitIgnored: false },
+            ] }));
+        let api: ReturnType<typeof useWorkspaceRepositoryTreeBrowser> | undefined;
+        function Test({ preservedPaths }: { preservedPaths: string[] }) {
+            api = useWorkspaceRepositoryTreeBrowser({ scope: revealScope, enabled: true, visibilityMode: 'project', preservedPaths });
+            return null;
+        }
+        const screen = await renderScreen(<Test preservedPaths={[]} />);
+        await vi.waitFor(() => expect(api?.nodes.map(node => node.path)).toEqual(['a.ts', 'b.ts']));
+        const before = api?.nodes;
+        // Opening a visible file reveals it (a new preserved-path list); the virtualized list keys its rows on this array.
+        await act(async () => { screen.update(<Test preservedPaths={['a.ts']} />); });
+        await act(async () => { screen.update(<Test preservedPaths={['a.ts', 'b.ts']} />); });
+        expect(api?.nodes).toBe(before);
+    });
     it('keeps authorized last-known rows when machine reads are disabled', async () => {
         const offlineScope = { ...scope, rootPath: '/last-known-browser' };
         directoryRpc.mockResolvedValue({ ok: true, path: offlineScope.rootPath,

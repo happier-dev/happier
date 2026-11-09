@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
 
@@ -107,14 +107,18 @@ describe('useSessionRunningExecutionRuns', () => {
         expect(rpc).toHaveBeenCalledTimes(2);
         expect(first.getCurrent()).toBe(previous);
 
-        // Own-Session pages can change access/publication admission. A secondary
-        // Home's coarse wake does not have enough detail to exclude that change.
-        publishHomeAccountChange('server-a', ['s1'], { changeKinds: ['session'] });
+        // A collaborator gets no live Run hints: a published content page is its
+        // only signal, so it still reads once per page for a Session it does not own.
+        publishHomeAccountChange('server-a', ['s1'], { feedPageConsumed: true, changeKinds: ['session'] });
         await flushHookEffects();
         expect(rpc).toHaveBeenCalledTimes(3);
+        // Own-Session access changes and coarse wakes can still change admission.
+        publishHomeAccountChange('server-a', ['s1'], { changeKinds: ['share'] });
+        await flushHookEffects();
+        expect(rpc).toHaveBeenCalledTimes(4);
         publishHomeAccountChange('server-a');
         await flushHookEffects();
-        expect(rpc).toHaveBeenCalledTimes(5);
+        expect(rpc).toHaveBeenCalledTimes(6);
 
         rpc.mockResolvedValueOnce({ runs: [] });
         notifyExecutionRunActivityFromUpdate('server-a', {
@@ -123,11 +127,11 @@ describe('useSessionRunningExecutionRuns', () => {
         await flushHookEffects();
         expect(first.getCurrent()).toEqual([]);
         expect(second.getCurrent().map(item => item.runId)).toEqual(['run_1']);
-        expect(rpc).toHaveBeenCalledTimes(6);
+        expect(rpc).toHaveBeenCalledTimes(7);
 
         notifyExecutionRunActivityReconnect('server-a');
         await flushHookEffects();
-        expect(rpc).toHaveBeenCalledTimes(8);
+        expect(rpc).toHaveBeenCalledTimes(9);
     });
 
     it('keeps unchanged rows and snapshots stable and does not render siblings', async () => {

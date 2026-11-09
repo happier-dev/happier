@@ -34,7 +34,6 @@ async function refreshWorkspaceScmSnapshot(scope: WorkspaceScopeBase): Promise<v
     const activePaths = new Set<string>(
         next?.entries?.map((entry) => String(entry?.path ?? '')).filter(Boolean) ?? [],
     );
-    state.pruneWorkspaceScmTouchedPaths(scope, activePaths);
     state.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths);
     state.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths);
 }

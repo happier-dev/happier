@@ -7,10 +7,12 @@ import {
 } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
-    type ProviderAccountUsageRecordId,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
+    type ProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import {
+    type QualifiedConnectedAccountQuotaSnapshotV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import {
     type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import {
     buildQualifiedQuotaSnapshotScopeKey,
     getQualifiedQuotaSnapshotEntry,

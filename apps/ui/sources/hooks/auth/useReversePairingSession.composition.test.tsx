@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
     deriveHomeQrBindingKeyV2,
-    deriveHomeQrRendezvousVerifierV2,
+    deriveHomeQrRendezvousVerifierV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import {
     sealTerminalProvisioningV3Payload,
     sealTerminalProvisioningV3TokenOnlyPayload,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';

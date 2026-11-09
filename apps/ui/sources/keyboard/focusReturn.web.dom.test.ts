@@ -13,8 +13,28 @@ describe('focus return helpers on web', () => {
         const focus = vi.fn();
 
         expect(restoreFocusToBestTarget({ current: { focus, isConnected: true } })).toBe(true);
-        expect(focus).toHaveBeenCalledExactlyOnceWith();
+        expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
     });
+
+    it('returns browser focus without changing the retained page scroll', () => {
+        const page = document.createElement('div');
+        const trigger = document.createElement('button');
+        page.append(trigger); document.body.append(page);
+        page.scrollTop = 650;
+        // Browser focus scrolling is an OS boundary: jsdom owns activeElement,
+        // but does not implement the layout-driven scroll side effect itself.
+        const original = trigger.focus;
+        trigger.focus = (options?: FocusOptions) => {
+            original.call(trigger, options);
+            if (!options?.preventScroll) page.scrollTop = 81;
+        };
+        try {
+            expect(restoreFocusToBestTarget({ current: trigger })).toBe(true);
+            expect(document.activeElement).toBe(trigger);
+            expect(page.scrollTop).toBe(650);
+        } finally { page.remove(); }
+    });
+
     it('returns to the eligible control inside a measurable trigger wrapper', () => {
         const wrapper = document.createElement('div');
         const hidden = document.createElement('button');

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema, ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 
 import {
     composeTeamCredentialProviderSourceOffer,

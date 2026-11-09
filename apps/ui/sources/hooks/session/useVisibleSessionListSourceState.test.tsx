@@ -245,6 +245,7 @@ describe('useVisibleSessionListSourceState', () => {
             enabled: true,
             homes: queryHomes,
             emptySelectionComplete: false,
+            agentTargetDemand: false,
         }]);
     });
 
@@ -268,6 +269,7 @@ describe('useVisibleSessionListSourceState', () => {
             enabled: true,
             homes: [],
             emptySelectionComplete: false,
+            agentTargetDemand: false,
         }]);
     });
 });

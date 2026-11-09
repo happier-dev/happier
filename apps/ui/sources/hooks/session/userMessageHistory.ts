@@ -1,18 +1,20 @@
-import type { Message } from "@happier-dev/session-core/messages";
+import type { MessageDisplayTextSource } from "@happier-dev/session-core/messages";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
 
 export type AgentInputHistoryScope = 'perSession' | 'global';
 
 export const DEFAULT_USER_MESSAGE_HISTORY_MAX_ENTRIES = 200;
 
-function isUserTextMessage(message: Message): message is Extract<Message, { kind: 'user-text' }> {
+type HistoryMessage = MessageDisplayTextSource & Readonly<{ kind: string; createdAt: number }>;
+
+function isUserTextMessage(message: HistoryMessage): boolean {
     return message.kind === 'user-text';
 }
 
 export function collectUserMessageHistoryEntries(opts: {
     scope: AgentInputHistoryScope;
     sessionId: string | null;
-    messagesBySessionId: Record<string, ReadonlyArray<Message> | undefined>;
+    messagesBySessionId: Record<string, ReadonlyArray<HistoryMessage> | undefined>;
     maxEntries?: number;
 }): string[] {
     const maxEntries = opts.maxEntries ?? DEFAULT_USER_MESSAGE_HISTORY_MAX_ENTRIES;
@@ -58,6 +60,8 @@ export type UserMessageHistoryNavigator = {
     warmup: () => void;
     isBrowsing: () => boolean;
     hasRetainedSession: () => boolean;
+    /** The recalled entry's place, counted from the newest (1), or null while on the draft. */
+    readPosition: () => Readonly<{ index: number; total: number }> | null;
 };
 
 export type UserMessageHistoryMoveState = Readonly<{
@@ -67,7 +71,7 @@ export type UserMessageHistoryMoveState = Readonly<{
 
 export type UserMessageHistoryNavigatorOptions = Readonly<{
     onMoveUp?: (state: UserMessageHistoryMoveState) => void;
-    onWarmup?: () => void;
+    onWarmup?: (retryFailed: boolean) => void;
 }>;
 
 type UserMessageHistoryEntriesSource = ReadonlyArray<string> | (() => ReadonlyArray<string>);
@@ -103,8 +107,8 @@ export function createUserMessageHistoryNavigator(
         session = null;
     }
 
-    function warmup() {
-        options.onWarmup?.();
+    function warmup(retryFailed = false) {
+        options.onWarmup?.(retryFailed);
     }
 
     function isBrowsing() {
@@ -144,7 +148,7 @@ export function createUserMessageHistoryNavigator(
     function moveUp(currentText: string): string | null {
         const entries = readHistoryEntries(entriesSource);
         if (entries.length === 0) {
-            warmup();
+            warmup(true);
             return null;
         }
 
@@ -204,5 +208,10 @@ export function createUserMessageHistoryNavigator(
         session.activeBrowsing = false;
     }
 
-    return { moveUp, moveDown, pause, reset, warmup, isBrowsing, hasRetainedSession };
+    function readPosition() {
+        if (!session || session.currentSlot.kind === 'draft') return null;
+        return { index: session.currentSlot.index + 1, total: readHistoryEntries(entriesSource).length };
+    }
+
+    return { moveUp, moveDown, pause, reset, warmup, isBrowsing, hasRetainedSession, readPosition };
 }

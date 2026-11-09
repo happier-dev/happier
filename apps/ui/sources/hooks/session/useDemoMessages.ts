@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { compareTranscriptMessagesOldestFirst, type Message } from "@happier-dev/session-core/messages";
+import { sortTranscriptMessagesOldestFirst, type Message } from "@happier-dev/session-core/messages";
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
 
 const DEMO_SESSION_ID = 'demo-messages-session';
@@ -8,7 +8,7 @@ type DemoMessagesInput = Parameters<typeof createReadOnlySessionTranscriptSource
 type DemoMessagesOptions = Pick<DemoMessagesInput, 'interaction' | 'actions'> & Partial<Pick<DemoMessagesInput, 'metadata'>>;
 
 export function useDemoMessages(messages: readonly Message[], options?: DemoMessagesOptions) {
-    const orderedMessages = useMemo(() => [...messages].sort(compareTranscriptMessagesOldestFirst), [messages]);
+    const orderedMessages = useMemo(() => sortTranscriptMessagesOldestFirst(messages), [messages]);
     const snapshot = useMemo(() => ({
         messages: orderedMessages,
         // These rows are already materialized, so no normalization/reducer

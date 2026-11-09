@@ -18,7 +18,8 @@ export type FriendsIdentityReadiness = Readonly<{
 }>;
 
 export function useFriendsIdentityReadiness(): FriendsIdentityReadiness {
-    const profile = useProfile();
+    // Only the identity facts: the always-mounted Inbox badge reads this, and the rest of the Profile moves with every refetch.
+    const profile = useProfile(({ username, linkedProviders }) => ({ username, linkedProviders }));
     const friendsAllowUsernameSupport = useFriendsAllowUsernameSupport();
     const requiredProviderIdFromServer = useFriendsRequiredIdentityProviderId();
 

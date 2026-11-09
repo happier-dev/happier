@@ -8,7 +8,7 @@ describe('session row keyboard commands', () => {
 
         expect(commands.get('sessions.row.moveUp')?.defaultBinding).toMatchObject({ binding: 'Alt+Shift+ArrowUp' });
         expect(commands.get('sessions.row.moveDown')?.defaultBinding).toMatchObject({ binding: 'Alt+Shift+ArrowDown' });
-        expect(commands.get('sessions.row.moveToFolder')?.defaultBinding).toMatchObject({ binding: 'Alt+Shift+F' });
+        expect(commands.get('sessions.row.moveToFolder')?.defaultBinding).toMatchObject({ binding: 'Alt+Shift+G' });
         expect(commands.get('sessions.row.moveToWorkspaceRoot')?.defaultBinding).toMatchObject({ binding: 'Alt+Shift+R' });
         expect(commands.get('sessions.row.moveToFolder')?.when?.({
             isEditableTarget: false,

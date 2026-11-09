@@ -21,12 +21,7 @@ import type { HealthNoticeInvestigationPlacement } from '@/components/inbox/deta
 export type FailureInvestigationSubject = AccountNoticeArtifact | TriageFailureSubjectV1;
 
 export const failureInvestigationSubjectKey = (entry: FailureInvestigationSubject) => 'artifact' in entry ? entry.artifact.id
-    : entry.kind === 'managedMachineOperation' || entry.kind === 'backupRun'
-        ? JSON.stringify([entry.kind, entry.operation.serverId, entry.operation.machineId, entry.operation.operationId])
-        : entry.kind === 'deploymentReceipt' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId, entry.deploymentId])
-        : entry.kind === 'domain' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId, entry.domainId])
-        : entry.kind === 'deploymentEnvironment' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId])
-        : JSON.stringify([entry.kind, entry.target]);
+    : JSON.stringify(triageFailureSubjectEntryV1(entry).entryRef);
 
 const NO_RECOVERY_CHOICES: readonly AccountNoticeRecoveryChoiceV1[] = Object.freeze([]);
 

@@ -23,6 +23,37 @@ const originalStorage = storage.getState();
 afterEach(async () => { await standardCleanup(); storage.setState(originalStorage); });
 
 describe('useWorkspaceRepositoryTreeBrowser', () => {
+    it.each([500, 501])('preserves the listing boundary and incompleteness for %i files through fresh, warm and offline trees', async (count) => {
+        const scope = { serverId: 'reload-home', machineId: 'listing-machine', rootPath: `/listing-${count}` };
+        const workspaceCacheKey = buildWorkspaceCacheKey(scope);
+        clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
+        const files = Array.from({ length: count }, (_, index) => ({
+            name: `f${String(index + 1).padStart(4, '0')}.txt`, type: 'file', size: 1,
+            path: `${scope.rootPath}/f${String(index + 1).padStart(4, '0')}.txt`,
+        }));
+        directoryRpc.mockImplementation(async request => {
+            const { path } = DaemonFilesystemListDirectoryRequestSchema.parse(request.payload);
+            return { ok: true, path, entries: files.slice(0, 500), truncated: count > 500 };
+        });
+        const expectListing = (nodes: ReturnType<typeof useWorkspaceRepositoryTreeBrowser>['nodes']) => {
+            expect(nodes.filter(node => node.type === 'file')).toHaveLength(500);
+            expect(nodes.filter(node => node.type === 'file').at(-1)?.name).toBe('f0500.txt');
+            expect(nodes.filter(node => node.type === 'info')).toEqual(count > 500 ? [expect.objectContaining({
+                infoKind: 'truncated', entryCount: 500, parentDirectoryPath: '',
+            })] : []);
+        };
+        const hook = await renderHook(() => useWorkspaceRepositoryTreeBrowser({ scope, enabled: true }));
+        await vi.waitFor(() => expectListing(hook.getCurrent().nodes));
+        await hook.unmount();
+        const { warmWorkspaceRepositoryDirectoryCache } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
+        expect(await warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath: '' }))
+            .toMatchObject({ ok: true, truncated: count > 500 });
+        const offline = await renderHook(() => useWorkspaceRepositoryTreeBrowser({ scope, enabled: false }));
+        expectListing(offline.getCurrent().nodes);
+        await offline.unmount();
+        clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
+    });
+
     it('reconciles real Write settlements through the transcript reducer and queues edits without guessing shell paths', async () => {
         const scope = { serverId: 'reload-home', machineId: 'write-machine', rootPath: '/write-repo' };
         const sessionId = 'tree-write-stream';

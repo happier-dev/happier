@@ -148,6 +148,7 @@ type KeybindingCaptureNativeEvent = Readonly<{
     metaKey?: boolean;
     shiftKey?: boolean;
     isComposing?: boolean;
+    repeat?: boolean;
 }>;
 
 export type KeybindingCaptureEvent = KeybindingCaptureNativeEvent & Readonly<{
@@ -188,7 +189,7 @@ export function formatKeybindingCaptureEvent(
     event: KeybindingCaptureEvent,
     platform: KeyboardPlatform,
 ): string | null {
-    if (readCaptureEventValue(event, 'isComposing') === true) return null;
+    if (readCaptureEventValue(event, 'isComposing') === true || readCaptureEventValue(event, 'repeat') === true) return null;
 
     const keyToken = keyTokenFromCaptureEvent(event);
     if (!keyToken) return null;

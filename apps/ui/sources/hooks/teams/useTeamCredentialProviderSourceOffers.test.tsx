@@ -2,10 +2,12 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
-    createProviderErrorV1,
-    ProviderConnectionIdSchema,
+    createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import {
+    ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import {
     ProviderConnectionSecurityFingerprintV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/fingerprints';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderSettingsHarness, createProviderSettingsAccountHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';

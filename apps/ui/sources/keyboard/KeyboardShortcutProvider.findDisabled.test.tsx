@@ -7,7 +7,8 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createTranscriptFindModel } from '@/components/sessions/transcript/find/useTranscriptFind';
-import { KeyboardShortcutProvider, useFindSurfaceRegistration, useFindSurfaceRuntime } from './KeyboardShortcutProvider';
+import { KeyboardShortcutProvider, useFindSurfaceRegistration, useFindSurfaceRuntime, useKeyboardShortcutHandlers } from './KeyboardShortcutProvider';
+import { CaptureWindowKeyboard } from '@/components/screenCapture/window/CaptureWindowKeyboard';
 
 const boundary = vi.hoisted(() => ({ platformOS: 'web', subscribe: vi.fn(), configure: vi.fn() }));
 vi.mock('react-native', async () => {
@@ -46,7 +47,113 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
+describe('Capture keys with general shortcuts disabled', () => {
+    it('copies only with an active capture handler, leaving note and annotation text to their editor', async () => {
+        const copy = vi.fn();
+        let setActive: React.Dispatch<React.SetStateAction<boolean>> = () => {};
+        function Capture() {
+            const [active, updateActive] = React.useState(true);
+            setActive = updateActive;
+            useKeyboardShortcutHandlers(active ? { 'screenCapture.copy': copy } : {});
+            return null;
+        }
+        await renderScreen(<CaptureWindowKeyboard><Capture /></CaptureWindowKeyboard>);
+        const pressCopy = async () => {
+            const event = new dom.window.KeyboardEvent('keydown', { key: 'c', code: 'KeyC', ctrlKey: true,
+                bubbles: true, cancelable: true });
+            await act(async () => { document.activeElement!.dispatchEvent(event); });
+            return event.defaultPrevented;
+        };
+        expect(await pressCopy()).toBe(true);
+        expect(copy).toHaveBeenCalledOnce();
+        document.querySelector('textarea')!.focus();
+        expect(await pressCopy()).toBe(false);
+        const annotationText = document.createElement('div');
+        annotationText.setAttribute('contenteditable', 'true');
+        annotationText.tabIndex = 0;
+        document.body.append(annotationText);
+        annotationText.focus();
+        expect(await pressCopy()).toBe(false);
+        annotationText.blur();
+        await act(async () => { setActive(false); });
+        expect(await pressCopy()).toBe(false);
+        expect(copy).toHaveBeenCalledOnce();
+    });
+});
+
 describe('Find keys with general shortcuts disabled', () => {
+    it('finds the last interacted surface when transcript text leaves BODY focused, and yields outside or on a second Find', async () => {
+        const root = document.createElement('section');
+        const transcript = document.createElement('span');
+        transcript.textContent = 'Harbour tide summary';
+        const input = document.createElement('input');
+        root.append(transcript, input);
+        const pane = document.createElement('section');
+        pane.tabIndex = -1;
+        pane.append(root);
+        document.body.append(pane);
+        const outside = document.querySelector('textarea')!;
+        const model = createTranscriptFindModel({ readCorpus: () => ({ messages: [],
+            history: { isLoaded: true, hasOlder: false, isLoadingOlder: false } }), loadPage: null,
+            jumpToTarget: async target => ({ status: 'scrolled', target }), reveal: async () => {} });
+        let surfaceRenders = 0;
+        function Surface() {
+            surfaceRenders += 1;
+            const registration = {
+                surfaceId: 'chat:harbour', controller: model,
+                containsFocus: () => root.contains(document.activeElement),
+                containsTarget: (target: unknown) => target !== null && typeof target === 'object' && 'nodeType' in target
+                    && root.contains(target as Node),
+                isOpen: () => model.getSnapshot().open,
+                isInputFocused: () => document.activeElement === input,
+                open: () => { model.open(); input.focus(); },
+            };
+            useFindSurfaceRegistration(registration);
+            return null;
+        }
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>);
+        const interact = (element: Element, kind = 'pointerdown') => {
+            const event = document.createEvent('Event');
+            event.initEvent(kind, true, true);
+            element.dispatchEvent(event);
+        };
+        const find = async () => {
+            const event = new dom.window.KeyboardEvent('keydown', { key: 'f', code: 'KeyF', ctrlKey: true,
+                bubbles: true, cancelable: true });
+            await act(async () => { document.activeElement!.dispatchEvent(event); });
+            return event.defaultPrevented;
+        };
+        expect(document.activeElement).toBe(document.body);
+        await act(async () => { interact(transcript); });
+        const settledRenders = surfaceRenders;
+        await act(async () => {
+            for (let index = 0; index < 20; index += 1) {
+                interact(transcript);
+                interact(transcript, 'click');
+            }
+        });
+        expect(surfaceRenders).toBe(settledRenders);
+        expect(await find()).toBe(true);
+        expect(model.getSnapshot().open).toBe(true);
+        expect(document.activeElement).toBe(input);
+        expect(await find()).toBe(false);
+        await act(async () => {
+            model.close();
+            outside.focus();
+            interact(transcript);
+            // Real browsers focus a tabindex=-1 pane ancestor between pointerdown
+            // and click when its non-focusable transcript text is clicked.
+            pane.focus();
+            interact(transcript, 'click');
+        });
+        expect(document.activeElement).toBe(pane);
+        expect(await find()).toBe(true);
+        expect(model.getSnapshot().open).toBe(true);
+        await act(async () => { model.close(); outside.focus(); interact(outside); });
+        expect(await find()).toBe(false);
+        expect(model.getSnapshot().open).toBe(false);
+    });
+
     it.each(['web', 'ios', 'android'])('opens in the composer and steps the real model on %s without stealing browser Find or blurred input keys', async platform => {
         boundary.platformOS = platform;
         const model = createTranscriptFindModel({ readCorpus: () => ({ messages: [

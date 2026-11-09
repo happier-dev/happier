@@ -25,6 +25,28 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('useResolvedActiveServerSelection', () => {
+    it('snapshots the same identity-qualified multi-Home defaults for a saved-space override', async () => {
+        const first = await harness.addHome({ name: 'A', serverUrl: 'https://spaces.a.example',
+            serverIdentityId: 'srv_spaces_a', accountId: 'account-a' });
+        const second = await harness.addHome({ name: 'B', serverUrl: 'https://spaces.b.example',
+            serverIdentityId: 'srv_spaces_b', accountId: 'account-b' });
+        const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+        await updateEffectiveHomeViewState(() => ({ version: 1,
+            groups: [{ id: 'both', name: 'Both', serverIds: [first, second] }], activeTargetKind: 'group', activeTargetId: 'both',
+        }), { scope: 'device' });
+        const { useResolvedActiveServerSelection } = await import('./useEffectiveServerSelection');
+        const hook = await renderHook(() => useResolvedActiveServerSelection());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().allowedServerIds).toEqual(['srv_spaces_a', 'srv_spaces_b']));
+        const { readResolvedActiveServerSelection } = await import('@/sync/domains/server/selection/serverSelectionResolution');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        expect(readResolvedActiveServerSelection(settingsDefaults)).toEqual(hook.getCurrent());
+        const { readCollectionSpaceDefaultV1 } = await import('@/components/settings/session/collectionSpaceDefaults');
+        expect(readCollectionSpaceDefaultV1('sessionWork', settingsDefaults))
+            .toMatchObject({ id: 'my-work', entityKind: 'sessionWork', filter: {
+                homeServerIds: ['srv_spaces_a', 'srv_spaces_b'], scope: 'my_work', audiences: [],
+            } });
+    });
+
     it('retains only an unchanged Home view in its device namespace, and publishes changed content', async () => {
         const { loadHomeViewState, saveHomeViewState, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
         // Exercise namespaced browser persistence, not the suite's native

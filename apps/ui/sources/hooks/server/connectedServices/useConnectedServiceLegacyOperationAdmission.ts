@@ -29,7 +29,7 @@ function admissionError(code: string): Error & Readonly<{ code: string }> {
     return Object.assign(new Error(code), { code });
 }
 
-export type { ConnectedAccountExpectedOperationTransport } from '@happier-dev/protocol';
+export type { ConnectedAccountExpectedOperationTransport } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 export function useConnectedAccountOperationAdmission(): (
     service: PluginContributionIdentityV1,

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { projectChangedFilesAttribution } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
-import type { CheckpointOverlapObservation, FileChangeEvidence, RepositoryCheckpointTurnMetadata, SessionChangeAttribution, SessionChangeSet, SessionChangeSetFile, TurnChangeSet, WorkspaceTouchedFileEvidence } from '@happier-dev/protocol/sessions/changes/types';
+import type { CheckpointOverlapObservation, FileChangeEvidence, RepositoryCheckpointTurnMetadata, SessionChangeAttribution, SessionChangeSet, SessionChangeSetFile, TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
@@ -12,8 +12,6 @@ import { buildScmFileStatusFromChangeEvidence } from '@/scm/scmEvidenceFileStatu
 type UseChangedFilesDataInput = {
     sessionId: string;
     scmSnapshot: ScmWorkingSnapshot | null;
-    /** Workspace-wide touched paths; a low-confidence fallback, never Session authorship proof. */
-    workspaceTouchedPaths: readonly string[];
     searchQuery: string;
     showAllRepositoryFiles: boolean;
     /** Canonical Session lifecycle identity, even when no Diff row was published. */
@@ -60,26 +58,6 @@ const EMPTY_SCOPE_RESULT = (allRepositoryChangedFiles: ScmFileStatus[]): ScopedP
     repositoryOnlyFiles: allRepositoryChangedFiles,
 });
 
-function mapScmStatusToChangeKind(file: ScmFileStatus): WorkspaceTouchedFileEvidence['changeKind'] {
-    if (file.status === 'added' || file.status === 'untracked') return 'added';
-    if (file.status === 'deleted' || file.status === 'renamed' || file.status === 'copied') return file.status;
-    return 'modified';
-}
-
-function adaptWorkspaceTouchedFiles(
-    allRepositoryChangedFiles: readonly ScmFileStatus[],
-    workspaceTouchedPaths: readonly string[],
-): WorkspaceTouchedFileEvidence[] {
-    const touchedPaths = new Set(workspaceTouchedPaths);
-    return allRepositoryChangedFiles
-        .filter((file) => touchedPaths.has(file.fullPath))
-        .map((file) => ({
-            filePath: file.fullPath,
-            changeKind: mapScmStatusToChangeKind(file),
-            ...(file.isBinary === undefined ? {} : { binary: file.isBinary }),
-        }));
-}
-
 function buildAttributedScope(params: Readonly<{
     allRepositoryChangedFiles: readonly ScmFileStatus[];
     projection: NonNullable<ReturnType<typeof deriveSessionWorkingTreeProjection>>;
@@ -122,7 +100,6 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
     const {
         sessionId,
         scmSnapshot,
-        workspaceTouchedPaths,
         searchQuery,
         showAllRepositoryFiles,
         latestTurnId = null,
@@ -199,17 +176,11 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         });
     }, [latestTurnCheckpointChangeSet, scmSnapshot]);
 
-    const workspaceTouchedFiles = React.useMemo(
-        () => adaptWorkspaceTouchedFiles(allRepositoryChangedFiles, workspaceTouchedPaths),
-        [allRepositoryChangedFiles, workspaceTouchedPaths],
-    );
-
     const sessionAttributionProjection = React.useMemo(() => projectChangedFilesAttribution({
         sessionId,
         canonicalChangeSet: sessionChangeSet,
-        workspaceTouchedFiles,
         repoRootPath,
-    }), [repoRootPath, sessionChangeSet, sessionId, workspaceTouchedFiles]);
+    }), [repoRootPath, sessionChangeSet, sessionId]);
     const sessionAttributionChangeSet = sessionAttributionProjection.changeSet;
 
     const sessionProjection = React.useMemo(() => {

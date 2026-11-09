@@ -5,6 +5,7 @@ import {
     buildKeyboardShortcutLabels,
     createKeyboardShortcutDispatcher,
     isKeybindingRuleAvailable,
+    isKeyboardTargetHidden,
     normalizeKeyboardEvent,
     normalizeNativeHardwareKeyboardEvent,
     readKeyboardContextFromEventTarget,
@@ -32,6 +33,89 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it('advertises only registered focused commands to native hardware when both global preferences are off', () => {
+        const options = {
+            enabled: false, platform: 'ios' as const, surface: 'native' as const,
+            singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
+            handlers: { 'annotation.arrow': () => {}, 'annotation.undo': () => {},
+                'screenCapture.copy': () => {}, 'screenCapture.chooseSession': () => {}, 'session.new': () => {} },
+            getContext: () => context,
+        };
+        expect(resolveNativeHardwareKeyboardConsumableEventSignatures(options)).toEqual(expect.arrayContaining([
+            'a|shift=false|ctrl=false|meta=false|alt=false',
+            'z|shift=false|ctrl=false|meta=true|alt=false',
+            'c|shift=false|ctrl=false|meta=true|alt=false',
+            'k|shift=false|ctrl=false|meta=true|alt=false',
+        ]));
+        expect(createKeyboardShortcutDispatcher(options)(keyEvent({ key: 'c', code: 'KeyC', metaKey: true }))).toBe(true);
+        expect(createKeyboardShortcutDispatcher(options)(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(true);
+        expect(createKeyboardShortcutDispatcher(options)(keyEvent({ key: 'n', code: 'KeyN', metaKey: true }))).toBe(false);
+        expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ ...options, handlers: {} })).toEqual([]);
+        expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ ...options,
+            disabledCommandIds: ['annotation.arrow', 'annotation.undo', 'screenCapture.copy', 'screenCapture.chooseSession'] })).toEqual([]);
+    });
+
+    it.each([
+        ['macos', 'web', 'browser'],
+        ['windows', 'web', 'desktop'],
+        ['linux', 'native', undefined],
+        ['ios', 'native', undefined],
+        ['android', 'native', undefined],
+    ] as const)('formats with Alt+Shift+F and moves a session row with Alt+Shift+G on %s/%s/%s', (platform, surface, webHost) => {
+        const dom = new JSDOM('<div role="textbox" tabindex="0"><span></span></div><button>Session row</button>');
+        try {
+            const calls: string[] = [];
+            let target: EventTarget | null = dom.window.document.querySelector('[role="textbox"] span');
+            const dispatch = createKeyboardShortcutDispatcher({
+                enabled: true, platform, surface, webHost, singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [], overrides: {},
+                // Both surfaces can stay mounted without competing for a chord.
+                handlers: {
+                    'code.format': () => { calls.push('format'); },
+                    'sessions.row.moveToFolder': () => { calls.push('moveToFolder'); },
+                },
+                getContext: () => readKeyboardContextFromEventTarget(target),
+            });
+            const moveChord = keyEvent({ key: 'G', code: 'KeyG', altKey: true, shiftKey: true });
+            const formatChord = keyEvent({ key: 'F', code: 'KeyF', altKey: true, shiftKey: true });
+            expect(dispatch(formatChord)).toBe(true);
+            expect(calls).toEqual(['format']);
+            expect(dispatch(moveChord)).toBe(false);
+            expect(dispatch({ ...formatChord, isComposing: true })).toBe(false);
+            target = dom.window.document.querySelector('button');
+            expect(dispatch({ ...moveChord, isComposing: true })).toBe(false);
+            expect(dispatch(moveChord)).toBe(true);
+            expect(calls).toEqual(['format', 'moveToFolder']);
+            // Format is also available from the read-view command handler.
+            expect(dispatch(formatChord)).toBe(true);
+            expect(calls).toEqual(['format', 'moveToFolder', 'format']);
+            expect(resolveNativeHardwareKeyboardConsumableEventSignatures({
+                enabled: true, platform, surface: 'native', singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [], overrides: {}, handlers: { 'code.format': () => {} },
+                getContext: () => ({ isEditableTarget: false, isComposing: false }),
+            })).toContain('f|shift=true|ctrl=false|meta=false|alt=true');
+            const rebound = createKeyboardShortcutDispatcher({
+                enabled: true, platform, surface, webHost, singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [],
+                overrides: {
+                    'code.format': [{ binding: 'Mod+Alt+Shift+F' }],
+                    'sessions.row.moveToFolder': [{ binding: 'Alt+Shift+F' }],
+                },
+                handlers: {
+                    'code.format': () => { calls.push('customFormat'); },
+                    'sessions.row.moveToFolder': () => { calls.push('customMove'); },
+                },
+                getContext: () => readKeyboardContextFromEventTarget(target),
+            });
+            expect(rebound(moveChord)).toBe(false);
+            expect(rebound(formatChord)).toBe(true);
+            target = dom.window.document.querySelector('[role="textbox"] span');
+            expect(rebound(formatChord)).toBe(false);
+            expect(rebound({ ...formatChord, metaKey: platform === 'macos' || platform === 'ios',
+                ctrlKey: platform !== 'macos' && platform !== 'ios' })).toBe(true);
+            expect(calls.slice(-2)).toEqual(['customMove', 'customFormat']);
+        } finally { dom.window.close(); }
+    });
     it('leaves review letters with an ARIA textbox editor that uses EditContext rather than contenteditable', () => {
         const dom = new JSDOM('<div role="textbox" tabindex="0"><span></span></div><button>Review</button>');
         try {
@@ -575,5 +659,74 @@ describe('createKeyboardShortcutDispatcher', () => {
         });
 
         expect(signatures).toEqual([]);
+    });
+});
+
+describe('isKeyboardTargetHidden', () => {
+    // The composer's editor sits ~70 elements deep, and this runs on every keydown. `checkVisibility`
+    // is the browser boundary jsdom lacks: false for a node under display: none (itself or an
+    // ancestor) or, with `visibilityProperty`, whose own computed visibility is hidden or collapse.
+    function deepTarget(dom: JSDOM, depth: number) {
+        let parent: Element = dom.window.document.body;
+        const chain: Element[] = [];
+        for (let index = 0; index < depth; index++) {
+            const child = dom.window.document.createElement('div');
+            parent.appendChild(child);
+            chain.push(child);
+            parent = child;
+        }
+        return chain;
+    }
+    function installCheckVisibility(dom: JSDOM) {
+        const view = dom.window;
+        // The browser answers natively; this stand-in must not count as page reads of computed style.
+        const computed = view.getComputedStyle.bind(view);
+        (view.Element.prototype as unknown as { checkVisibility: (options?: { visibilityProperty?: boolean }) => boolean })
+            .checkVisibility = function (this: Element, options?: { visibilityProperty?: boolean }) {
+                for (let node: Element | null = this; node; node = node.parentElement) {
+                    if (computed(node).display === 'none') return false;
+                }
+                const visibility = computed(this).visibility;
+                return !(options?.visibilityProperty && (visibility === 'hidden' || visibility === 'collapse'));
+            };
+    }
+
+    it('answers for a deep visible target without reading every ancestor\'s computed style', () => {
+        const dom = new JSDOM('<!doctype html><body></body>');
+        installCheckVisibility(dom);
+        const chain = deepTarget(dom, 70);
+        const target = chain.at(-1)!;
+        const reads = vi.spyOn(dom.window, 'getComputedStyle');
+        expect(isKeyboardTargetHidden(target)).toBe(false);
+        // The walk read the computed style of all 70 ancestors on every keydown.
+        expect(reads).not.toHaveBeenCalled();
+    });
+
+    it('still finds a target hidden by an ancestor attribute, display or its own visibility', () => {
+        const dom = new JSDOM('<!doctype html><body></body>');
+        installCheckVisibility(dom);
+        for (const hide of [
+            (element: HTMLElement) => element.setAttribute('aria-hidden', 'true'),
+            (element: HTMLElement) => { element.hidden = true; },
+            (element: HTMLElement) => element.setAttribute('inert', ''),
+            (element: HTMLElement) => { element.style.display = 'none'; },
+            (element: HTMLElement) => { element.style.visibility = 'hidden'; },
+        ]) {
+            const chain = deepTarget(dom, 12) as HTMLElement[];
+            hide(chain[3]!);
+            expect(isKeyboardTargetHidden(chain.at(-1)!)).toBe(true);
+        }
+        expect(isKeyboardTargetHidden(dom.window.document.body)).toBe(false);
+        expect(isKeyboardTargetHidden(dom.window)).toBe(false);
+        expect(isKeyboardTargetHidden(null)).toBe(false);
+    });
+
+    it('walks the ancestors where the engine has no checkVisibility', () => {
+        const dom = new JSDOM('<!doctype html><body></body>');
+        const chain = deepTarget(dom, 8) as HTMLElement[];
+        chain[2]!.style.visibility = 'collapse';
+        expect(isKeyboardTargetHidden(chain.at(-1)!)).toBe(true);
+        chain[2]!.style.visibility = '';
+        expect(isKeyboardTargetHidden(chain.at(-1)!)).toBe(false);
     });
 });

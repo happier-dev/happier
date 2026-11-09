@@ -4,10 +4,11 @@ import {
     resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
-    type AccountProfile,
+    type AccountProfile} from '@happier-dev/protocol/account/profile';
+import {
     type ConnectedServiceBindingSelectionV2,
     type ConnectedServiceId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import {
     readSessionConnectedServiceBindings,
@@ -15,7 +16,7 @@ import {
 import {
     resolveQualifiedConnectedAccountServiceKey,
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { useActiveServerAccountScope, useAllMachines, useProfile, useSessions } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useProfile, useSessions, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
@@ -175,7 +176,7 @@ export function useConnectedServiceRecoveryCreditMachineTarget(params: Readonly<
     profileId: string;
 }>): string | null {
     const sessions = useSessions();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const profile = useProfile();
     const activeServer = useActiveServerSnapshot();
     const activeScope = useActiveServerAccountScope();

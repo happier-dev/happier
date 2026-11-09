@@ -84,18 +84,18 @@ describe('useFriendsEnabled', () => {
         expect(seen.at(-1)).toBe(true);
     });
 
-    it('returns false when local experiment gate is disabled', async () => {
+    it('returns true without experiments despite a retained Friends opt-out', async () => {
         await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: false,
-            featureToggles: { 'social.friends': true },
+            featureToggles: { 'social.friends': false },
         });
 
         const { useFriendsEnabled } = await import('./useFriendsEnabled');
         const seen = await renderHookAndCollectValues(() => useFriendsEnabled());
 
-        expect(seen.at(-1)).toBe(false);
+        expect(seen.at(-1)).toBe(true);
     });
 
     it('returns true when the active server supports friends even if a selected group contains an unsupported server', async () => {
