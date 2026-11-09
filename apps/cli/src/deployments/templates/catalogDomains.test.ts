@@ -32,6 +32,8 @@ import { accountSettingsParse, DeploymentEnvironmentCreateIntentInputV1Schema, D
     DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, ProjectDeploymentDefaultsOutputV1Schema,
     HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -56,6 +58,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 // Persistence/Artifact and native transport are the boundaries. Catalog admission,
 // reviewed-child issuance, template apply and Domain placement/settlement stay real.
 it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'newProject', 'noProbe'] as const)('spends one Catalog create review on the real Domain owner: %s', async outcome => {
+    const nativeRemedy = 'Caddy refused the route configuration. Check the Caddy admin service and retry adding the Domain.';
+    const nativeFailureCause = { phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: null, httpStatus: 503 };
     const state = outcome === 'active' || outcome === 'warning' ? outcome : outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'newProject' || outcome === 'noProbe' || outcome === 'optionalOnly' ? 'active' : 'failed';
     const fixture = await createSavedSecretsCliHttpFixture({ serverIdentityId: 'srv_template_home' });
     const socket = await createRequesterCurrentnessSocketHarness();
@@ -312,7 +316,11 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
                         ] } });
                 nativeEffects++;
                 nativeCaptures.push(job.capture);
-                if (outcome === 'nativeFailure') return { ok: false, errorCode: 'service_unavailable' };
+                if (outcome === 'nativeFailure') return { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed',
+                    details: { environmentId: job.input.environmentId, domainId: job.input.domainId, step: 'native_execution',
+                        requiredFact: 'caddyAdminConfig', remedy: nativeRemedy,
+                        failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig', errorCode: 'HTTP_503' } },
+                    failureCause: nativeFailureCause };
                 const observation = { capture: job.capture, state } satisfies DeploymentDomainObservationBodyV1;
                 return { ...observation, proof: signMachineInstallationProof({ privateKey: identity.privateKey,
                     payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: job.expectedDomainRevision, observation }) }) };
@@ -367,7 +375,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         }
         expect(writes).toEqual([]); expect(contents.size).toBe(0);
         // Store's first install and retained retry share the instantiate Action root.
-        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'optionalOnly';
+        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'optionalOnly' || outcome === 'nativeFailure';
         const rootAction = templateRoot ? 'deployments.templates.instantiate' as const : 'deployments.environments.create' as const;
         let rootInput = templateRoot ? DeploymentTemplateInstantiateInputV1Schema.parse({
             mode: 'apply', serverId: input.serverId, machineId: 'target', projectSourceId: input.projectSourceId, templateRef,
@@ -483,7 +491,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             return;
         }
         const unavailable = outcome === 'nativeFailure' || outcome === 'discoveryFailure';
-        const failureCode = unavailable ? 'service_unavailable' : 'native_route_unavailable';
+        const failureCode = outcome === 'nativeFailure' ? 'native_effect_failed' : unavailable ? 'service_unavailable' : 'native_route_unavailable';
         if (state !== 'failed') expect(result.ok ? undefined : result, JSON.stringify({ unhandledRequests, writes })).toBeUndefined();
         expect(result).toMatchObject(state === 'failed'
             ? { ok: false, errorCode: failureCode, details: { kind: 'partial', phase: 'domains',
@@ -491,6 +499,18 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             : templateRoot ? { ok: true, result: { kind: 'applied', environmentId: environment.environment.id,
                 deployment: { ok: true, deploymentId: 'receipt', state: 'succeeded' } } }
                 : { ok: true, result: { ok: true, environmentId: environment.environment.id } });
+        if (outcome === 'nativeFailure') {
+            if (result.ok) throw new Error('Expected native Domain failure');
+            const partial = DeploymentTemplateInstantiationPartialV1Schema.parse(result.details);
+            expect(partial).toMatchObject({ kind: 'partial', phase: 'domains', environmentId: environment.environment.id,
+                targetLinkId: link.id, definition: { kind: 'stored' }, savedSecrets: [],
+                deployment: { ok: true, deploymentId: 'receipt', state: 'succeeded' },
+                failure: { step: 'native_execution', environmentId: environment.environment.id, requiredFact: 'caddyAdminConfig',
+                    remedy: nativeRemedy, failure: { errorCode: 'HTTP_503' } } });
+            expect(readDeploymentFailureRecoveryV1(result.errorCode, partial)).toMatchObject({
+                requiredFact: 'caddyAdminConfig', remedy: nativeRemedy });
+            expect(result.failureCause).toEqual(nativeFailureCause);
+        }
         if (outcome === 'discoveryFailure') expect(domain).toBeUndefined();
         else expect(domain).toMatchObject({ state: outcome === 'nativeFailure' ? 'pending' : state,
             environmentId: environment.environment.id, targetLinkId: link.id });

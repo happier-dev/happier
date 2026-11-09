@@ -82,6 +82,17 @@ function caddyBoundary() {
 }
 
 describe('native Caddy Domain placement owner', () => {
+    it('retains the typed admin-write refusal without disclosing native response content', async () => {
+        const native = caddyBoundary();
+        native.unavailableNextWrite();
+        expect(await native.owner.activate({ placement, route })).toMatchObject({
+            kind: 'unavailable', reason: 'native_effect_failed',
+            details: { requiredFact: 'caddyAdminConfig',
+                failure: { kind: 'native_effect_failed', errorCode: 'HTTP_503' }, remedy: expect.any(String) },
+            failureCause: { phase: 'deployment.domain.caddy.admin.write', httpStatus: 503 },
+        });
+    });
+
     it('projects only installed listener and local/fallback facts through a finite read', async () => {
         const native = caddyBoundary();
         const observed = { status: 'ready' as const, containerId: 'private-container', containerName: 'happier-caddy',
@@ -116,10 +127,12 @@ describe('native Caddy Domain placement owner', () => {
         expect(native.reads.slice(readsBefore)).toEqual(['/config/apps/http/servers/happier_private']);
         native.server.routes = [native.foreign];
         native.server.errors.routes = [];
-        expect(await native.owner.readExposure(request)).toEqual({ kind: 'unavailable', reason: 'route_absent' });
+        expect(await native.owner.readExposure(request)).toMatchObject({ kind: 'unavailable', reason: 'route_absent',
+            requiredFact: 'networkExposure', remedy: expect.any(String) });
         const missingBefore = native.reads.length;
         expect(await native.owner.readExposure({ ...request, caddy: { status: 'needs_setup' } }))
-            .toEqual({ kind: 'unavailable', reason: 'required_fact_unavailable' });
+            .toMatchObject({ kind: 'unavailable', reason: 'required_fact_unavailable',
+                requiredFact: 'networkExposure', remedy: expect.any(String) });
         expect(native.reads).toHaveLength(missingBefore);
         const edge = caddyBoundary();
         const edgeRoute: CaddyDomainRouteInput = { ...route,

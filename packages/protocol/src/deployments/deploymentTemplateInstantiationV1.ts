@@ -16,6 +16,7 @@ import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResu
 import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import { DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentEnvironmentCreateInputV1Schema } from './deploymentEnvironmentCreateV1.js';
+import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import type { DeploymentEnvironmentGetResultV1Schema } from './deploymentActionsV1.js';
 
 const existingEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }));
@@ -130,6 +131,7 @@ export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() =
   kind: z.literal('partial'), environmentId: z.optional(id), revision: z.optional(revision),
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
   phase: z.enum(['generation', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
+  failure: z.optional(DeploymentDomainFailureDetailsV1Schema),
   deployment: z.optional(DeploymentReceiptAcceptedResultV1Schema),
   continuation: z.optional(z.discriminatedUnion('actionId', [
     z.strictObject({ actionId: z.literal('deployments.environments.create'), input: DeploymentEnvironmentCreateInputV1Schema }),

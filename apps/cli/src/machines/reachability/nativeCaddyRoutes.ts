@@ -4,24 +4,34 @@ import { type NativeCaddyAdminExchange, type NativeCaddyObservationResult } from
 export { createNativeCaddyAdminExchange, type NativeCaddyAdminExchange } from '@happier-dev/cli-common/machineSetup';
 import { nativeCaddyRemovalSigningBytes as removalBytes, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { NativeCaddyRoutePlacement, NativeCaddyRemoval, DeploymentDomainNetworkExposureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { DeploymentDomainCaddyFailureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 export type { NativeCaddyRoutePlacement, NativeCaddyRemoval } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { CaddyDomainMaterializationError, caddyPublicHttpServerId, materializeCaddyDomainRouteV1, materializeCaddyDomainRemovalV1, materializeCaddyDomainReplicaSetV1,
     type CaddyDomainRouteInput, type CaddyDomainRouteMaterial, type CaddyDomainRouteRemovalInput } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 
+type NativeCaddyFailureDiagnostics = Readonly<{
+    details?: { requiredFact: 'caddyAdminConfig'; failure: DeploymentDomainCaddyFailureV1; remedy: string };
+    failureCause?: ActionFailureCauseV1;
+}>;
 export type NativeCaddyRouteResult = Readonly<{ kind: 'active'; networkExposure?: NativeCaddyExposureResult }> | Readonly<{ kind: 'absent' }>
-    | Readonly<{ kind: 'conflict' | 'unknown' | 'unavailable' | 'cancelled'; reason: string }>;
+    | Readonly<{ kind: 'conflict' | 'unknown' | 'unavailable' | 'cancelled'; reason: string }> & NativeCaddyFailureDiagnostics;
 /** Credential-free installed facts. Listener role does not assert Internet reachability. */
-export type NativeCaddyExposureResult = DeploymentDomainNetworkExposureV1;
+export type NativeCaddyExposureResult = DeploymentDomainNetworkExposureV1 & NativeCaddyFailureDiagnostics;
+const unavailableExposure = (reason: string, diagnostics: NativeCaddyFailureDiagnostics = {}): Extract<NativeCaddyExposureResult, { kind: 'unavailable' }> =>
+    ({ ...projectDeploymentFailureRecoveryV1({ kind: 'unavailable' as const, reason, requiredFact: 'networkExposure' as const }), ...diagnostics });
 type RouteRequest = Readonly<{ placement: NativeCaddyRoutePlacement; route: CaddyDomainRouteRemovalInput; signal?: AbortSignal }>;
 type ActivationRequest = Omit<RouteRequest, 'route'> & Readonly<{ route: CaddyDomainRouteInput; captureExposure?: NativeCaddyObservationResult }>;
 type InstalledListeners = Pick<Extract<NativeCaddyExposureResult, { kind: 'ready' }>, 'kind' | 'listener' | 'listeners'>
     | Extract<NativeCaddyExposureResult, { kind: 'unavailable' }>;
 function installedListeners(request: RouteRequest, caddy: NativeCaddyObservationResult): InstalledListeners {
-    if (caddy.status !== 'ready') return { kind: 'unavailable',
-        reason: caddy.status === 'unavailable' ? caddy.reason : 'required_fact_unavailable' };
+    if (caddy.status !== 'ready') return unavailableExposure(
+        caddy.status === 'unavailable' ? caddy.reason : 'required_fact_unavailable');
     const server = caddy.servers.find(server => server.serverId === request.placement.nativeServer);
-    if (!server) return { kind: 'unavailable', reason: 'required_fact_unavailable' };
+    if (!server) return unavailableExposure('required_fact_unavailable');
     const privateAddresses = new Set(caddy.privateOrigins?.flatMap(origin => origin.network.addresses)
         .map(normalizeHostnameForLoopbackCheck));
     const audience = (address: string): Extract<NativeCaddyExposureResult, { kind: 'ready' }>['listeners'][number]['endpoints'][number]['audience'] => {
@@ -100,7 +110,8 @@ function matchesMaterial(current: unknown, resource: Resource, request: RouteReq
 }
 
 class NativeRouteRefusal extends Error {
-    constructor(readonly kind: 'conflict' | 'unavailable', readonly reason: string) { super(reason); }
+    constructor(readonly kind: 'conflict' | 'unavailable', readonly reason: string,
+        readonly diagnostics: NativeCaddyFailureDiagnostics = {}) { super(reason); }
 }
 
 function hostMatches(pattern: string, hostname: string): boolean {
@@ -170,9 +181,26 @@ export function verifyNativeCaddyRemoval(result: NativeCaddyRemoval, expected: N
 export function createNativeCaddyRoutes(host: Readonly<{
     machineId: string; installationId: string; privateKey: Uint8Array; exchange: NativeCaddyAdminExchange;
 }>) {
+    const adminRefusal = (status: number, method: string, path: string) => {
+        const writing = method !== 'GET';
+        const phase = `deployment.domain.caddy.admin.${writing ? 'write' : 'read'}`;
+        const errorCode = `HTTP_${status}`;
+        // Caddy response bodies may contain rendered credentials/configuration.
+        // Retain only the operation and status, never response text or values.
+        logger.warnLocalFile('[Deployment] Caddy admin request refused', { phase, method, path, httpStatus: status });
+        return new NativeRouteRefusal('unavailable', writing ? 'native_effect_failed' : 'native_route_unavailable', {
+            details: { requiredFact: 'caddyAdminConfig', failure: { kind: writing ? 'native_effect_failed' : 'native_observation_unavailable',
+                reason: writing ? 'native_effect_failed' : 'required_fact_unavailable', requiredFact: 'caddyAdminConfig', errorCode },
+                remedy: writing
+                    ? 'Caddy refused the address configuration. Inspect its admin error in the Machine logs, correct the configuration, then retry the address change.'
+                    : 'Caddy could not return its address configuration. Restore its admin API on the Machine, then verify the address again.' },
+            failureCause: { phase, errorClass: 'Error', errorCode, httpStatus: status },
+        });
+    };
     const readRoot = async (request: RouteRequest, path: string): Promise<ConfigRoot> => {
         const response = await host.exchange({ method: 'GET', path, signal: request.signal });
-        if (response.status !== 200 || !object(response.value) || !response.etag) {
+        if (response.status !== 200) throw adminRefusal(response.status, 'GET', path);
+        if (!object(response.value) || !response.etag) {
             throw new Error('native_route_unavailable');
         }
         return { value: response.value, etag: response.etag, path };
@@ -225,19 +253,20 @@ export function createNativeCaddyRoutes(host: Readonly<{
         const installed = installedListeners(request, request.caddy);
         if (installed.kind !== 'ready') return installed;
         const { result, material } = await readObservation(request);
-        if (result.kind !== 'active' || !material) return { kind: 'unavailable',
-            reason: result.kind === 'absent' ? 'route_absent' : 'reason' in result ? result.reason : 'required_fact_unavailable' };
+        if (result.kind !== 'active' || !material) return unavailableExposure(
+            result.kind === 'absent' ? 'route_absent' : 'reason' in result ? result.reason : 'required_fact_unavailable',
+            'reason' in result ? { details: result.details, failureCause: result.failureCause } : {});
         return materialExposure(installed, material);
     };
     const write = async (request: RouteRequest, snapshot: ConfigRoot, method: 'PUT' | 'PATCH' | 'DELETE', path: string, value?: unknown) => {
         request.signal?.throwIfAborted();
         const response = await host.exchange({ method, path, value, etag: snapshot.etag, signal: request.signal });
         if (response.status === 412) throw new NativeRouteRefusal('conflict', 'route_conflict');
-        if (response.status < 200 || response.status >= 300) throw new NativeRouteRefusal('unavailable', 'native_effect_failed');
+        if (response.status < 200 || response.status >= 300) throw adminRefusal(response.status, method, path);
     };
     const failure = (error: unknown, signal: AbortSignal | undefined, issued: boolean): NativeCaddyRouteResult => {
         if (error instanceof CaddyDomainMaterializationError) return { kind: issued ? 'unknown' : 'unavailable', reason: error.code };
-        if (error instanceof NativeRouteRefusal) return { kind: issued ? 'unknown' : error.kind, reason: error.reason };
+        if (error instanceof NativeRouteRefusal) return { kind: issued ? 'unknown' : error.kind, reason: error.reason, ...error.diagnostics };
         return { kind: !issued && signal?.aborted ? 'cancelled' : 'unknown', reason: 'native_route_unavailable' };
     };
     const activate = async (request: ActivationRequest & Readonly<{ expected?: CaddyDomainRouteMaterial }>): Promise<NativeCaddyRouteResult> => {

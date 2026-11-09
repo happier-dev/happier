@@ -11,6 +11,7 @@ import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResu
     DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1,
     readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
     projectDeploymentReceiptSettlementAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
@@ -412,12 +413,14 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         } catch (error) {
             const code = context.signal?.aborted && !effectIssued ? 'cancelled' : errorCode(error);
             if (!effectIssued) return failure(code, error);
+            const authorizationFailure = readDeploymentAuthorizationFailure(error);
+            const diagnostic = authorizationFailure ?? failure(code, error);
+            const domainFailure = phase === 'domains' ? DeploymentDomainFailureDetailsV1Schema.safeParse(diagnostic.details) : undefined;
             const partial: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }> = { kind: 'partial', phase, errorCode: code, savedSecrets,
+                ...(domainFailure?.success ? { failure: domainFailure.data } : {}),
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
                 ...(deployment ? { deployment } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
-            const authorizationFailure = readDeploymentAuthorizationFailure(error);
-            const diagnostic = authorizationFailure ?? failure(code, error);
             return authorizationFailure || diagnostic.failureCause
                 ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
         }

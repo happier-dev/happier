@@ -341,8 +341,9 @@ export function createOwnServerDomainNative(host: Readonly<{
                 }
                 const networkExposure = await native.readExposure({ placement: job.capture.placement,
                     route: routeIdentity, caddy: topology.caddy, signal });
-                if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason, {
-                    requiredFact: networkExposure.requiredFact, remedy: networkExposure.remedy });
+                if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason,
+                    networkExposure.details ?? { requiredFact: networkExposure.requiredFact, remedy: networkExposure.remedy },
+                    networkExposure.failureCause);
                 return signObservation({ capture: job.capture, state: 'active', networkExposure,
                     dnsHealth: await readDnsHealth() });
             }
@@ -356,7 +357,8 @@ export function createOwnServerDomainNative(host: Readonly<{
                         await settleConnector(true);
                         return native.remove({ placement: job.capture.placement, route: routeIdentity, signal });
                     }));
-                if (removal.kind !== 'removed') return failure(job, 'reason' in removal ? removal.reason : 'native_route_unavailable');
+                if (removal.kind !== 'removed') return failure(job, 'reason' in removal ? removal.reason : 'native_route_unavailable',
+                    'details' in removal ? removal.details : undefined, 'failureCause' in removal ? removal.failureCause : undefined);
                 return signObservation({ capture: job.capture, state: 'removed', removal });
             }
             const environmentContent = acquired.environmentContent;
@@ -427,7 +429,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             };
             const result = await machineNativeEffectAdmission.run({ operation: { operationId: job.actionOperationId!, kind: job.actionId, signal },
                     keys: [{ kind: 'dockerEngine', dockerEndpoint: acquired.docker.engineId }] }, native => machineNativeEffectAdmission.runStage(native, effect));
-            if (result.kind !== 'active') return failure(job, 'reason' in result ? result.reason : 'native_route_unavailable');
+            if (result.kind !== 'active') return failure(job, 'reason' in result ? result.reason : 'native_route_unavailable',
+                'details' in result ? result.details : undefined, 'failureCause' in result ? result.failureCause : undefined);
             const observation: DeploymentDomainObservationBodyV1 = { capture: job.capture,
                 state: routeState, dnsHealth: await readDnsHealth(),
                 ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}) };

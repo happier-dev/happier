@@ -133,6 +133,7 @@ vi.mock('node:fs', async importOriginal => {
 const roots: string[] = [], servers: Server[] = [];
 const nativeDocker = new Map<string, ProjectNativeDockerPort>();
 const unavailableAdmin = new Set<string>();
+const refusedAdminWrites = new Set<string>();
 const pendingSeedOperations: Array<{ abort(): void; settled: Promise<unknown> }> = [];
 afterEach(async () => {
     const pending = pendingSeedOperations.splice(0);
@@ -145,6 +146,7 @@ afterEach(async () => {
     vi.unstubAllEnvs();
     nativeDocker.clear();
     unavailableAdmin.clear();
+    refusedAdminWrites.clear();
     seedFs.root = '';
 });
 const network = (address: string): MachinePrivateNetworkObservationV1 => ({ provider: { kind: 'builtin', id: 'tailscale' },
@@ -216,6 +218,9 @@ async function observed(address: string, port: number, edge = false,
         }
     }
     const server = createServer((request, response) => {
+        if (request.method !== 'GET' && refusedAdminWrites.has(join(root, 'admin.sock'))) {
+            response.writeHead(400).end(JSON.stringify({ error: 'private-native-response-must-not-escape' })); return;
+        }
         if (unavailableAdmin.has(join(root, 'admin.sock'))) { response.writeHead(503).end('{}'); return; }
         if (produced && request.method !== 'GET') {
             void (async () => {
@@ -514,7 +519,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
             details: { requiredFact: 'sharedTunnelOrigin' } });
 });
 
-it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
+it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
@@ -525,6 +530,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         remedy: 'Inspect and reconcile the existing Caddy seed before retrying the Domain operation.' });
     const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
+    const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const networkConnectFailure = scenario === 'Tunnel running public network failure';
     const runningPublic = scenario === 'Tunnel running public Caddy' || networkConnectFailure;
     const retainedSeed = scenario === 'Tunnel retained public seed' || scenario === 'Tunnel foreign seed' || runningPublic;
@@ -545,7 +551,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     }
     if (scenario === 'no active Domain members') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
-    const installedCaddy = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
+    const installedCaddy = scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -795,7 +801,10 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                     publicKey: Buffer.from(identity.publicKey).toString('base64url'), privateKey: Buffer.from(identity.secretKey).toString('base64url') };
                 vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(nativeIdentity);
                 try {
-                    if (job.kind === 'domain') children.push(DeploymentDomainChildRpcV1Schema.parse(job));
+                    if (job.kind === 'domain') {
+                        children.push(DeploymentDomainChildRpcV1Schema.parse(job));
+                        if (adminWriteRefused && observations[0]?.status === 'ready') refusedAdminWrites.add(observations[0].adminSocketPath);
+                    }
                     const controller = new AbortController();
                     const settled = memberDeps!.deploymentChild(job, { actionRequestId: 'domain-operation',
                         ...(retainedSeed ? { signal: controller.signal } : {}) });
@@ -1229,6 +1238,14 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
             } });
             expect(admissions).toEqual([]);
             expect(children).toEqual([]);
+            expect(transitions).toEqual([]);
+        } else if (adminWriteRefused) {
+            expect(ActionExecuteResultSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'native_effect_failed',
+                details: { requiredFact: 'caddyAdminConfig',
+                    failure: { kind: 'native_effect_failed', requiredFact: 'caddyAdminConfig', errorCode: 'HTTP_400' },
+                    remedy: expect.any(String) },
+                failureCause: { phase: 'deployment.domain.caddy.admin.write', httpStatus: 400 } });
+            expect(JSON.stringify(result)).not.toContain('private-native-response-must-not-escape');
             expect(transitions).toEqual([]);
         } else if (scenario === 'direct installed Caddy admin unavailable') {
             expect(result).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable', details: {

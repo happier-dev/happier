@@ -477,6 +477,13 @@ load together. These projections add no persisted Domain state, migration or
 protocol epoch. Shared UI technical details consume the typed cause, required
 fact and remedy rather than deriving a new failure classification.
 
+Store template partial results retain an optional typed Domain failure beside
+completed install progress. The shared recovery reader consumes its authored
+required fact and remedy; Caddy admin refusals retain the safe request phase and
+HTTP status without exposing response bodies or configuration. Matching strict
+Protocol, controller and app readers must load together for this unreleased
+field. It adds no persisted state, migration, protocol epoch, timer or retry.
+
 The Domain prepared-content request carries the existing Artifact mutation's
 optional revision provenance and provenance key envelope alongside its body.
 These remain opaque to the Domain owner and are committed by the Artifact writer.
