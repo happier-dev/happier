@@ -14,6 +14,7 @@ import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { extractVoiceActionsFromAssistantText } from '@happier-dev/protocol/voice/actions';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
+import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle, VoiceAssistantAction } from '@happier-dev/protocol';
@@ -494,27 +495,17 @@ export class VoiceAgentManager {
         this.notifyResumeHandleChanged(voiceAgent);
         return;
       }
-      if (msg.type !== 'model-output') return;
       const activeStream = voiceAgent.activeTurnStream;
       if (activeStream?.cancelled) return;
+      if (msg.type === 'tool-call') {
+        // Text before a native tool describes work still to be done. The SDK
+        // publishes that message's snapshot before its tool-call boundary.
+        voiceAgent.clearChatBuffer();
+        return;
+      }
+      if (msg.type !== 'model-output') return;
       if (typeof msg.textDelta === 'string') {
         voiceAgent.chatBuffer += msg.textDelta;
-        if (activeStream && !activeStream.done) {
-          ingestVoiceAgentStreamingDelta(
-            activeStream,
-            (next) => {
-              if (typeof next.deltaHold === 'string') activeStream.deltaHold = next.deltaHold;
-              if (typeof next.outputSpeechBuffer === 'string') activeStream.outputSpeechBuffer = next.outputSpeechBuffer;
-              if (typeof next.outputSpeechText === 'string') activeStream.outputSpeechText = next.outputSpeechText;
-              if (next.outputBudget) activeStream.outputBudget = next.outputBudget;
-              if (typeof next.outputIncomplete === 'boolean') activeStream.outputIncomplete = next.outputIncomplete;
-              if (typeof next.suppressActionDeltas === 'boolean') activeStream.suppressActionDeltas = next.suppressActionDeltas;
-              if (typeof next.outputSeq === 'number') activeStream.outputSeq = next.outputSeq;
-              if (typeof next.outputSegmentIndex === 'number') activeStream.outputSegmentIndex = next.outputSegmentIndex;
-            },
-            msg.textDelta,
-          );
-        }
       }
       if (typeof msg.fullText === 'string') {
         voiceAgent.chatBuffer = msg.fullText;
@@ -1256,27 +1247,27 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
 
         const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer.trim());
-        if (extracted.invalidActionBlock) {
-          // A final transcript alone cannot correct speech already played.
-          // Flush the parser's failure through the existing speech channel.
-          stream.deltaHold = '';
-          stream.outputSpeechBuffer = extracted.assistantText;
-        }
-
-        // Flush any held chars that were buffered for action-tag detection.
-        if (settleCancelled()) return;
-        finalizeVoiceAgentStreamingSpeech(stream, (next) => {
+        const patchSpeech: Parameters<typeof ingestVoiceAgentStreamingDelta>[1] = (next) => {
           if (typeof next.deltaHold === 'string') stream.deltaHold = next.deltaHold;
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;
           if (typeof next.outputSpeechText === 'string') stream.outputSpeechText = next.outputSpeechText;
           if (next.outputBudget) stream.outputBudget = next.outputBudget;
           if (typeof next.outputIncomplete === 'boolean') stream.outputIncomplete = next.outputIncomplete;
+          if (typeof next.suppressActionDeltas === 'boolean') stream.suppressActionDeltas = next.suppressActionDeltas;
           if (typeof next.outputSeq === 'number') stream.outputSeq = next.outputSeq;
           if (typeof next.outputSegmentIndex === 'number') stream.outputSegmentIndex = next.outputSegmentIndex;
-        });
+        };
+        // Native assistant messages have no final-answer flag. Admit speech only
+        // after completion has proved it is neither tool narration nor an Action
+        // request. The UI Action owner presents its real outcome separately.
+        if (extracted.actions.length === 0) {
+          if (extracted.invalidActionBlock) stream.outputSpeechBuffer = extracted.assistantText;
+          else ingestVoiceAgentStreamingDelta(stream, patchSpeech, voiceAgent.chatBuffer);
+          finalizeVoiceAgentStreamingSpeech(stream, patchSpeech);
+        }
 
         if (settleCancelled()) return;
-        const desiredText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
+        const desiredText = extracted.actions.length > 0 ? '' : extracted.assistantText.trim();
         const finalCandidate = { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: desiredText } as const;
         let cleanText = fitVoiceAgentOutputTextV1(stream.outputBudget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
         if (cleanText.length < desiredText.length) {
@@ -1314,7 +1305,7 @@ export class VoiceAgentManager {
         if (admittedActions.length !== extracted.actions.length) {
           cleanText = fitVoiceAgentOutputTextV1(plannedBudget, {
             ...finalCandidate, seq: plannedSeq,
-            text: this.normalizeAssistantTextForActions(extracted.assistantText, admittedActions),
+            text: '',
           }, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
           if (stream.outputSpeechText && !cleanText.startsWith(stream.outputSpeechText.trimEnd())) {
             cleanText = stream.outputSpeechText.trimEnd();
@@ -1345,7 +1336,13 @@ export class VoiceAgentManager {
         const failure = normalizeVoiceAgentTurnError(error);
         const message = failure instanceof Error ? failure.message : 'stream_failed';
         const code = readExecutionRunErrorCode(failure);
-        stream.events.push({ t: 'error', error: message, ...(code ? { errorCode: code } : {}) });
+        stream.events.push(ExecutionRunTurnStreamEventErrorSchema.parse({
+          t: 'error', error: message, ...(code ? { errorCode: code } : {}),
+          ...(failure && typeof failure === 'object' && 'usageLimitRecovery' in failure
+            ? { usageLimitRecovery: failure.usageLimitRecovery } : {}),
+          ...(failure && typeof failure === 'object' && 'usageLimitResetAtMs' in failure
+            ? { usageLimitResetAtMs: failure.usageLimitResetAtMs } : {}),
+        }));
       } finally {
         stream.done = true;
         stream.onEventsChanged();

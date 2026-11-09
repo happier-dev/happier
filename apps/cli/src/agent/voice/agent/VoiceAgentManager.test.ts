@@ -1128,7 +1128,7 @@ describe('VoiceAgentManager', () => {
       const request = { voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0, waitForEvents: true, signal: controller.signal };
       let settled = false;
       const abortedRead = manager.readTurnStream(request);
-      const pushedRead = manager.readTurnStream({ ...request, signal: new AbortController().signal });
+      const pushedRead = manager.readTurnStream({ ...request, maxEvents: 1, signal: new AbortController().signal });
       void abortedRead.then(() => { settled = true; }, () => { settled = true; });
       await Promise.resolve();
       await Promise.resolve();
@@ -1137,6 +1137,7 @@ describe('VoiceAgentManager', () => {
       await expect(abortedRead).rejects.toThrow('observation cancelled');
       await vi.waitFor(() => expect(backend.hasCurrentResponse()).toBe(true));
       backend.appendDelta('Streaming words. '.repeat(40));
+      backend.completeCurrentResponse();
       const page = await pushedRead;
       expect(page.events).toEqual(expect.arrayContaining([expect.objectContaining({
         t: 'voice_output', output: expect.objectContaining({ kind: 'speech_segment' }),
@@ -1145,7 +1146,6 @@ describe('VoiceAgentManager', () => {
       expect(page.nextCursor).toBe(page.events.length);
       expect(page.streamId).toBe(stream.streamId);
       const terminal = manager.readTurnStream({ ...request, cursor: page.nextCursor, signal: new AbortController().signal });
-      backend.completeCurrentResponse();
       let finalPage = await terminal;
       const remainingEvents = [...finalPage.events];
       while (!finalPage.done) {
@@ -2643,7 +2643,7 @@ describe('VoiceAgentManager', () => {
     expect(commit.commitText).not.toContain(cancelledText);
   });
 
-  it('replays completed textual history when cancellation requires a fresh chat session', async () => {
+  it('replays completed user history without procedural Action narration when cancellation requires a fresh chat session', async () => {
     let promptCount = 0;
     const cancelledRuntime = createDeterministicBackend('cancelled-mid-conversation', {
       onSend(request, publish) {
@@ -2685,7 +2685,7 @@ describe('VoiceAgentManager', () => {
     expect(replacementRuntime.prompts[0]).toContain('CURRENT VOICE CONTEXT');
     expect(replacementRuntime.prompts[0]).toContain('next turn');
     expect(replacementRuntime.prompts[0]).toContain('first turn');
-    expect(replacementRuntime.prompts[0]).toContain('first response');
+    expect(replacementRuntime.prompts[0]).not.toContain('first response');
     expect(replacementRuntime.prompts[0]).not.toContain('cancel this turn');
     expect(replacementRuntime.prompts[0]).not.toContain('prior-effect-session');
   });
@@ -3294,12 +3294,14 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_NOT_FOUND' });
   });
 
-  it('uses the admitted speech latency target before provider completion', async () => {
+  it('withholds provisional native speech until provider completion', async () => {
     let releaseProvider: (() => void) | undefined;
     const providerDone = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    let provisionalPublished = false;
     const runtime = createDeterministicBackend('latency-runtime', {
       async onSend(request, publish) {
         publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: `Sure. ${'word '.repeat(30)}` });
+        provisionalPublished = true;
         await providerDone;
         publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
       },
@@ -3314,13 +3316,17 @@ describe('VoiceAgentManager', () => {
       const stream = await manager.startTurnStream({
         voiceAgentId: started.voiceAgentId, userText: 'hello', speechSegmentTargetChars: 120,
       });
+      await vi.waitFor(() => expect(provisionalPublished).toBe(true));
       await vi.waitFor(async () => {
         const read = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0 });
         expect(read.done).toBe(false);
-        const speech = read.events.flatMap((event) => event.t === 'voice_output' && event.output.kind === 'speech_segment'
-          ? [event.output.text.trim()] : []);
-        expect(speech).toEqual(['Sure.', 'word '.repeat(30).trim()]);
+        expect(read.events).toEqual([]);
       });
+      releaseProvider?.();
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager,
+        voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      expect(events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+        ? [event.output.text.trim()] : [])).toEqual(['Sure.', 'word '.repeat(30).trim()]);
     } finally {
       releaseProvider?.();
       await manager.stop({ voiceAgentId: started.voiceAgentId });
@@ -3328,17 +3334,120 @@ describe('VoiceAgentManager', () => {
   });
 
   it.each([
-    { label: 'multilingual bytes beyond the retired payload quota', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: false },
-    { label: 'multilingual text beyond the final wire envelope', text: '你好🙂'.repeat(25_000), actionCount: 1, incomplete: true },
-    { label: 'multilingual text with normalized action preamble', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: false, sendMessage: true },
-    { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 1, incomplete: false },
+    { answer: 'The requested update is complete.', snapshot: true },
+    { answer: 'Which session should I open?', snapshot: false },
+    { answer: 'The tool could not complete that request.', snapshot: true },
+    { answer: '', snapshot: false },
+  ])('speaks only the terminal native answer after tools ($answer, snapshot=$snapshot)', async ({ answer, snapshot }) => {
+    let releaseProvider!: () => void;
+    const providerDone = new Promise<void>(resolve => { releaseProvider = resolve; });
+    let provisionalPublished = false;
+    const runtime = createDeterministicBackend('native-tool-speech', {
+      async onSend(request, publish) {
+        const turnId = request.delivery.turnId;
+        for (const [index, text] of ['I will inspect the available sessions. ', 'I will now open the requested session. '].entries()) {
+          const messageId = `provisional-${index}`;
+          publish({ kind: 'message-delta', turnId, channel: 'assistant', messageId, text });
+          // The native SDK commits the same message before publishing its tools.
+          publish({ kind: 'transcript-message-committed', turnId, role: 'assistant', messageId, text });
+          publish({ kind: 'tool-call', turnId, toolCallId: `call-${index}`, toolName: 'native-tool', input: {} });
+          publish({ kind: 'tool-result', turnId, toolCallId: `call-${index}`, output: { ok: true } });
+        }
+        if (answer) {
+          publish({ kind: 'message-delta', turnId, channel: 'assistant', messageId: 'terminal-answer', text: answer });
+          if (snapshot) publish({ kind: 'transcript-message-committed', turnId, role: 'assistant', messageId: 'terminal-answer', text: answer });
+        }
+        provisionalPublished = true;
+        await providerDone;
+        publish({ kind: 'turn-complete', turnId });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    try {
+      const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'open it' });
+      await vi.waitFor(() => expect(provisionalPublished).toBe(true));
+      expect((await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0 })).events).toEqual([]);
+      releaseProvider();
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      expect(events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+        ? [event.output.text] : []).join('')).toBe(answer);
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: answer } });
+    } finally {
+      releaseProvider();
+      await manager.dispose();
+    }
+  });
+
+  it('never flushes provisional native narration after a provider failure', async () => {
+    const runtime = createDeterministicBackend('failed-native-speech', {
+      onSend(request, publish) {
+        const turnId = request.delivery.turnId;
+        publish({ kind: 'message-delta', turnId, channel: 'assistant', text: 'I will inspect the session and report back. ' });
+        publish({ kind: 'turn-failed', turnId, diagnostic: { code: 'provider_error', severity: 'error', message: 'Provider failed' } });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    try {
+      const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'inspect it' });
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ t: 'error', errorCode: 'provider_error' });
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('withholds provisional native textual Action narration from semantic speech and the final Voice reply', async () => {
+    const runtime = createStaticResponseBackend('textual-actions', 'I will send that to the session now. '
+      + '<voice_actions>{"actions":[{"t":"sendSessionMessage","args":{"message":"Please investigate."}}]}</voice_actions>');
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    try {
+      let persistedText: string | undefined;
+      const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'send it',
+        onTurnFinal: text => { persistedText = text; } });
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      let output = createVoiceAgentOutputTurnV1(stream.streamId);
+      const speech: string[] = [];
+      for (const event of events) {
+        if (event.t !== 'voice_output') continue;
+        const accepted = ingestVoiceAgentOutputEventV1(output, event.output);
+        output = accepted.state;
+        speech.push(...accepted.effects.flatMap(effect => effect.kind === 'speak' ? [effect.text] : []));
+      }
+      expect(speech).toEqual([]);
+      expect(persistedText).toBe('');
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(1);
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it.each([
+    { label: 'multilingual bytes beyond the retired payload quota', text: '你好🙂'.repeat(15_000), actionCount: 0, incomplete: false },
+    { label: 'multilingual text beyond the final wire envelope', text: '你好🙂'.repeat(25_000), actionCount: 0, incomplete: true },
+    { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 0, incomplete: false },
     { label: 'valid action event overhead', text: 'word '.repeat(9_000), actionCount: 230, incomplete: false },
     { label: 'action events beyond the retired cumulative quota', text: 'word '.repeat(9_000), actionCount: 300, incomplete: false },
-    { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
-  ])('preserves $label within the receiving wire envelope', async ({ text, actionCount, incomplete, sendMessage }) => {
-    const action = sendMessage
-      ? { t: 'sendSessionMessage', args: { message: 'Do X.' } }
-      : { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
+    { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 0, incomplete: false },
+  ])('preserves $label within the receiving wire envelope', async ({ text, actionCount, incomplete }) => {
+    const action = { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
     const block = `<voice_actions>${JSON.stringify({ actions: Array.from({ length: actionCount }, () => action) })}</voice_actions>`;
     const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
     let sequence = 0;
@@ -3389,17 +3498,16 @@ describe('VoiceAgentManager', () => {
     }
     expect(state.terminal).toBe('final');
     expect(finalText).toBe(persistedText);
-    if (!sendMessage) expect(finalText?.startsWith(spokenText.trimEnd())).toBe(true);
-    expect(spokenText.length).toBeGreaterThan(text.length / 4);
+    expect(finalText?.startsWith(spokenText.trimEnd())).toBe(true);
+    if (actionCount === 0) expect(spokenText.length).toBeGreaterThan(text.length / 4);
+    else expect(spokenText).toBe('');
     expect(text.startsWith(spokenText)).toBe(true);
     expect(spokenText).not.toMatch(/[\uD800-\uDBFF]$/u);
     expect(finalText?.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(incomplete);
     expect(events.some((event) => event.t === 'error')).toBe(false);
     if (!incomplete) {
-      expect(spokenText).toBe(text);
-      expect(finalText).toBe(sendMessage
-        ? 'I sent that to the coding assistant and am waiting for its update.'
-        : text.trimEnd());
+      expect(spokenText).toBe(actionCount > 0 ? '' : text);
+      expect(finalText).toBe(actionCount > 0 ? '' : text.trimEnd());
       expect(events.filter((event) => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(actionCount);
     }
   });
@@ -3433,7 +3541,7 @@ describe('VoiceAgentManager', () => {
     expect(events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(true);
   });
 
-  it('filters voice action blocks out of streamed deltas and normalizes sendSessionMessage preambles', async () => {
+  it('keeps sendSessionMessage Action turns silent while preserving the canonical effect', async () => {
 
     const actionJson = JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }] });
     const chatBackend = createMultiDeltaBackend('chat', [
@@ -3471,12 +3579,11 @@ describe('VoiceAgentManager', () => {
       .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
       .map((e) => (e as any).output.text)
       .join('');
-    expect(deltaText).toContain('Hello.');
-    expect(deltaText).not.toContain('<voice_actions>');
+    expect(deltaText).toBe('');
 
     const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
     const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
-    expect(final.output.text).toBe('I sent that to the coding assistant and am waiting for its update.');
+    expect(final.output.text).toBe('');
     expect(effect.output.action.t).toBe('sendSessionMessage');
   });
 
@@ -3514,12 +3621,11 @@ describe('VoiceAgentManager', () => {
       .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
       .map((e) => (e as any).output.text)
       .join('');
-    expect(deltaText).toContain('Calling the teleport action for that session now.');
-    expect(deltaText).not.toContain('<voice_actions>');
+    expect(deltaText).toBe('');
 
     const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
     const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
-    expect(final.output.text).toBe('Calling the teleport action for that session now.');
+    expect(final.output.text).toBe('');
     expect(effect.output.action).toEqual({ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } });
   });
 
