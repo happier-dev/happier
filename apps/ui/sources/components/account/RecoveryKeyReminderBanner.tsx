@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, type GestureResponderEvent } from 'react-native';
+import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -9,8 +9,13 @@ import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
 import { useRecoveryKeyReminder } from '@/components/account/useRecoveryKeyReminder';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
-export const RecoveryKeyReminderBanner = React.memo(() => {
+export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
+    /** A list that leads with it already spaces it from what is above; a page keeps the section gap. */
+    header?: 'none';
+}>) => {
     const { theme } = useUnistyles();
     const triggerRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
     const reminder = useRecoveryKeyReminder({ surface: 'banner' });
@@ -20,7 +25,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
     const secret = reminder.secret;
 
     return (
-        <ItemGroup surface="none">
+        <ItemGroup surface="none" header={props.header}>
             <Item
                 testID="recovery-key-reminder"
                 pressableRef={triggerRef}
@@ -40,20 +45,22 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
                 }}
                 showChevron={false}
                 rightElement={
-                    <Pressable
+                    <HappierPressable
                         testID="recovery-key-reminder-dismiss"
-                        onPress={async (event: GestureResponderEvent) => {
-                            event.stopPropagation();
+                        // Beside the row's own target: it takes the 8 px accessory gap before it and the free edge after it.
+                        hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                        hitReach={{ left: 8 }}
+                        onPress={async (event) => {
+                            event?.stopPropagation?.();
                             try {
                                 await reminder.dismiss();
                             } catch {
                                 Modal.alert(t('common.error'), t('errors.unknownError'), [{ text: t('common.ok') }]);
                             }
                         }}
-                        hitSlop={12}
                     >
                         <Icon name="x" size={20} color={theme.colors.text.secondary} />
-                    </Pressable>
+                    </HappierPressable>
                 }
                 rightElementOutsidePressable={true}
             />

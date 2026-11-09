@@ -55,6 +55,63 @@ describe('TabBarNewSessionButton', () => {
         });
     });
 
+    it.each(['web', 'ios', 'android'] as const)('focuses the same Docked draft on %s and starts another only on an explicit modified press', async (platform) => {
+        const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
+        const { NewSessionShellHostProvider, useNewSessionShellHost } = await import('@/components/sessions/new/navigation/newSessionEntry');
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const storage = getStorage();
+        const { Platform } = await import('react-native');
+        const previousOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+        const initialState = storage.getState();
+        storage.setState({ settings: { ...initialState.settings, newSessionPresentationModeV1: 'docked' } });
+        function ShellState() {
+            const shell = useNewSessionShellHost();
+            return React.createElement('ShellState', {
+                visible: shell?.visible,
+                draftId: shell?.host.params.draftId,
+                focusRequest: shell?.focusRequest,
+            });
+        }
+        try {
+            const screen = await renderScreen(<NewSessionShellHostProvider><TabBarNewSessionButton /><ShellState /></NewSessionShellHostProvider>);
+            await screen.pressByTestIdAsync('tabbar-start-new-session');
+            const first = screen.tree.root.findByType('ShellState' as never).props;
+            expect(first.visible).toBe(true);
+            expect(first.draftId).toEqual(expect.any(String));
+            expect(expoRouterMock.spies.push).not.toHaveBeenCalled();
+
+            await screen.pressByTestIdAsync('tabbar-start-new-session');
+            const repeated = screen.tree.root.findByType('ShellState' as never).props;
+            expect(repeated.draftId).toBe(first.draftId);
+            expect(repeated.focusRequest).toBeGreaterThan(first.focusRequest);
+
+            const { act } = await import('react-test-renderer');
+            await act(async () => {
+                screen.findByTestId('tabbar-start-new-session')!.props.onPress({ nativeEvent: { ctrlKey: true, metaKey: true } });
+            });
+            expect(screen.tree.root.findByType('ShellState' as never).props.draftId).not.toBe(first.draftId);
+            expect(expoRouterMock.spies.push).not.toHaveBeenCalled();
+        } finally {
+            standardCleanup();
+            storage.setState(initialState, true);
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: previousOS });
+        }
+    });
+
+    // The sidebar "+" floats over the session list; the QA hit-area probe accepts only a control its owner marks this way.
+    it('marks the sidebar placement as a floating overlay and leaves the tab bar placement unmarked', async () => {
+        const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
+        const marked = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree.root.findAll(
+            (node) => (node.props as { dataSet?: { happierFloatingOverlay?: string } }).dataSet?.happierFloatingOverlay === 'true',
+        );
+
+        const sidebar = await renderScreen(<TabBarNewSessionButton placement="sidebar" />);
+        expect(marked(sidebar).some((node) => node.findAll((inner) => inner.props.testID === 'sidebar-start-new-session').length > 0)).toBe(true);
+        const tabBar = await renderScreen(<TabBarNewSessionButton />);
+        expect(marked(tabBar)).toHaveLength(0);
+    });
+
     it('exposes the new-session action to assistive technology', async () => {
         const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
 

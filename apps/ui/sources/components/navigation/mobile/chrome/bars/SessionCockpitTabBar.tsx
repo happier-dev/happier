@@ -1,15 +1,13 @@
-import { useSessionCollaborationDestinationAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
-import { useSessionBoardFeatureEnabled } from '@/components/sessions/board/useSessionBoardFeatureEnabled';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import * as React from 'react';
 import { listPendingPermissionRequests } from '@/utils/sessions/sessionUtils';
-import { useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
-import { useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -18,37 +16,33 @@ import { t } from '@/text';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
-    resolveSessionCockpitMobileCatalog,
     resolveSessionCockpitMobileTabVisibility,
+    resolveSessionCockpitPhoneItems,
     type SessionCockpitMobileCatalogEntry,
 } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
 import { type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
-import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import { NavigationPlacementPinButton } from '@/components/ui/navigation/NavigationPlacementPinButton';
-import { Modal } from '@/modal';
-import { fireAndForget } from '@/utils/system/fireAndForget';
-import { resolveFloatingTabBarSlotCount } from '@/components/ui/navigation/FloatingTabBarSurface';
-import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
-import { layout } from '@/components/ui/layout/layout';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
+import { useDetailPageTabsPosition } from '@/components/ui/navigation/useNavigationSurfacePlacement';
+import { type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { SessionCollaborationRailBadge } from '@/components/sessions/collaboration/sessionConversationAttention';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
+import { openSessionNavigationCustomizer, resolveSessionNavigationCustomizerProps } from '@/components/sessions/panes/sessionNavigationCustomizer';
+import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 
 import { useSessionSwitcherBand } from '../lateralSwipe/SessionSwitcherBand';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import {
     CockpitTabBar,
-    CockpitTabBarAction,
     CockpitTabBarView,
     CockpitTabBarActionView,
     type CockpitTabBarTabDefinition,
 } from './CockpitTabBar';
-import { publishCockpitBarScrolls } from './cockpitBarScrollState';
+import { PhonePageStripView } from './PhonePageStrip';
+import { useDetailPhonePlacement, useDetailPhoneBarPresentation, type DetailPhonePreviewMetrics } from './detailPhoneNavigation';
 import { sfSymbolForCockpitTabIcon } from './cockpitTabSymbols';
 
 export type SessionCockpitTabBarProps = Readonly<{
+    catalog: readonly SessionCockpitMobileCatalogEntry[];
     sessionId: string;
     /** Route server scope, so the capsule and the picker anchor on the same entry. */
     serverId?: string | null;
@@ -56,7 +50,10 @@ export type SessionCockpitTabBarProps = Readonly<{
     terminalTabAvailable: boolean;
     openDetailsTabCount: number;
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
+    /** The mounted Session's detail-list inputs: Customize resolves the desktop lists from them. */
+    detailInput?: ResolveRightSidebarTabsInput;
     onSurfacePress: (surface: SessionMobileSurface) => void;
+    onCustomize?: (props: import('@/components/ui/navigation/NavigationPlacementCustomizer').DetailNavigationCustomizerProps) => void;
 }>;
 
 export type SessionCockpitTabDefinition = CockpitTabBarTabDefinition<SessionMobileSurface> & Readonly<{ sfSymbol: string }>;
@@ -76,30 +73,35 @@ function SessionCockpitTabBarPreview(props: Readonly<{
     alwaysSwipe: boolean;
     metrics: TabBarMetrics;
 }>) {
-    const visibility = resolveSessionCockpitMobileTabVisibility(props);
+    const { theme } = useUnistyles();
+    const pageTabs = useDetailPageTabsPosition('session');
+    const visibility = resolveSessionCockpitMobileTabVisibility({ ...props, pageTabs });
     const tabs = visibility.visible.flatMap(entry => props.tabs.filter(tab => tab.id === entry.id));
+    const stripTabs = visibility.top.flatMap(entry => props.tabs.filter(tab => tab.id === entry.id));
     const activeBehindMore = [...visibility.held, ...visibility.overflow].some(entry => entry.id === props.activeSurface)
         ? props.tabs.find(tab => tab.id === props.activeSurface) ?? null : null;
-    return <CockpitTabBarView activeSurface={props.activeSurface} tabs={tabs}
+    const bar = <CockpitTabBarView activeSurface={props.activeSurface} tabs={tabs}
         barTestId="session-cockpit-preview" tabTestIdPrefix="session-cockpit-preview-tab-"
         metrics={props.metrics} bottomInset={0} layout={visibility.mode === 'scroll' ? 'scroll' : 'fit'}
         onSurfacePress={ignorePreviewPress} trailing={<CockpitTabBarActionView metrics={props.metrics}
             testID="session-cockpit-preview-more" label={activeBehindMore?.label ?? t('common.more')}
             icon={activeBehindMore && typeof activeBehindMore.icon === 'string' ? activeBehindMore.icon : 'dots-three'}
             selected={activeBehindMore !== null} onPress={ignorePreviewPress} />} />;
+    // Top page tabs draw their strip above the bar, as the Session shows them.
+    return stripTabs.length > 0 ? <View style={{ gap: theme.space.s12 }}>
+        <PhonePageStripView tabs={stripTabs} activeId={props.activeSurface} onSelect={ignorePreviewPress} testID="session-cockpit-preview-strip" />
+        {bar}
+    </View> : bar;
 }
 
 /** Catalog admission and presentation facts shared by both phone bar presenters. */
 export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBarProps,
-    'sessionId' | 'serverId' | 'terminalTabAvailable' | 'openDetailsTabCount' | 'pluginPlacements'>) {
+    'sessionId' | 'serverId' | 'catalog' | 'openDetailsTabCount'>) {
     const sessionServerId = usePreferredServerIdForSession({ serverId: props.serverId, sessionId: props.sessionId });
-    const collaborationAdmitted = useSessionCollaborationDestinationAdmitted(sessionServerId ?? '');
-    const sessionSharingAvailable = Boolean(sessionServerId) && collaborationAdmitted;
     const collaborationTarget = React.useMemo(
         () => normalizeSessionAddress(sessionServerId, props.sessionId),
         [props.sessionId, sessionServerId],
     );
-    const boardFeatureEnabled = useSessionBoardFeatureEnabled(sessionServerId);
     const session = useSession(props.sessionId, props.serverId);
     const pendingNavigationAddress = React.useMemo(
         () => normalizeSessionAddress(props.serverId ?? session?.serverId, props.sessionId),
@@ -125,15 +127,8 @@ export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBar
         () => (session ? listPendingPermissionRequests(session).length : 0),
         [session],
     );
-    const appTabInputs = useAppRightSidebarTabInputs();
 
-    const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
-        ...appTabInputs,
-        sessionSharingAvailable,
-        boardFeatureEnabled,
-        terminalTabAvailable: props.terminalTabAvailable,
-        pluginPlacements: props.pluginPlacements,
-    }), [appTabInputs, boardFeatureEnabled, sessionSharingAvailable, props.pluginPlacements, props.terminalTabAvailable]);
+    const catalog = props.catalog;
     const tabForEntry = (entry: SessionCockpitMobileCatalogEntry): SessionCockpitTabDefinition => {
         if (entry.owner === 'host') {
             if (entry.id === 'chat') {
@@ -198,8 +193,75 @@ export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBar
     return { catalog, tabForEntry, pendingNavigationAddress, collaborationTarget, agentId, hasBundledAgent: agentCore !== null };
 }
 
-export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
+/** Read when Customize opens: the desktop arrangement decides which Session tools are also pages. */
+function readPaneArrangement(): 'session' | 'editor' {
+    return storage.getState().localSettings.paneArrangement === 'editor' ? 'editor' : 'session';
+}
+
+export function useSessionCockpitBarPresentation(props: SessionCockpitTabBarProps, native = false) {
     const { catalog, tabForEntry, pendingNavigationAddress, collaborationTarget, agentId, hasBundledAgent } = useSessionCockpitTabDefinitions(props);
+    // "Always swipe between sessions" depends on the sideways swipe itself.
+    const alwaysSwipeSetting = useSetting('sessionCockpitSwipeAlwaysSessionsEnabled');
+    const swipeSetting = useSetting('sessionCockpitSwipeNavigationEnabled');
+    const alwaysSwipe = alwaysSwipeSetting === true && swipeSetting !== false;
+    const phoneItems = resolveSessionCockpitPhoneItems(catalog).map(entry => {
+        const tab = tabForEntry(entry);
+        return { ...entry, title: tab.label, icon: typeof tab.icon === 'string' ? tab.icon : 'dots-three' as const,
+            ...(entry.id === 'collaboration' && collaborationTarget ? { moreTrailing: <SessionCollaborationRailBadge
+                target={collaborationTarget} placement="inline" testID="session-cockpit-more-fact:collaboration" /> } : {}),
+        };
+    });
+    const placement = useDetailPhonePlacement(phoneItems, 'sessionTabBar', 'session');
+    const customize = ({ metrics, slotCount }: DetailPhonePreviewMetrics) => {
+        const previewTabs = catalog.map(tabForEntry).map(tab => tab.id === 'chat'
+            ? { ...tab, icon: { render: ({ size, tintColor }: Readonly<{ size: number; tintColor: string }>) =>
+                <AgentIcon agentId={hasBundledAgent ? agentId : null} size={size} color={tintColor} /> } }
+            : tab);
+        // The one Session Customize, at Phone; the desktop lists resolve from the same mounted inputs.
+        const customization = {
+            device: 'phone',
+            detailInput: props.detailInput ?? { scope: 'session', presentation: 'mobile', terminalTabAvailable: props.terminalTabAvailable, pluginPlacements: props.pluginPlacements },
+            arrangement: readPaneArrangement(),
+            phoneCatalog: catalog,
+            phonePageTabs: true,
+            renderPhonePreview: (next: NavigationPlacementPreferences) => <SessionCockpitTabBarPreview
+                catalog={catalog} tabs={previewTabs} preferences={next} metrics={metrics}
+                activeSurface={props.activeSurface} slotCount={slotCount ?? Number.POSITIVE_INFINITY} alwaysSwipe={alwaysSwipe} />,
+        } as const;
+        if (props.onCustomize) props.onCustomize(resolveSessionNavigationCustomizerProps(customization));
+        else openSessionNavigationCustomizer(customization);
+    };
+    const presentation = useDetailPhoneBarPresentation({ items: phoneItems, placement, address: 'sessionTabBar', pageKind: 'session',
+        activeId: props.activeSurface, select: id => props.onSurfacePress(id as SessionMobileSurface), native,
+        overflowBehavior: alwaysSwipe ? 'more' : 'scroll', heldSubtitle: t('phoneNav.bar.heldInMore'), onCustomize: customize });
+    // A scrolling bar owns the horizontal axis; the live bar publishes it and the band's swipe steps aside.
+    const barScrolls = presentation.layout === 'scroll';
+    const visibility = { mode: presentation.mode, visible: presentation.shown, top: placement.topPages,
+        held: presentation.held, overflow: placement.placements.overflow };
+    return { catalog, tabForEntry, visibility, tabs: presentation.shown.map(tabForEntry), menu: presentation.menu,
+        pageTabs: placement.pageTabs, barScrolls, pendingNavigationAddress, openMore: presentation.openMore };
+}
+
+/**
+ * Cockpit phones with page tabs at the top (plan T U1): Chat and the pages kept on the bar scroll in one
+ * strip under the Session header, while tools and the single More stay in the bottom bar. Same resolved
+ * visibility as the bar; nothing is drawn while Chat is the only page.
+ */
+export const SessionPhonePageStrip = React.memo(function SessionPhonePageStrip(props: Pick<SessionCockpitTabBarProps,
+    'sessionId' | 'serverId' | 'catalog' | 'activeSurface' | 'openDetailsTabCount' | 'onSurfacePress'>) {
+    const pageTabs = useDetailPageTabsPosition('session');
+    return pageTabs === 'top' ? <SessionPhoneTopPageStrip {...props} /> : null;
+});
+
+function SessionPhoneTopPageStrip(props: React.ComponentProps<typeof SessionPhonePageStrip>) {
+    const { tabForEntry } = useSessionCockpitTabDefinitions(props);
+    const { topPages: top } = useDetailPhonePlacement(resolveSessionCockpitPhoneItems(props.catalog), 'sessionTabBar', 'session');
+    if (top.length === 0) return null;
+    return <PhonePageStripView tabs={top.map(tabForEntry)} activeId={props.activeSurface} onSelect={id => props.onSurfacePress(id as SessionMobileSurface)} />;
+}
+
+export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
+    const { tabs, menu, barScrolls, pendingNavigationAddress } = useSessionCockpitBarPresentation(props);
     // The band's actions are built HERE because a tab is the only element in the band a screen
     // reader can focus, and an action only reaches the rotor through the element that owns it.
     // They are the switcher's non-gesture path: step either way, or open it for tapping.
@@ -217,89 +279,6 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             announceAccessibilityMessage(t(direction === 'next' ? 'phoneNav.switcher.noOlderSessions' : 'phoneNav.switcher.noNewerSessions'));
         }
     }, [switcherBand]);
-    const { preferences } = useNavigationSurfacePlacement('sessionTabBar');
-    // "Always swipe between sessions" depends on the sideways swipe itself.
-    const alwaysSwipeSetting = useSetting('sessionCockpitSwipeAlwaysSessionsEnabled');
-    const swipeSetting = useSetting('sessionCockpitSwipeNavigationEnabled');
-    const alwaysSwipe = alwaysSwipeSetting === true && swipeSetting !== false;
-    const windowWidth = useWindowDimensions().width;
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
-    const tabMinWidth = metrics.tabMinWidth;
-    const slotCount = resolveFloatingTabBarSlotCount({ windowWidth, maxWidth: layout.maxWidth, tabMinWidth });
-    const [moreOpen, setMoreOpen] = React.useState(false);
-    const visibility = React.useMemo(() => resolveSessionCockpitMobileTabVisibility({
-        catalog,
-        preferences,
-        slotCount,
-        alwaysSwipe,
-    }), [alwaysSwipe, preferences, catalog, slotCount]);
-    // A scrolling bar owns the horizontal axis; the band's session swipe reads this and steps aside.
-    const barScrolls = visibility.mode === 'scroll';
-    React.useEffect(() => {
-        publishCockpitBarScrolls(barScrolls);
-        return () => publishCockpitBarScrolls(false);
-    }, [barScrolls]);
-    const tabs = visibility.visible.map(tabForEntry);
-    // More lists every tool: what is on the bar first (pinned, including any that wait here while
-    // "Always swipe" keeps the bar to what fits), then the rest. Every row can be pinned.
-    const heldIds = new Set(visibility.held.map((entry) => entry.id));
-    const menuEntries: readonly Readonly<{ entry: SessionCockpitMobileCatalogEntry; pinned: boolean }>[] = [
-        ...visibility.visible.filter((entry) => entry.id !== 'chat').map((entry) => ({ entry, pinned: true })),
-        ...visibility.held.map((entry) => ({ entry, pinned: true })),
-        ...visibility.overflow.map((entry) => ({ entry, pinned: false })),
-    ];
-    const customize = () => {
-        setMoreOpen(false);
-        const previewTabs = catalog.map(tabForEntry).map(tab => tab.id === 'chat'
-            ? { ...tab, icon: { render: ({ size, tintColor }: Readonly<{ size: number; tintColor: string }>) =>
-                <AgentIcon agentId={hasBundledAgent ? agentId : null} size={size} color={tintColor} /> } }
-            : tab);
-        fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
-            Modal.show({ component: NavigationPlacementCustomizer, props: {
-                surfaceId: 'sessionTabBar',
-                items: catalog.filter((entry) => entry.id !== 'chat').map((entry) => {
-                    const tab = tabForEntry(entry);
-                    return { id: entry.id, title: tab.label, icon: typeof tab.icon === 'string' ? tab.icon : 'puzzle-piece' as const, defaultPlacement: entry.defaultPlacement };
-                }),
-                testID: 'session-cockpit-customizer',
-                renderPreview: (next: NavigationPlacementPreferences) => <SessionCockpitTabBarPreview
-                    catalog={catalog} tabs={previewTabs} preferences={next} metrics={metrics}
-                    activeSurface={props.activeSurface} slotCount={slotCount} alwaysSwipe={alwaysSwipe} />,
-            } });
-        }), { tag: 'SessionCockpitTabBar.customize' });
-    };
-    const menuItems: readonly DropdownMenuItem[] = [...menuEntries.map(({ entry, pinned }) => {
-        const tab = tabForEntry(entry);
-        const pinLabel = t(pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar');
-        return {
-            id: entry.id,
-            testID: `session-cockpit-more-item:${entry.id}`,
-            title: tab.label,
-            category: t(pinned ? 'phoneNav.bar.onTheBar' : 'phoneNav.bar.more'),
-            ...(heldIds.has(entry.id) ? { subtitle: t('phoneNav.bar.heldInMore') } : {}),
-            icon: <Icon name={typeof tab.icon === 'string' ? tab.icon : 'puzzle-piece'} size={18} />,
-            rightElement: (
-                <>
-                    {/* Collaboration says only news: a dot when someone mentioned you (the rail's dot). */}
-                    {entry.id === 'collaboration' && collaborationTarget ? (
-                        <SessionCollaborationRailBadge
-                            target={collaborationTarget}
-                            placement="inline"
-                            testID="session-cockpit-more-fact:collaboration"
-                        />
-                    ) : null}
-                    <NavigationPlacementPinButton surfaceId="sessionTabBar" testID={`session-cockpit-pin:${entry.id}`}
-                        entryId={entry.id} pinned={pinned} label={pinLabel} preferences={preferences} />
-                </>
-            ),
-        };
-    }), { id: 'customize', title: t('navigationPlacement.customize'), icon: <Icon name="sliders-horizontal" size={18} />, testID: 'session-cockpit-more-customize' }];
-    // A tool opened from More lives behind it: the More slot shows that tool, selected.
-    const activeBehindMore = visibility.visible.some((entry) => entry.id === props.activeSurface)
-        ? null
-        : menuEntries.find(({ entry }) => entry.id === props.activeSurface)?.entry ?? null;
-    const activeBehindMoreTab = activeBehindMore ? tabForEntry(activeBehindMore) : null;
-
     return (
         <CockpitTabBar
             activeSurface={props.activeSurface}
@@ -312,32 +291,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             onBandAccessibilityAction={bandAccessibilityActions ? handleBandAccessibilityAction : undefined}
             trailing={<>
                 <PendingNavigationPill address={pendingNavigationAddress} presentation="phone" />
-                {menuItems.length > 0 ? (
-                <DropdownMenu
-                    open={moreOpen}
-                    onOpenChange={setMoreOpen}
-                    items={menuItems}
-                    selectedId={activeBehindMore ? props.activeSurface : null}
-                    showCategoryTitles
-                    onSelect={(surface) => {
-                        if (surface === 'customize') { customize(); return; }
-                        setMoreOpen(false);
-                        props.onSurfacePress(surface as SessionMobileSurface);
-                    }}
-                    matchTriggerWidth={false}
-                    placement="top"
-                    trigger={({ open, toggle }) => (
-                        <CockpitTabBarAction
-                            testID="session-cockpit-tab-more"
-                            label={activeBehindMoreTab?.label ?? t('common.more')}
-                            icon={activeBehindMoreTab && typeof activeBehindMoreTab.icon === 'string' ? activeBehindMoreTab.icon : 'dots-three'}
-                            selected={activeBehindMoreTab !== null}
-                            expanded={open}
-                            onPress={toggle}
-                        />
-                    )}
-                />
-                ) : null}
+                {menu}
             </>}
         />
     );

@@ -30,10 +30,20 @@ type PhoneMenuItem = PhonePlacementItem & Readonly<{
 
 export type DetailPhonePreviewMetrics = Readonly<{ metrics: ReturnType<typeof resolveTabBarMetrics>; slotCount: number | null }>;
 
-export function detailNavigationTab(item: Pick<PhoneMenuItem, 'id' | 'title' | 'icon' | 'disabledReason'>): CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }> {
+export function detailNavigationTab(item: Pick<PhoneMenuItem, 'id' | 'title' | 'icon' | 'disabledReason' | 'count'>): CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }> {
+    // A tab's status rides on it (owner 11-06): its leading count as the badge, its full words in its name.
+    const count = item.count?.trim();
+    const short = count === undefined ? undefined : TAB_STATUS_COUNT.exec(count)?.[0];
     return { id: item.id, label: item.title, icon: item.icon, sfSymbol: sfSymbolForCockpitTabIcon(item.icon),
-        disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined };
+        disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined,
+        ...(count === undefined || count === '' ? {} : {
+            accessibilityLabel: `${item.title}, ${count}`,
+            ...(short === undefined ? {} : { badge: { kind: 'text' as const, value: short } }),
+        }) };
 }
+
+/** The count a status leads with ("2 failing" → 2, "~402", "1.8K"). */
+const TAB_STATUS_COUNT = /^[~≈]?\d[\d.,]*[KkMm]?/u;
 
 /** Detail hosts lend their resolved catalog to the same addressed phone/top projection. */
 export function useDetailPhonePlacement<T extends PhonePlacementItem>(items: readonly T[], address: NavigationPlacementAddress, pageKind: string, enabled = true) {
@@ -50,7 +60,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     pageKind: string;
     activeId: string;
     select: (id: string) => void;
-    /** Session's tools may own the horizontal axis instead of waiting in More. */
+    /** Session's "Always swipe between sessions" holds the excess in More instead of scrolling the bar. */
     overflowBehavior?: 'more' | 'scroll';
     heldSubtitle?: string;
     native: boolean;
@@ -90,7 +100,9 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
                     : input.heldSubtitle !== undefined && fit.held.some(item => item.id === entry.id) ? input.heldSubtitle : entry.count,
                 trailing: moreOpen ? entry.moreTrailing : undefined };
         })} />;
-    return { ...fit, menu, openMore, metrics, slotCount };
+    // Native bars keep UIKit's own capacity; the floating bar scrolls when its Bar items do not fit.
+    const barLayout = !input.native && fit.mode === 'scroll' ? 'scroll' as const : 'fit' as const;
+    return { ...fit, layout: barLayout, menu, openMore, metrics, slotCount };
 }
 
 export type DetailPhoneMoreEntry = Readonly<{

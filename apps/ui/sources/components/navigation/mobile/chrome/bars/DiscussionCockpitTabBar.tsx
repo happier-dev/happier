@@ -69,6 +69,6 @@ function DiscussionPhonePageStripContent(props: DiscussionCockpitTabBarProps) {
 export const DiscussionCockpitTabBar = React.memo(function DiscussionCockpitTabBar(props: DiscussionCockpitTabBarProps) {
     const presentation = useDiscussionCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.activeSurface} barTestId={`discussion-cockpit-tabbar-${props.discussionId}`}
-        tabs={presentation.shown.map(presentation.tabForItem)} tabTestIdPrefix="discussion-cockpit-tab-" layout="fit"
+        tabs={presentation.shown.map(presentation.tabForItem)} tabTestIdPrefix="discussion-cockpit-tab-" layout={presentation.layout}
         onSurfacePress={presentation.select} trailing={presentation.menu} />;
 });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
@@ -7,7 +8,9 @@ import { MetadataSchema } from '@happier-dev/session-core/state';
 import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScreen';
 import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import type { ScmStatus } from '@/sync/domains/state/storageTypes';
-import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import { getUiListsModalMockRef, installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,7 +33,7 @@ const sessionMetadataState = vi.hoisted(() => ({
     ownerMetadataView: undefined as Record<string, unknown> | null | undefined,
     accessLevel: null as 'view' | 'edit' | 'admin' | null,
 }));
-const collaborationAdmissionState = vi.hoisted(() => ({ admitted: false }));
+const collaborationAdmissionState = vi.hoisted(() => ({ state: 'unavailable' as 'loading' | 'available' | 'unavailable' }));
 const scmState = vi.hoisted(() => ({
     status: null as Pick<ScmStatus, 'isDirty' | 'changedFileCount' | 'linesAdded' | 'linesRemoved'> | null,
 }));
@@ -41,9 +44,8 @@ const badgeSettingsState = vi.hoisted(() => ({
 const cockpitPinsState = vi.hoisted(() => ({
     value: null as string[] | null,
 }));
-const surfacePlacementsState = vi.hoisted(() => ({
-    value: {} as Record<string, { orderedIds: string[]; placements: Record<string, 'pinned' | 'overflow' | 'hidden'> }>,
-}));
+// The canonical stored shape the fixture seeds into local settings.
+const surfacePlacementsState: { value: NonNullable<LocalSettings['navigationSurfacePlacementsV1']> } = vi.hoisted(() => ({ value: {} }));
 // The bar's width decides what fits; 800 is wide enough for everything, 390 is an iPhone.
 const windowState = vi.hoisted(() => ({ width: 800 }));
 const swipeSettingsState = vi.hoisted(() => ({ always: false, swipe: true }));
@@ -155,6 +157,11 @@ async function renderScreen(element: React.ReactElement) {
     } };
 }
 
+async function projectPages() {
+    const { resolveProjectPageCatalog } = await import('@/components/projects/detail/projectPageCatalog');
+    return resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'workspace-a', serverId: 'home' } });
+}
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, any>) => React.createElement(
         'DropdownMenu',
@@ -181,7 +188,8 @@ vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', ()
 }));
 
 vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({
-    useSessionCollaborationDestinationAdmitted: () => collaborationAdmissionState.admitted,
+    useSessionCollaborationDestinationAvailabilityState: () => collaborationAdmissionState.state,
+    useSessionCollaborationDestinationEntryAdmitted: () => collaborationAdmissionState.state === 'available',
 }));
 
 vi.mock('@/components/sessions/board/useSessionBoardFeatureEnabled', () => ({
@@ -200,7 +208,15 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 // Prepare the module after the canonical boundary options are installed. Module transformation
 // belongs to suite setup, so a saturated host does not count it against a behavior assertion.
-const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+const { SessionCockpitTabBar: SessionBarSubject, SessionPhonePageStrip } = await import('./SessionCockpitTabBar');
+const { resolveSessionCockpitMobileCatalog } = await import('@/components/workspaceCockpit/session/sessionCockpitMobileCatalog');
+function MountedSessionCockpitTabBar(props: Omit<React.ComponentProps<typeof SessionBarSubject>, 'catalog'>) {
+    const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
+        terminalTabAvailable: props.terminalTabAvailable, pluginPlacements: props.pluginPlacements,
+        sessionSharingAvailable: collaborationAdmissionState.state === 'available',
+    }), [props.terminalTabAvailable, props.pluginPlacements, collaborationAdmissionState.state]);
+    return <SessionBarSubject {...props} catalog={catalog} />;
+}
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 
 describe('cockpit tab bars', () => {
@@ -224,6 +240,119 @@ describe('cockpit tab bars', () => {
         swipeSettingsState.swipe = true;
         reachableMachineState.target = null;
         fixtureSessionServerId = undefined;
+        collaborationAdmissionState.state = 'unavailable';
+    });
+
+    it('keeps the bottom-mode page strip idle on Session updates and mounts top pages when requested', async () => {
+        const props = { sessionId: 'sess_1', serverId: 'srv_1', activeSurface: 'chat' as const,
+            openDetailsTabCount: 1, onSurfacePress: vi.fn(),
+            catalog: resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }),
+        };
+        await seedCockpitState(<SessionPhonePageStrip {...props} />);
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const commits = vi.fn();
+        const screen = await renderRealScreen(<React.Profiler id="page-strip" onRender={commits}>
+            <SessionPhonePageStrip {...props} />
+        </React.Profiler>);
+        commits.mockClear();
+        await act(async () => {
+            const session = storage.getState().sessions.sess_1!;
+            storage.getState().applySessions([{ ...session, updatedAt: session.updatedAt + 1,
+                metadata: session.metadata ? { ...session.metadata, name: 'Changed session' } : null }]);
+        });
+        expect(commits).not.toHaveBeenCalled();
+        await act(async () => storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: {
+            pageTabs: { session: 'top' }, sessionTabBar: { orderedIds: [], placements: { tabs: 'pinned' } },
+        } }));
+        expect(commits).toHaveBeenCalled();
+        expect(screen.tree.toJSON()).not.toBeNull();
+    });
+
+    it('uses the shared Session projection for native top mode with one bottom More', async () => {
+        const { SystemMobileBottomChrome } = await import('../SystemMobileBottomChrome');
+        const { SystemTabBar } = await import('../SystemTabBar');
+        const onSurfacePress = vi.fn();
+        const props = { sessionId: 'sess_1', serverId: 'srv_1', activeSurface: 'chat' as const,
+            terminalTabAvailable: true, openDetailsTabCount: 0, onSurfacePress,
+            catalog: resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }),
+        };
+        await seedCockpitState(<SessionBarSubject {...props} />);
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.setState(state => ({ localSettings: { ...state.localSettings,
+            // Open files kept on the bar is a page, so Top draws a strip (Chat alone keeps its bottom slot).
+            navigationSurfacePlacementsV1: { pageTabs: { session: 'top' }, sessionTabBar: { orderedIds: [], placements: { tabs: 'pinned' } } },
+        } }));
+        const screen = await renderRealScreen(<SystemMobileBottomChrome model={{ kind: 'sessionCockpit', props }} hidden={false} />);
+        const native = screen.findByType(SystemTabBar);
+        expect(native.props.items.map((item: { id: string }) => item.id)).toEqual(['browse', 'git', 'companion', 'terminal', 'more']);
+        await act(async () => native.props.onPress('more'));
+        expect(screen.findByType(DropdownMenu).props.open).toBe(true);
+        // Open files is on the top strip, so the one bottom More does not repeat it.
+        expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).not.toContain('tabs');
+        expect(screen.findByType(DropdownMenu).props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'customize' })]));
+        await act(async () => native.props.onPress('browse'));
+        expect(onSurfacePress).toHaveBeenCalledWith('browse');
+    });
+
+    it('publishes no Session chrome commit for an unrelated Session arrival', async () => {
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="session-navigation" onRender={() => { commits++; }}>
+            <MountedSessionCockpitTabBar sessionId="sess_1" serverId="srv_1" activeSurface="chat"
+                terminalTabAvailable openDetailsTabCount={0} onSurfacePress={() => {}} />
+        </React.Profiler>);
+        const before = commits;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
+            unrelated: createSessionFixture({ id: 'unrelated', serverId: 'srv_1' }),
+        } })));
+        expect(commits - before).toBe(0);
+        expect(screen.findHostByTestId('session-cockpit-tab-chat')).not.toBeNull();
+    });
+
+    it('never publishes Collaboration in the Cockpit catalog while admission is loading or refused', async () => {
+        collaborationAdmissionState.state = 'loading';
+        const bar = () => <MountedSessionCockpitTabBar sessionId="sess_1" serverId="srv_1" activeSurface="chat"
+            terminalTabAvailable={false} openDetailsTabCount={0} onSurfacePress={() => {}} />;
+        const screen = await renderScreen(bar());
+        const catalogIds = () => screen.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+        expect(catalogIds()).not.toContain('collaboration');
+
+        collaborationAdmissionState.state = 'unavailable';
+        await screen.update(bar());
+        expect(catalogIds()).not.toContain('collaboration');
+    });
+
+    it('previews current phone-bar placements through inert controls without mounting session detail or writing preferences', async () => {
+        const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
+        const onSurfacePress = vi.fn();
+        const screen = await renderScreen(<MountedSessionCockpitTabBar sessionId="preview-session" activeSurface="chat"
+            terminalTabAvailable openDetailsTabCount={0} onSurfacePress={onSurfacePress} />);
+        const modal = getUiListsModalMockRef().current;
+        modal.spies.show.mockClear();
+        settingWrites.calls = [];
+        await act(async () => { screen.tree.findByType(DropdownMenu).props.onSelect('customize'); });
+        await vi.waitFor(() => expect(modal.spies.show).toHaveBeenCalled());
+        const config = modal.spies.show.mock.calls.at(-1)?.[0];
+        // The one Session Customize carries the bar preview on its phone list.
+        const renderPreview = config.props.phone?.[0]?.renderPreview as ((preferences: NavigationPlacementPreferences) => React.ReactElement) | undefined;
+        expect(renderPreview).toBeTypeOf('function');
+        if (!renderPreview) throw new Error('Expected the phone-bar placement preview');
+        const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 503 }));
+        try {
+            const preview = await renderRealScreen(renderPreview({ orderedIds: [], placements: {} }));
+            expect(preview.findHostByTestId('session-cockpit-preview-tab-git')).not.toBeNull();
+            await preview.update(renderPreview({ orderedIds: ['terminal', 'browse'], placements: { git: 'hidden', tabs: 'overflow' } }));
+            expect(preview.findHostByTestId('session-cockpit-preview-tab-git')).toBeNull();
+            expect(preview.findHostByTestId('session-cockpit-preview-tab-terminal')).not.toBeNull();
+            expect(preview.findHostByTestId('session-cockpit-preview-tab-tabs')).toBeNull();
+            expect(preview.findHostByTestId('session-cockpit-preview-more')).not.toBeNull();
+            expect(preview.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(0);
+            expect(preview.findAll(node => node.type === DropdownMenu)).toHaveLength(0);
+            await act(async () => { preview.pressByTestId('session-cockpit-preview-tab-terminal'); preview.pressByTestId('session-cockpit-preview-more'); });
+            expect(onSurfacePress).not.toHaveBeenCalled();
+            expect(settingWrites.calls).toEqual([]);
+            expect(fetch).not.toHaveBeenCalled();
+        } finally { fetch.mockRestore(); }
     });
 
     it('forwards the route Home to every session-scoped cockpit read', async () => {
@@ -231,7 +360,7 @@ describe('cockpit tab bars', () => {
         fixtureSessionServerId = 'home-a';
         scmState.status = { isDirty: true, changedFileCount: 3, linesAdded: 42, linesRemoved: 8 };
         const bar = () => (
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 serverId="home-b"
                 activeSurface="chat"
@@ -260,6 +389,7 @@ describe('cockpit tab bars', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const navigate = vi.fn();
         const screen = await renderScreen(<ProjectCockpitTabBar
+            pages={await projectPages()}
             workspaceRefId="workspace-a" activeSurface="context" terminalTabAvailable={true} onSurfacePress={navigate}
         />);
         const tablists = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'tablist');
@@ -271,13 +401,14 @@ describe('cockpit tab bars', () => {
         const menu = screen.root.findByType(DropdownMenu);
         const behindMore = menu.props.items.map((item: { id: string }) => item.id);
         expect([...onBar, ...behindMore.filter((id: string) => pages.includes(id))]).toEqual(pages);
-        expect(behindMore).toEqual(expect.arrayContaining(['browse', 'browser', 'terminal', 'tabs']));
+        expect(behindMore).toEqual(expect.arrayContaining(['browser', 'terminal', 'tabs']));
+        expect(behindMore).not.toContain('browse');
         if (!onBar.includes('context')) {
             expect(menu.props.selectedId).toBe('context');
             expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? true).toBe(true);
         }
-        await act(async () => { menu.props.onSelect('browse'); });
-        expect(navigate).toHaveBeenCalledWith('browse');
+        await act(async () => { menu.props.onSelect('code'); });
+        expect(navigate).toHaveBeenCalledWith('code');
         await act(async () => { screen.findHostByTestId('project-cockpit-tab-overview')?.props.onPress(); });
         expect(navigate).toHaveBeenCalledWith('overview');
     });
@@ -292,7 +423,7 @@ describe('cockpit tab bars', () => {
         const { SessionSwitcherBandContext } = await import('../lateralSwipe/SessionSwitcherBand');
         const screen = await renderScreen(
             <SessionSwitcherBandContext.Provider value={controls}>
-                <SessionCockpitTabBar
+                <MountedSessionCockpitTabBar
                     sessionId="sess_1"
                     activeSurface="chat"
                     terminalTabAvailable={true}
@@ -328,7 +459,7 @@ describe('cockpit tab bars', () => {
     it('offers no band action where no switcher wraps the bar', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={true}
@@ -388,7 +519,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={true}
@@ -419,7 +550,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={false}
@@ -442,7 +573,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={false}
@@ -464,7 +595,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={false}
@@ -490,7 +621,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 serverId="server_external"
                 activeSurface="chat"
@@ -513,7 +644,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={false}
@@ -534,7 +665,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={false}
@@ -554,7 +685,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={false}
@@ -571,7 +702,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={false}
@@ -588,7 +719,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="tabs"
                 terminalTabAvailable={false}
@@ -605,7 +736,7 @@ describe('cockpit tab bars', () => {
         cockpitPinsState.value = ['browse', 'git', 'tabs'];
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="tabs"
                 terminalTabAvailable={false}
@@ -619,7 +750,7 @@ describe('cockpit tab bars', () => {
     });
 
     it('marks Collaboration in More with the rail\'s mention dot, and only for an unread mention', async () => {
-        collaborationAdmissionState.admitted = true;
+        collaborationAdmissionState.state = 'available';
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const store = getStorage();
         const publish = (reasons: string[]) => store.setState((state) => ({
@@ -637,7 +768,7 @@ describe('cockpit tab bars', () => {
             publish(['mentioned']);
             const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
             const screen = await renderScreen(
-                <SessionCockpitTabBar
+                <MountedSessionCockpitTabBar
                     sessionId="sess_1"
                     serverId="srv_1"
                     activeSurface="chat"
@@ -656,7 +787,7 @@ describe('cockpit tab bars', () => {
             await act(async () => { publish(['unread_discussion']); });
             expect(screen.findHostByTestId('session-cockpit-more-fact:collaboration')).toBeNull();
         } finally {
-            collaborationAdmissionState.admitted = false;
+            collaborationAdmissionState.state = 'unavailable';
         }
     });
 
@@ -666,7 +797,7 @@ describe('cockpit tab bars', () => {
         cockpitPinsState.value = ['browse', 'browser'];
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="browser"
                 terminalTabAvailable={false}
@@ -693,12 +824,12 @@ describe('cockpit tab bars', () => {
         expect(pressed).toEqual(['services']);
     });
 
-    it('puts Chat and the default tools on the bar and lists every tool, pinnable, in More', async () => {
+    it('puts Chat and the default tools on the bar and lists the rest, pinnable, in the shared More', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         windowState.width = 390;
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={true}
@@ -713,13 +844,17 @@ describe('cockpit tab bars', () => {
         expect(screen.findHostByTestId('session-cockpit-tab-tabs')).toBeNull();
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
         const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
-        expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(['browse', 'git', 'tabs', 'navigation', 'browser', 'services']));
-        expect(items.find((item) => item.id === 'git')?.category).toBe('en:phoneNav.bar.onTheBar');
-        expect(items.find((item) => item.id === 'tabs')?.category).toBe('en:phoneNav.bar.more');
-        // Every tool can be pinned, not only plugins.
+        // One More presentation for every detail kind (orchestrator ruling 11-04): what is behind More,
+        // pages before companions, never a second copy of the bar, then Customize.
+        expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(['tabs', 'navigation', 'browser', 'services', 'customize']));
+        expect(items.map((item) => item.id)).not.toContain('git');
+        expect(items.map((item) => item.id)).not.toContain('browse');
+        expect(items.find((item) => item.id === 'tabs')?.category).toBe('pages');
+        expect(items.find((item) => item.id === 'navigation')?.category).toBe('companions');
+        expect(screen.tree.findByType(DropdownMenu).props.popoverPhonePresentation).toBeUndefined();
+        // Every tool behind More can be pinned, not only plugins.
         await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
-        expect(screen.findHostByTestId('session-cockpit-pin:navigation')).toBeTruthy();
-        expect(screen.findHostByTestId('session-cockpit-pin:git')?.props.accessibilityState?.checked).toBe(true);
+        expect(screen.findHostByTestId('session-cockpit-pin:navigation')?.props.accessibilityState?.checked).toBe(false);
     });
 
     it('renders shared placement ordering and omits hidden tools from the bar and More', async () => {
@@ -728,7 +863,7 @@ describe('cockpit tab bars', () => {
             placements: { git: 'hidden', companion: 'overflow', tabs: 'hidden' },
         } };
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
-        const screen = await renderScreen(<SessionCockpitTabBar sessionId="sess_1" activeSurface="chat"
+        const screen = await renderScreen(<MountedSessionCockpitTabBar sessionId="sess_1" activeSurface="chat"
             terminalTabAvailable={true} openDetailsTabCount={0} onSurfacePress={() => {}} />);
         expect(screen.findHostByTestId('session-cockpit-tab-terminal')).toBeTruthy();
         expect(screen.findHostByTestId('session-cockpit-tab-git')).toBeNull();
@@ -751,7 +886,7 @@ describe('cockpit tab bars', () => {
         cockpitPinsState.value = ['browse', 'git', 'companion', 'terminal', 'tabs', 'navigation', 'browser'];
         const bar = () => (
             <>
-                <SessionCockpitTabBar sessionId="sess_1" activeSurface="chat" terminalTabAvailable={true}
+                <MountedSessionCockpitTabBar sessionId="sess_1" activeSurface="chat" terminalTabAvailable={true}
                     openDetailsTabCount={0} onSurfacePress={() => {}} />
                 <Probe />
             </>
@@ -770,7 +905,7 @@ describe('cockpit tab bars', () => {
         expect(screen.findHostByTestId('session-cockpit-tab-navigation')).toBeNull();
         const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
         expect(items.find((item) => item.id === 'navigation')).toEqual(expect.objectContaining({
-            category: 'en:phoneNav.bar.onTheBar',
+            category: 'companions',
             subtitle: 'en:phoneNav.bar.heldInMore',
         }));
         expect(observed.at(-1)).toBe(false);
@@ -780,7 +915,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         windowState.width = 390;
         const screen = await renderScreen(
-            <SessionCockpitTabBar sessionId="sess_1" activeSurface="services" terminalTabAvailable={true}
+            <MountedSessionCockpitTabBar sessionId="sess_1" activeSurface="services" terminalTabAvailable={true}
                 openDetailsTabCount={0} onSurfacePress={() => {}} />,
         );
         const more = screen.findHostByTestId('session-cockpit-tab-more');
@@ -793,7 +928,7 @@ describe('cockpit tab bars', () => {
         const placement = createMobilePluginPlacement();
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         const renderBar = () => (
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={false}
@@ -818,7 +953,6 @@ describe('cockpit tab bars', () => {
 
     it('renders plugin pinning as a focusable Android-minimum effective target with explicit toggle state', async () => {
         const { Platform } = await import('react-native');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
         settingWrites.calls = [];
         const originalPlatform = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
@@ -828,7 +962,7 @@ describe('cockpit tab bars', () => {
             const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
             const onSurfacePress = vi.fn();
             const renderBar = () => (
-                <SessionCockpitTabBar
+                <MountedSessionCockpitTabBar
                     sessionId="sess_1"
                     activeSurface="chat"
                     terminalTabAvailable={false}
@@ -837,24 +971,22 @@ describe('cockpit tab bars', () => {
                     onSurfacePress={onSurfacePress}
                 />
             );
-            const screen = await renderScreen(renderBar());
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+            const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>{renderBar()}</HappierUiPlatformProvider>);
             await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
             const pinTestID = 'session-cockpit-pin:plugin:acme.review:review-panel';
             const pin = screen.findHostByTestId(pinTestID);
-            const minimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
-            expect(minimumTargetSize).toBe(48);
+            const minimumTargetSize = 48;
             expect(pin?.props).toEqual(expect.objectContaining({
                 accessibilityRole: 'checkbox',
                 accessibilityLabel: 'en:phoneNav.bar.keepOnBar',
                 accessibilityState: expect.objectContaining({ checked: false }),
-                // The shared IconButton owns the minimum target with a real press
-                // frame; RNW cannot turn Pressable hitSlop into a physical target.
-                hitSlop: 0,
             }));
+            // Drawn at the IconButton's design square; the 48dp Android target is its hit area.
             const targetFrame = flattenStyle(pin?.props.style);
-            expect(targetFrame.width).toBeGreaterThanOrEqual(minimumTargetSize);
-            expect(targetFrame.height).toBeGreaterThanOrEqual(minimumTargetSize);
+            const area = await layoutHitArea(() => screen.findHostByTestId(pinTestID), { width: Number(targetFrame.width), height: Number(targetFrame.height) });
+            expect(area.height).toBeGreaterThanOrEqual(minimumTargetSize);
+            expect(area.width).toBeGreaterThanOrEqual(24);
 
             const stopPropagation = vi.fn();
             await act(async () => {
@@ -881,9 +1013,9 @@ describe('cockpit tab bars', () => {
 
             cockpitPinsState.value = ['plugin:acme.review:review-panel'];
             await screen.update(renderBar());
-            const pinnedControl = screen.findHostByTestId(pinTestID);
-            expect(pinnedControl?.props.accessibilityLabel).toBe('en:phoneNav.bar.removeFromBar');
-            expect(pinnedControl?.props.accessibilityState?.checked).toBe(true);
+            // Pinned, it moves to the bar and leaves More (the shared More lists only what is behind it).
+            expect(screen.findHostByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeTruthy();
+            expect(screen.findHostByTestId(pinTestID)).toBeNull();
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
@@ -895,7 +1027,7 @@ describe('cockpit tab bars', () => {
         cockpitPinsState.value = ['navigation'];
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="navigation"
                 terminalTabAvailable={false}
@@ -920,7 +1052,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={true}
@@ -936,7 +1068,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={true}
@@ -953,6 +1085,7 @@ describe('cockpit tab bars', () => {
 
         const screen = await renderScreen(
             <ProjectCockpitTabBar
+                pages={await projectPages()}
                 workspaceRefId="wr_1"
                 activeSurface="terminal"
                 onSurfacePress={() => {}}
@@ -967,7 +1100,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="chat"
                 terminalTabAvailable={true}
@@ -981,7 +1114,7 @@ describe('cockpit tab bars', () => {
         translationPrefix = 'fr';
         await act(async () => {
             await screen.update(
-                <SessionCockpitTabBar
+                <MountedSessionCockpitTabBar
                     sessionId="sess_1"
                     activeSurface="chat"
                     terminalTabAvailable={true}
@@ -1003,6 +1136,7 @@ describe('cockpit tab bars', () => {
 
         const screen = await renderScreen(
             <ProjectCockpitTabBar
+                pages={await projectPages()}
                 workspaceRefId="wr_1"
                 activeSurface="overview"
                 onSurfacePress={() => {}}
@@ -1015,6 +1149,7 @@ describe('cockpit tab bars', () => {
         await act(async () => {
             await screen.update(
                 <ProjectCockpitTabBar
+                    pages={await projectPages()}
                     workspaceRefId="wr_1"
                     activeSurface="overview"
                     onSurfacePress={() => {}}
@@ -1030,7 +1165,7 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
-            <SessionCockpitTabBar
+            <MountedSessionCockpitTabBar
                 sessionId="sess_1"
                 activeSurface="git"
                 terminalTabAvailable={true}
@@ -1045,4 +1180,84 @@ describe('cockpit tab bars', () => {
         expect(screen.findHostByTestId('session-cockpit-tab-git')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
         expect(screen.findHostByTestId('session-cockpit-tab-browse')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: false }));
     }, 120_000);
+it('projects addressed Discussion phone choices without reading shared desktop companion choices', async () => {
+    const { DiscussionCockpitTabBar } = await import('./DiscussionCockpitTabBar');
+    surfacePlacementsState.value = { workspaceRail: { orderedIds: [], placements: { discussionParticipants: 'hidden' } },
+        detailPages: { discussion: { phone: { items: { orderedIds: [], placements: { discussionAgents: 'hidden', discussionDetails: 'overflow' } } } } } };
+    const selected: string[] = [];
+    const screen = await renderScreen(<DiscussionCockpitTabBar discussionId="thread" activeSurface="chat"
+        onSurfacePress={surface => selected.push(surface)} />);
+    expect(screen.findHostByTestId('discussion-cockpit-tab-chat')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-participants')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-agents')).toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-details')).toBeNull();
+    await act(async () => { screen.pressByTestId('discussion-cockpit-tab-more'); });
+    expect(screen.tree.findByType(DropdownMenu).props.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'discussionDetails' }),
+    ]));
+    await act(async () => { screen.tree.findByType(DropdownMenu).props.onSelect('discussionDetails'); });
+    expect(selected).toEqual(['details']);
+    expect(surfacePlacementsState.value.workspaceRail?.placements).toEqual({ discussionParticipants: 'hidden' });
+    await screen.unmount();
+});
+// One bar rule (owner 11-06): Bar items that do not fit scroll; nothing moves to More on its own, and
+// items placed in More stay there. Every detail bar takes it from the shared presentation.
+it('scrolls a Project bar whose pinned pages do not fit, and keeps More to what was placed there', async () => {
+    const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
+    const { useCockpitBarScrolls } = await import('./cockpitBarScrollState');
+    const observed: boolean[] = [];
+    const Probe = () => { observed.push(useCockpitBarScrolls()); return null; };
+    const pages = ['overview', 'code', 'changes', 'scripts', 'services', 'context'];
+    const bar = async () => <>
+        <ProjectCockpitTabBar pages={await projectPages()} workspaceRefId="workspace-a" activeSurface="overview"
+            terminalTabAvailable={true} onSurfacePress={() => {}} />
+        <Probe />
+    </>;
+    windowState.width = 300;
+    const narrow = await renderScreen(await bar());
+    expect(pages.filter(page => narrow.findHostByTestId(`project-cockpit-tab-${page}`) === null)).toEqual([]);
+    expect(narrow.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
+    const behindMore = narrow.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+    expect(behindMore.filter((id: string) => pages.includes(id))).toEqual([]);
+    expect(observed.at(-1)).toBe(true);
+    await narrow.unmount();
+
+    windowState.width = 800;
+    const wide = await renderScreen(await bar());
+    expect(wide.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
+    expect(pages.filter(page => wide.findHostByTestId(`project-cockpit-tab-${page}`) === null)).toEqual([]);
+    expect(observed.at(-1)).toBe(false);
+    await wide.unmount();
+});
+it('keeps every pinned Discussion entry on a narrow bar, scrolling, beside one permanent More', async () => {
+    const { DiscussionCockpitTabBar } = await import('./DiscussionCockpitTabBar');
+    windowState.width = 260;
+    const props = { discussionId: 'thread', activeSurface: 'details' as const, onSurfacePress: vi.fn() };
+    const screen = await renderScreen(<DiscussionCockpitTabBar {...props} />);
+    expect(screen.findHostByTestId('discussion-cockpit-tab-chat')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-details')).not.toBeNull();
+    expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
+    expect(screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'discussion-cockpit-tab-more')).toHaveLength(1);
+    expect(screen.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).not.toContain('discussionDetails');
+    await screen.unmount();
+});
+it('keeps Discussion Chat in its bottom slot without a page strip when Top has only Chat', async () => {
+    const { DiscussionCockpitTabBar, useDiscussionPhoneNavigation } = await import('./DiscussionCockpitTabBar');
+    surfacePlacementsState.value = { pageTabs: { discussion: 'top' } };
+    const props = { discussionId: 'thread', activeSurface: 'chat' as const, onSurfacePress: vi.fn() };
+    let topPageIds: readonly string[] = [];
+    function DiscussionPhone() {
+        topPageIds = useDiscussionPhoneNavigation(props).topPages.map(item => item.id);
+        return <DiscussionCockpitTabBar {...props} />;
+    }
+    const screen = await renderScreen(<DiscussionPhone />);
+    expect(topPageIds).toEqual([]);
+    expect(screen.findHostByTestId('discussion-cockpit-tab-chat')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-participants')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-agents')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-cockpit-tab-details')).not.toBeNull();
+    expect(screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'discussion-cockpit-tab-more')).toHaveLength(1);
+    await screen.unmount();
+});
+
 });

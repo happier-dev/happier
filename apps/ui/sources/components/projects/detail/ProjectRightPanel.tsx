@@ -1,7 +1,12 @@
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
+import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
+import { useOptionalProjectPageCatalog } from '@/components/projects/navigation/useProjectPageCatalog';
 import { ProjectGitActionRailBadge, ProjectGitActionRailTooltip } from './ProjectGitActionRailBadge';
+import type { RailBadgeSignalRenderer } from '@/components/navigation/shell/appRail/AppRailBadge';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -32,6 +37,7 @@ import {
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { SidePaneBodyProvider } from '@/components/ui/lists/listPresentation';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -57,14 +63,17 @@ import {
     selectPluginRightSidebarTabPlacements,
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { ProjectPageV1 } from './projectRouteState';
 import { useActiveServerAccountScope, useProjectAccountRows } from '@/sync/domains/state/storage';
 import { resolveProjectTerminalScope } from './projectTerminalScope';
 import { CheckoutReachabilityLine, CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { CodeIntelligencePaneTab } from '@/components/workspaces/files/intelligence/CodeIntelligencePaneTab';
 import { useCodeIntelligencePaneProducer } from '@/components/workspaces/files/intelligence/codeIntelligencePaneStore';
+import { useRightSidebarContentFacts } from '@/components/appShell/rightSidebar/useRightSidebarContentFacts';
+import { useLocalServiceInventoryHasRunningServices } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryRunningCount';
+import { useProjectContext } from '@/components/projects/useProjectContext';
+import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
 
 type ProjectRightTabId = string;
 
@@ -86,7 +95,6 @@ export type ProjectRightPanelProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface.base,
         minHeight: 0,
         minWidth: 0,
         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
@@ -98,7 +106,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: theme.space.s8,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s10,
@@ -115,8 +122,13 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
+    const catalog = useOptionalProjectPageCatalog();
     const deviceType = useDeviceType();
-    const pane = useAppPaneScope(props.scopeId);
+    const pane = useAppPaneScope(props.scopeId, scope => ({
+        isOpen: scope?.right.isOpen,
+        activeTabId: scope?.right.activeTabId,
+        selectedDestination: scope?.right.selectedDestination,
+    }));
     const scopeState = pane.scopeState;
     const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
         serverId: props.workspaceRef.serverId,
@@ -129,6 +141,8 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         activeRootPath: props.activeRootPath,
         activeWorktreeId: props.activeWorktreeId,
     });
+    const activeCheckout = useProjectAccountWorkspaceRef(controller.checkoutWorkspace?.workspaceId ?? null, props.workspaceRef.serverId);
+    const projectContext = useProjectContext({ serverId: props.workspaceRef.serverId, projectRef: props.workspaceRef, activeCheckout });
     const viewerScope = useActiveServerAccountScope(props.workspaceRef.serverId);
     const projectRowsStatus = useProjectAccountRows()?.status;
     const terminalTabAvailable = React.useMemo(() => controller.checkoutWorkspace !== null
@@ -145,50 +159,50 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
             : []
     ), [pluginProjection.pluginUiProjection]);
     const pluginLocale = getPreferredLanguage();
-    const localizePluginText = React.useMemo(
-        () => createPluginLocalizedTextResolver({
+    const localizePluginText = usePluginLocalizedTextResolver({
             projection: pluginProjection.pluginUiProjection,
             locale: pluginLocale,
-        }),
-        [pluginLocale, pluginProjection.pluginUiProjection],
-    );
+    });
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: pluginProjection.platform,
         formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
     }), [deviceType, pluginProjection.platform]);
-    const appTabInputs = useAppRightSidebarTabInputs();
+    const appTabInputs = useAppRightSidebarTabInputs(props.workspaceRef.serverId);
     const codeIntelligenceAvailable = useCodeIntelligencePaneProducer(props.scopeId) !== null;
-    const rightPanelTabs = React.useMemo(() => resolveProjectRightSidebarTabs({
+    const rightPanelTabs = React.useMemo(() => catalog?.items.flatMap(item => item.companion ? [item.companion] : []) ?? resolveProjectRightSidebarTabs({
         ...appTabInputs,
         codeIntelligenceAvailable,
         terminalTabAvailable,
         activePage: props.activePage,
         presentation: deviceType === 'phone' ? 'mobile' : 'desktop',
         pluginPlacements: pluginRightSidebarPlacements,
+        policyContext: projectContext.policyContext,
         runtimeAdmission,
         localize: localizePluginText,
     }), [
+        catalog?.items,
         appTabInputs,
         codeIntelligenceAvailable,
         terminalTabAvailable,
         deviceType,
         localizePluginText,
         pluginRightSidebarPlacements,
+        projectContext.policyContext,
         props.activePage,
         runtimeAdmission,
     ]);
     const launcherTabs = React.useMemo(() => rightPanelTabs.filter(tab => !tab.hiddenInLauncher), [rightPanelTabs]);
     const availableTabIds = React.useMemo(() => new Set(rightPanelTabs.map((tab) => tab.id)), [rightPanelTabs]);
     const rightTabSelection = React.useMemo(() => resolveRightSidebarTabSelection<ProjectRightTabId>({
-        activeTabId: scopeState?.right.activeTabId,
-        selectedDestination: scopeState?.right.selectedDestination,
+        activeTabId: scopeState.activeTabId,
+        selectedDestination: scopeState.selectedDestination,
         tabs: rightPanelTabs,
         projectionPhase: pluginProjection.phase,
     }), [
         pluginProjection.phase,
         rightPanelTabs,
-        scopeState?.right.activeTabId,
-        scopeState?.right.selectedDestination,
+        scopeState.activeTabId,
+        scopeState.selectedDestination,
     ]);
     const activeTab = rightTabSelection.kind === 'available'
         ? rightTabSelection.tab.id
@@ -197,8 +211,8 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         && rightTabSelection.tab.owner === 'plugin'
         ? rightTabSelection.tab.placement
         : null;
-    const activeInstanceKey = scopeState?.right.selectedDestination?.kind === 'plugin'
-        ? scopeState.right.selectedDestination.instanceKey
+    const activeInstanceKey = scopeState.selectedDestination?.kind === 'plugin'
+        ? scopeState.selectedDestination.instanceKey
         : undefined;
     const accountLifetime = pluginProjection.accountLifetime;
     const [paneLaunchStore] = React.useState(createPluginSurfacePaneLaunchStore);
@@ -260,6 +274,7 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     }, [pane, paneLaunchStore]);
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
     const fallbackNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
+        projection: pluginProjection.pluginUiProjection,
         placements: pluginProjection.pluginUiProjection
             ? selectPluginDestinationSurfacePlacements(pluginProjection.pluginUiProjection)
             : [],
@@ -267,6 +282,7 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         accountLifetime,
         scopedLaunchFacts,
         runtimeAdmission,
+        policyContext: projectContext.policyContext,
     });
     const navigationBinding = targetNavigationBinding ?? fallbackNavigationBinding;
     const sidebarOwner = React.useMemo(() => ({
@@ -278,9 +294,18 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const pluginBinding = React.useMemo<BoundPluginSurfaceBinding>(() => ({ openSurface }), [openSurface]);
 
     return {
-        pane, workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
+        pane, catalog, scopeId: props.scopeId, projectId: projectContext.target?.checkout?.id, projectContext, workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
         activePaneLaunch, pluginBinding, selectTab, setActiveTab, checkoutWorkspace: controller.checkoutWorkspace,
+    };
+}
+
+/** Standalone pane specimens borrow the same admitted registry; mounted Projects lend their catalog owner. */
+function readProjectRightSidebarColumn(model: ReturnType<typeof useProjectRightSidebarModel>): ShellColumnActionOwner {
+    return model.catalog?.readColumn('side') ?? {
+        present: true, visible: model.pane.scopeState.isOpen === true, available: true,
+        tabs: model.rightPanelTabs.map(tab => tab.id), selectTab: model.selectTab,
+        setVisible: visible => { if (visible) model.pane.openRight(); else model.pane.closeRight(); },
     };
 }
 
@@ -297,7 +322,19 @@ export function ProjectRightSidebarProvider(props: React.PropsWithChildren<Proje
 export function ProjectRightSidebarRail(): React.ReactElement | null {
     const model = React.useContext(ProjectRightSidebarContext);
     const hiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
+    const runningServices = useLocalServiceInventoryHasRunningServices({
+        serverId: model?.workspaceScope.serverId ?? '', machineId: model?.workspaceScope.machineId ?? null, enabled: false,
+    });
+    const contentFacts = useRightSidebarContentFacts({ scopeId: model?.scopeId ?? '', runningServices });
+    const executeNavigation = useMountedScopeActionCommand(model?.pluginProjection.accountLifetime?.scope ?? null);
     if (!model) return null;
+    const readSide = (): ShellColumnActionOwner => {
+        const owner = readProjectRightSidebarColumn(model);
+        return { ...owner, selectTab: id => {
+            if (hiddenByDetails) model.pane.closeDetails();
+            owner.selectTab?.(id);
+        } };
+    };
     return (
         <RightSidebarActionRail
             surfaceId="workspaceRail"
@@ -307,11 +344,31 @@ export function ProjectRightSidebarRail(): React.ReactElement | null {
                 id: tab.id,
                 label: getRightSidebarTabLabel(tab),
                 icon: tab.icon,
+                group: tab.owner === 'builtin' ? tab.railGroup : 'plugins',
+                defaultPlacement: tab.defaultPlacement ?? (tab.owner === 'plugin' ? 'overflow' : undefined),
+                allowedPlacements: tab.allowedPlacements,
+                pluginCount: tab.owner === 'plugin' ? { tab, runtime: {
+                    pluginUiProjection: model.pluginProjection.pluginUiProjection,
+                    machineId: model.pluginProjection.machineId, serverId: model.pluginProjection.serverId,
+                    accountLifetime: model.pluginProjection.accountLifetime,
+                    interactionEnabled: model.pluginProjection.phase === 'current' && model.pluginProjection.interactionEnabled === true,
+                }, projectId: model.projectId, ...(tab.placement.binding.targetKind === 'project' && model.projectContext.target
+                    ? { target: model.projectContext.target } : {}),
+                    mountInstanceKey: model.activeTab === tab.id ? model.activeInstanceKey : undefined,
+                    launchInput: model.activeTab === tab.id && tab.placement.binding.targetKind !== 'app' ? model.activePaneLaunch?.input : undefined,
+                } : undefined,
+                hasContent: !hiddenByDetails && model.pane.scopeState.isOpen === true && model.activeTab === tab.id
+                    ? true : tab.owner === 'builtin' ? tab.readContent?.(contentFacts) : null,
                 badge: tab.id === 'git' ? <ProjectGitActionRailBadge scope={model.workspaceScope} /> : undefined,
+                renderBadgeSignal: tab.id === 'git' ? (renderSignal: RailBadgeSignalRenderer) => <ProjectGitActionRailBadge scope={model.workspaceScope} renderSignal={renderSignal} /> : undefined,
                 tooltipContent: tab.id === 'git' ? <ProjectGitActionRailTooltip scope={model.workspaceScope} /> : undefined,
-                active: !hiddenByDetails && model.pane.scopeState?.right.isOpen === true && model.activeTab === tab.id,
+                active: !hiddenByDetails && model.pane.scopeState.isOpen === true && model.activeTab === tab.id,
                 disabled: Boolean(tab.disabledReason),
-                onPress: () => toggleRightSidebarTab(model.pane, tab.id, model.activeTab, model.selectTab, hiddenByDetails),
+                onPress: () => {
+                    const visible = Boolean(hiddenByDetails) || model.pane.scopeState.isOpen !== true || model.activeTab !== tab.id;
+                    void executeNavigation('shell.column.set', { column: 'side', visible, ...(visible ? { tab: tab.id } : {}) },
+                        { kind: 'shell.column', column: 'side', read: readSide });
+                },
             }))}
         />
     );
@@ -355,12 +412,15 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
     model: ReturnType<typeof useProjectRightSidebarModel>;
 }>): React.ReactElement {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const insets = useChromeSafeAreaInsets();
     const hasActionRail = usePaneActionRail();
+    const executeNavigation = useMountedScopeActionCommand(props.model.pluginProjection.accountLifetime?.scope ?? null);
     const {
         workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
-        activePaneLaunch, pluginBinding, selectTab, setActiveTab, checkoutWorkspace,
+        activePaneLaunch, pluginBinding, setActiveTab, checkoutWorkspace,
     } = props.model;
     const {
         openFileInDetails,
@@ -378,13 +438,14 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
     });
     return (
         <PaneHeaderSlotProvider>
-        <View testID="project-right-panel-root" style={styles.container}>
-            {!hasActionRail ? <View style={[styles.header, { paddingTop: 10 + insets.top }]}>
+        <View testID="project-right-panel-root" style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
+            {!hasActionRail ? <View style={[styles.header, { paddingTop: 10 + insets.top, backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}>
                 <View style={styles.tabBarContainer}>
                     <RightSidebarIconTabBar
                         tabs={launcherTabs}
                         activeTabId={activeTab ?? ''}
-                        onSelectTab={selectTab}
+                        onSelectTab={id => { void executeNavigation('shell.column.set', { column: 'side', visible: true, tab: id },
+                            { kind: 'shell.column', column: 'side', read: () => readProjectRightSidebarColumn(props.model) }); }}
                         testIDPrefix="project-rightpanel-tab"
                     />
                 </View>
@@ -395,7 +456,6 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                         accessibilityLabel={t('common.close')}
                         variant="plain"
                         size={36}
-                        minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
                         iconName="x"
                         iconSize={16}
                     />
@@ -411,7 +471,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
             {/* The page's line spans only its own column, and a phone pane covers it: the pane says it under its header too. */}
             <CheckoutReachabilityLine scope={workspaceScope} testID="project-rightpanel-reachability" />
             <View style={styles.body}>
-                <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : 'pane'}>
+                <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : 'pane'}><SidePaneBodyProvider>
                 {rightTabSelection.kind === 'unresolved' ? (
                     <PaneLoadingFallback />
                 ) : rightTabSelection.kind === 'unavailable' ? (
@@ -481,7 +541,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <ProjectTerminalSurface scopeId={props.scopeId} workspaceRefId={props.workspaceRef.id}
                                     serverId={props.workspaceRef.serverId} machineId={props.workspaceRef.machineId}
-                                    rootPath={props.activeRootPath} workspace={checkoutWorkspace} />
+                                    rootPath={props.activeRootPath} workspace={checkoutWorkspace} presentation="right" />
                             </React.Suspense>
                         </RetainedPanelSurface>
                     ) : null}
@@ -525,7 +585,9 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                                         placement={tab.placement}
                                         machineId={pluginProjection.machineId}
                                         serverId={pluginProjection.serverId}
-                                        projectId={props.workspaceRef.id}
+                                        projectId={props.model.projectContext.target?.checkout?.id}
+                                        projectContext={props.model.projectContext}
+                                        policyContext={props.model.projectContext.policyContext}
                                         pluginUiProjection={pluginProjection.pluginUiProjection}
                                         projectionInteractionEnabled={pluginProjection.phase === 'current'
                                             && pluginProjection.interactionEnabled === true}
@@ -540,7 +602,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                         ))}
                     </View>
                 )}
-                </SurfaceStateSizeProvider>
+                </SidePaneBodyProvider></SurfaceStateSizeProvider>
             </View>
         </View>
         </PaneHeaderSlotProvider>

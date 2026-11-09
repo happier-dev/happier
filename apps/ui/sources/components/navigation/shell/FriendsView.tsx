@@ -1,7 +1,5 @@
 import * as React from 'react';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { View, ScrollView, Pressable } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
 import {
     useAcceptedFriends,
     useAllSessions,
@@ -14,105 +12,35 @@ import {
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { t } from '@/text';
-import { trackFriendsProfileView, trackFriendsSearch } from '@/track';
+import { trackFriendsProfileView } from '@/track';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
-import { Typography } from '@/constants/Typography';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
-import { useIsTablet } from '@/utils/platform/responsive';
-import { Header } from '@/components/navigation/Header';
-import { Image } from 'expo-image';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { Text } from '@/components/ui/text/Text';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { Icon } from '@/components/ui/icons/Icon';
+import { useFriendsAddAction } from '@/hooks/friends/useFriendsAddAction';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { TeamPeopleSections } from '@/components/settings/teams/members/TeamPeopleSections';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
-const styles = StyleSheet.create((theme) => ({
-    container: {
-        flex: 1,
-        backgroundColor: theme.colors.background.canvas,
-    },
-    scrollContent: {
-        alignSelf: 'center',
-        width: '100%',
-        // Lets the loading/empty body fill the viewport so it keeps the centered
-        // composition it had while it was rendered outside the scroll container.
-        flexGrow: 1,
-    },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: theme.space.s24,
-    },
-    emptyIcon: {
-        marginBottom: theme.space.s16,
-    },
-    emptyTitle: {
-        ...Typography.variant('title'),
-        color: theme.colors.text.primary,
-        marginBottom: theme.space.s8,
-        textAlign: 'center',
-    },
-    emptyDescription: {
-        ...Typography.variant('reading'),
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-    },
-}));
-
-interface FriendsViewProps {}
-
-// Header components for tablet mode only (phone mode header is in MainView)
-function HeaderTitleTablet() {
-    const { theme } = useUnistyles();
-    return (
-        <Text style={{
-            ...Typography.variant('heading'),
-            color: theme.colors.chrome.header.foreground,
-        }}>
-            {t('tabs.friends')}
-        </Text>
-    );
-}
-
-function HeaderRightTablet() {
-    const router = useRouter();
-    const { theme } = useUnistyles();
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
-
-    if (!friendsIdentityReady) {
-        return <View style={{ width: 32, height: 32 }} />;
-    }
-
-    return (
-        <Pressable
-            onPress={() => {
-                trackFriendsSearch();
-                router.push('/friends/search');
-            }}
-            hitSlop={15}
-            style={{
-                width: 32,
-                height: 32,
-                alignItems: 'center',
-                justifyContent: 'center',
-            }}
-        >
-            <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
-        </Pressable>
-    );
-}
-
-export const FriendsView = React.memo(({}: FriendsViewProps) => {
+/**
+ * People: the friends and teammates you work and share with, on one page (owner ruling Q6).
+ * Friends come from the friends store and its identity gate; teammates come from the Teams
+ * directory and roster owners, whose Members pages keep roles, encryption and membership changes.
+ * The page header owns the title and Add friend; a host that already draws both in its own bar (the
+ * phone tab shell) passes `header="none"`.
+ */
+export const FriendsView = React.memo(function FriendsView(props: Readonly<{ header?: 'page' | 'none' }>) {
     const router = useRouter();
     const navigateToSession = useNavigateToSession();
     const friends = useAcceptedFriends();
@@ -121,174 +49,116 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
     const feedItems = useFeedItems();
     const feedLoaded = useFeedLoaded();
     const friendsLoaded = useFriendsLoaded();
-    const { theme } = useUnistyles();
-    const materialColor = useHappierMaterialColorResolver();
-    const backgroundColor = materialColor(theme.colors.background.canvas, 'transparent');
-    const isTablet = useIsTablet();
-    // Read at render time so the user's content-width preference keeps applying
-    // here; a module-scope stylesheet would freeze it at the first evaluation.
-    const contentMaxWidth = useLayoutMaxWidth();
-    const scrollContentStyle = React.useMemo(
-        () => [styles.scrollContent, { maxWidth: contentMaxWidth }],
-        [contentMaxWidth],
-    );
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    const friendsIdentityReady = useFriendsIdentityReadiness().isReady;
+    const { openSearch } = useFriendsAddAction();
     const myId = syncStorage((state) => state.profile.id);
     const sessions = useAllSessions();
+    const isSessionVisible = useSessionRecordingVisibility();
 
     const sharedSessions = React.useMemo(() => {
         if (!myId) return [];
-        return sessions.filter((s) => s.owner && s.owner !== myId);
-    }, [sessions, myId]);
+        return sessions.filter((s) => s.owner && s.owner !== myId
+            && isSessionVisible({ sessionId: s.id, serverId: s.serverId }));
+    }, [sessions, myId, isSessionVisible]);
 
-    const isLoading = !feedLoaded || !friendsLoaded;
-    const isEmpty = !isLoading &&
-        friendRequests.length === 0 &&
-        requestedFriends.length === 0 &&
-        friends.length === 0 &&
-        sharedSessions.length === 0 &&
-        feedItems.length === 0;
+    const openProfile = React.useCallback((id: string) => {
+        trackFriendsProfileView();
+        router.push(`/user/${id}`);
+    }, [router]);
 
-    if (!friendsIdentityReady) {
-        return (
-            <View style={[styles.container, { backgroundColor }]}>
-                {isTablet && (
-                    <View style={{ backgroundColor }}>
-                        <Header
-                            title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
-                            headerLeft={() => null}
-                            headerShadowVisible={false}
-                            headerTransparent={true}
-                        />
-                    </View>
-                )}
-                <RequireFriendsIdentityForFriends>
-                    <View />
-                </RequireFriendsIdentityForFriends>
-            </View>
-        );
-    }
-
-    // `isLoading` and `isEmpty` are transient — friends activity flips between
-    // them while the surface is open (a request arrives, the last item is
-    // cleared). They may only change what renders inside the scroll container,
-    // never whether it is mounted, so the ScrollView keeps identity and offset.
-    const body: 'loading' | 'empty' | 'content' = isLoading
-        ? 'loading'
-        : isEmpty
-            ? 'empty'
-            : 'content';
+    const phoneBack = usePhoneDestinationBack('people:back');
+    const inheritedBack = useNavigationBackControl();
+    const friendsLoading = !friendsLoaded;
+    const noFriendsYet = friendsLoaded && friends.length === 0 && friendRequests.length === 0 && requestedFriends.length === 0;
 
     return (
-        <View style={[styles.container, { backgroundColor }]}>
-            {isTablet && (
-                <View style={{ backgroundColor }}>
-                    <Header
-                        title={<HeaderTitleTablet />}
-                        headerRight={() => <HeaderRightTablet />}
-                        headerLeft={() => null}
-                        headerShadowVisible={false}
-                        headerTransparent={true}
+        <ItemList testID="people-page">
+            {props.header !== 'none' ? (
+                <NavigationBackChromeProvider control={phoneBack ?? inheritedBack}>
+                    <PageHeader
+                        title={t('tabs.friends')}
+                        description={t('friends.peopleDescription')}
+                        primaryAction={friendsIdentityReady ? {
+                            title: t('friends.addFriend'),
+                            icon: 'user-plus',
+                            onPress: openSearch,
+                            testID: 'friends-add-friend',
+                        } : undefined}
                     />
-                </View>
+                </NavigationBackChromeProvider>
+            ) : null}
+            <RecoveryKeyReminderBanner />
+
+            {!friendsIdentityReady ? (
+                <ItemGroup title={t('friends.title')}>
+                    <RequireFriendsIdentityForFriends>
+                        <View />
+                    </RequireFriendsIdentityForFriends>
+                </ItemGroup>
+            ) : (
+                <>
+                    {friendRequests.length > 0 && (
+                        <ItemGroup title={t('friends.pendingRequests')}>
+                            {friendRequests.map((friend) => (
+                                <UserCard key={friend.id} user={friend} onPress={() => openProfile(friend.id)} />
+                            ))}
+                        </ItemGroup>
+                    )}
+
+                    <ItemGroup title={t('friends.title')}>
+                        {friendsLoading ? (
+                            <SurfaceStateCard testID="people-friends-loading" kind="loading" size="line" title={t('common.loading')} />
+                        ) : noFriendsYet ? (
+                            <EmptyState
+                                testID="people-friends-empty"
+                                layout="line"
+                                title={t('friends.emptyDescription')}
+                                primaryAction={{ label: t('friends.addFriend'), onPress: openSearch }}
+                            />
+                        ) : friends.map((friend) => (
+                            <UserCard key={friend.id} user={friend} onPress={() => openProfile(friend.id)} />
+                        ))}
+                    </ItemGroup>
+
+                    {requestedFriends.length > 0 && (
+                        <ItemGroup title={t('friends.requestPending')}>
+                            {requestedFriends.map((friend) => (
+                                <UserCard key={friend.id} user={friend} onPress={() => openProfile(friend.id)} />
+                            ))}
+                        </ItemGroup>
+                    )}
+                </>
             )}
-            <ScrollView contentContainerStyle={scrollContentStyle}>
-                <RecoveryKeyReminderBanner />
 
-                {body === 'loading' && (
-                    <View style={styles.emptyContainer}>
-                        <ActivitySpinner size="large" color={theme.colors.text.secondary} />
-                    </View>
-                )}
+            <TeamPeopleSections />
 
-                {body === 'empty' && (
-                    <View style={styles.emptyContainer}>
-                        <Image
-                            source={require('@/assets/images/brutalist/Brutalism 10.png')}
-                            contentFit="contain"
-                            style={[{ width: 64, height: 64 }, styles.emptyIcon]}
-                            tintColor={theme.colors.text.secondary}
-                        />
-                        <Text style={styles.emptyTitle}>{t('friends.emptyTitle')}</Text>
-                        <Text style={styles.emptyDescription}>{t('friends.emptyDescription')}</Text>
-                    </View>
-                )}
-
-                {body === 'content' && friendRequests.length > 0 && (
-                    <ItemGroup title={t('friends.pendingRequests')}>
-                        {friendRequests.map((friend) => (
-                            <UserCard
-                                key={friend.id}
-                                user={friend}
-                                onPress={() => {
-                                    trackFriendsProfileView();
-                                    router.push(`/user/${friend.id}`);
-                                }}
+            {sharedSessions.length > 0 && (
+                <ItemGroup title={t('friends.sharedSessions')}>
+                    {sharedSessions.map((session) => {
+                        const title = getSessionName(session, session.serverId);
+                        // A Session row may predate its Home binding; the id alone still
+                        // identifies it, and a bound one keeps the Home-qualified key.
+                        const address = normalizeSessionAddress(session.serverId, session.id);
+                        const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
+                        return (
+                            <Item
+                                key={address ? sessionAddressKey(address) : session.id}
+                                title={title}
+                                subtitle={subtitle}
+                                onPress={() => void navigateToSession(session.id, { serverId: session.serverId })}
                             />
-                        ))}
-                    </ItemGroup>
-                )}
+                        );
+                    })}
+                </ItemGroup>
+            )}
 
-                {body === 'content' && requestedFriends.length > 0 && (
-                    <ItemGroup title={t('friends.requestPending')}>
-                        {requestedFriends.map((friend) => (
-                            <UserCard
-                                key={friend.id}
-                                user={friend}
-                                onPress={() => {
-                                    trackFriendsProfileView();
-                                    router.push(`/user/${friend.id}`);
-                                }}
-                            />
-                        ))}
-                    </ItemGroup>
-                )}
-
-                {body === 'content' && sharedSessions.length > 0 && (
-                    <ItemGroup title={t('friends.sharedSessions')}>
-                        {sharedSessions.map((session) => {
-                            const title = getSessionName(session);
-                            // A Session row may predate its Home binding; the id alone still
-                            // identifies it, and a bound one keeps the Home-qualified key.
-                            const address = normalizeSessionAddress(session.serverId, session.id);
-                            const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
-                            return (
-                                <Item
-                                    key={address ? sessionAddressKey(address) : session.id}
-                                    title={title}
-                                    subtitle={subtitle}
-                                    onPress={() => void navigateToSession(session.id, { serverId: session.serverId })}
-                                />
-                            );
-                        })}
-                    </ItemGroup>
-                )}
-
-                {body === 'content' && feedItems.length > 0 && (
-                    <ItemGroup title={t('friends.activity')}>
-                        {feedItems.map((item) => (
-                            <FeedItemCard key={item.id} item={item} />
-                        ))}
-                    </ItemGroup>
-                )}
-
-                {body === 'content' && friends.length > 0 && (
-                    <ItemGroup title={t('friends.myFriends')}>
-                        {friends.map((friend) => (
-                            <UserCard
-                                key={friend.id}
-                                user={friend}
-                                onPress={() => {
-                                    trackFriendsProfileView();
-                                    router.push(`/user/${friend.id}`);
-                                }}
-                            />
-                        ))}
-                    </ItemGroup>
-                )}
-            </ScrollView>
-        </View>
+            {feedLoaded && feedItems.length > 0 && (
+                <ItemGroup title={t('friends.activity')}>
+                    {feedItems.map((item) => (
+                        <FeedItemCard key={item.id} item={item} />
+                    ))}
+                </ItemGroup>
+            )}
+        </ItemList>
     );
 });

@@ -46,8 +46,11 @@ export function resolveFloatingTabBarSlotCount(input: Readonly<{
     windowWidth: number;
     maxWidth: number;
     tabMinWidth: number;
+    /** A trailing accessory keeps its square; its centring mirror gives way when the bar needs the room. */
+    accessorySize?: number;
 }>): number {
-    const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth) - PILL_PADDING_HORIZONTAL * 2;
+    const accessory = input.accessorySize === undefined ? 0 : input.accessorySize + ACCESSORY_GAP;
+    const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth) - accessory - PILL_PADDING_HORIZONTAL * 2;
     return input.tabMinWidth > 0 ? Math.max(0, Math.floor(room / input.tabMinWidth)) : 0;
 }
 
@@ -103,8 +106,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     // Only the mirror gives way when a labelled bar needs the room; the accessory keeps its square.
+    // Its shrink weight far outweighs the bar cell's, so the mirror gives all its room before the bar
+    // narrows (and, with more items than fit, scrolls).
     accessoryMirror: {
-        flexShrink: 1,
+        flexShrink: 1000,
     },
     // The accessory's square footprint, mirrored on the leading edge so the bar stays centred on
     // the SCREEN instead of in the space the accessory leaves over. Both are as wide as the bar is
@@ -195,7 +200,8 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
                 <View style={styles.accessoryRow}>
                     <View pointerEvents="none" style={[accessoryFootprint, styles.accessoryMirror]} />
                     <View style={styles.accessoryRowBar} onLayout={handleBarCellLayout}>
-                        {bar}
+                        {/* Bounded by its cell, so a bar of more items than fit scrolls instead of spilling past the edges. */}
+                        <View style={styles.pillBounds}>{bar}</View>
                     </View>
                     <View style={accessoryFootprint}>
                         {props.trailingAccessory}

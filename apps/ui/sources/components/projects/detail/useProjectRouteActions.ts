@@ -4,11 +4,12 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 import { AppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { projectPageSelectionId, resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
+import type { ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { createBrowserLaunchpadDetailsTab } from '@/components/browser/surfaces';
-import { buildProjectTerminalDetailsInstanceId, openProjectTerminalDetailsTab } from './openProjectTerminalDetailsTab';
 import { buildProjectRouteHref, readProjectSelectedRouteResource, type ProjectRouteSegment, type ProjectDetailsSourceSurface } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
+import { usePersistProjectLastMobileSurface } from '@/sync/domains/state/storage';
 
 export function useProjectRouteActions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -20,14 +21,20 @@ export function useProjectRouteActions(params: Readonly<{
 }>) {
     const paneContext = React.useContext(AppPaneContext);
     const routerRef = useProjectRouteRouterRef();
+    const persistPage = usePersistProjectLastMobileSurface();
     const routeParams = useLocalSearchParams<Record<string, string | string[]>>();
     const pathname = usePathname();
-    const page = resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
+    const currentRoute = React.useMemo(() => resolveProjectCockpitRouteFromPathname(pathname), [pathname]);
+    const page = currentRoute?.page ?? 'overview';
+    const selection = currentRoute?.selection;
     const buildHref = React.useCallback((input?: Readonly<{
         segment?: ProjectRouteSegment;
+        selection?: ProjectPageSelection;
         showWorktrees?: boolean;
         sourceSurface?: ProjectDetailsSourceSurface | null;
         workspaceRef?: WorkspaceRefV1;
+        activeRootPath?: string;
+        activeWorktreeId?: string | null;
     }>) => {
         const workspaceRef = input?.workspaceRef ?? params.workspaceRef;
         const details = params.pane ? paneContext?.getSnapshot().state.scopes[params.pane.scopeId]?.details : null;
@@ -35,40 +42,43 @@ export function useProjectRouteActions(params: Readonly<{
             workspaceRefId: workspaceRef.id,
             serverId: workspaceRef.serverId,
             segment: input?.segment ?? page,
+            selection: input?.selection ?? (input?.segment ? undefined : selection),
             routeParams,
-            activeRootPath: input?.workspaceRef ? workspaceRef.rootPath : params.activeRootPath,
+            activeRootPath: input?.activeRootPath ?? (input?.workspaceRef ? workspaceRef.rootPath : params.activeRootPath),
             defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: input?.workspaceRef ? null : params.activeWorktreeId,
+            activeWorktreeId: input?.activeWorktreeId !== undefined ? input.activeWorktreeId : input?.workspaceRef ? null : params.activeWorktreeId,
             showWorktrees: input?.showWorktrees ?? params.showWorktrees,
             sourceSurface: input?.sourceSurface ?? params.sourceSurface,
             initialResource: params.pane ? readProjectSelectedRouteResource(details ? buildDetailsWorkspaceStateView(details) : null) ?? null : undefined,
         }) : '/projects';
-    }, [page, paneContext, params.activeRootPath, params.activeWorktreeId, params.pane?.scopeId, params.showWorktrees, params.sourceSurface, params.workspaceRef, routeParams]);
-    const navigateToSegment = React.useCallback((input: Readonly<{
+    }, [page, selection, paneContext, params.activeRootPath, params.activeWorktreeId, params.pane?.scopeId, params.showWorktrees, params.sourceSurface, params.workspaceRef, routeParams]);
+    const navigateToSegment = React.useCallback(async (input: Readonly<{
         segment?: ProjectRouteSegment;
+        selection?: ProjectPageSelection;
         showWorktrees?: boolean;
         method?: 'push' | 'replace';
         sourceSurface?: ProjectDetailsSourceSurface | null;
         workspaceRef?: WorkspaceRefV1;
+        activeRootPath?: string;
+        activeWorktreeId?: string | null;
     }>) => {
-        if (!params.workspaceRef) return;
-        routerRef.current[input.method ?? 'push'](buildHref(input));
-    }, [buildHref, params.workspaceRef, routerRef]);
+        const workspaceRef = params.workspaceRef;
+        if (!workspaceRef) return false;
+        const accepted = await routerRef.current[input.method ?? 'push'](buildHref(input));
+        const selected = input.selection ?? (input.segment ? { kind: 'builtin' as const, page: input.segment } : null);
+        if (accepted && selected) persistPage(input.workspaceRef?.id ?? workspaceRef.id, projectPageSelectionId(selected),
+            input.workspaceRef?.serverId ?? workspaceRef.serverId);
+        return accepted;
+    }, [buildHref, params.workspaceRef, persistPage, routerRef]);
     const replaceOverviewVisibility = React.useCallback((input: Readonly<{ segment?: ProjectRouteSegment; visible: boolean }>) => {
         navigateToSegment({ segment: input.visible ? 'overview' : input.segment ?? page, showWorktrees: input.visible, method: 'replace' });
     }, [navigateToSegment, page]);
     const openWorktreesInDetails = React.useCallback((method: 'push' | 'replace' = 'push') => {
         navigateToSegment({ segment: 'overview', showWorktrees: true, method });
     }, [navigateToSegment]);
-    const openTerminal = React.useCallback((input?: Readonly<{ segment?: ProjectRouteSegment; exitOverview?: boolean }>) => {
-        if (!params.workspaceRef || !params.pane) return;
-        if (input?.exitOverview && params.showWorktrees) navigateToSegment({ segment: input.segment ?? page, showWorktrees: false, method: 'replace' });
-        openProjectTerminalDetailsTab({
-            openDetailsTab: params.pane.openDetailsTab,
-            cwd: params.activeRootPath,
-            terminalInstanceId: buildProjectTerminalDetailsInstanceId(params.workspaceRef.id),
-        });
-    }, [navigateToSegment, page, params.activeRootPath, params.pane, params.showWorktrees, params.workspaceRef]);
+    const openTerminal = React.useCallback((input?: Readonly<{ exitOverview?: boolean }>) =>
+        navigateToSegment({ segment: 'terminal', ...(input?.exitOverview ? { showWorktrees: false } : {}) }),
+    [navigateToSegment]);
     const openBrowser = React.useCallback(() => {
         params.pane?.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
     }, [params.pane]);

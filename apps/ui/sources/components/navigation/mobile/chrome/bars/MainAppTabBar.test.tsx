@@ -16,7 +16,9 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import '@/sync/syncEngine';
-import { AccountProfileSchema, FeaturesResponseSchema, UserProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const tabBarProfile = AccountProfileSchema.parse({ id: 'tabbar-account', username: 'tabbar-viewer' });
@@ -45,9 +47,13 @@ const badgeSettingsState = vi.hoisted(() => ({
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
     .createSocketIoClientBoundary(importOriginal));
+// The phone's width decides what fits on the bar.
+const windowState = vi.hoisted(() => ({ width: 390 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: windowState.width, height: 844, scale: 3, fontScale: 1 }),
+    });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -134,6 +140,7 @@ describe('MainAppTabBar', () => {
         badgeSettingsState.inbox = true;
         badgeSettingsState.sessions = true;
         badgeSettingsState.showLabels = true;
+        windowState.width = 390;
         const artifact = createHomeHubArtifactHttpBoundary('tabbar-account', tabBarProfile);
         connection = await restoreServerAccountForTest({ serverUrl: 'https://tabbar.test', accountId: 'tabbar-account', request: (url, init) => {
             const path = new URL(String(url)).pathname;
@@ -190,6 +197,38 @@ describe('MainAppTabBar', () => {
         expect(tablist.findAllByType('MoreAction' as never)).toHaveLength(1);
         expect(tablist.findAll((node) => node.props.accessibilityRole === 'tab' && typeof node.props.testID === 'string'
             && node.props.testID.includes('more'))).toHaveLength(0);
+    });
+
+    // Owner 11-06: the person puts each destination on the bar or in More; a bar item never moves to
+    // More on its own. When the bar holds more than fits, it scrolls sideways, Sessions fixed.
+    it('keeps every pinned destination on a bar wider than the phone, reachable by swiping it', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+        const pinned = ['search', 'bots', 'friends', 'artifacts'];
+        const pressed: string[] = [];
+        const bar = () => <MainAppTabBar activeTab="sessions" onTabPress={() => {}}
+            trailingAccessory={React.createElement('TrailingAccessory')}
+            destinations={{ tabs: pinned.map(id => ({ id, label: id, icon: 'robot' as const })), onPress: id => { pressed.push(id); } }}
+            more={() => React.createElement('MoreAction')} />;
+        const tracks = (screen: Awaited<ReturnType<typeof renderTabBar>>) =>
+            screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.horizontal === true);
+
+        windowState.width = 360;
+        const narrow = await renderTabBar(bar());
+        for (const id of ['sessions', ...pinned]) expect(narrow.findHostByTestId(`tabbar-tab-${id}`), id).not.toBeNull();
+        expect(tracks(narrow)).toHaveLength(1);
+        // Sessions stays put; the destinations and More scroll with the other tabs.
+        expect(tracks(narrow)[0]!.findAll((node) => node.props.testID === 'tabbar-tab-sessions')).toHaveLength(0);
+        expect(tracks(narrow)[0]!.findAll((node) => node.props.testID === 'tabbar-tab-bots').length).toBeGreaterThan(0);
+        expect(tracks(narrow)[0]!.findAllByType('MoreAction' as never)).toHaveLength(1);
+        await act(async () => { narrow.findHostByTestId('tabbar-tab-bots')?.props.onPress(); });
+        expect(pressed).toEqual(['bots']);
+        await narrow.unmount();
+
+        windowState.width = 800;
+        const wide = await renderTabBar(bar());
+        for (const id of ['sessions', ...pinned]) expect(wide.findHostByTestId(`tabbar-tab-${id}`), id).not.toBeNull();
+        expect(tracks(wide)).toHaveLength(0);
+        await wide.unmount();
     });
 
     it('exposes localized tab semantics and selected state when visual labels are hidden', async () => {
@@ -288,7 +327,8 @@ describe('MainAppTabBar', () => {
         const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const tabIds = Array.from(new Set(
-            tree.findAll((node) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('tabbar-tab-'))
+            tree.findAll((node) => node.props?.accessibilityRole === 'tab' && typeof node.props?.testID === 'string'
+                && node.props.testID.startsWith('tabbar-tab-'))
                 .map((node) => String(node.props.testID).replace('tabbar-tab-', '')),
         ));
 

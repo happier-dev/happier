@@ -30,6 +30,8 @@ export const BrandWordmark = React.memo(function BrandWordmark(props: BrandWordm
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
                 : require('@/assets/images/logotype-dark.png')}
             contentFit="contain"
+            // The drawn mark starts on the box's edge, level with the copy under it.
+            contentPosition="left"
             style={[styles.image, { height, width }]}
         />
     );

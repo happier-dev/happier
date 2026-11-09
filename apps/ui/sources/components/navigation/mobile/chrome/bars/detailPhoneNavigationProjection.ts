@@ -20,10 +20,14 @@ export function resolveDetailPhonePlacement<T extends PhonePlacementItem>(
         bottom: topMode ? pinned.filter(item => item.navigation.kind === 'companion') : pinned };
 }
 
-/** Session alone may give the horizontal axis to its tools rather than holding them in More. */
+/**
+ * One fit rule for every phone bar (owner 11-06): Bar items that do not fit scroll, and nothing moves to
+ * More on its own; only items placed in More wait there. Session's "Always swipe between sessions" alone
+ * holds the excess in More (`'more'`), so the swipe keeps the horizontal axis.
+ */
 export function resolveDetailPhoneBarFit<T extends PhonePlacementItem>(
     placement: ReturnType<typeof resolveDetailPhonePlacement<T>>, slotCount: number | null,
-    overflowBehavior: 'more' | 'scroll' = 'more',
+    overflowBehavior: 'more' | 'scroll' = 'scroll',
     /**
      * Slots the selected tab's name takes beyond its icon: with labels off it still names itself (owner 11-06), so a
      * bar that fits only as icons scrolls instead of clipping that name.

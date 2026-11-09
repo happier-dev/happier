@@ -7,6 +7,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installMachinesSettingsCommonModuleMocks } from './machinesSettingsTestHelpers';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import type { WidgetAreaPresetV1 } from '@happier-dev/protocol/widgets';
 import { recordMachineCollectionVisit } from './collection/machineCollectionVisit';
 import {
@@ -34,6 +35,7 @@ type Group = {
 const routerPushSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const desktopState = vi.hoisted(() => ({ value: false }));
+const routeState = vi.hoisted(() => ({ pathname: '/settings/machines' }));
 type InventorySeed = {
     managedByServerId?: Readonly<Record<string, readonly ManagedMachineV1[]>>;
     managedInventory?: {
@@ -70,7 +72,8 @@ installMachinesSettingsCommonModuleMocks({
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
       router: { push: routerPushSpy, replace: routerReplaceSpy },
-      pathname: '/settings/machines',
+      pathname: () => routeState.pathname,
+      params: () => routeState.pathname.endsWith('/machine-a1') ? { serverId: 'srv_a' } : {},
     }).module;
   },
 });
@@ -84,10 +87,24 @@ vi.mock('@/components/ui/icons/Icon', () => ({
   Icon: 'Icon',
   ICON_SIZE: { xs: 12 },
 }));
-vi.mock('@/components/ui/lists/ItemList', () => ({
-  ItemList: ({ children }: { children?: React.ReactNode }) =>
-    React.createElement('ItemList', null, children),
-}));
+// The page's physical scroller is a boundary here. Like the real ItemList it supplies the page's scroll
+// tracker; its viewport holds the whole page unless a test narrows it.
+const pageViewport = vi.hoisted(() => ({ current: { top: 0, bottom: 1_000_000 } }));
+vi.mock('@/components/ui/lists/ItemList', async () => {
+  const { PluginUiScrollActivityProvider } = await import('@happier-dev/plugin-ui/advanced');
+  const tracker = {
+    onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+    getLayoutRevision: () => 0, subscribe: () => () => {},
+    getWindow: () => pageViewport.current,
+    measureSpan: async () => ({ top: 0 }),
+    scrollToOffset() {},
+  };
+  return {
+    ItemList: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement(PluginUiScrollActivityProvider, { tracker }, React.createElement('ItemList', null, children)),
+  };
+});
+const surfaceRenders = vi.hoisted(() => ({ groups: 0, items: 0 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: ({
     children,
@@ -97,10 +114,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
     children?: React.ReactNode;
     title?: React.ReactNode;
     description?: React.ReactNode;
-  }) => React.createElement('Group', { title, description }, children),
+  }) => { surfaceRenders.groups += 1; return React.createElement('Group', { title, description }, children); },
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: Record<string, unknown>) => React.createElement('Item', props),
+  Item: (props: Record<string, unknown>) => { surfaceRenders.items += 1; return React.createElement('Item', props); },
 }));
 vi.mock('@/components/ui/forms/SelectionTiles', () => ({
   SelectionTiles: (props: Record<string, unknown>) =>
@@ -189,7 +206,7 @@ async function setMachines(
     activeTargetKind: 'group', activeTargetId: 'test-fleet' }), { scope: 'device' });
 }
 
-async function renderPage() {
+async function primeFeatures() {
   for (const [serverId, profileId] of homeProfiles) {
     const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: serverId } } });
     const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
@@ -200,6 +217,10 @@ async function renderPage() {
     const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
   }
+}
+
+async function renderPage() {
+  await primeFeatures();
   const screen = await renderScreen(React.createElement(MachinesSettingsView));
   await waitForHomeGovernance(() => {
     for (const group of selectedGroups.filter(group => group.status !== 'signedOut')) {
@@ -211,7 +232,45 @@ async function renderPage() {
   return screen.tree;
 }
 
-afterEach(() => { standardCleanup(); clearMachineRequestReachabilityForTest(); });
+afterEach(() => { standardCleanup(); clearMachineRequestReachabilityForTest(); routeState.pathname = '/settings/machines'; });
+
+it.each(['index', 'rail'] as const)('holds the first managed answer, then keeps ready rows in a 185-Machine %s while another name is pending', async surface => {
+  const fleet = Array.from({ length: 185 }, (_, index) => ({
+    ...machine(`progressive-${index}`, `Studio ${index}`, `studio-${index}.local`), active: index % 2 === 0,
+  }));
+  fleet[184] = { ...fleet[184]!, active: false, metadata: null, availability: undefined };
+  await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: fleet }]);
+  await primeFeatures();
+  const managed = createDeferred<void>();
+  home.answer(homeProfiles.get('srv_a')!, 'POST /v1/machines/managed/actions/list', {
+    body: { machines: [] }, respondAfter: managed.promise,
+  });
+  const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
+  const screen = await renderScreen(surface === 'index' ? <MachinesSettingsView /> : <MachinesColumn />);
+  try {
+    await flushHookEffects();
+    const rowId = surface === 'index' ? 'machines.index.row.machine:srv_a:progressive-0'
+      : 'settings.machines.row.srv_a.progressive-0';
+    const row = () => screen.tree.findAll(node => node.props.testID === rowId && typeof node.props.onPress === 'function')[0];
+    // R8-4b: the initial enrolled roster cannot decide its ownership groups yet.
+    expect(row()).toBeUndefined();
+    await act(async () => managed.resolve());
+    await waitForHomeGovernance(() => expect(row()).toBeDefined());
+    // Synced roster facts contain no live samples. The online fleet admits one
+    // shared summary batch (e48c310359); pending names add no hydration read.
+    const summaryReads = () => home.requests.filter(request => request.path === '/v1/machines/read-batch');
+    await waitForHomeGovernance(() => expect(summaryReads()).toHaveLength(1));
+    expect(MachineReadBatchRequestV1Schema.parse(summaryReads()[0]!.input).machineIds.sort())
+      .toEqual(fleet.filter(machine => machine.active).map(machine => machine.id).sort());
+    await act(async () => storage.getState().applyMachines([{ ...fleet[0]!, metadataVersion: 2,
+      metadata: { ...fleet[0]!.metadata!, displayName: 'Renamed studio' } }], false, { sourceServerId: 'srv_a' }));
+    expect(row()?.props.accessibilityLabel).toContain('Renamed studio');
+    expect(summaryReads()).toHaveLength(1);
+  } finally {
+    managed.resolve();
+    await screen.unmount();
+  }
+});
 
 it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row when a heartbeat restores canonical reachability', async (surface) => {
   const now = Date.now();
@@ -229,11 +288,12 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   const before = storage.getState().machineListByServerId[scope.serverId];
 
   await act(async () => {
-    storage.getState().applyMachines([{ ...retained, activeAt: now - 20_286 }], false, { sourceServerId: scope.serverId });
+    storage.getState().applyMachineActivityUpdates([{ id: retained.id, active: true, activeAt: now - 20_286 }], { sourceServerId: scope.serverId });
   });
-  // Real heartbeat-only publication retains the semantic roster inputs. The
-  // mounted row must still project the owner's fresh verdict without reopening.
-  expect(storage.getState().machineListByServerId[scope.serverId]).toBe(before);
+  // The heartbeat producer publishes immutable records. The mounted row still
+  // projects the owner's fresh verdict without reopening or mutating its old input.
+  expect(before?.[0]?.activeAt).toBe(now - 80_000);
+  expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.activeAt).toBe(now - 20_286);
   expect(resolveMachineReachability(scope, storage.getState().machines.studio!)).toBe('reachable');
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
   await act(async () => { recordMachineRequestFailed({ ...scope, machineId: retained.id }); });
@@ -241,7 +301,8 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   await act(async () => { recordMachineRequestSucceeded({ ...scope, machineId: retained.id }); });
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
   await act(async () => { withdrawMachinePresenceForScope(scope); });
-  expect(row().props.accessibilityLabel).toContain('common.unknown');
+  // Re-resolving a live Machine reads quiet in place: neither "Unknown" nor a guessed Online/Offline.
+  expect(row().props.accessibilityLabel).not.toMatch(/common\.unknown|settingsOverview\.machineOnline|settingsOverview\.machineOffline/);
   await act(async () => { captureMachinePresenceObservation(scope)([retained.id]); });
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
 });
@@ -281,6 +342,44 @@ it('keeps Collection row owners quiet across unchanged Machine publications and 
     expect(renders).toContain('machine:srv_a:a');
     expect(renders).not.toContain('machine:srv_a:b');
   } finally { spy.mockRestore(); }
+});
+
+it.each(['index', 'rail'] as const)('re-renders no %s content when its retained surface hides or shows, and computes nothing for Session churn while hidden', async surface => {
+  await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+    machine('a', 'Alpha', 'alpha.local'), machine('b', 'Beta', 'beta.local'),
+  ] }]);
+  await primeFeatures();
+  const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
+  const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+  const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  let commits = 0;
+  // One stable content element, as a retained tab keeps its body: only the presentation fact changes.
+  const content = <React.Profiler id="machines" onRender={() => { commits += 1; }}>
+    {surface === 'index' ? <MachinesSettingsView /> : <MachinesColumn />}
+  </React.Profiler>;
+  const surfaceAt = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>{content}</PluginSurfaceFocusEligibilityProvider>;
+  const screen = await renderScreen(surfaceAt(true));
+  await waitForHomeGovernance(() => expect(surface === 'index' ? screen.getTextContent().includes('Beta')
+    : screen.findAll(node => node.props?.title === 'Beta').length > 0).toBe(true));
+  await flushHookEffects();
+  const content0 = surfaceRenders.groups + surfaceRenders.items;
+  await screen.update(surfaceAt(false));
+  await flushHookEffects();
+  await screen.update(surfaceAt(true));
+  await flushHookEffects();
+  // The demand withdraws and returns (the live-demand suite proves it); the page's own rows, groups and dashboard stay as drawn.
+  expect(surfaceRenders.groups + surfaceRenders.items - content0).toBe(0);
+  await screen.update(surfaceAt(false));
+  await flushHookEffects();
+  const hiddenCommits = commits;
+  const serverId = getActiveServerSnapshot().serverId;
+  for (let index = 0; index < 4; index++) {
+    await act(async () => storage.getState().applySessions([createSessionFixture({ id: `churn-${index}`, serverId,
+      active: true, presence: 'online', thinking: true, thinkingAt: Date.now(), seq: 2, lastViewedSessionSeq: 2,
+      metadata: { ...createSessionFixture().metadata!, machineId: 'a' } })]));
+    await flushHookEffects();
+  }
+  expect(commits - hiddenCommits).toBe(0);
 });
 
 function addMenuItemIds(
@@ -337,6 +436,18 @@ describe('All machines (the Settings door index)', () => {
         (node) => node.props?.testID === 'settings.machines.thisComputer',
       ),
     ).toHaveLength(0);
+  });
+
+  it('says why an online machine it cannot read has no figures, where its figures would stand in the table', async () => {
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      machine('machine-a1', 'Machine A1', 'a.local'),
+      { ...machine('machine-l', 'Shared box', 'shared.local'), metadata: null,
+        availability: { kind: 'locked', reason: 'custodian_only' } } as never,
+    ] }]);
+    const tree = await renderPage();
+    const row = tree.findAll(node => node.props?.testID === 'machines.index.row.machine:srv_a:machine-l')[0]!;
+    const texts = row.findAll(node => typeof node.props?.children === 'string').map(node => node.props.children as string);
+    expect(texts).toContain('machine.lockedReason.custodianOnly');
   });
 
   it.each([true, false])('pins the dashboard from the page’s two-Home attention census (needs attention: %s)', async (needsAttention) => {
@@ -416,7 +527,9 @@ describe('All machines (the Settings door index)', () => {
         node.props?.testID === 'machines.index.header' &&
         typeof node.props?.title === 'string',
     )[0]!;
-    expect(header.props.title).toContain('machineAttention.phrases.diskFull');
+    // The page is called Machines; the fleet's state is its purpose line (owner 11-05).
+    expect(header.props.title).toBe('settings.machines');
+    expect(header.props.description).toContain('machineAttention.phrases.diskFull');
     // This file mocks Item, so the row's one action is read from the row it belongs to.
     const row = tree.findAll(
       (node) => node.props?.testID === 'machines.needs-you.srv_a.machine-a1',
@@ -599,6 +712,46 @@ describe('All machines (the Settings door index)', () => {
           node.props?.testID === 'machines.index.row.machine:srv_a:old-3',
       ).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('builds only the table rows near the page viewport for a census-sized fleet', async () => {
+    const fleet = Array.from({ length: 120 }, (_, index) => machine(`census-${index}`, `Census ${index}`, `census-${index}.local`));
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: fleet }]);
+    await primeFeatures();
+    // The page's physical scroller holds one 1000px viewport at the top.
+    pageViewport.current = { top: 0, bottom: 1000 };
+    const screen = await renderScreen(<MachinesSettingsView />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === 'machines.index.row.machine:srv_a:census-0'
+        && typeof node.props?.onPress === 'function').length).toBeGreaterThan(0));
+      await flushHookEffects();
+      const rows = [...new Set(screen.tree.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.startsWith('machines.index.row.machine:srv_a:census-')
+        && typeof node.props?.onPress === 'function').map(node => node.props.testID as string))];
+      // A data-sized table never mounts every row: what is built is bounded by the viewport, not the fleet.
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(fleet.length / 3);
+    } finally {
+      pageViewport.current = { top: 0, bottom: 1_000_000 };
+      await screen.unmount();
+    }
+  });
+
+  it('leaves searching a long fleet to the machine list when that list stands beside the page', async () => {
+    const offline = Array.from({ length: 9 }, (_, index) => ({
+      ...machine(`old-${index}`, `Old ${index}`, `old${index}.local`),
+      active: false,
+      activeAt: 1,
+    }));
+    await setMachines([
+      { serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('machine-a1', 'Machine A1', 'a.local'), ...offline] },
+    ]);
+    const { AllMachinesIndex } = await import('@/components/machines/index/AllMachinesIndex');
+    const { MachinesDoorProvider } = await import('@/components/machines/page/machinesDoor');
+    // The rail door on a wide screen: the list column (with its own search) is the shell column beside the index.
+    const tree = (await renderScreen(<MachinesDoorProvider door="rail"><AllMachinesIndex /></MachinesDoorProvider>)).tree;
+    await flushHookEffects();
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.row.machine:srv_a:machine-a1').length).toBeGreaterThan(0);
+    expect(tree.findAll((node) => node.props?.testID === 'machines.index.search')).toHaveLength(0);
   });
 
   it('opens the canonical add-machine draft from both the browser and desktop collection', async () => {
@@ -889,6 +1042,98 @@ describe('the machine list column in the rail door', () => {
 describe('the presets group in the rail', () => {
   const sectionIds = (tree: Awaited<ReturnType<typeof renderScreen>>['tree']) => tree.findAll((node) => typeof node.props?.testID === 'string'
     && node.props.testID.startsWith('settings.machines.presets.')).map((node) => node.props.testID as string);
+
+  it('admits the active fleet beside an absent selected receipt while the archive is still loading', async () => {
+    const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
+    const { CollectionSkeletonRows } = await import('@/components/ui/lists/collection/CollectionList');
+    const fleet = Array.from({ length: 128 }, (_, index) => machine(`studio-${index}`, `Studio ${index}`, `studio-${index}.local`));
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: fleet }]);
+    routeState.pathname = '/settings/machines/managed/removed-resource';
+    const activeReply = createDeferred<void>();
+    const archiveReply = createDeferred<void>();
+    home.answer(homeProfiles.get('srv_a')!, 'POST /v1/machines/managed/actions/list', {
+      select: input => ({ body: { machines: [] }, respondAfter:
+        input && typeof input === 'object' && 'archived' in input && input.archived ? archiveReply.promise : activeReply.promise }),
+    });
+    const screen = await renderScreen(<MachineCollectionRail />);
+    const row = () => screen.tree.findAll(node => typeof node.type === 'string'
+      && node.props.testID === 'settings.machines.row.srv_a.studio-0')[0];
+    try {
+      await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/managed/actions/list')).toBe(true));
+      // An ordinary roster alone cannot answer whether there are created machines too.
+      expect(row()).toBeUndefined();
+      expect(screen.tree.findAllByType(CollectionSkeletonRows)).toHaveLength(1);
+      await act(async () => activeReply.resolve());
+      await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/managed/actions/list'
+        && request.input && typeof request.input === 'object' && 'archived' in request.input && request.input.archived)).toBe(true));
+      await flushHookEffects();
+      expect(row()).toBeDefined();
+      expect(screen.tree.findAllByType(CollectionSkeletonRows)).toHaveLength(0);
+      const reads = home.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length;
+      const admitted = row();
+      await act(async () => storage.getState().applyMachineActivityUpdates(
+        fleet.map(machine => ({ id: machine.id, active: true, activeAt: Date.now() })), { sourceServerId: 'srv_a' }));
+      await flushHookEffects();
+      expect(row()).toBe(admitted);
+      // Fleet arrivals do not start another active/archive read while the archive is pending.
+      expect(home.requests.filter(request => request.path === '/v1/machines/managed/actions/list')).toHaveLength(reads);
+      await act(async () => pressTestInstanceAsync(row()!));
+      expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/studio-0?serverId=srv_a');
+    } finally {
+      activeReply.resolve();
+      archiveReply.resolve();
+      await screen.unmount();
+    }
+  });
+
+  it('keeps admitted machine, pool and preset controls mounted and selected while a later name hydrates', async () => {
+    const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
+    const named = machine('machine-a1', 'Studio', 'studio.local');
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [{ ...named, metadata: null, availability: undefined }] }]);
+    routeState.pathname = '/settings/machines/machine-a1';
+    poolFeatureState.value = 'enabled';
+    await primeFeatures();
+    const profileId = homeProfiles.get('srv_a')!;
+    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
+      id: 'build', homeId: 'srv_a', revision: 1, name: 'Build recipe', owner: { kind: 'account', accountId: 'account-a' },
+      controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
+      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
+    }] } });
+    home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [{
+      pool: { id: '00000000-0000-4000-8000-000000000001', name: 'Development', description: null,
+        revision: 1, createdAt: 1, updatedAt: 1, members: [] },
+      availability: { state: 'known', connectedCount: 0, enabledCount: 0 },
+    }] } });
+    const screen = await renderScreen(<MachineCollectionRail />);
+    const ids = ['settings.machines.row.srv_a.machine-a1',
+      'settings.machinePools.row.srv_a.00000000-0000-4000-8000-000000000001', 'settings.machines.preset.srv_a.build'];
+    const read = (id: string) => screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0];
+    // Initial hydration still holds the whole first answer.
+    expect(read(ids[0]!)).toBeUndefined();
+    await act(async () => storage.getState().applyMachines([named], false, { sourceServerId: 'srv_a' }));
+    await waitForHomeGovernance(() => { for (const id of ids) expect(read(id)).toBeDefined(); });
+    const admitted = ids.map(id => read(id));
+    expect(read(ids[0]!)?.props.selected).toBe(true);
+
+    const arriving = { ...machine('machine-b', 'Builder', 'builder.local'), metadata: null, availability: undefined };
+    await act(async () => storage.getState().applyMachines([arriving], false, { sourceServerId: 'srv_a' }));
+    await flushHookEffects();
+    // No admitted row is unmounted to show collection skeletons.
+    for (const [index, id] of ids.entries()) expect(read(id)).toBe(admitted[index]);
+    expect(read(ids[0]!)?.props.selected).toBe(true);
+    for (const id of ids) await act(async () => pressTestInstanceAsync(read(id)!));
+    expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/machine-a1?serverId=srv_a');
+    expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/pools/00000000-0000-4000-8000-000000000001?serverId=srv_a');
+    expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/presets/build?serverId=srv_a');
+
+    await act(async () => storage.getState().applyMachines([
+      { ...machine('machine-b', 'Builder', 'builder.local'), metadataVersion: arriving.metadataVersion + 1 },
+    ], false, { sourceServerId: 'srv_a' }));
+    await waitForHomeGovernance(() => expect(read('settings.machines.row.srv_a.machine-b')?.props.title).toBe('Builder'));
+    expect(read(ids[0]!)).toBe(admitted[0]);
+    expect(read(ids[0]!)?.props.selected).toBe(true);
+    await screen.unmount();
+  });
 
   it('keeps its group and its add control while the list is read again, and only waits for the first answer', async () => {
     const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');

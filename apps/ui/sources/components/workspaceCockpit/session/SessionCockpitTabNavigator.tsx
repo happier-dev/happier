@@ -1,4 +1,5 @@
-import { useSessionCollaborationDestinationAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
+import { DetailNavigationItemsContext, useDetailNavigationItems } from '@/components/appShell/rightSidebar/useDetailNavigationItems';
+import { useSessionCollaborationDestinationEntryAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useSessionBoardFeatureEnabled } from '@/components/sessions/board/useSessionBoardFeatureEnabled';
 import * as React from 'react';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -21,17 +22,19 @@ import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/la
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
 import { PanePresentationProvider, usePanePresentation, type PanePresentation } from '@/components/appShell/panes/panePresentation';
+import { RightSidebarActionsContext, type RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { buildActiveDetailsRouteParams, buildSessionDetailsTabHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useOptionalWorkspaceNavigation, type WorkspacePhoneControls } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useDestinationPathname, useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useSessionViewerPresentingReader } from '@/components/sessions/viewer/SessionViewerDestinationScope';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 
 import {
     isSessionPluginMobileSurface,
     normalizeSessionMobileSurface,
     resolveSessionCockpitLandingSurface,
     resolveSessionCockpitRouteFromPathname,
-    resolveSessionMobileSurfaceIntent,
+    resolveSessionPaneIntentSurface,
     type SessionMobileSurface,
 } from './sessionCockpitState';
 import {
@@ -76,7 +79,7 @@ const SESSION_COCKPIT_TAB_SCREEN_OPTIONS = {
 } as const;
 const WebInertView = View as React.ComponentType<ViewProps & Pick<React.HTMLAttributes<HTMLElement>, 'inert'>>;
 
-type SessionCockpitTabNavigatorProps = Omit<SessionCockpitSurfaceScreenProps, 'surface' | 'openWorkStateRequestKey' | 'onRequestOpenWorkState'> & Readonly<{
+type SessionCockpitTabNavigatorProps = Omit<SessionCockpitSurfaceScreenProps, 'catalog' | 'surface' | 'openWorkStateRequestKey' | 'onRequestOpenWorkState'> & Readonly<{
     initialSurface: SessionMobileSurface;
 }>;
 
@@ -168,7 +171,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
     const readViewerPresenting = useSessionViewerPresentingReader(props.sessionId, sessionServerId);
     const [viewerPresentingAtMount] = React.useState(readViewerPresenting);
     const requestedInitialSurface = resolveSessionCockpitLandingSurface(props.initialSurface, viewerPresentingAtMount);
-    const collaborationAdmitted = useSessionCollaborationDestinationAdmitted(sessionServerId ?? '');
+    const collaborationAdmitted = useSessionCollaborationDestinationEntryAdmitted(sessionServerId ?? '');
     const sessionSharingAvailable = Boolean(sessionServerId) && collaborationAdmitted;
     const boardFeatureEnabled = useSessionBoardFeatureEnabled(sessionServerId);
     const retentionRealm = React.useMemo(() => Object.freeze({
@@ -177,7 +180,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
         accountRealmKey: persistenceAccountRealmKey,
     }), [persistenceAccountRealmKey, props.sessionId, sessionServerId]);
     const boardPluginRuntime = useSessionPluginRuntime({ address: sessionAddress });
-    const appTabInputs = useAppRightSidebarTabInputs();
+    const appTabInputs = useAppRightSidebarTabInputs(sessionServerId);
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: boardPluginRuntime.platform,
         formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
@@ -187,21 +190,15 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
             ? selectPluginRightSidebarTabPlacements(boardPluginRuntime.pluginUiProjection, 'session')
             : []
     ), [boardPluginRuntime.pluginUiProjection]);
+    const detailInput = React.useMemo(() => ({
+        scope: 'session' as const, presentation: 'mobile' as const, ...appTabInputs,
+        sessionSharingAvailable, boardFeatureEnabled, terminalTabAvailable, pluginPlacements, runtimeAdmission,
+    }), [appTabInputs, boardFeatureEnabled, pluginPlacements, runtimeAdmission, sessionSharingAvailable, terminalTabAvailable]);
+    const detailItems = useDetailNavigationItems(detailInput);
     const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
-        ...appTabInputs,
-        sessionSharingAvailable,
-        boardFeatureEnabled,
-        terminalTabAvailable,
-        pluginPlacements,
-        runtimeAdmission,
-    }), [
-        appTabInputs,
-        boardFeatureEnabled,
-        sessionSharingAvailable,
-        pluginPlacements,
-        runtimeAdmission,
-        terminalTabAvailable,
-    ]);
+        tabs: detailItems, terminalTabAvailable,
+    }), [detailItems, terminalTabAvailable]);
+    const detailNavigation = React.useMemo(() => ({ scopeId: props.scopeId, items: detailItems, input: detailInput }), [detailInput, detailItems, props.scopeId]);
     const projectedSurfaces = React.useMemo(() => resolveSessionCockpitMobileNavigatorSurfaces({ catalog }), [catalog]);
     const [retainedPluginSelection, setRetainedPluginSelection] = React.useState<RetainedPluginSurfaceSelection | null>(() => (
         isSessionPluginMobileSurface(requestedInitialSurface) && projectedSurfaces.includes(requestedInitialSurface)
@@ -226,10 +223,15 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
                 : Object.freeze({ ...retentionRealm, surface: requestedInitialSurface })
         ));
     }, [boardPluginRuntime.pluginUiProjection, requestedInitialSurface, retentionRealm]);
-    const surfaces = React.useMemo(() => resolveSessionCockpitMobileNavigatorSurfaces({
-        catalog,
-        retainedPluginSurface,
-    }), [catalog, retainedPluginSurface]);
+    const surfaces = React.useMemo(() => {
+        const projected = resolveSessionCockpitMobileNavigatorSurfaces({ catalog, retainedPluginSurface });
+        // Discovery stays fail-closed through `catalog`; a requested Collaboration
+        // route is screen-only state so its own three-state surface can present
+        // loading or refusal without being normalized to Chat first.
+        return requestedInitialSurface === 'collaboration' && !projected.includes('collaboration')
+            ? [...projected, 'collaboration' as const]
+            : projected;
+    }, [catalog, requestedInitialSurface, retainedPluginSurface]);
     const initialSurface = resolveInitialSurface(cockpit ? requestedInitialSurface : 'chat', surfaces);
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     // Phone Ask (P5 §3.9, D-4): the cockpit is the common parent of the File page and the Chat scene that mounts
@@ -272,7 +274,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
         const surface = resolveSessionCockpitSurfaceFromNavigationState(state);
         if (!surface) return;
         commitNavigatorSurface(surface);
-    }, [commitNavigatorSurface]);
+    }, [cockpit, commitNavigatorSurface]);
     const [openWorkStateRequestKey, setOpenWorkStateRequestKey] = React.useState<number | null>(null);
     const requestOpenWorkState = React.useCallback(() => {
         setOpenWorkStateRequestKey((current) => (current ?? 0) + 1);
@@ -286,6 +288,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
     }, [retentionRealm]);
 
     return (
+        <DetailNavigationItemsContext.Provider value={detailNavigation}>
         <SessionBoardControllerProvider
             sessionId={props.sessionId}
             serverId={sessionServerId}
@@ -308,6 +311,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
                                 <SessionCockpitNavigatorInitialSurfaceBridge
                                     {...tabBarProps}
                                     cockpit={cockpit}
+                                    scopeId={props.scopeId}
                                     readViewerPresenting={readViewerPresenting}
                                     fallbackInitialSurface={isSessionPluginMobileSurface(requestedInitialSurface) ? 'chat' : initialSurface}
                                     requestedInitialSurface={requestedInitialSurface}
@@ -336,6 +340,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
                                                 >
                                                     <SessionCockpitSurfaceScreen
                                                         {...props}
+                                                        catalog={catalog}
                                                         surface={surface}
                                                         openWorkStateRequestKey={surface === 'chat' ? openWorkStateRequestKey : null}
                                                         onRequestOpenWorkState={requestOpenWorkState}
@@ -352,6 +357,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
             </NavigationIndependentTree>
             </PhoneAskSheetProvider>
         </SessionBoardControllerProvider>
+        </DetailNavigationItemsContext.Provider>
     );
 });
 
@@ -421,7 +427,26 @@ export function SessionCockpitPanePresentationBoundary(props: React.PropsWithChi
         props.navigate(target);
         props.commitSurface(target);
     }, [props.catalog, props.commitSurface, props.navigate, props.scopeId, props.serverId, props.sessionId, router]);
-    return <PanePresentationProvider value={props.cockpit ? presentPane : enclosingPresentation}>{props.children}</PanePresentationProvider>;
+    // The phone has no side rail: its scenes are the rail's tabs. A scene that asks the scope's chooser for a
+    // tab (an ended preview's Go to Services) gets this catalog and the same scene switch as presentPane.
+    // The ref is stable and its reads are live, so a consumer sees the tabs on its first render.
+    const enclosingSideActions = React.useContext(RightSidebarActionsContext);
+    const sideTabs = React.useMemo(() => props.catalog.flatMap((entry) => (
+        entry.owner === 'rightSidebar' && entry.tab.owner !== 'plugin' ? [entry.tab.id] : [])), [props.catalog]);
+    const latestSideActions = React.useRef<RightSidebarActions | null>(null);
+    latestSideActions.current = {
+        tabs: sideTabs,
+        selectTab: (tab) => presentPane({ scopeId: props.scopeId, pane: 'right', destination: { kind: 'builtin', id: tab } }),
+    };
+    const cockpitSideActions = React.useMemo<React.MutableRefObject<RightSidebarActions | null>>(() => ({
+        current: {
+            get tabs() { return latestSideActions.current?.tabs ?? []; },
+            selectTab: (tab: string) => latestSideActions.current?.selectTab(tab),
+        },
+    }), []);
+    return <PanePresentationProvider value={props.cockpit ? presentPane : enclosingPresentation}>
+        <RightSidebarActionsContext.Provider value={props.cockpit ? cockpitSideActions : enclosingSideActions}>{props.children}</RightSidebarActionsContext.Provider>
+    </PanePresentationProvider>;
 }
 
 const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
@@ -453,12 +478,14 @@ const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
 
 const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTabBarProps & Readonly<{
     cockpit: boolean;
+    scopeId: string;
     readViewerPresenting: () => boolean;
     fallbackInitialSurface: SessionMobileSurface;
     requestedInitialSurface: SessionMobileSurface;
     paneUrlState?: SessionCockpitSurfaceScreenProps['paneUrlState'];
     terminalTabAvailable: boolean;
 }>) => {
+    const readPaneState = useAppPaneContext(value => value.getReadState);
     const activeSurface = normalizeSessionMobileSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
     const routeSurface = resolveSessionCockpitRouteFromPathname(useDestinationPathname())?.surface;
     const presentsDetails = routeSurface === 'tabs';
@@ -475,7 +502,10 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
             if (wasCockpit) phoneState.current = props.state;
             if (activeSurface !== 'chat') props.navigation.navigate('chat');
         } else if (!wasCockpit) {
-            if (props.readViewerPresenting()) props.navigation.navigate('chat');
+            // Details opened while wide is still the presented destination. Do not hide it
+            // behind an earlier phone selection when the side panes fold into scenes.
+            if (readPaneState().scopes[props.scopeId]?.details.isOpen) props.navigation.navigate('tabs');
+            else if (props.readViewerPresenting()) props.navigation.navigate('chat');
             else if (phoneState.current) {
                 // Catalog admission can change while wide. Keep the current navigator's
                 // inventory and identity, restoring saved routes only where still admitted.
@@ -492,7 +522,7 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
             }
             else props.navigation.navigate(props.requestedInitialSurface);
         }
-    }, [activeSurface, props.cockpit, props.navigation, props.readViewerPresenting, props.requestedInitialSurface, props.state]);
+    }, [activeSurface, props.cockpit, props.navigation, props.readViewerPresenting, props.requestedInitialSurface, props.scopeId, props.state, readPaneState]);
 
     const restoredInitialPluginSurfaceRef = React.useRef<SessionMobileSurface | null>(null);
     const requestedRouteIntent = JSON.stringify([props.requestedInitialSurface,
@@ -500,14 +530,10 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
     const consumedRouteIntentRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!props.cockpit) return;
-        const hasPaneIntent = presentsDetails || Boolean(props.paneUrlState?.details || props.paneUrlState?.rightTabId);
+        const paneIntentSurface = resolveSessionPaneIntentSurface(props.paneUrlState, props.terminalTabAvailable);
+        const hasPaneIntent = presentsDetails || paneIntentSurface !== null;
         // A Details route presents retained/contributed tabs even when its URL still carries a sidebar.
-        const requestedSurface = presentsDetails ? 'tabs' : hasPaneIntent ? resolveSessionMobileSurfaceIntent({
-            routeKind: 'index',
-            detailsTargetPresent: props.paneUrlState?.details !== undefined,
-            activeRightTabId: props.paneUrlState?.details ? null : props.paneUrlState?.rightTabId,
-            terminalTabAvailable: props.terminalTabAvailable,
-        }) : props.requestedInitialSurface;
+        const requestedSurface = presentsDetails ? 'tabs' : paneIntentSurface ?? props.requestedInitialSurface;
         if (consumedRouteIntentRef.current === requestedRouteIntent) return;
         // Consume external route intent once. Native/history Back owns the
         // next transition; an unchanged retained URL must not trap the user.

@@ -1,17 +1,17 @@
 import * as React from 'react';
 
 /**
- * Whether the session bar is currently scrolling its tools sideways.
+ * Whether the phone bar on screen is scrolling its items sideways.
  *
- * The bar owns the decision (its measured width against its tools and the "Always swipe between
- * sessions" setting); the bottom-chrome host only needs the answer, because a scrolling bar owns
- * the horizontal axis and the sideways session swipe must then stay out of its way. One boolean,
+ * The bar owns the decision (its measured width against its Bar items and, for Session, the "Always
+ * swipe between sessions" setting); the live `CockpitTabBar` publishes it for every bar. A scrolling bar
+ * owns the horizontal axis, so the Session band's sideways swipe stays out of its way. One boolean,
  * published by the one bar on screen, read by the one band gesture.
  */
 let scrolls = false;
 const listeners = new Set<() => void>();
 
-export function publishCockpitBarScrolls(next: boolean): void {
+function publishCockpitBarScrolls(next: boolean): void {
     if (scrolls === next) return;
     scrolls = next;
     for (const listener of listeners) listener();
@@ -23,6 +23,15 @@ function subscribe(listener: () => void): () => void {
 }
 
 const read = () => scrolls;
+
+/** The live bar says it scrolls while it does, and hands the axis back when it stops or leaves. */
+export function usePublishCockpitBarScrolls(scrolling: boolean): void {
+    React.useEffect(() => {
+        if (!scrolling) return;
+        publishCockpitBarScrolls(true);
+        return () => publishCockpitBarScrolls(false);
+    }, [scrolling]);
+}
 
 export function useCockpitBarScrolls(): boolean {
     return React.useSyncExternalStore(subscribe, read, read);

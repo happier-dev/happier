@@ -10,6 +10,7 @@ export type SessionMobileSurface =
     | 'board'
     | 'agents'
     | 'collaboration'
+    | 'skills'
     | 'tabs'
     | 'browser'
     | 'services'
@@ -17,7 +18,7 @@ export type SessionMobileSurface =
     | SessionPluginMobileSurface;
 export type SessionLegacyRouteKind = 'index' | 'files' | 'git' | 'details' | 'terminal';
 
-type SessionRightTabId = 'git' | 'files' | 'navigation' | 'agents' | 'collaboration' | 'board' | 'terminal' | 'browser' | 'services' | SessionPluginMobileSurface;
+type SessionRightTabId = 'git' | 'files' | 'navigation' | 'agents' | 'collaboration' | 'skills' | 'board' | 'terminal' | 'browser' | 'services' | SessionPluginMobileSurface;
 type SessionRoutePathQueryValue = string | number | boolean | null | undefined;
 
 type SessionRoutePathOptions = Readonly<{
@@ -42,6 +43,7 @@ export function normalizeSessionMobileSurface(value: string | null | undefined):
         || normalized === 'board'
         || normalized === 'agents'
         || normalized === 'collaboration'
+        || normalized === 'skills'
         || normalized === 'tabs'
         || normalized === 'browser'
         || normalized === 'services'
@@ -127,6 +129,7 @@ export function resolveSessionRightTabIdForSurface(
     if (surface === 'collaboration') {
         return 'collaboration';
     }
+    if (surface === 'skills') return 'skills';
     if (surface === 'board') {
         return 'board';
     }
@@ -191,6 +194,7 @@ export function resolveSessionMobileSurfaceIntent(input: Readonly<{
     if (input.activeRightTabId === 'collaboration') {
         return 'collaboration';
     }
+    if (input.activeRightTabId === 'skills') return 'skills';
     if (input.activeRightTabId === 'board') {
         return 'board';
     }
@@ -230,6 +234,7 @@ export function resolveSessionRoutePathForSurface(
         || surface === 'board'
         || surface === 'agents'
         || surface === 'collaboration'
+        || surface === 'skills'
         || surface === 'browser'
         || surface === 'services'
         || surface.startsWith('plugin:')
@@ -328,8 +333,30 @@ export function shouldRouteSessionCockpitSurfacePressThroughUrl(input: Readonly<
     if (input.surface === 'tabs') return false;
     // A root URL carrying desktop pane intent still needs the phone route
     // projection, even when the selected tab already matches that intent.
-    const path = input.pathname?.split(/[?#]/, 1)[0]?.replace(/\/+$/, '');
-    if (path === `/session/${encodeURIComponent(input.sessionId)}`
+    if (isSessionRootRoutePath(input.pathname, input.sessionId)
         && (input.paneUrlState?.details || input.paneUrlState?.rightTabId || input.paneUrlState?.bottomTabId)) return true;
     return currentRoute.surface !== input.surface;
+}
+
+/** Whether the pathname is the Session's root route (`/session/<id>`), whatever its query. */
+export function isSessionRootRoutePath(pathname: string | null | undefined, sessionId: string): boolean {
+    const path = pathname?.split(/[?#]/, 1)[0]?.replace(/\/+$/, '');
+    return path === `/session/${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * The phone surface a Session URL's desktop pane intent asks for (an open Details page presents on Tabs, a right
+ * sidebar tab on its own surface), or null when the URL carries none. The cockpit navigator consumes it once.
+ */
+export function resolveSessionPaneIntentSurface(
+    paneUrlState: SessionPaneUrlState | null | undefined,
+    terminalTabAvailable: boolean,
+): SessionMobileSurface | null {
+    if (!paneUrlState?.details && !paneUrlState?.rightTabId) return null;
+    return resolveSessionMobileSurfaceIntent({
+        routeKind: 'index',
+        detailsTargetPresent: paneUrlState.details !== undefined,
+        activeRightTabId: paneUrlState.details ? null : paneUrlState.rightTabId,
+        terminalTabAvailable,
+    });
 }

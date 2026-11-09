@@ -15,6 +15,8 @@ import type { SessionOrganizationDisplayState } from '@/sync/domains/session/org
 import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
 import { buildLegacySessionWorkspaceAliasIndex, type LegacyWorkspaceAliasMachine } from '@/sync/domains/session/listing/legacySessionWorkspaceAliases';
 import { t } from '@/text';
+import { areSessionAppearanceColorsEqual, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import { projectSessionWorkspaceColors } from '@/sync/domains/session/organization/projectWorkspaceColors';
 
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
@@ -27,10 +29,17 @@ export type SessionListProjectHeaderViewModel = Readonly<{
     scopeHint: WorkspaceScopeBase | null;
     seedSessionId: string | null;
     machineSubtitle?: string;
+    appearanceColor?: SessionAppearanceColor | null;
     serverId?: string | null;
-    /** The list projection's collision name and single group-wide offline message. */
-    machineDetail?: string;
+    /**
+     * The list projection's collision name and single group-wide offline message, in two parts: the Machine's
+     * own `name`, which a narrow header may shorten, and the `end` that tells it apart (its short-id suffix,
+     * Offline), which stays whole.
+     */
+    machineDetail?: SessionListProjectHeaderMachineDetail;
 }>;
+
+export type SessionListProjectHeaderMachineDetail = Readonly<{ name: string | null; end: string | null }>;
 
 export type SessionListProjectHeaderViewModelState = Readonly<{
     projectHeaderViewModelByGroupKey: Map<string, SessionListProjectHeaderViewModel>;
@@ -60,6 +69,7 @@ function appendCachePart(parts: string[], value: string): void {
 type ProjectHeaderProjectionInput = Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
     workspaceLabels?: Readonly<Record<string, string> | null | undefined>;
+    workspaceColorsByServerId?: SessionOrganizationListViewState['workspaceColorsByServerId'];
     workspaceRefsServerId?: string;
     legacyWorkspaceLabelDisplayStatesByKey?: Readonly<Record<string,
         SessionOrganizationListViewState['labelDisplayStatesByKey'][string] | SessionOrganizationDisplayState>>;
@@ -71,7 +81,7 @@ type ProjectHeaderProjectionInput = Readonly<{
 
 type MachineNameSource = Parameters<typeof resolveMachineDisplayNames>[0][number];
 type ProjectHeaderCache = {
-    input: Omit<ProjectHeaderProjectionInput, 'machinesById' | 'listItems' | 'workspaceLabels' | 'projectOrganizations' | 'legacyWorkspaceLabelDisplayStatesByKey'>;
+    input: Omit<ProjectHeaderProjectionInput, 'machinesById' | 'listItems' | 'workspaceLabels' | 'workspaceColorsByServerId' | 'projectOrganizations' | 'legacyWorkspaceLabelDisplayStatesByKey'>;
     listInputs: WeakSet<ReadonlyArray<SessionListIndexItem>>;
     organizationInputs: WeakSet<readonly ProjectOrganizationRow[]>;
     hasOrganizations: boolean;
@@ -86,7 +96,28 @@ type ProjectHeaderCache = {
     migrationAliases?: ReadonlyMap<string, WorkspaceScopeBase | null>;
     migrationLabelsKey?: string;
     baseScopeHints?: Map<string, WorkspaceScopeBase>;
+    scopedColorsInput?: ProjectHeaderProjectionInput['workspaceColorsByServerId'];
+    projectedColorsByServerId?: SessionOrganizationListViewState['workspaceColorsByServerId'];
 };
+
+function refreshWorkspaceColors(cache: ProjectHeaderCache, input: ProjectHeaderProjectionInput, force = false): void {
+    if (!force && cache.scopedColorsInput === input.workspaceColorsByServerId && cache.projectedColorsByServerId) return;
+    if (cache.scopedColorsInput !== input.workspaceColorsByServerId || !cache.projectedColorsByServerId) {
+        cache.scopedColorsInput = input.workspaceColorsByServerId;
+        cache.projectedColorsByServerId = Object.fromEntries(Object.entries(input.workspaceColorsByServerId ?? {}).map(([serverId, workspaceColors]) => [serverId,
+            projectSessionWorkspaceColors({ workspaceColors, workspaceRefs: input.workspaceRefs,
+                censusServerId: serverId === input.workspaceRefsServerId ? serverId : undefined, machines: input.machinesById })]));
+    }
+    let headers = cache.state.projectHeaderViewModelByGroupKey;
+    for (const [key, previous] of headers) {
+        const colors = cache.projectedColorsByServerId?.[previous.serverId ?? ''];
+        const appearanceColor = colors?.[previous.legacyWorkspaceKey] ?? null;
+        if (previous.appearanceColor !== undefined && areSessionAppearanceColorsEqual(previous.appearanceColor, appearanceColor)) continue;
+        if (headers === cache.state.projectHeaderViewModelByGroupKey) headers = new Map(headers);
+        headers.set(key, { ...previous, appearanceColor });
+    }
+    if (headers !== cache.state.projectHeaderViewModelByGroupKey) cache.state = { ...cache.state, projectHeaderViewModelByGroupKey: headers };
+}
 
 function refreshLegacyLabelHints(cache: ProjectHeaderCache, input: ProjectHeaderProjectionInput): void {
     if (!cache.baseScopeHints) return;
@@ -196,7 +227,8 @@ function refreshMachineNames(cache: ProjectHeaderCache, input: ProjectHeaderProj
 function refreshMachineInputs(cache: ProjectHeaderCache, input: ProjectHeaderProjectionInput): SessionListProjectHeaderViewModelState {
     refreshMachineNames(cache, input);
     const removedMigrationIds = new Set(cache.migrationMachineInputs.keys());
-    const needsLegacyMachineFacts = Object.keys(input.workspaceLabels ?? {})
+    const needsLegacyMachineFacts = [...Object.keys(input.workspaceLabels ?? {}),
+        ...Object.keys(input.workspaceColorsByServerId?.[input.workspaceRefsServerId ?? ''] ?? {})]
         .some(key => /^wl_[0-9a-f]{8}$/.test(key));
     for (const machine of machineCollectionValues(input.machinesById)) {
         if (!needsLegacyMachineFacts) continue;
@@ -205,16 +237,18 @@ function refreshMachineInputs(cache: ProjectHeaderCache, input: ProjectHeaderPro
         if (cache.migrationMachineInputs.get(machine.id) !== facts) {
             cache.migrationMachineInputs.set(machine.id, facts);
             cache.migrationAliases = undefined;
+            cache.projectedColorsByServerId = undefined;
         }
     }
-    for (const id of removedMigrationIds) { cache.migrationMachineInputs.delete(id); cache.migrationAliases = undefined; }
-    const { machinesById: _machines, listItems, workspaceLabels: _legacyLabels, projectOrganizations,
+    for (const id of removedMigrationIds) { cache.migrationMachineInputs.delete(id); cache.migrationAliases = undefined; cache.projectedColorsByServerId = undefined; }
+    const { machinesById: _machines, listItems, workspaceLabels: _legacyLabels, workspaceColorsByServerId: _scopedColors, projectOrganizations,
         legacyWorkspaceLabelDisplayStatesByKey: _legacyDisplays, ...structuralInput } = input;
     cache.listInputs.add(listItems);
     if (projectOrganizations) cache.organizationInputs.add(projectOrganizations);
     cache.hasOrganizations = projectOrganizations !== undefined;
     cache.input = structuralInput;
     refreshLegacyLabelHints(cache, input);
+    refreshWorkspaceColors(cache, input);
     return cache.state;
 }
 
@@ -362,7 +396,7 @@ export function buildSessionListProjectHeaderViewModels(input: ProjectHeaderProj
         if (item.machine?.id === machineId) fallbackMachines.set(machineId, captureMachineNameInput(item.machine));
         else if (input.machinesById) fallbackMachines.set(machineId, { id: machineId, absence: 'unlisted' });
     }
-    const { machinesById: _machines, listItems, workspaceLabels: _legacyLabels, projectOrganizations,
+    const { machinesById: _machines, listItems, workspaceLabels: _legacyLabels, workspaceColorsByServerId: _scopedColors, projectOrganizations,
         legacyWorkspaceLabelDisplayStatesByKey: _legacyDisplays, ...structuralInput } = input;
     const cache: ProjectHeaderCache = { input: structuralInput, state: EMPTY_SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE,
         listInputs: new WeakSet([listItems]),
@@ -451,6 +485,7 @@ export function buildSessionListProjectHeaderViewModels(input: ProjectHeaderProj
     cache.state = nextState;
     cache.baseScopeHints = scopeHintByLegacyWorkspaceKey;
     refreshLegacyLabelHints(cache, input);
+    refreshWorkspaceColors(cache, input, true);
     cache.state = reuseEqualHeaderState(lastBuiltState, cache.state);
     lastBuiltState = cache.state;
     SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE.set(cacheKey, cache);

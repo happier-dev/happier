@@ -119,6 +119,17 @@ describe('SettingsModalFloatingControls', () => {
     expect(dismissToSpy).toHaveBeenCalledWith('/settings');
   });
 
+  it('closes a Memory fact without leaving its qualified topic', async () => {
+    pathnameState.value = '/settings/prompts/memory/doc-1';
+    paramsState.value = { serverId: 'home-1', topic: 'Workshop', fact: 'fact-1' };
+    const tree = await renderControls();
+    const back = findByTestId(tree.root, 'settings-modal-back');
+    expect(back).toBeTruthy();
+    await act(async () => { back!.props.onPress(); });
+    expect(dismissToSpy).toHaveBeenCalledWith('/settings/prompts/memory/doc-1?serverId=home-1&topic=Workshop');
+    await act(async () => { tree.unmount(); });
+  });
+
   it('keeps the current settings screen when its active unsaved-changes guard chooses keep editing', async () => {
     pathnameState.value = '/settings/providers/new';
     const requestDecision = vi.fn(async () => 'keepEditing' as const);

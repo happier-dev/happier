@@ -3,12 +3,11 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { buildWidgetSurfaceArtifactIdV1, type WidgetAreaLayoutSummaryV1 } from '@happier-dev/protocol/widgets';
 
-import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
-import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -24,6 +23,8 @@ import {
   type WidgetAreaLayoutLabels,
   type WidgetAreaLayoutOption,
 } from '@/components/widgets/area/WidgetAreaLayoutBar';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { confirmDashboardDelete } from './confirmDashboardDelete';
 import { isWidgetAreaLayoutOutcomeUnknown, useProjectDashboards } from './useProjectDashboards';
 import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import type { ProjectAttachedDashboardRead } from '@/components/widgets/area/useProjectWidgetAreaBinding';
@@ -71,10 +72,11 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
 ) {
   const serverId = props.workspaceRef.serverId;
   const projectKey = React.useMemo(
-    () => readProjectWidgetAreaContextV1({ serverId, projectRef: props.workspaceRef }).projectIdentity?.projectKey ?? null,
+    () => projectWorkspaceRefV1(props.workspaceRef).projectKey,
     [props.workspaceRef, serverId],
   );
   // The mounted area owns selection; this bar sends its canonical Action only.
+    const phone = useDeviceType() === 'phone';
     const scope = useActiveServerAccountScope(serverId);
     const dashboards = useProjectDashboards({
       serverId: serverId,
@@ -125,11 +127,14 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
     ...(list.length > 0
       ? list.map((entry) => ({ id: entry.artifactId, name: entry.name, isDefault: entry.isDefault, ...(entry.isEdited ? { edited: true } : {}) }))
       : [{ id: 'default', name: t('projects.pages.overview'), isDefault: true }]),
-    ...(!selected && unavailableId ? [{ id: unavailableId, name: t('projects.dashboard.unavailable'), unavailable: true }] : []),
+    // Until the inventory answers, the routed dashboard is unknown, not unavailable: it keeps its tab, pending.
+    ...(!selected && unavailableId ? [dashboards.state.status === 'loading'
+      ? { id: unavailableId, name: t('common.loading') }
+      : { id: unavailableId, name: t('projects.dashboard.unavailable'), unavailable: true }] : []),
     ...(props.attachedDashboard && !list.some(entry => entry.artifactId === props.attachedDashboard?.artifactId)
       ? [{ id: props.attachedDashboard.artifactId, name: props.sharedDashboard?.name ?? t('projects.dashboard.unavailable'),
           ...(props.sharedDashboard ? {} : { unavailable: true }) }] : []),
-  ], [list, selected, unavailableId, props.attachedDashboard?.artifactId, props.sharedDashboard]);
+  ], [list, selected, unavailableId, dashboards.state.status, props.attachedDashboard?.artifactId, props.sharedDashboard]);
 
   const select = React.useCallback(
       async (artifactId: string) => {
@@ -183,10 +188,10 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
           await dashboards.rename(shared, name, () => { void renameShared(name); });
         };
         return {
-          ...(canShare ? { share: () => {
+          ...(canShare ? { share: (anchor?: ShareSheetAnchor) => {
             if (!captureDestination()) return;
             showDocumentShareSheet({ kind: 'widget-area-layout.v1', artifactId: shared.artifactId, name: shared.name,
-              subtitle: `${t('projects.dashboard.label')} · ${props.projectName}` });
+              subtitle: `${t('projects.dashboard.label')} · ${props.projectName}`, ...(anchor ? { anchor } : {}) });
           } } : {}),
           rename: () => renameShared(),
         };
@@ -201,7 +206,7 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
           source.createdByAccountId === scope.accountId,
       );
       return {
-        share: async () => {
+        share: async (anchor?: ShareSheetAnchor) => {
           const captured = captureDestination();
           if (!captured) return;
           const outcome = await dashboards.prepareToShare(selected);
@@ -213,6 +218,7 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
             artifactId: outcome.dashboard.artifactId,
             name: outcome.dashboard.name,
             subtitle: `${t('projects.dashboard.label')} · ${props.projectName}`,
+            ...(anchor ? { anchor } : {}),
           });
         },
         attach: {
@@ -220,7 +226,7 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
           sources: teamSources.map((source) => ({
             id: source.id,
             name: source.name,
-            address: formatProjectSourceAddress(source.repository),
+            address: source.repository ? formatProjectSourceAddress(source.repository) : source.name,
             attached: (source.attachments ?? []).some(
               (attachment) =>
                 attachment.purpose === 'dashboard' &&
@@ -315,8 +321,9 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
                 if (!selected) return;
                 const captured = captureDestination();
                 if (!captured) return;
-                // The canonical Action owns confirmation for the original request and Retry.
-                const outcome = await dashboards.remove(selected, () => { void deleteSelected(); });
+                // The person confirms this dashboard by name, for the original request and for Retry.
+                if (!await confirmDashboardDelete(selected.name) || !captured.isCurrent()) return;
+                const outcome = await dashboards.remove(selected, () => { void deleteSelected(); }, true);
                 if (!captured.isCurrent()) return;
                 if (outcome.ok && outcome.approvalPending) return;
                 if (!outcome.ok) {
@@ -326,16 +333,6 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
                   return;
                 }
                 setUnconfirmedDelete(null);
-                // Only after the acknowledged delete does the page return to the retained default.
-                const defaultLayout = list.find(entry => entry.isDefault);
-                if (defaultLayout) await dashboards.select(defaultLayout);
-                publishPresentationNotice({
-                  key: `dashboard-deleted:${selected.artifactId}`,
-                  message: t('projects.dashboard.deleted', {
-                    name: selected.name,
-                  }),
-                  severity: 'info',
-                });
       }
     }, [
       captureDestination,
@@ -353,8 +350,9 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
     return (
       <View style={styles.header}>
         <WidgetAreaLayoutBar
-          // The Project's tab already names the page: a dashboard's name is one section of it, never a second page title.
-          heading="section"
+          // A phone has no top tab naming the page, so the dashboard's name does.
+          // Elsewhere the Project's tab already names the page: a dashboard's name is one section of it, never a second page title.
+          heading={phone ? 'page' : 'section'}
           layouts={options}
           labels={DASHBOARD_LABELS}
           selectedId={props.attachedDashboard?.artifactId ?? selected?.artifactId ?? unavailableId ?? 'default'}
@@ -367,6 +365,7 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
               : null
           }
           actions={actions}
+          readFailure={dashboards.readFailure}
           testID="project-dashboards"
         />
         {unconfirmedDelete?.destination === destination ? (
@@ -384,12 +383,6 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
                 void dashboards.reload();
               },
             }}
-          />
-        ) : null}
-        {dashboards.state.status === 'offline' ? (
-          <SurfaceFreshnessLine
-            testID="project-dashboards.offline"
-            reason={t('projects.widgets.offline')}
           />
         ) : null}
       </View>

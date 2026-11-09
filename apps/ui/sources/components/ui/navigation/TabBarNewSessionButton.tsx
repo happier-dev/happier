@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -14,8 +13,8 @@ import { useSetting } from '@/sync/store/settingsReadHooks';
 import { t } from '@/text';
 import {
     shouldForceFreshNewSessionEntryFromPressEvent,
-    useResolveNewSessionOrdinaryEntryRoute,
 } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
+import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 /**
@@ -65,11 +64,19 @@ const styles = StyleSheet.create({
 });
 
 
+export function useTabBarNewSessionPress() {
+    const openNewSession = useOpenNewSession();
+    return React.useCallback((event?: unknown) => {
+        openNewSession({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+    }, [openNewSession]);
+}
+
 export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton(props: Readonly<{
     placement?: 'tabBar' | 'sidebar';
 }>) {
-    const router = useRouter();
-    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
+    const handlePress = useTabBarNewSessionPress();
     const { theme } = useUnistyles();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     const shortcut = useKeyboardShortcutLabel('session.new');
@@ -78,13 +85,6 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
     const anchorRef = React.useRef<View | null>(null);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
-
-    const handlePress = React.useCallback((event?: unknown) => {
-        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
-            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
-        });
-        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
-    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     const button = (
         <GlassPanel radius={CAPSULE_RADIUS} shadowLevel={sidebar ? 2 : undefined} style={sidebar ? styles.sidebarCapsule : undefined} frameStyle={sidebar ? undefined : styles.capsule}>
@@ -110,6 +110,8 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
         <View
             ref={anchorRef}
             collapsable={false}
+            // The sidebar's "+" floats over the session list: the QA hit-area probe accepts it covering a row.
+            {...(Platform.OS === 'web' ? { dataSet: { happierFloatingOverlay: 'true' } } : {})}
             onPointerEnter={() => setHovered(true)}
             onPointerLeave={() => setHovered(false)}
         >

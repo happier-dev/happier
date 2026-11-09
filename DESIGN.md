@@ -391,7 +391,10 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   session role panel). **Menus**, tooltips and small popovers keep the hair (owner, 2026-10-16),
   except over a live picture (a shared screen or browser page): there every floating surface carries
   Strong's panel coat (85%) at any tint, because arbitrary pixels are content, not atmosphere
-  (recommended exception; owner ruling pending).
+  (recommended exception; owner ruling pending). In light on web, the default glass gives every
+  floating surface that coat everywhere: what lies under a light menu or Share card is ink (a black
+  button, text, field edges), and through the hair its blur reads as a grey ghost on white glass
+  (2026-10-31, intake #44). Dark and native floating glass keep their coats.
   Custom glass values, Solid and Reduce Transparency apply to both roles unchanged. On glass with a picture or the live desktop behind it, faint (secondary) ink takes a
   stronger step, primary ink at 70%, so it holds about 3:1 over a bright sky; ordinary pages and
   unbacked glass keep the theme's secondary ink.
@@ -431,8 +434,8 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   for floating surfaces and the composer, and to a quarter of it (0.006) for in-flow cards. The theme's single editable
   `effect.surfaceFinish` ink controls colour and strength, with custom values left as authored.
 - **Flat edge in flow; the rim only for what floats.** Controls, rows, cards, grouped sheets and the
-  composer use the flat edge, in every theme. Popovers, menus, dialogs, sheets over content, toasts,
-  tooltips and the message bubble use the directional rim: one corner light anchored top-left,
+  composer use the flat edge, in every theme. The message bubble is a fill only: no hairline and no rim.
+  Popovers, menus, dialogs, sheets over content, toasts and tooltips use the directional rim: one corner light anchored top-left,
   running along the top and down the side and gone by about a third of the way round, with a short
   sheen inside the fill from the same corner. On dark the corner is lighter (white about 18% at the
   corner, 5% by a fifth of the way, sheen about 3%); on light it is inverted — a breath darker, never
@@ -644,8 +647,9 @@ live in the page-presentation owners in code.
   on a phone, at the top level of a tab, where the navigation bar leaves the page's name to the page
   (Home, Inbox, a plugin's top-level collection). An entity page keeps the page title because its mark
   leads. Home's greeting over its planet is Home's own moment, not a page title. A page never chooses;
-  `HappierPageHeader` decides from what navigation says. The title sits at one height on every page,
-  with or without header actions. Only a detail actually open beside a list shares that list's top band.
+  `HappierPageHeader` decides from what navigation says. The title sits
+  at one height on every page, with or without header actions. Only a detail actually open beside a
+  list shares that list's top band.
 - **A title block is one unit.** Mark, title and purpose read as one block: the mark is drawn large in a slot
   that hugs it, close to the title, and the purpose sits right under the title. A page never sizes its own mark;
   `PageHeaderMarkIcon` draws it (plugins: `PageHeader`'s `leading`).
@@ -711,7 +715,8 @@ live in the page-presentation owners in code.
   - a **header row** the height of the identity mark: the item's logo (catalog mark box, 32) or,
     for a group or a thing without a brand, one glyph at the row-icon size (20) in secondary ink,
     top-left; the **right slot** top-right;
-  - the **title** below it (`heading`, one line), then the **description** (`body`, secondary ink,
+  - the **title** below it (`heading`, one line; two on a board card, whose title is the item's
+    identity, such as a pull request's), then the **description** (`body`, secondary ink,
     up to two lines reserved only for items with descriptions). Truly title-only items keep the
     compact mark-and-title card; no empty description band;
   - one quiet **facts line** at the foot (`meta`, tertiary ink, one line): the kind, then one or
@@ -735,6 +740,9 @@ live in the page-presentation owners in code.
 - **Phones recompose rather than shrink.** Only a switch, a short value or a chevron may sit to the
   right of a label; anything wider moves beneath it. A setting that can never apply on a platform is
   not shown there.
+- **A phone has one way around.** The tab bar holds the four tabs and More, and it does not move between
+  tabs. Every tab opens on one head: the Home line, Activity and the avatar, with the page's large title
+  under them on the page edge. A destination More opens has no tab bar, so its head always has a Back.
 - **Everything is findable.** Every setting a page renders is declared for search. A result names
   the setting and its location, and opening it brings the row into view.
 - **Status speaks only when it matters.** Healthy items stay quiet. A tinted banner appears only when
@@ -789,13 +797,17 @@ live in the page-presentation owners in code.
      and one description line (`body`, secondary; two on a phone). A speaking status leads line 2
      as its word, never a pill. No dividers or sheet; use
      `HAPPIER_COLLECTION_LIST_METRICS.catalogRow` (60 minimum, rows 2 apart, shared row radius).
-     This applies in narrow Settings columns too. A quiet count sits at the end of line 1;
-     only a fix or action sits at the row's end.
+     A quiet count sits at the end of line 1; only a fix or action sits at the row's end.
+     In a column (a Settings rail, a phone's collection page) the same described row keeps its
+     content (mark, name, one description line) on the column's own geometry: the mark in the
+     column's glyph box on the text edge, so it shares one axis with the column's index, tree and
+     group glyphs; name and description one line each; `describedRowMinHeight` (46) for every row;
+     a title meta joins the description line instead of competing with the name (owner, 2026-10-30).
   2. **The single-line row** — title-only navigation, menus and indexes of names use the compact
      `rowMinHeight` step with the glyph or mark in the shared leading column.
   3. **The preference row** — one decision with its switch, select, segmented control, field or
      button uses the divided page row on a sheet (`Item`, page density).
-  A described collection keeps the catalog floor for a peer missing its description and centres
+  A described collection keeps its described floor for a peer missing its description and centres
   its title; no invented copy. A title-only navigation group above it stays compact. Narrow rails
   use the shared Collection rule: name, meaningful scope, status and fix survive; description
   yields first. Full text remains in the accessible name, preview and opened detail.

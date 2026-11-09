@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { HomeHub } from '@/components/hub/HomeHub';
-import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
+import { useSessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import { SIDEBAR_NEW_SESSION_INSET_PX, TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import { InboxView } from '@/components/navigation/shell/InboxView';
@@ -17,7 +17,7 @@ import { t } from '@/text';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { SessionsListPaneContent } from '@/components/sessions/shell/SessionsListPaneContent';
 import {
     resolveSidebarSessionListSurfaceInteractive,
@@ -36,6 +36,7 @@ interface MainViewProps {
     variant: 'phone' | 'sidebar';
 }
 
+
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
@@ -48,7 +49,7 @@ const styles = StyleSheet.create((theme) => ({
     // The phone's main screen owns its plane; the session list lies transparent over it.
     phoneContainer: {
         flex: 1,
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: theme.colors.surface.base,
     },
     sidebarContentContainer: {
         flex: 1,
@@ -67,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: theme.space.s20,
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: theme.colors.surface.base,
     },
     primaryPaneFallbackText: {
         textAlign: 'center',
@@ -85,7 +86,6 @@ type ActiveTabType = 'sessions' | 'projects' | 'inbox';
 
 export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
-    const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
     const pathname = usePathname();
 
@@ -98,7 +98,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         });
         const storageChrome = (
             <SessionsListStorageChrome
-                storageKind={storageKind}
                 column="sessions"
             />
         );
@@ -109,7 +108,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                     {storageChrome}
                     <View style={styles.sidebarContentContainer}>
                         <SessionsListPaneContent
-                            storageKind={storageKind}
                             fallbackGuidanceVariant="sidebar"
                             surfaceOwnership={surfaceOwnership}
                         />
@@ -125,17 +123,26 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
     return (
         <PhoneMainView
-            externalSessionsEnabled={externalSessionsEnabled}
-            storageKind={storageKind}
             isTablet={isTablet}
-            themeGroupedBackground={theme.colors.background.canvas}
+            themeGroupedBackground={theme.colors.surface.base}
         />
     );
 });
 
+function TabletSessionHome(props: Readonly<{ backgroundColor: string }>) {
+    const filters = useSessionListViewFilterController();
+    if (filters.sourceAvailable && filters.displayFilters.source === 'direct') {
+        return <View style={[styles.container, { backgroundColor: props.backgroundColor }]}><ExternalSessionsEmptyState /></View>;
+    }
+    if (getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID) !== 'deny') return <HomeHub />;
+    return (
+        <View testID="mainview-tablet-primary-pane-fallback" style={[styles.primaryPaneFallback, { backgroundColor: props.backgroundColor }]}>
+            <Text style={styles.primaryPaneFallbackText}>{t('components.emptyMainScreen.readyToCode')}</Text>
+        </View>
+    );
+}
+
 const PhoneMainView = React.memo((props: Readonly<{
-    externalSessionsEnabled: boolean;
-    storageKind: 'all' | 'persisted' | 'direct';
     isTablet: boolean;
     themeGroupedBackground: string;
 }>) => {
@@ -159,38 +166,19 @@ const PhoneMainView = React.memo((props: Readonly<{
     const headerTab: ActiveTabType = activeTab === 'projects' ? 'projects' : activeTab === 'inbox' && inboxEnabled ? 'inbox' : 'sessions';
 
     const renderTabContent = React.useCallback(() => {
-        switch (activeTab) {
+        switch (headerTab) {
             case 'inbox':
-                return inboxEnabled ? <InboxView /> : <SessionsListWrapper pathname="/" />;
+                return <InboxView />;
             case 'projects':
                 return <ProjectsListView />;
             case 'sessions':
             default:
                 return <SessionsListWrapper pathname="/" />;
         }
-    }, [activeTab, inboxEnabled]);
+    }, [headerTab]);
 
     if (props.isTablet) {
-        const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
-        if (buildPolicyDecision !== 'deny') {
-            if (props.externalSessionsEnabled && props.storageKind === 'direct') {
-                return (
-                    <View style={[styles.primaryPaneFallback, { backgroundColor }]}>
-                        <ExternalSessionsEmptyState surface="primaryPane" />
-                    </View>
-                );
-            }
-            // The empty main pane is the app home hub (it shows the getting-started guidance until a
-            // machine can run a session).
-            return <HomeHub />;
-        }
-        return (
-            <View testID="mainview-tablet-primary-pane-fallback" style={[styles.primaryPaneFallback, { backgroundColor }]}>
-                <Text style={styles.primaryPaneFallbackText}>
-                    {t('components.emptyMainScreen.readyToCode')}
-                </Text>
-            </View>
-        );
+        return <TabletSessionHome backgroundColor={backgroundColor} />;
     }
 
     return (

@@ -27,6 +27,14 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 
 import { SESSION_LIST_COLUMN_METRICS, sessionListStyles } from './sessionListStyles';
 import { resolveProjectGroupHeaderMenuItems } from './resolveProjectGroupHeaderMenuItems';
+import { useCustomSessionAppearanceColors } from '@/hooks/session/useSessionAppearance';
+import { resolveSessionAppearanceColor, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import {
+    buildSessionAppearanceColorMenuItem,
+    resolveSessionAppearanceColorMenuChoice,
+} from '@/components/sessions/organization/sessionAppearanceColorMenu';
+
+const PROJECT_COLOR_MENU_ID = 'workspace-color';
 import { resolveNewSessionGroupTarget } from './resolveSessionListHeaderActionHandlers';
 import {
     resolveSessionListDensityItems,
@@ -52,6 +60,7 @@ import { useSessionSectionDraftController } from '@/components/sessions/organiza
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import type { SessionListProjectHeaderMachineDetail } from './sessionListProjectHeaderViewModels';
 
 
 /**
@@ -384,7 +393,8 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
     return (
         <View style={styles.listHeaderSection}>
-            <RecoveryKeyReminderBanner />
+            {/* The chip line above already ends in its own space; the group's untitled inset would double it. */}
+            <RecoveryKeyReminderBanner header="none" />
         </View>
     );
 });
@@ -392,13 +402,11 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
 export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
-    machineSubtitle?: string;
-    hasMultipleMachines: boolean;
+    machineDetail?: SessionListProjectHeaderMachineDetail;
     displayTitle: string;
     hasCustomLabel: boolean;
     canOpenProject: boolean;
     workspaceFaviconsEnabled?: boolean;
-    workspaceMachineSubtitlesEnabled?: boolean;
     newSessionEnabled?: boolean;
     onOpenProject: () => void;
     onCreateSession: () => void;
@@ -419,11 +427,15 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     faviconSource?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
     /** The held baseline Machine's canonical reachability; false keeps the folder mark. */
     faviconSourceReachable?: boolean;
+    /** The project's own colour (sessions inherit it); drawn as a dot on the mark. */
+    appearanceColor?: SessionAppearanceColor | null;
+    appearanceServerId?: string | null;
+    /** The canonical writer for this project's colour; absent hides Set color. */
+    onSetColor?: (color: SessionAppearanceColor | null) => void;
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
-    const machineSubtitle = props.machineSubtitle ?? props.item.subtitle;
-    const { item, hasMultipleMachines, displayTitle, hasCustomLabel, canOpenProject, workspaceFaviconsEnabled = false, workspaceMachineSubtitlesEnabled = true, newSessionEnabled = true, onOpenProject, onCreateSession, onAddFolder, onRename, onReset, collapsed, onToggleCollapse } = props;
+    const { item, displayTitle, hasCustomLabel, canOpenProject, workspaceFaviconsEnabled = false, newSessionEnabled = true, onOpenProject, onCreateSession, onAddFolder, onRename, onReset, collapsed, onToggleCollapse } = props;
     const [menuOpen, setMenuOpen] = React.useState(false);
     const newSessionTarget = resolveNewSessionGroupTarget(item);
     const projectServerId = newSessionTarget?.serverId ?? item.serverId ?? null;
@@ -458,7 +470,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         onRegister: props.onRegisterDropTarget,
     });
 
-    const menuItems = resolveProjectGroupHeaderMenuItems({
+    const staticMenuItems = resolveProjectGroupHeaderMenuItems({
         canOpenProject,
         canAddFolder: sessionFoldersFeatureEnabled && workspace !== null,
         canRename: Boolean(item.projectKey) && item.workspace?.t !== 'managedSessions',
@@ -467,7 +479,28 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         canMoveDown: typeof props.onMoveDown === 'function',
         actionIconColor,
     });
+    const projectColor = props.appearanceColor ?? null;
+    const canSetColor = typeof props.onSetColor === 'function';
+    // Colours in use are detail data: read only while this header's menu is open.
+    const customColors = useCustomSessionAppearanceColors(props.appearanceServerId ?? null, { enabled: menuOpen && canSetColor });
+    const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
+    const menuItems = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
+        if (!canSetColor) return staticMenuItems;
+        const colorItem = buildSessionAppearanceColorMenuItem({
+            menuId: PROJECT_COLOR_MENU_ID,
+            iconColor: actionIconColor,
+            current: projectColor,
+            customColors,
+            theme,
+            customPickerLoading: customColorPickerLoading,
+        });
+        // Beside Rename: both are the project's identity.
+        const renameIndex = staticMenuItems.findIndex((entry) => entry.id === 'rename');
+        const at = renameIndex >= 0 ? renameIndex + 1 : staticMenuItems.length;
+        return [...staticMenuItems.slice(0, at), colorItem, ...staticMenuItems.slice(at)];
+    }, [actionIconColor, canSetColor, customColorPickerLoading, customColors, projectColor, staticMenuItems, theme]);
     const menuEnabled = menuItems.length > 0;
+    const colorDotPaint = resolveSessionAppearanceColor(projectColor, theme);
 
     const mark = favicon ? (
         <View testID="session-list-workspace-favicon" style={styles.groupHeaderFaviconFrame}>
@@ -479,6 +512,17 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             />
         </View>
     ) : <Icon name="folder" size={13} color={theme.colors.text.tertiary} />;
+    const markWithColor = colorDotPaint ? (
+        <View style={styles.groupHeaderMarkFrame}>
+            {mark}
+            <View
+                testID={`session-workspace-color:${item.groupKey ?? item.title}`}
+                accessible={false}
+                importantForAccessibility="no-hide-descendants"
+                style={[styles.groupHeaderColorDot, { backgroundColor: colorDotPaint }]}
+            />
+        </View>
+    ) : mark;
     // The group's own operations ride with the pointer (lab `.ls-h .act`): ⋯ then New session here.
     const actions = (
         <>
@@ -488,7 +532,20 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                     onOpenChange={setMenuOpen}
                     items={menuItems}
                     onSelect={(itemId) => {
-                        if (itemId === 'moveUp') {
+                        if (canSetColor && itemId.startsWith(`${PROJECT_COLOR_MENU_ID}:`)) {
+                            void resolveSessionAppearanceColorMenuChoice({
+                                menuId: PROJECT_COLOR_MENU_ID,
+                                itemId,
+                                current: projectColor,
+                                serverId: props.appearanceServerId ?? null,
+                                onPickerLoading: setCustomColorPickerLoading,
+                                closeMenus: () => setMenuOpen(false),
+                            }).then((color) => {
+                                if (color !== undefined) props.onSetColor?.(color);
+                            }, () => {
+                                Modal.alert(t('common.error'), t('errors.unknownError'));
+                            });
+                        } else if (itemId === 'moveUp') {
                             props.onMoveUp?.();
                         } else if (itemId === 'moveDown') {
                             props.onMoveDown?.();
@@ -550,10 +607,11 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             <CollectionListGroupLabel
                 testID={headerTestId}
                 title={displayTitle}
-                detail={workspaceMachineSubtitlesEnabled && hasMultipleMachines && machineSubtitle ? machineSubtitle : undefined}
+                {...(props.machineDetail?.name ? { detail: props.machineDetail.name } : {})}
+                {...(props.machineDetail?.end ? { detailEnd: props.machineDetail.end } : {})}
                 first={props.first}
                 rollup={<WorkStatusRollup rollup={props.item.rollup} testID={`${headerTestId}:rollup`} />}
-                mark={mark}
+                mark={markWithColor}
                 disclosure={{ expanded: !collapsed, onToggle: onToggleCollapse }}
                 actions={actions}
                 actionsHeld={menuOpen}
@@ -587,6 +645,8 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     headerKind?: SessionListHeaderItemKind;
     /** How many the group holds now; omitted while unknown. */
     count?: number;
+    /** A quiet fact after the title (Needs you "from everywhere"). */
+    detail?: string;
     /** The column's first group sits closer to the header. */
     first?: boolean;
     testID?: string;
@@ -609,6 +669,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
             count={props.count}
             first={props.first}
             mark={mark}
+            {...(props.detail ? { detail: props.detail } : {})}
             testID={props.testID}
             rollup={props.testID ? <WorkStatusRollup rollup={props.rollup} testID={`${props.testID}:rollup`} /> : undefined}
             disclosure={{

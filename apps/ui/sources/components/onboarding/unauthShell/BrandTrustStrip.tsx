@@ -1,10 +1,14 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { useBrandPaneTokens } from './brandPaneTokens';
+
+const TRUST_CLAIM_SEPARATOR = ' · ';
+const MOBILE_WRAP = { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8 } as const;
 
 export type BrandTrustStripProps = Readonly<{
     /** Allow up to two lines on the mobile hero where width is tighter. */
@@ -27,13 +31,21 @@ export const BrandTrustStrip = React.memo(function BrandTrustStrip(props: BrandT
         letterSpacing: 0.88,
         color: tokens.foregroundMuted,
     } as const;
+    if (props.mobile) {
+        // On a phone it wraps between its claims, never inside one ("SELF-" / "HOSTABLE").
+        const claims = t('welcome.brandTrustStrip').split(TRUST_CLAIM_SEPARATOR);
+        return (
+            <View testID="brand-trust-strip" style={MOBILE_WRAP}>
+                {claims.map((claim, index) => (
+                    <Text key={claim} style={style} numberOfLines={1}>
+                        {index < claims.length - 1 ? `${claim} ·` : claim}
+                    </Text>
+                ))}
+            </View>
+        );
+    }
     return (
-        <Text
-            testID="brand-trust-strip"
-            style={style}
-            numberOfLines={props.mobile ? 2 : 1}
-            adjustsFontSizeToFit={props.mobile}
-        >
+        <Text testID="brand-trust-strip" style={style} numberOfLines={1}>
             {t('welcome.brandTrustStrip')}
         </Text>
     );

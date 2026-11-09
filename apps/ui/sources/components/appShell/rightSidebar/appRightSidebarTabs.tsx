@@ -11,16 +11,20 @@ import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui
 import { resolveRightSidebarTabs } from './rightSidebarTabRegistry';
 import type { PluginUiInstanceKeyV1, PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 /**
  * The App's own right-sidebar tabs (`rightSidebarTab × app`, design §3.3): every page's right sidebar
  * lists them — the App page's own, and a Session's or Project's after their scoped tabs — from the
  * one app-shell projection, never from a Session's or Project's machine projection.
  */
-export function useAppRightSidebarTabInputs(): Readonly<{
+export function useAppRightSidebarTabInputs(serverId?: string | null): Readonly<{
     appPluginPlacements: readonly PluginUiSurfacePlacementProjection[];
     appLocalize: PluginLocalizedTextResolver;
+    browserFeatureEnabled: boolean;
 }> {
+    const browserFeatureEnabled = useFeatureDecision('browser', serverId
+        ? { scopeKind: 'spawn', serverId } : { scopeKind: 'runtime' })?.state === 'enabled';
     const projection = useAppShellPluginUiProjection().pluginUiProjection;
     const appLocalize = useProjectedPluginLocalizedTextResolver();
     const appPluginPlacements = React.useMemo(
@@ -30,7 +34,8 @@ export function useAppRightSidebarTabInputs(): Readonly<{
     return React.useMemo(() => ({
         appPluginPlacements,
         appLocalize,
-    }), [appLocalize, appPluginPlacements]);
+        browserFeatureEnabled,
+    }), [appLocalize, appPluginPlacements, browserFeatureEnabled]);
 }
 
 /** The App rail and its pane adapter read one catalog, not separate tab-availability rules. */

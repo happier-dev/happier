@@ -40,6 +40,7 @@ import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
+import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
@@ -239,13 +240,16 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             accessibilitySemantics="alert" /></View> : null}
         {empty && !firstLoad && !libraryFailed && !accountFailed ? <EmptyState testID="workflows-column:library:empty"
             layout="line" title={t('workflows.destination.libraryEmpty')} /> : null}
-        {visibleLibraryRows.map((row) => 'definition' in row ? (
-            <ColumnDefinitionRow key={row.key} definition={row.definition} summary={row.lastRunSummary}
-                selected={selectedDefinitionId === row.definition.definitionId}
-                href={row.openTarget.href} onOpen={openHref} />
-        ) : (
-            <ColumnAccountWorkflowEntry key={row.key} row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
-        ))}
+        {visibleLibraryRows.map((row, index) => <ColumnRowWindow key={row.key} id={row.key} index={index}
+            pinned={'definition' in row ? selectedDefinitionId === row.definition.definitionId : params.trigger === row.accountTrigger.automationId}>
+            {'definition' in row ? (
+                <ColumnDefinitionRow definition={row.definition} summary={row.lastRunSummary}
+                    selected={selectedDefinitionId === row.definition.definitionId}
+                    href={row.openTarget.href} onOpen={openHref} />
+            ) : (
+                <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
+            )}
+        </ColumnRowWindow>)}
         {accountFailed ? <View style={styles.stale}>
             <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
                 reason={t('workflows.triggers.section.accountLoadFailed')}
@@ -257,24 +261,40 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {split.sharedWithYou.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')} countPlacement="title"
                 count={split.sharedWithYou.length} />
-            {split.sharedWithYou.map((definition) => <CollectionNavigationRow key={definition.definitionId}
-                href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
-                title={formatWorkflowDefinitionLibraryTitle(definition)} selected={selectedDefinitionId === definition.definitionId}
-                {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
-                onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />)}
+            {split.sharedWithYou.map((definition, index) => <ColumnRowWindow key={definition.definitionId} id={definition.definitionId}
+                index={visibleLibraryRows.length + index} pinned={selectedDefinitionId === definition.definitionId}>
+                <CollectionNavigationRow
+                    href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
+                    title={formatWorkflowDefinitionLibraryTitle(definition)} selected={selectedDefinitionId === definition.definitionId}
+                    {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
+                    onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />
+            </ColumnRowWindow>)}
         </> : null}
         <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} isVisible={isVisible} />
         {split.fromPlugins.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')} countPlacement="title"
                 count={split.fromPlugins.length} />
-            {split.fromPlugins.map((workflow) => <CollectionNavigationRow key={workflow.workflow}
-                rowRole="item"
-                href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
-                title={workflow.title} selected={selectedDefinitionId === workflow.workflow}
-                onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />)}
+            {split.fromPlugins.map((workflow, index) => <ColumnRowWindow key={workflow.workflow} id={workflow.workflow}
+                index={visibleLibraryRows.length + split.sharedWithYou.length + index} pinned={selectedDefinitionId === workflow.workflow}>
+                <CollectionNavigationRow
+                    rowRole="item"
+                    href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
+                    title={workflow.title} selected={selectedDefinitionId === workflow.workflow}
+                    onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />
+            </ColumnRowWindow>)}
         </> : null}
     </>;
 });
+
+/**
+ * A column row's near-viewport window: the Library scales with the Account, so only rows near the column's
+ * viewport are built. A pinned row (the open one, a deep-linked Account Workflow) stays built where it stands.
+ */
+function ColumnRowWindow(props: Readonly<{ id: string; index: number; pinned: boolean; children: React.ReactNode }>) {
+    const rowHeight = HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight;
+    return <NearViewportWindow id={props.id} testID={`workflows-column:row-window:${props.id}`} pinned={props.pinned}
+        estimatedTop={props.index * rowHeight} estimatedHeight={rowHeight}>{props.children}</NearViewportWindow>;
+}
 
 /**
  * What a Library row says at its end (lab `nav-N1` column): the one amber mark while a run waits for you,

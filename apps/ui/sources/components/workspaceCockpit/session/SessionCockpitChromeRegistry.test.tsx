@@ -19,6 +19,9 @@ import {
     type SessionCockpitChromeRegistration,
 } from './SessionCockpitChromeRegistry';
 import type { SessionMobileSurface } from './sessionCockpitState';
+import { resolveSessionCockpitMobileCatalog } from './sessionCockpitMobileCatalog';
+const catalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true });
+const readColumn = () => ({ present: true, visible: true, available: true, setVisible: () => {} });
 import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 import {
     useSessionCockpitPetRect,
@@ -84,7 +87,7 @@ function RegisteringBridge(props: Readonly<{
         sessionId: 'session-1',
         serverId: props.serverId,
         activeSurface: props.activeSurface ?? 'chat',
-        terminalTabAvailable: true,
+        terminalTabAvailable: true, catalog, readColumn,
         openDetailsTabCount: 0,
         switchSurface,
     }), [props.activeSurface, props.serverId, register, switchSurface]);
@@ -144,7 +147,7 @@ function ControlledRegistrationHarness(props: Readonly<{
         cleanupRef.current = register({
             sessionId: 'session-1',
             activeSurface,
-            terminalTabAvailable: true,
+            terminalTabAvailable: true, catalog, readColumn,
             openDetailsTabCount: 0,
             switchSurface,
         });

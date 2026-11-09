@@ -110,6 +110,8 @@ type TabBadgeProps =
         variant: 'count';
         size?: 'default' | 'compact';
         value: number;
+        /** A count already said in words ("1.8K", "~402"): shown as is instead of `value`. */
+        text?: string;
         max?: number;
         tone?: 'attention' | 'neutral';
         style?: StyleProp<ViewStyle>;
@@ -160,7 +162,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
                     props.style ?? null,
                 ]}
             >
-                <Text style={[styles.countText, props.size === 'compact' ? styles.compactText : null, props.size === 'compact' && props.tone === 'neutral' ? styles.countTextNeutralCompact : null]}>{formatBadgeCount(props.value, props.max)}</Text>
+                <Text style={[styles.countText, props.size === 'compact' ? styles.compactText : null, props.size === 'compact' && props.tone === 'neutral' ? styles.countTextNeutralCompact : null]}>{props.text ?? formatBadgeCount(props.value, props.max)}</Text>
             </View>
         );
     }

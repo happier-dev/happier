@@ -469,12 +469,52 @@ describe('SessionListSearchChrome', () => {
         );
 
         const navRow = firstByTestId(screen.root, 'session-list-phone-nav-row');
-        for (const id of ['shell-home-line', 'session-list-search-trigger', 'session-list-view-options-trigger', 'shell-glyphs']) {
+        for (const id of ['shell-home-line', 'shell-glyphs']) {
             expect(navRow.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
         }
-        // The title is its own row under the nav row, never beside its controls.
-        expect(navRow.findAllByProps({ testID: 'filter-control' })).toHaveLength(0);
-        expect(firstByTestId(screen.root, 'session-list-title-slot').findAllByProps({ testID: 'filter-control' }).length).toBeGreaterThan(0);
+        // The line is the one every tab has. The list's controls stand on its title's line, as on a wide column.
+        const titleLine = firstByTestId(screen.root, 'session-list-search-primary-controls');
+        for (const id of ['filter-control', 'session-list-search-trigger', 'session-list-view-options-trigger']) {
+            expect(navRow.findAllByProps({ testID: id })).toHaveLength(0);
+            expect(titleLine.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
+        }
+    });
+
+    it('on a phone tab page keeps the spaces on their line with no chip row beside them', async () => {
+        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+        const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
+        const screen = await renderScreen(
+            <PhoneTabNavRowProvider leading={null} trailing={null}>
+                <SessionListSearchChrome
+                    filterControl={<Text testID="filter-control">My work</Text>}
+                    spacesStrip={<Text testID="spaces-strip">spaces</Text>}
+                    searchQuery=""
+                    onSearchQueryChange={vi.fn()}
+                />
+            </PhoneTabNavRowProvider>,
+        );
+
+        const line = firstByTestId(screen.root, 'session-list-phone-controls');
+        expect(line.findAllByProps({ testID: 'spaces-strip' }).length).toBeGreaterThan(0);
+        expect(screen.root.findAllByProps({ testID: 'session-list-quick-filters' })).toHaveLength(0);
+    });
+
+    it('ends Find with the funnel that opens the filters, inside the field', async () => {
+        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <SessionListSearchChrome
+                filterControl={<Text testID="filter-control">My work</Text>}
+                filterButton={{ activeCount: 1, open: false, onPress }}
+                searchQuery=""
+                onSearchQueryChange={vi.fn()}
+            />,
+        );
+        await screen.pressByTestIdAsync('session-list-search-trigger');
+        const field = firstByTestId(screen.root, 'session-list-search-input.field');
+        expect(field.findAllByProps({ testID: 'session-list-filter-open' }).length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('session-list-filter-open');
+        expect(onPress).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the title beside its controls when no shell row is folded in', async () => {

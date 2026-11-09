@@ -1,9 +1,12 @@
 import * as React from 'react';
+import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { makeMutable, type SharedValue } from 'react-native-reanimated';
 import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 
+import type { SessionCockpitMobileCatalogEntry } from './sessionCockpitMobileCatalog';
 import type { SessionMobileSurface } from './sessionCockpitState';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 
 export type SessionCockpitChromeRegistration = Readonly<{
     sessionId: string;
@@ -11,8 +14,13 @@ export type SessionCockpitChromeRegistration = Readonly<{
     activeSurface: SessionMobileSurface;
     terminalTabAvailable: boolean;
     openDetailsTabCount: number;
+    catalog: readonly SessionCockpitMobileCatalogEntry[];
+    readColumn: (column: 'main' | 'side') => ShellColumnActionOwner;
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
-    switchSurface: (surface: SessionMobileSurface) => void;
+    /** The mounted Session's detail-list inputs, for Customize's other-device list. */
+    detailInput?: ResolveRightSidebarTabsInput;
+    /** `ownTab`: a phone opened the pane's Details page as its own rail tab, so the Session tab stays where it is. */
+    switchSurface: (surface: SessionMobileSurface) => 'ownTab' | void;
 }>;
 
 type SessionCockpitChromeRegister = (registration: SessionCockpitChromeRegistration) => () => void;
@@ -100,12 +108,14 @@ export function resetSessionSwitcherStateForTests(): void {
 // preventing nested scroll content (`ItemList`) from reserving it a second time.
 export const SessionCockpitBottomChromeHeightContext = React.createContext(0);
 const SessionCockpitBottomChromeHeightSetterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
-// One shell-owned floating band (the phone Voice Island), measured independently of the bar.
+// The shell's floating band above the bar (the phone Voice Island, a docked New Session), measured independently of the
+// bar: each producer reports its own height and the band is the tallest, since they float over the same edge.
+type SessionCockpitFloatingBottomChromeReporter = (producer: string, height: number) => void;
 const SessionCockpitFloatingBottomChromeHeightContext = React.createContext(0);
 // The shell's own bar, which no subtree rebases: zero means this window has no bar (a desktop), so a page
 // clears the floating band itself; under a bar a rebased subtree's screen already lifts content past the band.
 const SessionCockpitShellBarHeightContext = React.createContext(0);
-const SessionCockpitFloatingBottomChromeReporterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
+const SessionCockpitFloatingBottomChromeReporterContext = React.createContext<SessionCockpitFloatingBottomChromeReporter>(() => {});
 /**
  * The composer band that floats **above** the bottom chrome, published separately from it.
  *
@@ -177,7 +187,17 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
     const pet = useMountedMeasuredRect();
     const actionRail = useMountedMeasuredRect();
     const [bottomChromeHeight, setBottomChromeHeightState] = React.useState(0);
-    const [floatingBottomChromeHeight, setFloatingBottomChromeHeight] = React.useState(0);
+    const [floatingBottomChromeById, setFloatingBottomChromeById] = React.useState<Readonly<Record<string, number>>>({});
+    const reportFloatingBottomChrome = React.useCallback<SessionCockpitFloatingBottomChromeReporter>((producer, height) => {
+        setFloatingBottomChromeById((current) => {
+            if ((current[producer] ?? 0) === height) return current;
+            const next = { ...current };
+            if (height > 0) next[producer] = height;
+            else delete next[producer];
+            return next;
+        });
+    }, []);
+    const floatingBottomChromeHeight = React.useMemo(() => Math.max(0, ...Object.values(floatingBottomChromeById)), [floatingBottomChromeById]);
     const [composerChromeById, setComposerChromeById] = React.useState<Readonly<Record<string, SessionCockpitComposerChromeMeasurement>>>({});
     const [registration, setRegistration] = React.useState<SessionCockpitChromeRegistration | null>(null);
     const [dismissingSessionId, setDismissingSessionId] = React.useState<string | null>(null);
@@ -202,6 +222,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                 && currentRegistration.terminalTabAvailable === nextRegistration.terminalTabAvailable
                 && currentRegistration.openDetailsTabCount === nextRegistration.openDetailsTabCount
                 && currentRegistration.pluginPlacements === nextRegistration.pluginPlacements
+                && currentRegistration.catalog === nextRegistration.catalog
             ) {
                 return currentRegistration;
             }
@@ -213,10 +234,17 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                 terminalTabAvailable: nextRegistration.terminalTabAvailable,
                 openDetailsTabCount: nextRegistration.openDetailsTabCount,
                 pluginPlacements: nextRegistration.pluginPlacements,
+                catalog: nextRegistration.catalog,
+                readColumn: column => {
+                    const latest = latestRegistrationRef.current;
+                    return latest?.sessionId === nextRegistration.sessionId && latest.serverId === nextRegistration.serverId
+                        ? latest.readColumn(column)
+                        : { present: false, visible: false, available: false, setVisible: () => {} };
+                },
                 switchSurface: (surface) => {
                     const latest = latestRegistrationRef.current;
                     if (latest?.sessionId !== nextRegistration.sessionId || latest.serverId !== nextRegistration.serverId) return;
-                    latest.switchSurface(surface);
+                    return latest.switchSurface(surface);
                 },
             };
         });
@@ -292,7 +320,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
         <SessionCockpitChromeRegisterContext.Provider value={register}>
             <SessionCockpitBottomChromeHeightSetterContext.Provider value={setBottomChromeHeight}>
                 <SessionCockpitBottomChromeHeightContext.Provider value={bottomChromeHeight}>
-                    <SessionCockpitFloatingBottomChromeReporterContext.Provider value={setFloatingBottomChromeHeight}>
+                    <SessionCockpitFloatingBottomChromeReporterContext.Provider value={reportFloatingBottomChrome}>
                         <SessionCockpitFloatingBottomChromeHeightContext.Provider value={floatingBottomChromeHeight}>
                         <SessionCockpitShellBarHeightContext.Provider value={bottomChromeHeight}>
                             <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
@@ -382,13 +410,14 @@ export function useSessionCockpitPageBottomClearance(): number {
 /** The shell withdraws its measured floating band on suppression, container change or unmount. */
 export function useReportSessionCockpitFloatingBottomChromeHeight(enabled: boolean): (height: number) => void {
     const report = React.useContext(SessionCockpitFloatingBottomChromeReporterContext);
+    const producer = React.useId();
     React.useEffect(() => {
-        if (!enabled) report(0);
-        return () => report(0);
-    }, [enabled, report]);
+        if (!enabled) report(producer, 0);
+        return () => report(producer, 0);
+    }, [enabled, producer, report]);
     return React.useCallback((height: number) => {
-        if (enabled) report(Number.isFinite(height) ? Math.max(0, height) : 0);
-    }, [enabled, report]);
+        if (enabled) report(producer, Number.isFinite(height) ? Math.max(0, Math.round(height)) : 0);
+    }, [enabled, producer, report]);
 }
 
 /**

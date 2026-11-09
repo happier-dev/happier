@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { FlatList, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
+import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { compileDiscussionListFilterV1, DEFAULT_DISCUSSION_LIST_FILTER_V1, DiscussionListFilterPatchV1Schema,
     discussionListFilterFieldsV1, type DiscussionListFilterV1, type DiscussionListFilterFactsV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
@@ -16,12 +16,13 @@ import { registerDiscussionListScopeActionOwner } from '@/sync/ops/actions/scope
 
 import { DiscussionRow, DiscussionRowSkeleton } from '@/components/discussions/DiscussionRow';
 import { useDiscussionListRows } from '@/sync/ops/discussions/useDiscussionListRows';
-import { discussionWaitingSessionName } from './discussionSessionLabel';
+import { useDiscussionSessionLabelProjection } from './discussionSessionLabel';
 import type { DiscussionListRow } from '@/activity/attention/buildDiscussionListAttention';
 import { useOpenDiscussion } from './useOpenDiscussion';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -53,6 +54,7 @@ import {
 import { useSessionConversationsAvailability } from '@/components/sessions/conversations/useSessionConversationsAvailability';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionDisplayNameProjections, useSetting } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -235,6 +237,7 @@ function DiscussionsListReady(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const column = props.presentation === 'column';
+    const pageBack = usePhoneDestinationBack('discussions-column:back');
     const statusWords = useSetting('sessionListStatusWords');
     const presented = useLayoutPresentationActive();
     const focused = useIsFocused();
@@ -288,7 +291,7 @@ function DiscussionsListReady(props: Readonly<{
     // one key-scoped projection for the whole list, never a read per row.
     const waitingAddresses = React.useMemo(() => [...new Set(activeRows.flatMap(row => row.waitingSessionId ? [row.waitingSessionId] : []))]
         .map(sessionId => ({ serverId: props.scope.serverId, sessionId })), [activeRows, props.scope.serverId]);
-    const waitingNames = useSessionDisplayNameProjections(waitingAddresses, discussionWaitingSessionName);
+    const waitingNames = useSessionDisplayNameProjections(waitingAddresses, useDiscussionSessionLabelProjection(true));
     const attention = React.useMemo(() => {
         const names = new Map(waitingAddresses.map((address, index) => [address.sessionId, waitingNames[index] ?? null] as const));
         return new Map(activeRows.map(row => [row.id, { ...row, agentName: row.waitingSessionId ? names.get(row.waitingSessionId) ?? null : null }] as const));
@@ -447,16 +450,17 @@ function DiscussionsListReady(props: Readonly<{
                         approvalArtifactId={attention.get(item.discussion.id)?.approvalArtifactIds[0]}
                         statusWords={statusWords}
                         presented={presented}
-                        workStatus={resolveWorkStatusTone({ kind: 'discussion', facts: attention.get(item.discussion.id)
-                            ?? { attentionReason: null, attentionType: null } })}
+                        attentionReason={attention.get(item.discussion.id)?.attentionReason ?? null}
+                        attentionType={attention.get(item.discussion.id)?.attentionType ?? null}
+                        agentName={attention.get(item.discussion.id)?.agentName}
                         selected={activeDiscussionKey === item.discussion.id}
-                        onPress={() => openDiscussion(item.discussion.id, item.discussion.title)}
+                        onOpenDiscussion={openDiscussion}
                     />
                 );
             case 'human_pending':
                 return (
                     <View testID="session-conversations-loading" accessibilityRole="progressbar" accessibilityLabel={t('session.collaboration.discussion.loading')}>
-                        {SKELETON_ROWS.map((index) => <DiscussionRowSkeleton key={index} index={index} />)}
+                        {SKELETON_ROWS.map((index) => <DiscussionRowSkeleton key={index} index={index} column={column} />)}
                     </View>
                 );
             case 'human_empty':
@@ -512,15 +516,18 @@ function DiscussionsListReady(props: Readonly<{
                         onPress={toggleArchived}
                         style={({ pressed }) => [styles.archivedDisclosure, pressed ? { opacity: motionTokens.press.opacity } : null]}
                     >
-                        <Icon name={archivedExpanded ? 'caret-down' : 'caret-right'} size={13} color={theme.colors.text.tertiary} />
+                        <DisclosureCaret expanded={archivedExpanded} size={13} />
                         <Text style={styles.archivedLabel}>{t('session.collaboration.discussion.archived')}</Text>
                     </Pressable>
                 );
             case 'archived_discussion':
                 return <DiscussionRow discussion={item.discussion} viewerAccountId={viewerAccountId} geometry={column ? 'column' : 'pane'}
                     serverId={props.address.serverId} approvalArtifactId={attention.get(item.discussion.id)?.approvalArtifactIds[0]}
-                    statusWords={statusWords} presented={presented} workStatus={resolveWorkStatusTone({ kind: 'discussion', facts: attention.get(item.discussion.id)
-                    ?? { attentionReason: null, attentionType: null } })} selected={activeDiscussionKey === item.discussion.id} onPress={() => openDiscussion(item.discussion.id, item.discussion.title)} />;
+                    statusWords={statusWords} presented={presented}
+                    attentionReason={attention.get(item.discussion.id)?.attentionReason ?? null}
+                    attentionType={attention.get(item.discussion.id)?.attentionType ?? null}
+                    agentName={attention.get(item.discussion.id)?.agentName}
+                    selected={activeDiscussionKey === item.discussion.id} onOpenDiscussion={openDiscussion} />;
             case 'archived_loading':
                 return <View style={styles.center}><ActivitySpinner size="small" /></View>;
             case 'search_more':
@@ -594,10 +601,11 @@ function DiscussionsListReady(props: Readonly<{
             <CollectionList
                 testID="discussions-column"
                 surface={props.surface}
+                pageBack={props.surface === 'page' ? pageBack : null}
                 title={t('session.collaboration.discussion.title')}
                 // The title names the space and opens its menu (R9, the Sessions title chevron).
                 titleControl={spaceHeader.titleControl}
-                strip={<>{spaceHeader.strip}{spaceHeader.overlays}</>}
+                strip={<>{spaceHeader.strip}{spaceHeader.conditionRow}{spaceHeader.overlays}</>}
                 // A narrowed column counts what it shows, once that answer is whole.
                 count={searching || filter !== 'all' ? narrowedCount : activeCount ?? null}
                 search={searchable ? {

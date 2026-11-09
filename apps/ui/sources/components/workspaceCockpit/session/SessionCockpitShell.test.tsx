@@ -1,3 +1,9 @@
+import { resolveSessionCockpitMobileCatalog } from './sessionCockpitMobileCatalog';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { sessionLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
 import * as React from 'react';
 
 import { act } from 'react-test-renderer';
@@ -31,7 +37,7 @@ const safeAreaInsetsMock = vi.hoisted(() => ({
 }));
 const pluginProjectionState = vi.hoisted<{
     value: {
-        pluginUiProjection: unknown;
+        pluginUiProjection: PluginUiProjectionModel | null;
         pluginBrowserProjection: null;
         phase: 'current' | 'unavailable';
         interactionEnabled: boolean;
@@ -151,15 +157,17 @@ function createPluginProjection() {
     const placement = {
         id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`,
         pluginId: REVIEW_PLUGIN_ID,
-        contributionKind: 'surfacePlacement',
+        contributionKind: 'surfacePlacement' as const,
         descriptorId: 'review-panel',
         binding,
         target: binding.target,
         renderer: { kind: 'host', rendererId: 'review.panel' },
         display: { developerFallback: 'Review' },
-        availability: { state: 'available', reason: 'available', diagnostics: [] },
+        headerActions: [],
+        availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
     };
     return Object.freeze({
+        ...EMPTY_PLUGIN_UI_PROJECTION,
         generation: 4,
         translationsByPluginId: Object.freeze({}),
         sessionHeaderActionsById: Object.freeze({}),
@@ -167,6 +175,15 @@ function createPluginProjection() {
         reactNativeBundlesById: Object.freeze({}),
         surfacePlacementsById: Object.freeze({ [placement.id]: placement }),
         unknownEntriesById: Object.freeze({}),
+    } satisfies PluginUiProjectionModel);
+}
+
+// The navigator normally supplies the admitted catalog; these standalone screen fixtures supply its producer output.
+function createScreenCatalog() {
+    const projection = pluginProjectionState.value.pluginUiProjection;
+    return resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true,
+        pluginPlacements: projection ? selectPluginRightSidebarTabPlacements(projection, 'session') : [],
+        runtimeAdmission: { platform: pluginProjectionState.value.platform, formFactor: 'phone' },
     });
 }
 
@@ -200,7 +217,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 async function primeSessionBoardFeature(serverId: string, enabled: boolean): Promise<void> {
     const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-    const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+    const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
     const features = createRootLayoutFeaturesResponse();
     if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', enabled)) {
         throw new Error('The sessions.board bit could not be written by its own writer');
@@ -220,6 +237,7 @@ describe('SessionCockpitSurfaceScreen', () => {
         await primeSessionBoardFeature('server-b', true);
         storage.setState(initialStorageState);
         primeLocalSettings({});
+        replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {});
         safeAreaInsetsMock.top = 0;
         safeAreaInsetsMock.bottom = 0;
         safeAreaInsetsMock.left = 0;
@@ -236,8 +254,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('closes an already-open right pane when the chat surface becomes active', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
                     details: {
@@ -248,14 +265,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="chat"
@@ -269,7 +284,7 @@ describe('SessionCockpitSurfaceScreen', () => {
         await act(async () => {
             await screen.update(
                 <AppPaneProvider>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="chat"
@@ -295,8 +310,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('makes the mounted mobile Board primary over retained desktop Board panes', async () => {
         const retainedBoardTab = createSessionBoardDetailsTab();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: true, activeTabId: 'board', tabState: {} },
                     details: {
@@ -307,14 +321,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="board"
@@ -326,7 +338,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
         const board = screen.tree.findByType('SessionBoardPane' as never);
         expect(board.props.serverId).toBe('server-b');
-        expect(board.props.resolvePrimaryHost('widget-a')).toBe('mobileCockpit');
+        expect(board.props.host).toBe('mobileCockpit');
     });
 
     it('publishes the focused surface as the cockpit navigation owner', async () => {
@@ -338,7 +350,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 <AppPaneProvider>
                     <SessionCockpitChromeRegistryProvider>
                         <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                            <SessionCockpitSurfaceScreen
+                            <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                                 sessionId="s_1"
                                 scopeId="session:s_1"
                                 surface="chat"
@@ -366,8 +378,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('closes the details presentation when returning to chat from an opened details surface', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -387,14 +398,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="chat"
@@ -407,7 +416,7 @@ describe('SessionCockpitSurfaceScreen', () => {
         await act(async () => {
             await screen.update(
                 <AppPaneProvider>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="chat"
@@ -427,8 +436,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders a stable terminal screen wrapper when the terminal surface is active', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -439,14 +447,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="terminal"
@@ -467,8 +473,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     it('delegates route-owned safe-area padding to the shared session chrome', async () => {
         safeAreaInsetsMock.top = 24;
         safeAreaInsetsMock.bottom = 12;
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -479,14 +484,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="terminal"
@@ -508,8 +511,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('uses screen presentation for fallback details when the route owns safe-area padding', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -520,14 +522,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="tabs"
@@ -543,8 +543,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders the mobile Browser cockpit surface through BrowserSurfaceHost', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -555,14 +554,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="browser"
@@ -584,8 +581,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders the mobile Services cockpit surface through DetectedLocalServicesPane', async () => {
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -596,14 +592,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface="services"
@@ -624,8 +618,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('hands a browsed file to the shared workspace file opener without pushing a sibling stack route or opening a pane tab', async () => {
         const switchSurface = vi.fn();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -636,15 +629,13 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="browse"
@@ -682,7 +673,7 @@ describe('SessionCockpitSurfaceScreen', () => {
             switchTo = setActiveSurface;
             return (
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface: setActiveSurface, returnToPreviousSurface: () => setActiveSurface(surface) }}>
-                    <SessionCockpitSurfaceScreen sessionId="s_1" scopeId="session:s_1" surface={activeSurface} terminalTabAvailable />
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()} sessionId="s_1" scopeId="session:s_1" surface={activeSurface} terminalTabAvailable />
                 </SessionCockpitSurfaceNavigationProvider>
             );
         }
@@ -709,8 +700,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens commit details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -721,15 +711,13 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="git"
@@ -760,8 +748,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens review details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -772,15 +759,13 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="git"
@@ -811,8 +796,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens stash details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -823,15 +807,13 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="git"
@@ -862,8 +844,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens a new terminal details tab on the internal details surface', async () => {
         const switchSurface = vi.fn();
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -874,15 +855,13 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
                 <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                    <SessionCockpitSurfaceScreen
+                    <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                         sessionId="s_1"
                         scopeId="session:s_1"
                         surface="terminal"
@@ -921,8 +900,7 @@ describe('SessionCockpitSurfaceScreen', () => {
             serverId: 'server-1',
             platform: 'web',
         };
-        primeLocalSettings({
-            appPaneScopesV1: {
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -933,14 +911,12 @@ describe('SessionCockpitSurfaceScreen', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            },
-            sessionLastMobileSurfaceBySessionId: {},
-        });
+            }));
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface={`plugin:${REVIEW_PLUGIN_ID}:review-panel`}
@@ -978,7 +954,7 @@ describe('SessionCockpitSurfaceScreen', () => {
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionCockpitSurfaceScreen
+                <SessionCockpitSurfaceScreen catalog={createScreenCatalog()}
                     sessionId="s_1"
                     scopeId="session:s_1"
                     surface={`plugin:${REVIEW_PLUGIN_ID}:missing`}

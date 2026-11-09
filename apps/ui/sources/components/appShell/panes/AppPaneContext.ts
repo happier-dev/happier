@@ -8,6 +8,7 @@ import type { PaneOverlayFocusReturnOwner } from './paneOverlayFocusReturn';
 import type { FileFindSeedHandoff } from './fileFindSeedHandoff';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { workspaceFileDetailsTabKey } from './details/fileDetailsTab';
+import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 
 export type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -15,7 +16,7 @@ export type AppPaneContextValue = Readonly<{
     getReadState: () => AppPaneState;
     /** Pane state remains in memory if the device could not persist its latest write. */
     persistenceFailed?: boolean;
-    /** Explicit transfer flush; ordinary edits retain their in-memory draft on failure. */
+    /** Explicit transfer flush; ordinary edits continue to retain their in-memory draft on failure. */
     flushPersistence?: () => boolean;
     dispatch: (action: AppPaneAction) => void;
     registerDriver: (driver: PaneDriver) => () => void;
@@ -53,6 +54,8 @@ type FileTabFrontSubscription = Readonly<{
      * open; a phone presents that Details as the full page.
      */
     readActiveDetailsOpen: (resourceScopeId: string) => boolean;
+    /** Whether the active pane scope is this resource's and its terminal workspace holds at least one terminal. */
+    readActiveTerminalsOpen: (resourceScopeId: string) => boolean;
 }>;
 
 export const AppPaneFileFrontContext = createContext<FileTabFrontSubscription | null>(null);
@@ -75,6 +78,14 @@ export function createFileTabFrontSubscription(readState: () => AppPaneState): F
             const active = state.activeScopeId;
             return active !== null && readResourcePaneScopeId(active) === resourceScopeId
                 && state.scopes[active]?.details.isOpen === true;
+        },
+        readActiveTerminalsOpen(resourceScopeId) {
+            const state = readState();
+            const active = state.activeScopeId;
+            if (active === null || readResourcePaneScopeId(active) !== resourceScopeId) return false;
+            // A scope that never opened a terminal has no record (a Project starts empty); only a stored workspace counts.
+            const stored = state.scopes[active]?.bottom.tabState.terminal;
+            return stored !== undefined && readSessionTerminalWorkspace(stored).tabs.length > 0;
         },
         notify() {
             for (const listener of listeners) listener();

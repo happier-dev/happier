@@ -1,3 +1,10 @@
+import { resolveSessionCockpitMobileCatalog } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
+import { normalizeSessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+const mountedCatalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true });
+function columnReader(switchSurface: (surface: import('@/components/workspaceCockpit/session/sessionCockpitState').SessionMobileSurface) => void) {
+    return () => ({ present: true, visible: true, available: true, tabs: mountedCatalog.map(entry => entry.id),
+        selectTab: (id: string) => { const surface = normalizeSessionMobileSurface(id); if (surface) switchSurface(surface); }, setVisible: () => {} });
+}
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { Text } from 'react-native';
@@ -7,6 +14,7 @@ import { act } from 'react-test-renderer';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
@@ -44,6 +52,9 @@ it('uses the live navigator after it registers without changing the selected sur
             const pathname = new URL(String(url)).pathname;
             if (pathname === '/v2/account/settings') return Promise.resolve(Response.json({ content: { t: 'plain', v: settings }, version: 1 }));
             if (pathname === '/v1/features') return Promise.resolve(Response.json(createRootLayoutFeaturesResponse()));
+            if (pathname === '/v1/kv/bulk') return Promise.resolve(Response.json({ values: [] }));
+            const bootstrap = createEmptyAccountBootstrapHttpResponse(pathname, init);
+            if (bootstrap) return Promise.resolve(bootstrap);
             return artifact.request(url, init);
         },
     });
@@ -54,6 +65,7 @@ it('uses the live navigator after it registers without changing the selected sur
     const { SessionCockpitChromeRegistryProvider, useSessionCockpitChromeRegister } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
     const { MainAppTabStateProvider } = await import('./MainAppTabStateProvider');
     const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+    const { PresentedSessionChromeFixture } = await import('@/dev/testkit/harness/presentedDetailChrome');
 
     // A controlled caller of the real registry, not a registry/navigator mock.
     // Its rendered state records whether the actual tab reached the current callback.
@@ -63,7 +75,7 @@ it('uses the live navigator after it registers without changing the selected sur
         React.useEffect(() => {
             if (!props.registered) return;
             return register({ sessionId: 'session-1', serverId: route.serverId, activeSurface: surface,
-                terminalTabAvailable: false, openDetailsTabCount: 0, switchSurface: setSurface });
+                terminalTabAvailable: false, openDetailsTabCount: 0, catalog: mountedCatalog, readColumn: columnReader(setSurface), switchSurface: setSurface });
         }, [props.registered, register, surface]);
         return <Text testID="navigator-surface">{surface}</Text>;
     }
@@ -72,18 +84,19 @@ it('uses the live navigator after it registers without changing the selected sur
         return <InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><SessionCockpitChromeRegistryProvider>
                 <NavigatorCaller registered={props.registered} />
+                <PresentedSessionChromeFixture />
                 <MobileBottomChromeHost />
             </SessionCockpitChromeRegistryProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>;
     }
     const screen = await renderScreen(<Harness registered={false} />);
-    expect(screen.findHostByTestId('session-cockpit-tab-browse')).not.toBeNull();
+    expect(screen.findHostByTestId('session-cockpit-tab-browse')).toBeNull();
     await screen.update(<Harness registered />);
     await flushHookEffects({ cycles: 3 });
     await screen.pressByTestIdAsync('session-cockpit-tab-browse');
-    expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('browse');
+    await vi.waitFor(() => expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('browse'));
     await screen.pressByTestIdAsync('session-cockpit-tab-chat');
-    expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('chat');
+    await vi.waitFor(() => expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('chat'));
     // Dispatch the web keyboard event at the actual painted control boundary.
     await act(async () => {
         const onKeyDown = screen.findHostByTestId('session-cockpit-tab-browse')?.props.onKeyDown;
@@ -91,5 +104,5 @@ it('uses the live navigator after it registers without changing the selected sur
             onKeyDown({ nativeEvent: { key: ' ' }, preventDefault() {}, stopPropagation() {} });
         }
     });
-    expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('browse');
+    await vi.waitFor(() => expect(screen.findHostByTestId('navigator-surface')?.props.children).toBe('browse'));
 });

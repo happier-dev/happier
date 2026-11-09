@@ -5,7 +5,6 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
@@ -20,6 +19,7 @@ import { teamPageHeaderMeta, type TeamSectionContext } from './teamSectionContex
 import { teamSettingsPath } from './teamsRoutes';
 import { teamReadFailureLabel } from './teamMutationPresentation';
 import { useTeamReadFailureAction } from './useTeamReadFailureAction';
+import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 /**
  * The page head of a Team destination: a sub-page names itself (`title`, `description`); an entity
@@ -33,6 +33,25 @@ export type TeamSectionHeader = Readonly<{
     /** An entity header built from the Team, replacing the title/description header once it exists. */
     render?: (context: TeamSectionContext) => React.ReactNode;
 }>;
+
+/** The Team shell's page identity, shared with local presentation-only stage readers. */
+export function TeamSectionPageHeader(props: Readonly<{
+    title: string;
+    description?: string;
+    actions?: React.ReactNode;
+    alwaysShowTitle?: boolean;
+    teamName: string | null;
+    homeName?: string;
+}>): React.ReactElement {
+    return <PageHeader
+        testID="team-page-header"
+        title={props.title}
+        description={props.description}
+        actions={props.actions}
+        alwaysShowTitle={props.alwaysShowTitle}
+        meta={teamPageHeaderMeta({ pageTitle: props.title, teamName: props.teamName, homeName: props.homeName })}
+    />;
+}
 
 /**
  * A condition that occupies the page because there is genuinely nothing else truthful to show.
@@ -90,6 +109,8 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * `embedded`: the section lives inside another surface (the Home console's Invite people dialog),
      * which owns the title and the scroll container. Conditions render without a page header, the
      * banners sit above the child, and the screen title is left alone.
+     * `virtualized-list`: the child draws the page with a `VirtualizedItemList` (the page scroller owns the page
+     * scope) and receives the header and conditions to place in its list header.
      */
     presentation?: 'item-list' | 'virtualized-list' | 'embedded';
     /**
@@ -136,7 +157,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const resolvedTitle = props.title ?? readyTeamName ?? t('teams.title');
 
     // An entity page (the Team, a member, a Group) names itself in its own header, and the
-    // collection layout leaves the phone header untitled for it (registry `headsItself`). Its
+    // collection layout leaves the phone header untitled for it, as every Settings page. Its
     // condition states keep the page title for the same reason.
     const headsItself = props.renderHeader !== undefined || props.childRendersHeader === true;
     const embedded = props.presentation === 'embedded';
@@ -146,17 +167,13 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     }, [embedded, navigation, resolvedTitle]);
 
     const renderPlainHeader = (actions?: React.ReactNode) => (
-        <PageHeader
-            testID="team-page-header"
+        <TeamSectionPageHeader
             title={resolvedTitle}
             description={props.description}
             actions={actions}
             alwaysShowTitle={headsItself}
-            meta={teamPageHeaderMeta({
-                pageTitle: resolvedTitle,
-                teamName: readyTeamName,
-                homeName: 'homeName' in binding ? binding.homeName : undefined,
-            })}
+            teamName={readyTeamName}
+            homeName={'homeName' in binding ? binding.homeName : undefined}
         />
     );
     const plainHeader = renderPlainHeader();
@@ -270,7 +287,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
                     title={t('approvals.title')}
                     description={approvalError
                         ? t('approvals.loadError')
-                        : approvalLoading || approvalStatus === 'open' || approvalStatus === 'approved' || approvalStatus === 'executing'
+                        : approvalLoading || isApprovalRequestV2InFlightStatus(approvalStatus)
                             ? t('approvals.status.open')
                             : undefined}
                     accessibilityLiveRegion={approvalError ? 'assertive' : 'polite'}
@@ -316,11 +333,9 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
 
     if (props.presentation === 'virtualized-list') {
         return (
-            <ListPresentationProvider value="page">
-                <React.Fragment key={scopeKey}>
-                    {props.children(context, header)}
-                </React.Fragment>
-            </ListPresentationProvider>
+            <React.Fragment key={scopeKey}>
+                {props.children(context, header)}
+            </React.Fragment>
         );
     }
 

@@ -3,7 +3,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import {
     ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX,
-    ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from '@/components/ui/lists/itemGroupSpacing';
 import { Typography } from '@/constants/Typography';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -48,11 +47,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     contentContainer: {
         flex: 1,
     },
-    headerSection: {
-        paddingHorizontal: SESSION_LIST_TEXT_INSET_PX,
-        paddingTop: SESSION_LIST_COLUMN_METRICS.groupLabelPaddingTopPx,
-        paddingBottom: SESSION_LIST_COLUMN_METRICS.groupLabelPaddingBottomPx,
-    },
     listHeaderSection: {
     },
     // Group labels in the rail are sentence case: the `Eyebrow` primitive they render through is
@@ -69,59 +63,36 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         paddingBottom: SESSION_LIST_COLUMN_METRICS.groupLabelPaddingBottomPx,
     },
     /**
-     * An untitled `ItemGroup` draws a top spacer in place of a header; a session-list group already has
-     * its label above it, so the sheet cancels exactly that spacer and sits the label's padding below it.
-     */
-    groupSheetUnderLabel: {
-        marginTop: -(Platform.select(ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX) ?? 0),
-    },
-    /**
      * An `ItemGroup` sheet in the column (Drafts, the Browse row) on the column's sheet edge: the group's own
      * container padding plus this margin land it where the session sheets start.
      */
     groupSheetInset: {
         marginHorizontal: SESSION_LIST_SHEET_INSET_PX - (Platform.select(ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX) ?? 0),
     },
-    groupHeaderTitle: {
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.text.secondary,
-        flexShrink: 1,
-        textTransform: 'none' as const,
-    },
-    /** A group's quiet count beside its label ("Drafts 3"). */
-    groupHeaderCount: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.tertiary,
-        fontVariant: ['tabular-nums'],
-    },
-    /** The group's machine on the label's line: quiet and shrinking first, the label keeps its room. */
-    groupHeaderMachine: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.tertiary,
-        flexShrink: 2,
-        minWidth: 0,
-    },
     groupHeaderSubtitle: {
         ...Typography.variant('micro'),
         color: theme.colors.text.secondary,
         marginTop: theme.space.s2,
     },
-    groupHeaderRow: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        justifyContent: 'space-between' as const,
-    },
-    groupHeaderTitleRow: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: theme.space.s6,
-        flex: 1,
-        minWidth: 0,
-    },
     groupHeaderFavicon: {
         width: 16,
         height: 16,
         borderRadius: 4,
+    },
+    // A coloured project's dot sits on its mark's corner, so titles keep one edge across groups.
+    groupHeaderMarkFrame: {
+        position: 'relative' as const,
+    },
+    groupHeaderColorDot: {
+        position: 'absolute' as const,
+        right: -3,
+        bottom: -2,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        // The ink hairline keeps pale customs visible and separates the dot from the mark under it.
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
     },
     groupHeaderFaviconFrame: {
         width: 16,
@@ -132,36 +103,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         maxHeight: 16,
         flexShrink: 0,
         borderRadius: 4,
-        backgroundColor: theme.colors.background.canvas,
         overflow: 'hidden' as const,
-    },
-    folderHeaderSection: {
-        paddingHorizontal: theme.space.s10,
-        paddingTop: 0,
-        paddingBottom: 0,
-    },
-    folderHeaderRow: {
-        minHeight: 22,
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        justifyContent: 'space-between' as const,
-        borderRadius: 8,
-    },
-    groupHeaderContent: {
-        flex: 1,
-        minWidth: 0,
-    },
-    groupHeaderInlineActions: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: theme.space.s2,
-        flexShrink: 0,
-    },
-    groupHeaderTrailingActions: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        flexShrink: 0,
-        marginLeft: theme.space.s8,
     },
     /**
      * A section's quiet line at the rows' title edge (calm ruling 2026-11-01): an empty section's "Drag sessions
@@ -185,19 +127,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         borderRadius: 999,
         marginLeft: theme.space.s4,
     },
-    groupHeaderDragHandle: {
-        width: theme.space.s24,
-        height: theme.space.s24,
-    },
-    folderHeaderDragHandleIcon: {
-        opacity: 0,
-    },
-    folderHeaderDragHandleIconActive: {
-        opacity: 1,
-    },
-    groupHeaderActionIcon: {
-        color: theme.colors.text.secondary,
-    },
     headerRow: {
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
@@ -209,12 +138,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
         flex: 1,
         minWidth: 0,
-    },
-    headerChevron: {
-        width: 16,
-        alignItems: 'center' as const,
-        justifyContent: 'center' as const,
-        color: theme.colors.text.secondary,
     },
     searchChrome: {
         paddingLeft: SESSION_LIST_TEXT_INSET_PX,
@@ -236,6 +159,18 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         marginTop: SESSION_LIST_COLUMN_METRICS.fieldGapPx,
         marginLeft: SESSION_LIST_FIELD_OUTSET_LEFT_PX,
         marginRight: SESSION_LIST_FIELD_OUTSET_RIGHT_PX,
+        flexGrow: 1,
+        flexShrink: 1,
+    },
+    /** A View menu row's current value and its submenu chevron (lab `clfilter:view`: values trail). */
+    viewMenuValue: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        gap: theme.space.s4,
+    },
+    viewMenuValueText: {
+        color: theme.colors.text.tertiary,
+        ...Typography.variant('meta'),
     },
     /** The list title (its scope menu) takes the row's leading edge; the search and view controls trail. */
     searchChromeTitleSlot: {
@@ -246,13 +181,27 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         alignItems: 'center' as const,
         justifyContent: 'flex-start' as const,
     },
+    /** The Projects/Recent segment hugs its two glyphs beside Find and View (lab `clviews`). */
+    layoutSegment: {
+        flexShrink: 0,
+    },
     searchChromeStatusRow: {
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
         gap: theme.space.s8,
         minHeight: 28,
     },
-    /** Active-facet chips under the title: they leave the field's gap and the list's rows where they were. */
+    // On a phone tab the spaces strip takes its own line under the title.
+    searchChromePhoneControls: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        gap: theme.space.s4,
+        paddingTop: theme.space.s8,
+    },
+    searchChromePhoneStrip: {
+        flex: 1,
+        minWidth: 0,
+    },
     searchChromeChipRow: {
         flexDirection: 'row' as const,
         flexWrap: 'wrap' as const,
@@ -302,7 +251,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row' as const,
         alignItems: 'center' as const,
         gap: theme.space.s6,
-        minHeight: 44,
         paddingVertical: theme.space.s8,
     },
     searchChromeEscalationText: {
@@ -317,26 +265,5 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         height: 20,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
-    },
-    groupHeaderChevron: {
-        width: 16,
-        alignItems: 'center' as const,
-        justifyContent: 'center' as const,
-        color: theme.colors.text.secondary,
-    },
-    webHoverHiddenChevron: {
-        opacity: 0,
-    },
-    webHoverVisibleChevron: {
-        opacity: 1,
-    },
-    dropIndicator: {
-        position: 'absolute' as const,
-        left: 16,
-        right: 16,
-        height: 2,
-        borderRadius: 1,
-        backgroundColor: theme.colors.accent.blue,
-        zIndex: 10,
     },
 }));

@@ -1,8 +1,10 @@
+import { resolveSessionCockpitMobileCatalog } from './sessionCockpitMobileCatalog';
+const mountedCatalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false });
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import { resolveHref } from 'expo-router/build/link/href';
-import { flushHookEffects, invokeTestInstanceHandler, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, renderHook, standardCleanup } from '@/dev/testkit';
 import {
     createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit,
 } from '@/components/sessions/files/views/sessionFilesViewTestkit';
@@ -105,6 +107,74 @@ afterEach(async () => {
     resetRouteParams();
 });
 
+
+/** Closes the phone comparison's one Details tab the way a person does: its header's ⋯, then Close tab. */
+async function closeComparisonTabFromMenu(screen: Readonly<{ tree: import('react-test-renderer').ReactTestInstance }>) {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.tree.find((node) => node.type === DropdownMenu && node.props.testID === 'scm-comparison-phone-actions');
+    const close = (menu.props.items as { id: string; testID?: string }[]).find((item) => item.testID === 'details-tab-menu-close')!;
+    await act(async () => { (menu.props.onSelect as (id: string) => void)(close.id); });
+}
+
+it('keeps an unavailable phone workspace settled across parent renders', async () => {
+    fixture = await createSessionFilesViewFixture();
+    const { usePhoneWorkspaceTabs } = await import('@/components/appShell/workspace/usePhoneWorkspaceTabs');
+    let renders = 0;
+    const hook = await renderHook(() => { renders++; return usePhoneWorkspaceTabs(); });
+    const initial = hook.getCurrent();
+    expect(initial).toMatchObject({ available: false, tabs: [], activeTabId: null });
+    const before = renders;
+    await hook.rerender();
+    expect(hook.getCurrent()).toBe(initial);
+    // An unchanged, unavailable catalog has no title arrival to schedule another render.
+    await flushHookEffects({ cycles: 20 });
+    expect(renders).toBe(before + 1);
+    await hook.unmount();
+});
+
+it('opens a phone Service through the cockpit into its Browser workspace', async () => {
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const features = createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } });
+    const browserTarget = { kind: 'localServicePreview', targetId: 'phone-preview', machineId: 'm1', sessionId: 's1' } as const;
+    const resource = { previewId: 'phone-preview', machineId: 'm1', sessionId: 's1', owner: { kind: 'session', id: 's1' },
+        target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+        display: { title: 'Phone service', addressLabel: 'localhost:5173' }, originMode: 'host', browserTarget } as const;
+    const preview = { previewId: resource.previewId, resource, accessUrl: 'https://phone-preview.test/', expiresAt: Date.now() + 60_000, diagnostics: [] };
+    const previewSnapshot = { v: 1, machineId: 'm1', generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] };
+    const launcherSnapshot = { v: 1, machineId: 'm1', sessionId: 's1', updatedAt: 1_000, targets: [{
+        id: 'inventory:phone-service', source: 'inventory_entry', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'phone-service' },
+        machineId: 'm1', sessionId: 's1', title: 'Phone service', confidence: 'high', state: 'available', actions: [], browserTarget,
+    }] };
+    fixture = await createSessionFilesViewFixture({ serverUrl: 'https://phone-browser-cockpit.test', rootPath: '/tmp/repo',
+        rpc: request => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT
+            ? { protocolVersion: 1, snapshot: launcherSnapshot }
+            : request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE
+                ? { protocolVersion: 1, status: 'existing', preview, snapshot: previewSnapshot }
+                : request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT
+                    ? { protocolVersion: 1, snapshot: previewSnapshot } : undefined,
+        request: async url => new URL(String(url)).pathname === '/v1/features' ? Response.json(features)
+            : new URL(String(url)).pathname === '/v2/account/settings' ? Response.json({ version: 1, content: { t: 'plain', v: {
+                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] } },
+            } } }) : Response.json({}, { status: 404 }),
+    });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId: fixture.home.id, snapshot: { status: 'ready', features } });
+    const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
+    const { SessionCockpitSurfaceNavigationProvider } = await import('./SessionCockpitSurfaceNavigation');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const switchSurface = vi.fn();
+    let browserPane!: ReturnType<typeof useAppPaneScope>;
+    function Probe() { browserPane = useAppPaneScope('session:s1:browser'); return null; }
+    const screen = await fixture.render(<SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => {} }}>
+        <Probe /><SessionCockpitSurfaceScreen catalog={mountedCatalog} sessionId="s1" scopeId="session:s1" surface="services" routeServerId={fixture.home.id} />
+    </SessionCockpitSurfaceNavigationProvider>);
+    await vi.waitFor(() => expect(screen.findHostByTestId('session-mobile-services-row:inventory:phone-service-open')).not.toBeNull());
+    await screen.pressByTestIdAsync('session-mobile-services-row:inventory:phone-service-open');
+    expect(browserPane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['browser-view']);
+    expect(switchSurface).toHaveBeenCalledWith('browser');
+});
+
 it.each([true, false])('leaves phone Details through the real comparison Back with pane open=%s without deleting its retained tab', async (paneOpen) => {
     const snapshot = fileViewSnapshot({ rootPath: '/tmp/repo' });
     fixture = await createSessionFilesViewFixture({ serverUrl: `https://phone-pane-${paneOpen}.test`, rootPath: '/tmp/repo', rpc: request =>
@@ -143,9 +213,10 @@ it.each([true, false])('leaves phone Details through the real comparison Back wi
     await flushHookEffects({ cycles: 20 });
     await measure();
     await flushHookEffects({ cycles: 20 });
-    expect(screen.findHostByTestId('scm-comparison-phone-back')).not.toBeNull();
+    // One Back on a phone Details tab: the Session header's. The tab closes from its header's ⋯.
+    expect(screen.findHostByTestId('scm-comparison-phone-back')).toBeNull();
     route.replace.mockClear();
-    await screen.pressByTestIdAsync('scm-comparison-phone-back');
+    await closeComparisonTabFromMenu(screen);
     await flushHookEffects({ cycles: 20 });
     const url = new URL(String(route.replace.mock.calls.at(-1)?.[0]), 'https://happier.test');
     expect(url.pathname).toBe('/session/s1');
@@ -156,22 +227,38 @@ it.each([true, false])('leaves phone Details through the real comparison Back wi
     await screen.unmount();
 });
 
-it.each([false, true])('opens phone Details through workspace navigation and returns to the conversation with Watch=%s', async (watch) => {
+it.each(['git', 'viewer', 'track'] as const)('opens phone Details through workspace navigation and returns to the conversation from %s', async (entry) => {
+    const watch = entry !== 'git';
+    const fileText = 'export const alpha = 1;\n';
+    const read = entry === 'track' ? await (await import('@/dev/testkit/harness/externalActionAccountHttpBoundary'))
+        .createExternalActionAccountHttpBoundary({ serverUrl: 'https://phone-git.test', serverIdentityId: 'srv_phone_watch',
+            accountId: 'alice', machineId: 'm1', tokenEpoch: 0, actionId: 'daemon.filesystem.readFile',
+            execute: () => ({ success: true, content: Buffer.from(fileText).toString('base64') }) }) : null;
     const snapshot = fileViewSnapshot({ rootPath: '/tmp/repo', entries: [{
         path: 'alpha.txt', kind: 'modified', includeStatus: 'unmodified', pendingStatus: 'modified',
         hasIncludedDelta: false, hasPendingDelta: true, previousPath: null,
         stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false },
     }] });
-    fixture = await createSessionFilesViewFixture({ serverUrl: 'https://phone-git.test', rootPath: '/tmp/repo', rpc: request =>
-        request.method === 'scm.status.snapshot' ? { success: true, snapshot } : undefined,
-        request: async url => new URL(String(url)).pathname === '/v1/kv/bulk'
-            ? Response.json({ values: [] }) : Response.json({}, { status: 404 }),
+    fixture = await createSessionFilesViewFixture({ serverUrl: 'https://phone-git.test', rootPath: '/tmp/repo',
+        ...(read ? { serverIdentityId: 'srv_phone_watch' } : {}), rpc: request =>
+        request.method === 'scm.status.snapshot' ? { success: true, snapshot }
+            : request.method === 'scm.diff.file' ? { success: true, diff: '--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1 +1 @@\n-before\n+after\n' }
+                : { success: true, exists: true, kind: 'file', sizeBytes: Buffer.byteLength(fileText) },
+        request: async (url, init) => {
+            const parsed = new URL(String(url));
+            if (read && parsed.pathname === '/v1/machines/m1') return Response.json({ machine: read.machine });
+            return await read?.handle(parsed, init) ?? (parsed.pathname === '/v1/kv/bulk'
+                ? Response.json({ values: [] }) : Response.json({}, { status: 404 }));
+        },
     });
     fixture.setSnapshot(snapshot);
     fixture.storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
+    if (entry === 'track') fixture.storage.getState().applySettingsLocal({ experiments: true,
+        featureToggles: { 'scm.writeOperations': true, 'files.editor': true, 'files.reviewComments': false, 'files.diffSyntaxHighlighting': false } });
     fixture.storage.setState({ isDataReady: true, localSettings: {
-        ...fixture.storage.getState().localSettings, workspaceLayoutV1: {},
+        ...fixture.storage.getState().localSettings, filesTrackAgentEdits: false,
     } });
+    replacePersistentUiStateForTest(workspaceLayoutsState, {});
     const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
     const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
     const { SessionDestinationBody } = await import('@/components/sessions/shell/SessionDestinationBody');
@@ -230,6 +317,72 @@ it.each([false, true])('opens phone Details through workspace navigation and ret
     });
     await measure();
     await flushHookEffects({ cycles: 20 });
+    // An older same-Session File context must never win the later scene selection.
+    const originalInstanceKey = instanceKey;
+    await act(async () => {
+        workspace.dispatch({ type: 'openTab', groupId: workspace.state.focusedGroupId,
+            tab: { id: 'stale-file-context', preview: false, pinned: false,
+                target: { kind: 'session', params: { id: 's1', serverId: fixture.home.id,
+                    details: 'file', path: 'old-settings.ts' } } } });
+        workspace.activateTab(workspace.state.focusedGroupId, originalInstanceKey);
+    });
+    if (entry === 'track') {
+        const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+        const { readWorkspaceFileView } = await import('@/components/workspaces/files/details/workspaceFileDetails/workspaceFileView');
+        const { FilePageHeader } = await import('@/components/workspaces/files/file/FilePageHeader');
+        const { FileEditorPanel } = await import('@/components/workspaces/files/file/editor/FileEditorPanel');
+        const { Modal } = await import('@/modal');
+        const originalScopeId = pane.scopeId;
+        const fileTab = createWorkspaceFileDetailsTab('alpha.txt', undefined, undefined, { view: 'changes' });
+        await act(async () => workspace.navigationForTab(instanceKey).replace(`/session/s1/details?${new URLSearchParams({
+            serverId: fixture.home.id, ...buildActiveDetailsRouteParams([fileTab], fileTab.key),
+        })}`));
+        await measure();
+        await vi.waitFor(() => expect(screen.findAllByType(FilePageHeader)[0]?.props.edit?.kind).toBe('edit'));
+        await act(async () => { screen.findAllByType(FilePageHeader)[0]!.props.edit.onPress(); });
+        await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
+        expect(screen.findAllByType(FileEditorPanel)[0]?.props.value).toBe(fileText);
+        expect(readWorkspaceFileView(pane.scopeState?.details.tabState['file:alpha.txt']).mode).toBe('edit');
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams(pane.scopeState!.details.tabs,
+            pane.scopeState!.details.activeTabKey, pane.scopeState!.details.tabState))?.details).toMatchObject({ view: 'edit' });
+        expect(pane.scopeId).toBe(originalScopeId);
+        await screen.pressByTestIdAsync('session-cockpit-tab-chat');
+        await measure();
+        await act(async () => {
+            fixture.storage.getState().applySessions([{ ...fixture.session, active: true, activeAt: Date.now(),
+                thinking: true, thinkingAt: Date.now(), latestTurnStatus: 'in_progress' }]);
+            fixture.storage.getState().applyMessages('s1', [{ id: 'watch-edit', localId: null, createdAt: Date.now(),
+                role: 'agent', isSidechain: false, content: [{ type: 'tool-call', id: 'watch-patch', name: 'Patch',
+                    input: { changes: [{ path: '/tmp/repo/alpha.txt', kind: { type: 'update' },
+                        diff: '@@ -1 +1 @@\n-before\n+after' }] }, description: null, uuid: 'watch-edit-uuid', parentUUID: null }] }]);
+        });
+        await vi.waitFor(async () => {
+            await measure();
+            expect(screen.findHostByTestId('session-phone-track-watch-capsule-action')).not.toBeNull();
+        });
+        expect(readWorkspaceFileView(pane.scopeState?.details.tabState['file:alpha.txt']).mode).toBe('edit');
+        expect(pane.scopeId).toBe(originalScopeId);
+        vi.mocked(Modal.alertAsync).mockClear();
+        await screen.pressByTestIdAsync('session-phone-track-watch-capsule-action');
+        await flushHookEffects({ cycles: 20 });
+        await measure();
+        await flushHookEffects({ cycles: 20 });
+        expect.soft(readWorkspaceFileView(pane.scopeState?.details.tabState['file:alpha.txt']).mode).toBe('edit');
+        expect.soft(pane.scopeId).toBe(originalScopeId);
+        expect.soft(screen.findAllByType(FileEditorPanel)).toHaveLength(1);
+        expect.soft(screen.findAllByType(FileEditorPanel)[0]?.props.value).toBe(fileText);
+        expect(pane.scopeState?.details.activeTabKey).toBe('file:alpha.txt');
+        expect(screen.findHostByTestId('session-cockpit-scene:tabs')).not.toBeNull();
+        expect.soft(Modal.alertAsync).not.toHaveBeenCalled();
+        // A later write must still reach the Session's retained pane, not a resource destination
+        // with no foreground Session driver. This is the same admitted Action used by Track.
+        const { invokeWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+        expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.open', input: { present: false, tabId: instanceKey, file: {
+            target: { kind: 'session', sessionId: 's1', serverId: fixture.home.id }, path: 'alpha.txt',
+        } } })).toEqual({ ok: true });
+        await screen.unmount();
+        return;
+    }
     const sourceLifetime = watch ? screen.findAllByType(SessionViewerSourceAccountScopeProvider)
         .map(provider => provider.props.accountLifetime).find(lifetime => lifetime?.isCurrent()) : null;
     if (watch) {
@@ -239,9 +392,10 @@ it.each([false, true])('opens phone Details through workspace navigation and ret
             ?.apply({ kind: 'viewer.open', source: 'computer' })).toEqual({ status: 'applied' }));
         expect(screen.findHostByTestId('session-viewer-sticky')).not.toBeNull();
         const tab = createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'walkthrough' });
-        await act(async () => expect(workspace.openHref(`/session/s1/details?${new URLSearchParams({
+        // The external navigator delivers the source-bound Details destination.
+        await act(async () => { workspace.navigationForTab(originalInstanceKey).replace(`/session/s1/details?${new URLSearchParams({
             serverId: fixture.home.id, ...buildActiveDetailsRouteParams([tab], tab.key),
-        })}`)).toBe(true));
+        })}`); });
     } else {
         expect(screen.tree.findAllByType(SessionCockpitShell).map(node => node.props.surface)).toEqual(['git']);
         await vi.waitFor(async () => {
@@ -254,6 +408,7 @@ it.each([false, true])('opens phone Details through workspace navigation and ret
     await measure();
     await flushHookEffects({ cycles: 20 });
     const detailsUrl = new URL(route.href, 'https://happier.test');
+    expect(instanceKey).toBe(originalInstanceKey);
     expect(detailsUrl.pathname).toBe('/session/s1/details');
     expect(detailsUrl.searchParams.get('serverId')).toBe(fixture.home.id);
     expect(parseSessionPaneUrlState(Object.fromEntries(detailsUrl.searchParams))?.details).toMatchObject({
@@ -262,13 +417,13 @@ it.each([false, true])('opens phone Details through workspace navigation and ret
     expect(selectedTab().target).toMatchObject({ kind: 'sessionDetails', params: {
         details: 'scmReview', comparison: 'workingTree', view: 'walkthrough',
     } });
-    expect(screen.findHostByTestId('scm-comparison-phone-back')).not.toBeNull();
+    expect(screen.findHostByTestId('scm-comparison-phone-back')).toBeNull();
     // A phone presents hosted Details as its Session cockpit's File scene, beside the cockpit's one Chat composer.
     expect(screen.findHostByTestId('session-cockpit-route-screen')).not.toBeNull();
     expect(screen.findHostByTestId('session-cockpit-scene:tabs')).not.toBeNull();
     if (watch) expect(sourceLifetime?.isCurrent()).toBe(true);
     observingReturn = true;
-    await screen.pressByTestIdAsync('scm-comparison-phone-back');
+    await closeComparisonTabFromMenu(screen);
     await flushHookEffects({ cycles: 20 });
     await measure();
     await flushHookEffects({ cycles: 20 });
@@ -286,6 +441,20 @@ it.each([false, true])('opens phone Details through workspace navigation and ret
     expect(returnedRightPresentations).not.toContain(true);
     // The Git opener retains a pane tab; direct Details selection is URL-owned.
     if (!watch) expect(pane.scopeState?.details.tabs[0]?.resource).toMatchObject({ comparison: { kind: 'workingTree' }, view: 'walkthrough' });
+    if (entry === 'viewer') {
+        const tab = createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'walkthrough' });
+        await act(async () => { workspace.navigationForTab(originalInstanceKey).replace(`/session/s1/details?${new URLSearchParams({
+            serverId: fixture.home.id, ...buildActiveDetailsRouteParams([tab], tab.key),
+        })}`); });
+        // The external navigator can re-admit the File scene after Details was
+        // presented. It must select its source context, not an older File context.
+        await act(async () => { workspace.navigationForTab(originalInstanceKey).replace(`/session/s1?${new URLSearchParams({
+            serverId: fixture.home.id, mobileSurface: 'tabs',
+        })}`); });
+        expect(instanceKey).toBe(originalInstanceKey);
+        expect(pane.scopeState?.details.activeTabKey).toBe(tab.key);
+        expect(workspace.state.tabs['stale-file-context'].target.params.path).toBe('old-settings.ts');
+    }
     await screen.unmount();
     if (watch) expect(sourceLifetime?.isCurrent()).toBe(false);
 });
@@ -302,9 +471,8 @@ it.each((['classic', 'cockpit', 'hosted'] as const).flatMap(experience =>
     fixture.storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: experience === 'classic' ? 'classic' : 'cockpit' });
     // Admit a hydrated, fresh workspace in the real store; preceding route
     // cases share this Home but must not lend this provider an old layout.
-    fixture.storage.setState({ isDataReady: true, localSettings: {
-        ...fixture.storage.getState().localSettings, workspaceLayoutV1: {},
-    } });
+    fixture.storage.setState({ isDataReady: true });
+    replacePersistentUiStateForTest(workspaceLayoutsState, {});
     const { createSessionScmReviewDetailsTab } = await import('@/components/sessions/panes/details/sessionDetailsTabBuilders');
     const { buildActiveDetailsRouteParams, parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
     const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
@@ -368,22 +536,27 @@ it.each((['classic', 'cockpit', 'hosted'] as const).flatMap(experience =>
     });
     await measure();
     await flushHookEffects({ cycles: 20 });
-    expect(screen.findHostByTestId('scm-comparison-phone-back')).not.toBeNull();
+    expect(screen.findHostByTestId('scm-comparison-phone-back')).toBeNull();
     expect(pane.scopeState?.details.tabs[0]?.resource).toMatchObject({ comparison: { kind: 'workingTree' }, view: 'walkthrough' });
     await act(async () => persistSurface('s1', 'tabs', fixture.home.id));
     route.replace.mockClear();
     route.back.mockClear();
     const scope = getActiveServerAccountScope();
     if (!scope) throw new Error('Expected the restored Home Account');
-    const question = 'Why preserve this selection?';
+    // A bare Ask supplies only routing; it must survive the real Session
+    // composer mounting, just like a suggested question with authored text.
+    const question = experience === 'hosted' ? '' : 'Why preserve this selection?';
     const recipient = { mode: 'scm_diff_summary', recipient: { kind: 'execution_run', runId: 'generator' },
         target: { cwd: '/tmp/repo', resultId: 'reading', expectedRevision: 2, stopIds: ['selection'] } };
     if (trigger === 'composer') {
         await act(async () => {
-            writeExistingSessionDraft({ scope, sessionId: 's1', patch: { text: question, routing: { recipient } } });
+            writeExistingSessionDraft({ scope, sessionId: 's1', patch: { ...(question ? { text: question } : {}), routing: { recipient } } });
             handoff();
         });
-    } else await screen.pressByTestIdAsync('scm-comparison-phone-back');
+    } else if (screen.findHostByTestId('session-details-close')) {
+        // A full-screen route lends its ✕ to the comparison header; the cockpit closes from the header's ⋯.
+        await screen.pressByTestIdAsync('session-details-close');
+    } else await closeComparisonTabFromMenu(screen);
     await flushHookEffects({ cycles: 20 });
     const url = new URL(route.href, 'https://happier.test');
     expect(url.pathname).toBe('/session/s1');
@@ -401,6 +574,12 @@ it.each((['classic', 'cockpit', 'hosted'] as const).flatMap(experience =>
         expect(screen.tree.findAllByType(SessionDetailsDestinationBody)).toHaveLength(0);
         expect(screen.tree.findAllByType(SessionDestinationBody)).toHaveLength(1);
         expect(screen.findHostByTestId('agent-input-composer')).not.toBeNull();
+        if (trigger === 'composer') {
+            const { AgentInput } = await import('@/components/sessions/agentInput/AgentInput');
+            const chips = screen.tree.findByType(AgentInput).props.extraActionChips;
+            expect(chips?.find((chip: import('@/components/sessions/agentInput/agentInputContracts').AgentInputExtraActionChip) => chip.controlId === 'recipient')
+                ?.collapsedOptionsPopover?.label).toBe('To: Walkthrough');
+        }
         expect(screen.findHostByTestId('session-cockpit-scene:chat')).not.toBeNull();
         expect(screen.findHostByTestId('session-cockpit-scene:git')).toBeNull();
         expect(pane.scopeState?.right.isOpen).toBe(false);
@@ -409,7 +588,7 @@ it.each((['classic', 'cockpit', 'hosted'] as const).flatMap(experience =>
         await measure();
         await flushHookEffects({ cycles: 20 });
         expect(selectedWorkspaceTab()).toMatchObject({ id: originalInstanceKey, target: { kind: 'sessionDetails' } });
-        expect(screen.findHostByTestId('scm-comparison-phone-back')).not.toBeNull();
+        expect(screen.findHostByTestId('scm-comparison-phone-more')).not.toBeNull();
         expect(screen.findHostByTestId('session-cockpit-scene:tabs')).not.toBeNull();
     }
     // Hosted Details uses its destination selection; its retained pane remains
@@ -470,9 +649,8 @@ it('selects Chat from a retained Computer Details destination without replacing 
             ? Response.json({ values: [] }) : Response.json({}, { status: 404 }),
     });
     fixture.storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
-    fixture.storage.setState({ isDataReady: true, localSettings: {
-        ...fixture.storage.getState().localSettings, workspaceLayoutV1: {},
-    } });
+    fixture.storage.setState({ isDataReady: true });
+    replacePersistentUiStateForTest(workspaceLayoutsState, {});
     const { createComputerScreenDetailsTab } = await import('@/components/computer/computerScreenDetailsTab');
     const { buildActiveDetailsRouteParams } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
     const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
@@ -790,4 +968,61 @@ it.each(['tabs', 'git', 'git-review', 'empty', 'file-tree', 'file-recent'] as co
         expect(workspace.state.tabs[opened.id]).toBeUndefined();
         expect(workspace.state.tabs[sessionTabId].target).toEqual(sessionTarget);
     } finally { await screen.unmount(); }
+});
+
+
+it.each([
+    { safeAreaPadding: undefined, initiallyFocused: true },
+    { safeAreaPadding: false, initiallyFocused: true },
+    { safeAreaPadding: undefined, initiallyFocused: false },
+    { safeAreaPadding: false, initiallyFocused: false },
+])('acquires a fullscreen file only while its retained scene is focused: %o', async ({ safeAreaPadding, initiallyFocused }) => {
+    fixture = await createSessionFilesViewFixture({ rootPath: '/work/artifacts', serverIdentityId: 'srv_fullscreen_file_activity',
+        rpc: request => request.method === 'daemon.filesystem.readFile'
+            ? { success: true, content: Buffer.from('fullscreen report').toString('base64') }
+            : request.method === 'statFile' ? { success: true, exists: true, kind: 'file', sizeBytes: 17 }
+                : { success: false, error: 'RPC method not available', errorCode: 'METHOD_NOT_AVAILABLE' },
+    });
+    fixture.setSnapshot(null);
+    fixture.storage.setState({ isDataReady: true });
+    fixture.storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
+    const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
+    const { SessionCockpitChromeRegistryProvider } = await import('./SessionCockpitChromeRegistry');
+    const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { createSessionFileDetailsTab } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+    let pane!: ReturnType<typeof useAppPaneScope>;
+    let focus!: React.Dispatch<React.SetStateAction<boolean>>;
+    function Scene() {
+        const [focused, setFocused] = React.useState(initiallyFocused);
+        focus = setFocused;
+        pane = useAppPaneScope('session:s1');
+        return <Focus.Provider value={focused}><SessionCockpitSurfaceScreen catalog={mountedCatalog}
+            sessionId="s1" scopeId="session:s1" surface="tabs" routeServerId={fixture.scope.serverId}
+            safeAreaPadding={safeAreaPadding} /></Focus.Provider>;
+    }
+    const screen = await fixture.render(<MainAppTabStateProvider><SessionCockpitChromeRegistryProvider>
+        <Scene />
+    </SessionCockpitChromeRegistryProvider></MainAppTabStateProvider>);
+    const tab = createSessionFileDetailsTab({ path: 'report.md', view: 'view' });
+    if (!tab) throw new Error('Expected file tab');
+    await act(async () => { pane.openDetailsTab(tab, { intent: 'pinned' });
+        if (initiallyFocused) pane.closeDetails();
+    });
+    const measure = async () => act(async () => {
+        for (const host of screen.tree.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')) {
+            invokeTestInstanceHandler(host, 'onLayout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 844 } } });
+        }
+    });
+    await measure();
+    await flushHookEffects({ cycles: 20 });
+    const reads = () => fixture.requests.filter(request => request.method === 'daemon.filesystem.readFile');
+    if (!initiallyFocused) {
+        expect(reads()).toEqual([]);
+        await act(async () => focus(true));
+        await measure();
+    }
+    await vi.waitFor(() => expect(reads().map(request => request.payload)).toContainEqual(
+        expect.objectContaining({ path: '/work/artifacts/report.md' })));
+    await screen.unmount();
 });
