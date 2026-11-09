@@ -166,6 +166,18 @@ describe('buildSessionCompanionItemActions', () => {
         expect(moveTo).toHaveBeenCalledWith(1);
     });
 
+    it('steps past sections that draw nothing, so Move up and Move down always change what is seen', () => {
+        // Summary, Environment, Running (nothing running), Usage (no usage), Links.
+        const drawn = new Set([0, 1, 4]);
+        const moveTo = vi.fn();
+        const links = buildSessionCompanionItemActions({ index: 4, count: 5, moveTo, remove: () => {}, isPresented: index => drawn.has(index) });
+        links.find((action) => action.id === 'move-up')?.onPress?.();
+        expect(moveTo).toHaveBeenLastCalledWith(1);
+        const environment = buildSessionCompanionItemActions({ index: 1, count: 5, moveTo, remove: () => {}, isPresented: index => drawn.has(index) });
+        environment.find((action) => action.id === 'move-down')?.onPress?.();
+        expect(moveTo).toHaveBeenLastCalledWith(4);
+    });
+
     it('offers Open on Board only when the Board is currently reachable', () => {
         expect(ids(buildSessionCompanionItemActions({
             index: 0, count: 1, moveTo: () => {}, remove: () => {},

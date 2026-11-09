@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
-import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -10,14 +10,18 @@ import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayout
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
+import { INSTRUMENT_STRIP_LINE_HEIGHT_PX } from '@/components/sessions/agentInput/instrumentStrip/instrumentStripStyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const COMPACT_ACTIONS_MAX_WIDTH = 560;
 
-/** The actions draw at the page control height; a finger reaches them through the hit area. */
-export const NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE = HAPPIER_PAGE_METRICS.controlHeightPx;
+/**
+ * The actions stand in the composer's status row, so they draw at its line height: a taller action grew the
+ * row and moved the card when a draft's actions appeared. A finger reaches them through the hit area.
+ */
+export const NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE = INSTRUMENT_STRIP_LINE_HEIGHT_PX;
 /** Half the row's 4 px gap: neighbouring actions' hit areas meet, never overlap. */
 const ACTION_HIT_REACH = { left: 2, right: 2 } as const;
 /** Every glyph in the status row's actions, labelled or not, is the composer's quiet icon glyph. */

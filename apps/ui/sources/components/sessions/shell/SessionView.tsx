@@ -1953,6 +1953,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            openSessionCollaboration={openSessionCollaboration}
                            openSessionAccess={openSessionAccess}
                            companionEdge={companionPreference.preference.edge}
+                           companionRailWidthPx={companionHeaderPlacement.kind === 'reserved_rail' ? companionHeaderPlacement.widthPx : 0}
                            openWorkStateRequestKey={props.openWorkStateRequestKey ?? null}
                            embedded={embedded}
                            embeddedArrangement={props.embeddedArrangement}
@@ -2049,6 +2050,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     routeHydrationPending,
     onAppPanePluginSurfaceNavigationBindingChange,
     companionEdge,
+    companionRailWidthPx,
     embedded,
     embeddedArrangement,
     companionAddress,
@@ -2153,6 +2155,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     openSessionCollaboration: () => void;
     openSessionAccess: () => void;
     companionEdge: SessionCompanionEdge;
+    /** Width the docked Companion rail takes beside the transcript (`reserved_rail`), else 0. */
+    companionRailWidthPx: number;
     openWorkStateRequestKey: number | null;
 } & SessionComposerView) {
     const { theme } = useUnistyles();
@@ -2624,7 +2628,12 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     const main = (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {/* The header and the desktop page tabs under it stay put: a page in this column starts below them. */}
-            {embedded ? null : <PaneMainTopAnchor>{header}<SessionPageTabs /></PaneMainTopAnchor>}
+            {/* The header opens the transcript column, so a docked Companion rail's width is left beside it on the
+                rail's side: its title and controls then stand on the transcript's column, as they do without the rail. */}
+            {embedded ? null : <PaneMainTopAnchor>
+                <View style={companionEdge === 'leading' ? { paddingStart: companionRailWidthPx } : { paddingEnd: companionRailWidthPx }}>{header}</View>
+                <SessionPageTabs />
+            </PaneMainTopAnchor>}
             {/* The transcript's own positioning context: its floating notices anchor below the header. */}
             <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
             {requesterRecoveryBanner || startFailureBanner ? <PaneMainBody>{requesterRecoveryBanner}{startFailureBanner}</PaneMainBody> : null}

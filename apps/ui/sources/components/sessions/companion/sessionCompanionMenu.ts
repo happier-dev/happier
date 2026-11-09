@@ -116,6 +116,11 @@ export function buildSessionCompanionItemActions(input: Readonly<{
     count: number;
     moveTo: (toIndex: number) => void;
     remove: () => void;
+    /**
+     * Whether the item at an index draws anything right now (a glance with nothing to show draws nothing).
+     * Read at press time, so Move up/down step past the sections the person cannot see.
+     */
+    isPresented?: (index: number) => boolean;
     /** Present only while the Board is currently reachable for this viewer. */
     openOnBoard?: () => void;
     /** Personal plugin settings recovery for a plugin widget. */
@@ -128,12 +133,19 @@ export function buildSessionCompanionItemActions(input: Readonly<{
     }>;
 }>): ItemAction[] {
     const actions: ItemAction[] = [];
+    // One step lands past the next drawn neighbour; with none drawn it is a plain one-place step.
+    const step = (direction: -1 | 1) => {
+        for (let index = input.index + direction; index >= 0 && index < input.count; index += direction) {
+            if (input.isPresented?.(index) !== false) return input.moveTo(index);
+        }
+        input.moveTo(input.index + direction);
+    };
     if (input.index > 0) {
         actions.push({
             id: 'move-up',
             title: t('common.moveUp'),
             icon: 'arrow-up',
-            onPress: () => input.moveTo(input.index - 1),
+            onPress: () => step(-1),
         });
     }
     if (input.index < input.count - 1) {
@@ -141,7 +153,7 @@ export function buildSessionCompanionItemActions(input: Readonly<{
             id: 'move-down',
             title: t('common.moveDown'),
             icon: 'arrow-down',
-            onPress: () => input.moveTo(input.index + 1),
+            onPress: () => step(1),
         });
     }
     // First/last are only distinct once a step and a jump differ, which is exactly

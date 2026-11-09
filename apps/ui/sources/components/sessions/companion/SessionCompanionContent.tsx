@@ -300,6 +300,9 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     // reaches persistence: a drop resolves to a semantic target index and the
     // Companion preference stores order, not pixels.
     const cardRectsRef = React.useRef(new Map<string, SessionBoardItemRect>());
+    // Items whose frame laid out at zero height: a glance with nothing to show draws nothing.
+    // Move up/down read it at press time to step past what the person cannot see.
+    const undrawnKeysRef = React.useRef(new Set<string>());
     const measuredCardsRef = React.useRef(new Map<string, Readonly<{ widthPx: number; heightPx: number }>>());
     const reportLargestMeasuredCard = React.useCallback(() => {
         if (!props.onMeasuredCardBounds || measuredCardsRef.current.size === 0) return;
@@ -325,10 +328,14 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         for (const key of cardRectsRef.current.keys()) {
             if (!currentKeys.has(key)) cardRectsRef.current.delete(key);
         }
+        for (const key of undrawnKeysRef.current) {
+            if (!currentKeys.has(key)) undrawnKeysRef.current.delete(key);
+        }
         reportLargestMeasuredCard();
     }, [itemMeasurementKeys, reportLargestMeasuredCard]);
     const reportCardLayout = React.useCallback((key: string, event: LayoutChangeEvent) => {
         const { width, height, x, y } = event.nativeEvent.layout;
+        if (height === 0) undrawnKeysRef.current.add(key); else undrawnKeysRef.current.delete(key);
         if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return;
         if (Number.isFinite(x) && Number.isFinite(y)) {
             cardRectsRef.current.set(key, { x, y, width, height });
@@ -680,6 +687,8 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance'],
         listDestinations: item => {
             const source = item.kind === 'session-board-item' ? liveDrop.current.board?.itemsById.get(item.itemId)?.state : null;
+            // An item that draws nothing is no place a person can aim at.
+            if (key !== undefined && undrawnKeysRef.current.has(key)) return [];
             return key === undefined
                 ? [{ destination: { keep: true }, label: source?.kind === 'ready' && source.item.source.kind !== 'widget'
                     ? t('sessionCompanion.drop.keepBesideChat') : t('sessionBoard.item.moveTargetView', { title: t('sessionBoard.companion.title') }), group: t('sessionBoard.companion.title') }]
@@ -779,9 +788,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                         testID={`${testID}-item-${key}`}
                         label={label(entry)}
                         {...(props.measurementOnly ? {} : { viewport: widgetDemandTracker })}
-                        onLayout={props.onMeasuredCardBounds || canDrag
-                            ? (event) => reportCardLayout(key, event)
-                            : undefined}
+                        onLayout={props.measurementOnly && !props.onMeasuredCardBounds ? undefined : (event) => reportCardLayout(key, event)}
                         {...(canDrag ? {
                             entityDrag: {
                                 scope: dragScope.scope, title: label(entry),
@@ -797,7 +804,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                                 pointerDestination: (bounds: WindowBounds, pointer: Readonly<{ x: number; y: number }>) => ({ side: pointer.y < bounds.y + bounds.height / 2 ? 'before' : 'after', itemKey: key }),
                                 getCompanionTarget: () => ({ itemKey: key, items: liveDrop.current.controller.preference.items }),
                                 keyboardDestination: (intent, selected, destinations) => intent === 'previous' || intent === 'next'
-                                    ? resolveSessionSurfaceKeyboardDestination({ itemKey: key, orderedKeys: liveDrop.current.controller.preference.items.map(sessionCompanionItemKey), selected, destinations, direction: intent,
+                                    ? resolveSessionSurfaceKeyboardDestination({ itemKey: key, orderedKeys: liveDrop.current.controller.preference.items.map(sessionCompanionItemKey).filter(other => other === key || !undrawnKeysRef.current.has(other)), selected, destinations, direction: intent,
                                         readAnchor: destination => { const parsed = SessionCompanionDestinationSchema.safeParse(destination.destination); return parsed.success ? { side: parsed.data.side, itemId: parsed.data.itemKey } : null; } }) : null,
                                 getNativeBounds: () => {
                                     const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
@@ -809,6 +816,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                         actions={props.measurementOnly ? [] : buildSessionCompanionItemActions({
                             index,
                             count: items.length,
+                            isPresented: (at) => !undrawnKeysRef.current.has(itemMeasurementKeys[at] ?? ''),
                             moveTo: (toIndex) => { moveCompanionItemTo(entry, toIndex); },
                             remove: () => { removeFromCompanion(entry); },
                             ...(entry.ref.kind === 'widget' && boardReachable && props.onRevealBoardItem
