@@ -56,6 +56,7 @@ function SelectedRowOwner(props: Readonly<{ packId: string; kind: 'stt_sherpa' |
     return <DaemonVoiceModelCatalogProvider value={controller}>
         <SelectedDaemonModelPackRow packId={props.packId} kind={props.kind}
             setting={props.anchored ? VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId : undefined} />
+        {React.createElement('CatalogObservation', { errorCode: controller.state.errorCode })}
     </DaemonVoiceModelCatalogProvider>;
 }
 
@@ -275,6 +276,9 @@ describe('DaemonModelPackRow', () => {
         const screen = await renderScreen(<SelectedRowOwner packId={entry.packId} kind="stt_sherpa" />);
         const download = () => screen.tree.root.findAllByProps({ testID: `voice-model-install-${entry.packId}` })
             .find(node => String(node.type) === 'Pressable');
+        await waitForTestEvent(screen.subscribe,
+            () => screen.tree.root.findByType('CatalogObservation').props.errorCode,
+            code => code === 'feature_disabled');
         expect(download()).toBeUndefined();
         await act(async () => {
             const settings = storage.getState().settings;

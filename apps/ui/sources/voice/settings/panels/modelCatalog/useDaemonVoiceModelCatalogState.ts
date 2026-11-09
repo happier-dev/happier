@@ -11,6 +11,7 @@ import {
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
 import {
     getMachineContributionRegistryProjectionRevision,
@@ -77,6 +78,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
 }> {
     const providedClient = params?.client;
     const enabled = params?.enabled !== false;
+    const daemonInferenceEnabled = useFeatureEnabled('voice.daemonInference', { scopeKind: 'runtime' });
     const client = React.useMemo<DaemonVoiceModelCatalogClient>(
         () => providedClient ?? new DaemonVoiceInferenceClient(),
         [providedClient],
@@ -145,6 +147,14 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         }
     }, [client, enabled, observation]);
     const refresh = React.useCallback(() => refreshCatalog(true), [refreshCatalog]);
+
+    React.useEffect(() => {
+        // Enabling Account policy makes its cached refusal recoverable. Refresh
+        // discovery once; an admitted install keeps its existing lifetime.
+        if (enabled && daemonInferenceEnabled && observation.getSnapshot().errorCode === 'feature_disabled') {
+            void refreshCatalog(true);
+        }
+    }, [enabled, daemonInferenceEnabled, observation, refreshCatalog]);
 
     React.useEffect(() => account?.onRetire(observation.invalidate).dispose, [account, observation]);
 
