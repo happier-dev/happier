@@ -77,8 +77,11 @@ import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExe
 import {
     useEndpointOnlineVerdict,
     useMachineCliDetectionTarget,
+    useServerScopedMachine,
 } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import type { PluginMachineExecutionOriginStateV1, PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { describePluginCollectionWriterRefusal, describePluginExecutionOriginRefusal, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -438,6 +441,8 @@ export type BoundPluginSurfaceBinding = Readonly<{
 }>;
 
 export type BoundPluginSurfaceController = Readonly<{
+    /** Published Machine access narrows Actions while Resources stay readable. */
+    actionsReadOnly?: boolean;
     /** The one exact surface context for this mount. */
     surfaceContext: PluginUiSurfaceContextV1;
     hostApi: PluginSurfaceHostApiV1;
@@ -1056,11 +1061,17 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // contract. Narrow live effects through the existing Host API availability
     // seam instead of constructing a reduced facade that de-admits the page.
     // Navigation/context remain useful without lending retained data authority.
-    const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => (
-        method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
-        || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
-            || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled(false)))
-    );
+    const canManageActions = (): boolean => {
+        const facts = readActionInputFacts();
+        return !facts.machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), facts.serverId, facts.machineId));
+    };
+    const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => {
+        if ((method === 'executeAction' || method === 'admitAction' || method === 'selectActionInput'
+            || method === 'actionControl') && !canManageActions()) return false;
+        return method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
+            || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
+                || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled(false)));
+    };
     const readCompleteResourceDeclarations = () => {
         const facts = readActionInputFacts();
         // A complete Account namespace retains custody, including known-empty.
@@ -1320,6 +1331,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ? createPluginSurfaceActionControls({
             pluginId: surfaceContext.pluginId, surfaceId: surfaceContext.surfaceId, hostAction,
             signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
+            isActionAvailable: canManageActions,
             captureCurrentBinding: () => {
                 const authorityKey = readMachineAuthorityKey(readActionInputFacts());
                 return () => isInteractionCurrent() && authorityKey === readMachineAuthorityKey(readActionInputFacts());
@@ -1703,6 +1715,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     let publishedResourceStore: PluginUiResourceStore | undefined;
     return Object.freeze({
         surfaceContext,
+        get actionsReadOnly() { return !canManageActions(); },
         hostApi,
         get resourceStore() {
             const currentStore = resourceStore;
@@ -1813,6 +1826,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
     binding?: BoundPluginSurfaceBinding;
 }>): BoundPluginSurfaceController {
     const facts = input.facts;
+    useServerScopedMachine(facts.serverId, facts.machineId, canManageMachine);
     const binding = input.binding;
     // Admission of the exact Account caller changes execution authority. Keep
     // incidental Availability delivery out of the physical lifetime, but do not

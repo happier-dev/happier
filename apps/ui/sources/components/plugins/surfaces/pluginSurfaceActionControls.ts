@@ -53,11 +53,13 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     hostAction: PluginSurfaceHostActionBinding;
     signal: AbortSignal;
     isCurrent(): boolean;
+    isActionAvailable?(): boolean;
     captureCurrentBinding(): () => boolean;
 }>): PluginSurfaceActionControls {
     const controls = new Map<string, Binding>();
     const listeners = new Set<() => void>();
     let snapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
+    const emptySnapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
     let sequence = 0;
     let disposed = false;
     const current = () => !disposed && !input.signal.aborted && input.isCurrent();
@@ -125,7 +127,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
 
     const press = async (id: string): Promise<void> => {
         const binding = controls.get(id);
-        if (!binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
+        if (input.isActionAvailable?.() === false || !binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
         const requestId = `${input.surfaceId}:actionControl:${++sequence}`;
         // Optional Machine admission can change without replacing the mounted
         // Account control. Bind authority to this preparation, not its lifetime.
@@ -181,7 +183,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         listeners.clear();
     };
     input.signal.addEventListener('abort', dispose, { once: true });
-    return Object.freeze({ getSnapshot: () => snapshot, subscribe: (listener: () => void) => {
+    return Object.freeze({ getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot, subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };
     }, handleRequest, press, invalidatePreparations: () => {

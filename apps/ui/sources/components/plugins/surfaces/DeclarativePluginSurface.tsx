@@ -594,6 +594,7 @@ export function DeclarativePluginSurface(props: Readonly<{
     dispatchAction: BoundPluginSurfaceController['dispatchAction'];
     /** Its factual installation result, after capability/origin/currentness admission. */
     actionAvailable: boolean;
+    actionsReadOnly?: boolean;
     /** Host-private Composer scope supplied only by an exact Composer mount. */
     composerRef?: ComposerRefV1;
     /** The mounted controller's canonical Composer mutation facade. */
@@ -893,7 +894,7 @@ export function DeclarativePluginSurface(props: Readonly<{
      * agree with the current occurrenceId stays visible but inert, so a stale
      * projection cannot dispatch.
      */
-    const resolveAction = React.useCallback((node: RecordValue): DeclarativeActionAffordance => {
+    const resolveAction = React.useCallback((node: RecordValue): DeclarativeActionAffordance | null => {
         const composerApply = readComposerApplyBinding(node);
         if (composerApply !== null) {
             const key = `composerApply:${typeof node.path === 'string' ? node.path : 'invalid'}`;
@@ -911,6 +912,7 @@ export function DeclarativePluginSurface(props: Readonly<{
                 onPress: () => runComposerApply(composerApply, true, key),
             };
         }
+        if (props.actionsReadOnly) return null;
         const binding = readActionBinding(node, occurrenceId);
         const key = binding?.qualifiedActionId ?? `invalid:${String(node.path)}`;
         const busy = binding !== null && pendingActions.has(binding.qualifiedActionId);
@@ -929,6 +931,7 @@ export function DeclarativePluginSurface(props: Readonly<{
         occurrenceId,
         pendingActions,
         props.actionAvailable,
+        props.actionsReadOnly,
         props.applyComposer,
         props.composerApplyAvailable,
         props.composerRef,
@@ -959,6 +962,7 @@ export function DeclarativePluginSurface(props: Readonly<{
             if (!command) return null;
 
             if (command.kind === 'action') {
+                if (props.actionsReadOnly) return null;
                 const action = collectionCommandCatalog.actions.get(command.action.qualifiedId);
                 if (!action?.title) return null;
                 const pendingKey = rowCommandPendingKey(action, context);
@@ -1019,6 +1023,7 @@ export function DeclarativePluginSurface(props: Readonly<{
         collectionCommandCatalog.destinations,
         occurrenceId,
         props.actionAvailable,
+        props.actionsReadOnly,
         props.daemonInteractionEnabled,
         props.openSurface,
         props.openSurfaceAvailable,

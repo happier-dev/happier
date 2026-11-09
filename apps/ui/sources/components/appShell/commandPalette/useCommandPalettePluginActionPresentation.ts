@@ -18,8 +18,12 @@ import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/avail
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMachineListForServerSelection } from '@/sync/domains/state/storage';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 const selectAccountLifetime = (value: AppShellPluginUiProjectionValue) => value.accountLifetime;
+const selectManageAffordances = (machines: readonly Machine[]) => JSON.stringify(machines.map(machine => [machine.id, canManageMachine(machine)]));
 
 /**
  * Search discovers Actions; Administration and AppShell still select their executable origins.
@@ -80,6 +84,7 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
         ? resolvePreferredServerIdForSessionId(activeSessionId) ?? null
         : appShellProjection.serverId;
     const routedBindings = useServerCredentialAccountScopeBindings(activeSessionId && serverId ? [serverId] : []);
+    const manageAffordances = useMachineListForServerSelection(serverId ?? '', selectManageAffordances);
     const accountLifetime = activeSessionId ? routedBindings.values().next().value ?? null : appShellProjection.accountLifetime;
     const projection = useDaemonMergedProjectionInputs({
         accountLifetime,
@@ -189,7 +194,7 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
             const origin = readPluginUiContributionOrigin(action);
             return origin ? { ...current, host: { ...current.host, machineId: origin.machineId, serverId: origin.serverId } } : null;
         },
-    }), [clientExecutableRegistrationRevision]);
+    }), [clientExecutableRegistrationRevision, manageAffordances]);
 
     return React.useMemo(() => (
         snapshot

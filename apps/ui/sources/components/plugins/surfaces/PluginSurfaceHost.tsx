@@ -695,6 +695,7 @@ function DeclarativePluginSurfaceDocumentContent(
             daemonInteractionEnabled={props.daemonInteractionEnabled}
             dispatchAction={props.controller.dispatchAction}
             actionAvailable={props.controller.installedMethods.includes('executeAction')}
+            actionsReadOnly={props.controller.actionsReadOnly}
             {...(props.composerRef === undefined ? {} : { composerRef: props.composerRef })}
             applyComposer={props.controller.applyComposer}
             composerApplyAvailable={props.controller.installedMethods.includes('applyComposer')}
@@ -838,6 +839,7 @@ function DeclarativePluginSurfaceWithDocumentSource(
                 daemonInteractionEnabled={props.daemonInteractionEnabled}
                 dispatchAction={props.controller.dispatchAction}
                 actionAvailable={props.controller.installedMethods.includes('executeAction')}
+                actionsReadOnly={props.controller.actionsReadOnly}
                 {...(props.composerRef === undefined ? {} : { composerRef: props.composerRef })}
                 applyComposer={props.controller.applyComposer}
                 composerApplyAvailable={props.controller.installedMethods.includes('applyComposer')}
@@ -3635,6 +3637,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 daemonInteractionEnabled={daemonOwnedInteractionEnabled}
                 dispatchAction={controller.dispatchAction}
                 actionAvailable={controller.installedMethods.includes('executeAction')}
+                actionsReadOnly={controller.actionsReadOnly}
                 {...(composerBinding ? { composerRef: composerBinding.mount.composer } : {})}
                 applyComposer={controller.applyComposer}
                 composerApplyAvailable={controller.installedMethods.includes('applyComposer')}

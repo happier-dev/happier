@@ -25,7 +25,7 @@ import {
 import { Linking } from 'react-native';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createDeferred, createMachineFixture, renderHook, renderScreen } from '@/dev/testkit';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -145,6 +145,31 @@ const FACTS = {
 } as const;
 
 const TARGETED_RESOURCE_MOUNT_INSTANCE_KEY = 'targeted-surface:v1:review:mount-a';
+beforeEach(() => {
+    const previous = storage.getState();
+    onTestFinished(() => storage.setState(previous));
+    const machine = createMachineFixture({ id: FACTS.machineId, isShared: false });
+    storage.setState({ machineListByServerId: { [FACTS.serverId]: [machine] },
+        machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
+});
+
+it('keeps a Can-use plugin view readable while withdrawing live Action methods', () => {
+    const previous = storage.getState();
+    onTestFinished(() => storage.setState(previous));
+    const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
+        access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+    storage.setState({ machineListByServerId: { [FACTS.serverId]: [shared] }, machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
+    const controller = createBoundPluginSurfaceController({ facts: FACTS });
+    onTestFinished(() => controller.dispose());
+    expect(controller.installedMethods).toContain('readResource');
+    expect(controller.installedMethods).toContain('context');
+    expect(controller.installedMethods).not.toContain('executeAction');
+    expect(controller.installedMethods).not.toContain('actionControl');
+    expect(controller.actionsReadOnly).toBe(true);
+    storage.setState({ machineListByServerId: { [FACTS.serverId]: [{ ...shared, access: { ...shared.access!, role: 'manage' } }] } });
+    expect(controller.installedMethods).toContain('executeAction');
+    expect(controller.actionsReadOnly).toBe(false);
+});
 
 describe('mounted host Resource admission', () => {
     it('distinguishes complete current full-describe Resource sets from absent, partial and retired sources', async () => {
@@ -311,6 +336,9 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         const http = createHomeHubArtifactHttpBoundary('account-a');
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://page-tabs-parent-home.test',
             accountId: 'account-a', request: http.request });
+        storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId,
+            [connection.home.id]: [createMachineFixture({ id: FACTS.machineId, isShared: false })] },
+            machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [connection.home.id]: 'idle' } });
         let selected = 'session';
         const unregister = registerShellColumnActionOwner('main', () => ({ present: true, visible: true, available: true,
             tabs: ['chat'], activeTab: 'chat', selectTab: () => {}, setVisible: () => {} }));
@@ -336,6 +364,10 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         } finally { controllers.forEach(controller => controller.dispose()); unregister(); await connection.dispose(); }
     });
     it('withdraws a pending host preparation when the mounted Machine binding changes', async () => {
+        storage.setState({ machineListByServerId: { [FACTS.serverId]: [
+            createMachineFixture({ id: FACTS.machineId, isShared: false }),
+            createMachineFixture({ id: 'machine_2', isShared: false }),
+        ] } });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
         const binding = { executeHostAction: executor.execute };
         let machineId = 'machine_1';
@@ -395,6 +427,15 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             expect(controller.actionControls!.getSnapshot()).toBe(snapshot);
             expect(publication).not.toHaveBeenCalled();
             unsubscribe();
+            const managed = storage.getState().machineListByServerId[FACTS.serverId]!;
+            const useOnly = createMachineFixture({ id: FACTS.machineId, isShared: true,
+                access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+            storage.setState({ machineListByServerId: { [FACTS.serverId]: [useOnly] } });
+            expect(controller.actionControls!.getSnapshot()).toHaveLength(0);
+            await controller.actionControls!.press('run');
+            expect(prepared).toBe(0);
+            storage.setState({ machineListByServerId: { [FACTS.serverId]: managed } });
+            expect(controller.actionControls!.getSnapshot()).toBe(snapshot);
             await controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
                 requestId: 'forged', preparation: { input } }));
             expect(launches).toBe(0);
@@ -551,6 +592,9 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
     });
 
     it('names the unavailable Run-on Machine supplied by the surface host without a bound execution origin', async () => {
+        storage.setState({ machineListByServerId: { [FACTS.serverId]: [
+            createMachineFixture({ id: 'machine_pinned_offline', isShared: false }),
+        ] } });
         const controller = createBoundPluginSurfaceController({ facts: {
             ...FACTS, machineId: 'machine_pinned_offline', machineDisplayName: 'Old laptop',
             occurrenceId: null, executionOrigin: null, daemonInteractionEnabled: false,

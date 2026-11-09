@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createMachineFixture } from '@/dev/testkit';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { openPluginContributedAction } from './openPluginContributedAction';
@@ -25,10 +27,12 @@ import type {
 import {
     PluginProjectedActionV2Schema,
     PluginProjectionInstalledPackageV2Schema,
-    type PluginJsonSchemaV2,
-    type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    type PluginJsonSchemaV2} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import {
+    type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -53,7 +57,9 @@ import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
-import { setPreferredLanguageFromSettings } from '@/text';
+import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
+import { createPluginLocalizedTextResolver, createPluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import type {
     PluginUiSelectActionInputRequestV1,
     PluginUiSelectActionInputTargetedRequestV1,
@@ -98,7 +104,17 @@ const STABLE_ACCOUNT_LIFETIME = Object.freeze({
 const actionInputSchemas = new Map<string, PluginJsonSchemaV2>();
 const actionSchemaKey = (localId: string, occurrenceId: string) => JSON.stringify([localId, occurrenceId]);
 
+function publishMachineAccess(role: 'use' | 'manage') {
+    const machine = createMachineFixture({ id: MACHINE_ID, isShared: true,
+        access: { role, accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+    storage.setState({ machineListByServerId: { [SERVER_ID]: [machine] },
+        machineListStatusByServerId: { [SERVER_ID]: 'idle' } });
+}
+
 beforeEach(() => {
+    const previous = storage.getState();
+    onTestFinished(() => storage.setState(previous));
+    publishMachineAccess('manage');
     actionInputSchemas.clear();
     resetMachineProjectionReadsForTests();
     machineRpcWithServerScopeMock.mockReset();
@@ -316,6 +332,159 @@ function createAccountLifetimeHarness() {
     };
 }
 
+describe('contributed Action form discovery', () => {
+    it('hides client Actions for Can use while preserving host-presented Session controls', () => {
+        const previous = storage.getState();
+        onTestFinished(() => storage.setState(previous));
+        const machine = createMachineFixture({ id: MACHINE_ID, isShared: true,
+            access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+        storage.setState({ machineListByServerId: { [SERVER_ID]: [machine] }, machineListStatusByServerId: { [SERVER_ID]: 'idle' } });
+        const current = snapshot([
+            action({ id: 'run', scopes: ['global', 'session'], placementBindings: ['commandPalette', 'primary'] }),
+            action({ id: 'compose', placementBindings: ['composer.primary'] }),
+            action({ id: 'message', scopes: ['message'], placementBindings: ['message.menu'] }),
+        ]);
+        let inSession = false;
+        let inMessage = false;
+        const controller = createPluginContributedActionController({ resolveCurrent: () => ({ ...current,
+            host: { ...current.host, sessionId: inSession ? SESSION_ID : undefined,
+                currentComposerIntent: () => ({ composer: { kind: 'session', sessionId: SESSION_ID }, revision: 1 }),
+                ...(inMessage ? { messageActionReference: { v: 1 as const, sessionId: SESSION_ID,
+                    messageId: 'message-a', observedRevision: 'revision-a' } } : {}),
+            } }) });
+        expect(controller.list({ scope: 'global', placement: 'commandPalette' })).toHaveLength(0);
+        inSession = true;
+        expect(controller.list({ scope: 'session', placement: 'primary' })).toHaveLength(0);
+        expect(controller.list({ scope: 'session', placement: 'composer.primary' })).toHaveLength(1);
+        inMessage = true;
+        expect(controller.list({ scope: 'message', placement: 'message.menu' })).toHaveLength(1);
+        inSession = false;
+        storage.setState({ machineListByServerId: { [SERVER_ID]: [{ ...machine, access: { ...machine.access!, role: 'manage' } }] } });
+        expect(controller.list({ scope: 'global', placement: 'commandPalette' })).toHaveLength(1);
+    });
+    it('addresses the reload-17 flower picker by its public Action identity while retaining the Machine draft', async () => {
+        const machineId = 'ffd72b3e-40ca-4644-9bd2-46753a01d8cb';
+        const base = snapshot([action({ id: 'change', scopes: ['global', 'machine'],
+            placementBindings: ['commandPalette'],
+            inputSchema: { type: 'object', properties: { flower: { type: 'string', enum: ['marigold', 'rose'] } },
+                required: ['flower'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'flower', title: 'Flower', widget: 'select', required: true,
+                inputType: { pluginId: 'qa.qar90s-r8', localId: 'flower' } }] },
+        })], { pluginId: 'qa.qar90s-r8' });
+        const current = { ...base, host: { ...base.host, machineId, sessionId: null } };
+        const previous = storage.getState();
+        onTestFinished(() => storage.setState(previous));
+        storage.setState({ machineListByServerId: { [SERVER_ID]: [createMachineFixture({ id: machineId, isShared: false })] },
+            machineListStatusByServerId: { [SERVER_ID]: 'idle' } });
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+        const descriptor = controller.list({ placement: 'commandPalette', scope: 'global' })[0]!;
+        expect(descriptor.qualifiedActionId).toBe('qa.qar90s-r8/change');
+        vi.mocked(Modal.show).mockClear();
+        const opened = await openPluginContributedAction({ controller, action: descriptor });
+        expect(opened.kind).toBe('form');
+        if (opened.kind !== 'form') throw new Error('Expected the flower form');
+        try {
+            const modal = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            // Replay the captured query using the identity actually supplied to
+            // ActionInputFormModal, rather than an invented discovery identity.
+            const query = { actionId: modal?.props?.actionId, fieldPath: 'flower', draftInput: { machineId } };
+            const projected = current.resolveContributedAction!({ pluginId: 'qa.qar90s-r8', localId: 'change' })!;
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                listContributedActionDefinitions: () => [projectedActionToDefinition(projected, null)],
+                // The daemon descriptor is the external boundary. Keep the real
+                // declaration, identity, and options admission beneath it.
+                resolveInputType: async () => ({
+                    identity: { pluginId: 'qa.qar90s-r8', localId: 'flower' },
+                    occurrenceId: projected.occurrenceId,
+                    definition: PluginInputTypeContributionV1Schema.parse({ id: 'flower', title: 'Flower',
+                        semantic: 'qa-qar90s-flower', valueSchema: { type: 'string', enum: ['marigold', 'rose'] },
+                        picker: 'flower-picker-renderer' }),
+                }),
+            }));
+            expect(await executor.execute('action.options.resolve', query, {
+                surface: 'ui', authority: 'present_user',
+                serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+                runtimeAccountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e',
+                externalActionTarget: { kind: 'machine', machineId },
+            })).toEqual({
+                ok: true, result: { actionId: 'qa.qar90s-r8/actions/change', fieldPath: 'flower',
+                    optionsSourceId: null, options: [] },
+            });
+        } finally {
+            opened.form.retire();
+        }
+    });
+});
+
+describe('qualified Session row Action binding', () => {
+    function rowSnapshot(inputHints?: PluginProjectionAction['inputHints']) {
+        const current = snapshot([action({ id: 'inspect-row', placementBindings: ['rowAction', 'contextMenu'],
+            ...(inputHints ? { inputHints } : {}),
+            inputSchema: { type: 'object', properties: { sessionId: { type: 'string' }, note: { type: 'string' } },
+                required: ['sessionId'], additionalProperties: false },
+        })]);
+        const raw = current.resolveContributedAction!({ pluginId: 'acme.channels', localId: 'inspect-row' });
+        if (!raw) throw new Error('missing_row_action_fixture');
+        const projected = { ...raw, sessionTarget: { field: 'sessionId', cardinality: 'one' as const } };
+        return { ...current, host: { ...current.host, sessionRow: true as const }, resolveContributedAction: () => projected };
+    }
+
+    it('binds a direct row Action to the declared exact Session through ordinary dispatch', async () => {
+        const current = rowSnapshot();
+        const dispatch = vi.fn(async (): Promise<PluginSurfaceActionDispatchOutcome> => ({ ok: true, result: null }));
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current, dispatch });
+        const entry = controller.list({ placement: 'rowAction', scope: 'session' })[0];
+        expect(entry).toBeDefined();
+        expect(await controller.open(entry!)).toMatchObject({ kind: 'direct', outcome: { ok: true } });
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            input: { sessionId: SESSION_ID },
+            contributedAction: expect.objectContaining({ serverId: SERVER_ID, sessionId: SESSION_ID,
+                accountLifetime: STABLE_ACCOUNT_LIFETIME }),
+            hostAction: expect.objectContaining({ context: expect.objectContaining({
+                serverId: SERVER_ID, expectedAccountId: 'account-a', defaultSessionId: SESSION_ID,
+            }) }),
+        }));
+    });
+
+    it('prefills forms for the row and rejects a changed target before dispatch', async () => {
+        const current = rowSnapshot({ fields: [{ path: 'note', title: 'Note', widget: 'text' }] });
+        const dispatch = vi.fn(async (): Promise<PluginSurfaceActionDispatchOutcome> => ({ ok: true, result: null }));
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current, dispatch });
+        const opened = await controller.open(controller.list({ placement: 'contextMenu', scope: 'session' })[0]!);
+        if (opened.kind !== 'form') throw new Error('expected_row_form');
+        expect(opened.form.getInput()).toMatchObject({ sessionId: SESSION_ID });
+        opened.form.replaceInput({ sessionId: 'another-session', note: 'Review' });
+        expect(await opened.form.submit()).toMatchObject({ kind: 'unavailable', reason: 'invalid_input' });
+        expect(dispatch).not.toHaveBeenCalled();
+        opened.form.replaceInput({ sessionId: SESSION_ID, note: 'Review' });
+        expect(await opened.form.submit()).toMatchObject({ kind: 'settled', outcome: { ok: true } });
+        opened.form.retire();
+    });
+
+    it('admits neither an unqualified Home nor an Action without a declared Session operand', () => {
+        const current = rowSnapshot();
+        const unqualified = { ...current, host: { ...current.host, serverId: null } };
+        const controller = createPluginContributedActionController({ resolveCurrent: () => unqualified });
+        expect(controller.list({ placement: 'rowAction', scope: 'session' })).toEqual([]);
+        const noOperandSnapshot = snapshot([action({ id: 'global-operation', placementBindings: ['rowAction'] })]);
+        const noOperand = { ...noOperandSnapshot, host: { ...noOperandSnapshot.host, sessionRow: true as const } };
+        expect(createPluginContributedActionController({ resolveCurrent: () => noOperand })
+            .list({ placement: 'rowAction', scope: 'session' })).toEqual([]);
+    });
+
+    it('keeps a Session reference borrowing row placement distinct from list-row intent', async () => {
+        const current = snapshot([action({ id: 'reference-form', placementBindings: ['rowAction'],
+            inputHints: { fields: [{ path: 'note', title: 'Note', widget: 'text' }] } })]);
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+        const opened = await controller.openSessionReference({ pluginId: 'acme.channels', localId: 'reference-form' });
+        expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'form' });
+        if (opened.kind !== 'form') throw new Error('Expected the Session reference form');
+        opened.form.replaceInput({ note: 'keep the reference draft' });
+        expect(opened.form.isRetired()).toBe(false);
+        expect(opened.form.getInput()).toEqual({ note: 'keep the reference draft' });
+    });
+});
+
 const CLIENT_REGISTERED_PLUGIN_ID = 'acme.client-actions';
 const CLIENT_REGISTERED_LOCAL_ID = 'refresh-index';
 const CLIENT_REGISTERED_TARGET = Object.freeze({
@@ -387,57 +556,6 @@ function clientRegisteredCacheIdentity(): PluginReactNativeBundleCacheIdentity {
  * are never presented", so this fixture commits a real registration through the
  * production projection, cache and executable composition the gate reads.
  */
-describe('contributed Action form discovery', () => {
-    it('addresses the reload-17 flower picker by its public Action identity while retaining the Machine draft', async () => {
-        const machineId = 'ffd72b3e-40ca-4644-9bd2-46753a01d8cb';
-        const base = snapshot([action({ id: 'change', scopes: ['global', 'machine'],
-            placementBindings: ['commandPalette'],
-            inputSchema: { type: 'object', properties: { flower: { type: 'string', enum: ['marigold', 'rose'] } },
-                required: ['flower'], additionalProperties: false },
-            inputHints: { fields: [{ path: 'flower', title: 'Flower', widget: 'select', required: true,
-                inputType: { pluginId: 'qa.qar90s-r8', localId: 'flower' } }] },
-        })], { pluginId: 'qa.qar90s-r8' });
-        const current = { ...base, host: { ...base.host, machineId, sessionId: null } };
-        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
-        const descriptor = controller.list({ placement: 'commandPalette', scope: 'global' })[0]!;
-        expect(descriptor.qualifiedActionId).toBe('qa.qar90s-r8/change');
-        vi.mocked(Modal.show).mockClear();
-        const opened = await openPluginContributedAction({ controller, action: descriptor });
-        expect(opened.kind).toBe('form');
-        if (opened.kind !== 'form') throw new Error('Expected the flower form');
-        try {
-            const modal = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
-            // Replay the captured query using the identity actually supplied to
-            // ActionInputFormModal, rather than an invented discovery identity.
-            const query = { actionId: modal?.props?.actionId, fieldPath: 'flower', draftInput: { machineId } };
-            const projected = current.resolveContributedAction!({ pluginId: 'qa.qar90s-r8', localId: 'change' })!;
-            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                listContributedActionDefinitions: () => [projectedActionToDefinition(projected, null)],
-                // The daemon descriptor is the external boundary. Keep the real
-                // declaration, identity, and options admission beneath it.
-                resolveInputType: async () => ({
-                    identity: { pluginId: 'qa.qar90s-r8', localId: 'flower' },
-                    occurrenceId: projected.occurrenceId,
-                    definition: PluginInputTypeContributionV1Schema.parse({ id: 'flower', title: 'Flower',
-                        semantic: 'qa-qar90s-flower', valueSchema: { type: 'string', enum: ['marigold', 'rose'] },
-                        picker: 'flower-picker-renderer' }),
-                }),
-            }));
-            expect(await executor.execute('action.options.resolve', query, {
-                surface: 'ui', authority: 'present_user',
-                serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
-                runtimeAccountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e',
-                externalActionTarget: { kind: 'machine', machineId },
-            })).toEqual({
-                ok: true, result: { actionId: 'qa.qar90s-r8/actions/change', fieldPath: 'flower',
-                    optionsSourceId: null, options: [] },
-            });
-        } finally {
-            opened.form.retire();
-        }
-    });
-});
-
 function createRegisteredClientActionFixture(
     handler: PluginClientActionHandler,
     presentation: Pick<PluginProjectedActionV2, 'scopes' | 'placementBindings'> = {
@@ -551,6 +669,78 @@ function createRegisteredClientActionFixture(
 }
 
 describe('plugin contributed Action controller', () => {
+    it.each(['open', 'exact'] as const)('loads only selected Action copy before materializing its %s form', async mode => {
+        const previousLanguage = getPreferredLanguage();
+        await preloadTranslationsForSettings('fr');
+        setPreferredLanguageFromSettings('fr');
+        const projection: PluginUiProjectionModel = { ...EMPTY_PLUGIN_UI_PROJECTION, translationsByPluginId: {
+            'acme.channels': { id: 'translations:acme.channels', pluginId: 'acme.channels', contributionKind: 'translations',
+                locales: ['en', 'fr', 'de'], resourceIdsByLocale: { en: 'copy-en', fr: 'copy-fr', de: 'copy-de' } },
+        } };
+        const signals: AbortSignal[] = [];
+        const reads: string[] = [];
+        const runtime = createPluginUiTranslationRuntime({ projection: EMPTY_PLUGIN_UI_PROJECTION,
+            readResourceBytes: async (_projection, pluginId, resourceId, signal) => {
+                reads.push(`${pluginId}:${resourceId}`); signals.push(signal);
+                return new TextEncoder().encode(JSON.stringify(resourceId === 'copy-fr'
+                    ? { title: 'Publier', prompt: 'Quel message ?' } : { title: 'Publish', prompt: 'Which message?' }));
+            } });
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => EMPTY_PLUGIN_UI_PROJECTION, undefined, undefined, runtime);
+        try {
+            const current = snapshot([action({ id: 'publish', surfaces: ['ui', 'plugin'],
+                localizedPresentation: { title: { key: 'title', fallback: 'Publish' },
+                    inputHints: { fields: [{ path: 'message', title: 'Message', prompt: { key: 'prompt', fallback: 'Which message?' }, widget: 'text' }] } },
+                inputHints: { fields: [{ path: 'message', title: 'Message', widget: 'text' }] },
+            })], { pluginUiProjection: projection });
+            const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+            const selected = mode === 'open' ? await controller.open(controller.list({ placement: 'primary', scope: 'session' })[0]!)
+                : await controller.selectExactBoundActionInput({ action: { pluginId: 'acme.channels', localId: 'publish' }, expectedOccurrenceId: 'contributor-generation-a' });
+            expect(selected.kind).toBe('form');
+            if (selected.kind !== 'form') throw new Error('Expected selected form');
+            expect(selected.form.presentation).toMatchObject({ title: 'Publier', inputHints: { fields: [{ prompt: 'Quel message ?' }] } });
+            expect(reads.sort()).toEqual(['acme.channels:copy-en', 'acme.channels:copy-fr']);
+            expect(signals.every(signal => signal.aborted)).toBe(true);
+            selected.form.cancel();
+        } finally { unpublish(); runtime.dispose(); setPreferredLanguageFromSettings(previousLanguage); }
+    });
+
+    it('refuses a form when its Action source is replaced while locale bytes are pending', async () => {
+        const projection: PluginUiProjectionModel = { ...EMPTY_PLUGIN_UI_PROJECTION, translationsByPluginId: {
+            'acme.channels': { id: 'translations:acme.channels', pluginId: 'acme.channels', contributionKind: 'translations',
+                locales: ['en'], resourceIdsByLocale: { en: 'copy-en' } },
+        } };
+        const finish: (() => void)[] = [];
+        const runtime = createPluginUiTranslationRuntime({ projection: EMPTY_PLUGIN_UI_PROJECTION,
+            readResourceBytes: async () => new Promise(resolve => finish.push(() => resolve(new TextEncoder().encode('{"title":"Old copy"}')))) });
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => EMPTY_PLUGIN_UI_PROJECTION, undefined, undefined, runtime);
+        try {
+            let current = snapshot([action({ id: 'publish', surfaces: ['plugin'], localizedPresentation: {
+                title: { key: 'title', fallback: 'Publish' }, inputHints: { fields: [{ path: 'message', title: 'Message', widget: 'text' }] },
+            }, inputHints: { fields: [{ path: 'message', title: 'Message', widget: 'text' }] } })], { pluginUiProjection: projection });
+            const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+            const pending = controller.selectExactBoundActionInput({ action: { pluginId: 'acme.channels', localId: 'publish' }, expectedOccurrenceId: 'contributor-generation-a' });
+            expect(finish).toHaveLength(1);
+            current = snapshot([action({ id: 'publish', occurrenceId: 'replacement', surfaces: ['plugin'] })], { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION });
+            finish.forEach(resolve => resolve());
+            await expect(pending).resolves.toEqual({ kind: 'unavailable', reason: 'action_not_found' });
+        } finally { unpublish(); runtime.dispose(); }
+    });
+
+    it('uses the visible presentation resolver carried by the current snapshot', () => {
+        const projection: PluginUiProjectionModel = { ...EMPTY_PLUGIN_UI_PROJECTION, translationsByPluginId: {
+            'acme.channels': { id: 'translations:acme.channels', pluginId: 'acme.channels', contributionKind: 'translations',
+                locales: ['fr'], bundles: { fr: { title: 'Publier', prompt: 'Quel message ?' } } },
+        } };
+        const current = { ...snapshot([action({ id: 'publish', localizedPresentation: {
+            title: { key: 'title', fallback: 'Publish' },
+            inputHints: { fields: [{ path: 'message', title: 'Message', prompt: { key: 'prompt', fallback: 'Which message?' }, widget: 'text' }] },
+        } })]), localize: createPluginLocalizedTextResolver({ projection, locale: 'fr' }) };
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+        expect(controller.list({ placement: 'primary', scope: 'session' })).toMatchObject([{
+            title: 'Publier', inputHints: { fields: [{ prompt: 'Quel message ?' }] },
+        }]);
+    });
+
     it('selects JSON input for an exact Action with no declared input schema', async () => {
         const declared = action({ id: 'unconstrained', inputHints: null, scopes: ['settings'], surfaces: ['plugin'], placementBindings: [] });
         machineRpcWithServerScopeMock.mockImplementation(async () => ({ ok: true }));
@@ -562,6 +752,43 @@ describe('plugin contributed Action controller', () => {
         })).resolves.toEqual({ kind: 'direct', result: { kind: 'submitted', input: { note: 'kept' },
             action: { pluginId: 'acme.channels', localId: declared.id }, connectedAccount: { kind: 'none' },
             presentation: { connectedAccountLabel: null } } });
+    });
+
+    it.each([
+        { definitionsKey: 'definitions', hinted: true },
+        { definitionsKey: '$defs', hinted: true },
+        { definitionsKey: 'definitions', hinted: false },
+        { definitionsKey: '$defs', hinted: false },
+    ] as const)('selects a form with parent $definitionsKey references in a hinted=$hinted draft', async ({ definitionsKey, hinted }) => {
+        const declared = action({
+            id: 'prepare-workspace', scopes: ['settings'], surfaces: ['plugin'], placementBindings: [],
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    repository: { $ref: `#/${definitionsKey}/repository` },
+                    directory: { type: 'string' },
+                },
+                [definitionsKey]: { repository: { type: 'string', minLength: 1 } },
+                required: ['repository', 'directory'], additionalProperties: false,
+            },
+            inputHints: { fields: [
+                ...(hinted ? [{ path: 'repository', title: 'Repository', widget: 'text' as const }] : []),
+                { path: 'directory', title: 'Directory', widget: 'text' },
+            ] },
+        });
+        const controller = createPluginContributedActionController({ resolveCurrent: () => snapshot([declared]) });
+        const request = {
+            action: { pluginId: 'acme.channels', localId: declared.id },
+            expectedOccurrenceId: 'contributor-generation-a',
+            ...(!hinted ? { allowSchemaDeclaredDraftFields: true } : {}),
+        };
+
+        const selected = await controller.selectExactBoundActionInput({ ...request, draft: { repository: 'happier-dev/triage-qa-sandbox' } });
+        expect(selected.kind).toBe('form');
+        if (selected.kind !== 'form') throw new Error('expected selection form');
+        expect(selected.form.getInput()).toEqual({ repository: 'happier-dev/triage-qa-sandbox' });
+        await expect(controller.selectExactBoundActionInput({ ...request, draft: { repository: '' } }))
+            .resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
     });
 
     it('preserves a schema-valid host-filled draft for an exact no-form Action', async () => {
@@ -1251,6 +1478,35 @@ describe('plugin contributed Action controller', () => {
             connectedAccountOptions: true as const,
         });
         await expect(make([{ ...base, inputHints: { fields: [accountField('one')] } }]).selectActionInput(selectionRequest(operation, { undeclared: true }))).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
+        await expect(make([action({ ...base, inputSchema: { type: 'object', properties: {
+            repository: { type: 'string' }, unhinted: { type: 'boolean' },
+        }, additionalProperties: false } })]).selectActionInput(selectionRequest(operation, { unhinted: true })))
+            .resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
+    });
+
+    it('settles a saved-secret input hint only as an exact shared reference even with a permissive Action schema', async () => {
+        const operation = targetedOperation({ localId: 'pick-secret' });
+        const current = snapshot([action({ id: 'pick-secret', scopes: ['settings'], surfaces: ['plugin'], placementBindings: [],
+            inputSchema: { type: 'object', properties: { secret: {} }, required: ['secret'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'secret', title: 'Secret', widget: 'select', required: true,
+                inputType: { hostType: 'savedSecretReference' } }] },
+        })], { targeted: targetedContributions(operation) });
+        const controller = createPluginContributedActionController({ resolveCurrent: () => current });
+        const selected = await controller.selectActionInput(selectionRequest(operation));
+        if (selected.kind !== 'form') throw new Error('Expected the canonical secret-reference form');
+        for (const secret of [{ ref: 'person_selects' }, { ref: 'private-id', resourceRevision: 3 },
+            { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3, value: 'not-a-reference' }]) {
+            selected.form.replaceInput({ secret });
+            expect(await selected.form.submit()).toEqual({ kind: 'unavailable', reason: 'invalid_input' });
+        }
+        const secret = { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3 };
+        selected.form.replaceInput({ secret });
+        expect(await selected.form.submit()).toMatchObject({ kind: 'settled', outcome: { ok: true } });
+        expect(await selected.result).toMatchObject({ kind: 'submitted', input: { secret } });
+        const canceled = await controller.selectActionInput(selectionRequest(operation));
+        if (canceled.kind !== 'form') throw new Error('Expected a cancelable reference form');
+        canceled.form.cancel();
+        expect(await canceled.result).toEqual({ kind: 'cancelled' });
     });
 
     it('does not open a secret-capable form without a captured Account lifetime', async () => {
@@ -1714,7 +1970,8 @@ describe('plugin contributed Action controller', () => {
         ]);
     });
 
-    it('resolves localized Action form presentation through the same host resolver as Voice', () => {
+    it('resolves localized Action form presentation through the same host resolver as Voice', async () => {
+        await preloadTranslationsForSettings('es');
         setPreferredLanguageFromSettings('es');
         try {
             const localized = action({
@@ -1865,6 +2122,7 @@ describe('plugin contributed Action controller', () => {
     });
 
     it('dispatches a host-presented Composer Action with its current intent and no fabricated caller', async () => {
+        publishMachineAccess('use');
         const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { completed: true } });
         let composerRevision = 17;
         const initial = snapshot([action({
@@ -2035,6 +2293,7 @@ describe('plugin contributed Action controller', () => {
     });
 
     it('rechecks an immutable structured Action reference with current Message intent, never a retained caller', async () => {
+        publishMachineAccess('use');
         const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { opened: true } });
         const messageActionReference = {
             v: 1 as const,
@@ -2557,6 +2816,35 @@ describe('plugin contributed Action controller', () => {
         }));
     });
 
+    it('selects native credentials through the same exact-bound chooser and preserves ordinary native input', async () => {
+        const service = { pluginId: 'com.acme.accounts', localId: 'service' };
+        const resolveConnectedAccountOptions = vi.fn().mockResolvedValue({ supported: true, result: {
+            ok: true, options: [{ value: service, label: 'gh', nativeServicePath: 'nativeService' }],
+        } });
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({ id: 'native-source', surfaces: ['plugin'],
+                inputSchema: { type: 'object', properties: {
+                    nativeService: { type: 'object', properties: {
+                        pluginId: { type: 'string' }, localId: { type: 'string' },
+                    }, required: ['pluginId', 'localId'], additionalProperties: false },
+                }, required: ['nativeService'], additionalProperties: false },
+                inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true }] },
+            })]), dispatch: vi.fn(), resolveConnectedAccountOptions,
+        });
+        const opened = await controller.selectExactBoundActionInput({
+            action: { pluginId: 'acme.channels', localId: 'native-source' }, expectedOccurrenceId: 'contributor-generation-a',
+        });
+        if (opened.kind !== 'form') throw new Error('expected native chooser');
+        opened.form.replaceInput({ credentialRef: service });
+        expect((await opened.form.submit()).kind).toBe('settled');
+        const selected = await opened.result;
+        expect(selected).toMatchObject({ kind: 'submitted', connectedAccount: { kind: 'none' },
+            input: { nativeService: service } });
+        if (selected.kind !== 'submitted') throw new Error('expected submitted native input');
+        expect(reconstructPluginUiSelectedActionInput(selected)).toEqual({ nativeService: service });
+        expect(resolveConnectedAccountOptions).toHaveBeenCalledTimes(1);
+    });
+
     it('opens a successful empty Connected Account result with its derived empty marker', async () => {
         const resolveConnectedAccountOptions = vi.fn().mockResolvedValue({
             supported: true,
@@ -2950,6 +3238,13 @@ describe('plugin contributed Action controller', () => {
         const opened = await controller.openSessionReference(reference);
         expect(opened.kind).toBe('form');
         expect(dispatch).not.toHaveBeenCalled();
+        if (opened.kind !== 'form') throw new Error('Expected a Session reference form');
+        opened.form.replaceInput({ endpoint: 'https://channels.example.test' });
+        await expect(opened.form.submit()).resolves.toEqual({ kind: 'settled',
+            outcome: { ok: true, result: { configured: true } } });
+        expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({
+            action: reference, input: { endpoint: 'https://channels.example.test' },
+        }));
 
         await expect(controller.openSessionReference(reference, null)).resolves.toEqual({
             kind: 'direct',

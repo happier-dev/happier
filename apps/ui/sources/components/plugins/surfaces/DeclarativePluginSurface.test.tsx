@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { applyAccountSettingsSavedSecretMutation, PluginDeclarativeProjectedModelV1Schema, resolveAccountSettingsPluginSecret, resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol';
+import { applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecret, resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { PluginDeclarativeProjectedModelV1Schema} from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { installRealActionExecutorModuleLoader, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -382,6 +383,28 @@ describe('DeclarativePluginSurface action continuity', () => {
 });
 
 describe('DeclarativePluginSurface action controls', () => {
+    it('withdraws a live Action when its host publishes read-only access and restores it for Manage', async () => {
+        const action = { identity: { pluginId: 'acme.manage', localId: 'save' },
+            qualifiedId: 'acme.manage/save', occurrenceId: 'manage-source' };
+        const actionModel = PluginDeclarativeProjectedModelV1Schema.parse({
+            visible: true, requiredHostMethods: [],
+            identity: { pluginId: 'acme.manage', localId: 'panel', qualifiedId: 'acme.manage/panel', occurrenceId: 'manage-source' },
+            declarativeInventory: { actions: [{ ...action, enabled: true }], destinations: [], settings: [], uiQueries: [] },
+            root: { kind: 'action', path: 'root', order: 0, label: 'Save', action, enabled: true },
+        });
+        const accountLifetime = createAccountLifetime();
+        const render = (actionsReadOnly: boolean) => <DeclarativePluginSurface pluginId="acme.manage" model={actionModel}
+            interactionEnabled={true} daemonInteractionEnabled={true} actionsReadOnly={actionsReadOnly}
+            dispatchAction={dispatchAction} actionAvailable={true} openSurface={openSurface}
+            openSurfaceAvailable={false} accountLifetime={accountLifetime} />;
+        const screen = await renderScreen(render(false));
+        const testID = 'plugin-declarative-action:acme.manage/save';
+        expect(screen.findByTestId(testID)).not.toBeNull();
+        await screen.update(render(true));
+        expect(screen.findByTestId(testID)).toBeNull();
+        await screen.update(render(false));
+        expect(screen.findByTestId(testID)?.props.disabled).toBe(false);
+    });
     // A touch target is a hit area, never a drawn size: the declarative action draws at the page
     // control height on every pointer and the shared pressable reaches the finger's target past it.
     it.each([

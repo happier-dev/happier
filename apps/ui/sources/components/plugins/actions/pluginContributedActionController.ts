@@ -38,6 +38,9 @@ import {
     type PluginSurfaceHostPresentedActionInvocation,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
+import { storage } from '@/sync/domains/state/storageStore';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
@@ -1073,6 +1076,15 @@ export function createPluginContributedActionController(params: Readonly<{
         return { kind: 'resolved' };
     }
 
+    function canPresentAction(resolved: ResolvedCurrentAction, placement?: PluginActionPlacementV2): boolean {
+        const { machineId, serverId } = resolved.snapshot.host;
+        if (!machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), serverId, machineId))) return true;
+        // Session identity alone does not change client Action admission. Reuse
+        // the exact host-presented invocation that execution will carry.
+        const invocation = resolveHostInvocation({ resolved, placement });
+        return invocation.kind === 'resolved' && invocation.invocation !== undefined;
+    }
+
     async function dispatchResolvedAction(
         resolved: ResolvedCurrentAction,
         input: unknown,
@@ -1820,6 +1832,9 @@ export function createPluginContributedActionController(params: Readonly<{
                 if (plugin.enabled !== true) continue;
                 for (const action of plugin.actions) {
                     const identity = { pluginId: plugin.pluginId, localId: action.id };
+                    const actionSnapshot = currentSnapshot(identity);
+                    if (!actionSnapshot || hostStatus(actionSnapshot).kind !== 'ready'
+                        || !canPresentAction({ snapshot: actionSnapshot, identity }, selector.placement)) continue;
                     if (
                         !isActionCurrent(snapshot, identity)
                         || !hasCurrentClientActionRegistration(snapshot, identity)
@@ -1846,6 +1861,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 if (plugin.enabled !== true) continue;
                 for (const action of plugin.actions) {
                     const identity = { pluginId: plugin.pluginId, localId: action.id };
+                    if (!canPresentAction({ snapshot, identity }, 'composer.slash')) continue;
                     if (
                         !isActionCurrent(snapshot, identity)
                         || !hasCurrentClientActionRegistration(snapshot, identity)
@@ -1939,10 +1955,13 @@ export function createPluginContributedActionController(params: Readonly<{
             );
         },
         isReferenceAvailable(requested) {
-            return resolveReference(requested).kind === 'resolved';
+            const current = resolveReference(requested);
+            return current.kind === 'resolved'
+                && canPresentAction(current.value, resolveMessageReferenceInvocationPlacement(current.value));
         },
         isSessionReferenceAvailable(requested) {
-            return resolveSessionReference(requested).kind === 'resolved';
+            const current = resolveSessionReference(requested);
+            return current.kind === 'resolved' && canPresentAction(current.value, current.value.descriptor.placement);
         },
         async invokeReference(requested, input) {
             const current = resolveReference(requested);
