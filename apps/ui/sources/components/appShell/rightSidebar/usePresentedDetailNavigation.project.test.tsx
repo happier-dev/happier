@@ -17,13 +17,13 @@ afterEach(() => { standardCleanup(); storage.setState(initial, true); });
 
 const companionId = (item: DetailPageNavigationItem) => item.navigation.kind === 'page' ? item.id : item.navigation.companion;
 
-async function mount(items: readonly ProjectDetailNavigationItem[], effects: string[], activeTab = 'overview') {
+async function mount(items: readonly ProjectDetailNavigationItem[], effects: string[], activeTab = 'overview', activePage = 'overview') {
     let navigation: ReturnType<typeof usePresentedDetailNavigation>;
     const companions = items.flatMap(item => item.companion ? [{ ...item,
         defaultPlacement: item.companion.defaultPlacement, allowedPlacements: item.companion.allowedPlacements }] : []);
     function Fixture(props: { phone: boolean }) {
         navigation = usePresentedDetailNavigation({ pageKind: 'project', identity: 'checkout', scope: null,
-            items, activeId: 'overview', phone: props.phone, presented: false,
+            items, activeId: activePage, phone: props.phone, presented: false,
             selectPage: id => effects.push(`page:${id}`),
             columnState: column => ({ visible: true, activeTab: column === 'main' ? activeTab : undefined, setVisible: () => {} }),
             companion: { items: companions, idForItem: companionId, activeId: null,
@@ -64,14 +64,14 @@ it('keeps Project Changes/Git Action addresses and reacts to independent phone a
     expect(await read('main')).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ id: 'changes', placement: 'pinned' })]) });
 });
 
-it('returns from a Project companion surface to its retained page through the main Action', async () => {
+it.each([['overview', 'git'], ['services', 'browser']])('returns to retained Project %s from %s through the main Action', async (page, surface) => {
     const { items } = resolveProjectPageCatalogState({ target: { kind: 'project', workspaceRefId: 'checkout', serverId: 'home' } });
     const effects: string[] = [];
-    const fixture = await mount(items, effects, 'git');
+    const fixture = await mount(items, effects, surface, page);
     await fixture.phone(true);
-    await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'overview' }, undefined,
+    await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: page }, undefined,
         { kind: 'shell.column', column: 'main', read: () => fixture.navigation.readColumn('main') });
-    expect(effects).toEqual(['page:overview']);
+    expect(effects).toEqual([`page:${page}`]);
 });
 
 it('keeps an admitted disabled Project page unavailable to Actions', async () => {

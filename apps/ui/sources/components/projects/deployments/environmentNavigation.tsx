@@ -53,7 +53,10 @@ export function useEnvironmentNavigation(input: Readonly<{
     const navigation = usePresentedDetailNavigation({ pageKind: 'environment', identity: input.environmentId,
         scope: input.scope, items, activeId: input.destination.tab, phone: input.phone, presented: input.presented,
         title: t('projects.deployments.review.environment'),
-        selectPage: id => input.navigate(resolveDeploymentEnvironmentDestinationV1({ tab: id })),
+        selectPage: id => {
+            const current = latest.current;
+            if (id !== current.destination.tab) current.navigate(resolveDeploymentEnvironmentDestinationV1({ tab: id }));
+        },
         companion: { activeId: activeCompanion, close: companion.close, select: id => {
             if (isEnvironmentCompanionId(id) && latest.current.companions?.includes(id)) companion.open(id);
         } },

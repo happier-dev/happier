@@ -149,7 +149,7 @@ export function usePresentedDetailNavigation(input: Readonly<{
                 pageKind, placement: placed.effectivePlacements[phone ? item.id : itemId(item)] ?? 'overflow' })),
             selectTab: id => {
                 if (main) {
-                    if (id !== latest.current.activeId) latest.current.selectPage(id);
+                    latest.current.selectPage(id);
                 } else latest.current.companion?.select(id);
             },
             setVisible: visible => {
