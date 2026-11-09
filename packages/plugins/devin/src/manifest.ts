@@ -1,5 +1,7 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { devinConnectedAccountRuntime } from './connectedAccounts/runtime.js';
+import { devinAccountAuthentication } from './connectedAccounts/account.js';
 
 import { detectDevinCliAuthStatus } from './agent/auth/status.js';
 import { DEVIN_ACP_RUNTIME_DECLARATION } from './agent/acp/runtimeDeclaration.js';
@@ -21,6 +23,11 @@ export const DEVIN_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
+      id: 'devin-oauth',
+      capability: 'network',
+      reason: 'Exchange a Devin browser authorization code and read optional account identity.',
+      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.devin.ai' }], methods: ['GET', 'POST'] },
+    }, {
       id: 'devin-process',
       capability: 'process',
       reason: 'Run the declared Devin CLI executable.',
@@ -35,6 +42,35 @@ export const DEVIN_PLUGIN = definePlugin({
       scope: { locations: [{ root: 'workspace' }], access: ['read'] },
     }],
     optional: [],
+  },
+  connectedAccountDescriptors: {
+    'devin-account': {
+      declaration: {
+        title: 'Devin',
+        authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
+          defaultModeId: 'browser-session',
+          modes: [{
+            id: 'browser-session', kind: 'oauthAuthorizationCode', title: 'Sign in with Devin',
+            callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+            scopes: [], pkce: 'required', allowRawAuthorizationCode: true, outcomeReconciliation: 'none',
+          }, {
+            id: 'enterprise-seat', kind: 'manual', title: 'Enterprise seat credential', outcomeReconciliation: 'none',
+            setup: {
+              url: 'https://docs.devin.ai/cli/enterprise/devin-auth',
+              checklist: ['Your enterprise administrator must grant the Use Devin CLI role.', 'Use the native enterprise seat credential and its matching API server.'],
+              createKeyTitle: 'Read enterprise sign-in instructions',
+            },
+            fields: [
+              { id: 'seatToken', title: 'Enterprise seat credential', secret: true, schema: { type: 'string', minLength: 1 } },
+              { id: 'apiServerUrl', title: 'API server URL', secret: false, schema: { type: 'string', minLength: 1 } },
+            ],
+          }],
+        },
+      },
+      runtime: devinConnectedAccountRuntime,
+      accountRuntime: devinAccountAuthentication,
+    },
   },
   agents: {
     devin: {
@@ -65,6 +101,7 @@ export const DEVIN_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: 'devin-cli' },

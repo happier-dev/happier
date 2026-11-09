@@ -13,6 +13,10 @@ describe('Devin plugin manifest', () => {
       entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: {
         required: [{
+          id: 'devin-oauth',
+          capability: 'network',
+          scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.devin.ai' }], methods: ['GET', 'POST'] },
+        }, {
           id: 'devin-process',
           capability: 'process',
           scope: {

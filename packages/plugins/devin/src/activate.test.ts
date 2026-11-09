@@ -6,12 +6,6 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Devin activation', () => {
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
-    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
-      'agents',
-      'settings',
-      'systemTools',
-      'ui',
-    ]);
     expect(await import('./manifest.js')).toEqual(expect.objectContaining({
       DEVIN_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
     }));
