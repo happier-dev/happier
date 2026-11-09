@@ -48,7 +48,22 @@ export function describeComputerActionApproval(input: Readonly<{
     preview: unknown;
     /** What the Action returned once it ran: an executed capture shows the picture it produced. */
     result?: unknown;
+    /** The person's picker answer for this approval, applied before what the Action produced. */
+    selection?: ComputerApprovalDisplayV1 | null;
 }>): ComputerActionApproval | null {
+    const described = describeComputerRequest(input);
+    if (!described) return null;
+    // The person's pick says where it ran; what it produced is applied after it, so a pick made before
+    // approving never hides the executed picture.
+    const requested = applyComputerSelection(described, input.selection ?? null);
+    const produced = readProducedCapture(input.actionId, input.result);
+    // It ran, so the choice is made. The request may never have known a window's title; a display needs none.
+    return produced ? { ...requested, requiresTargetSelection: false, captureMedia: produced.media,
+        target: requested.target ?? (produced.target.kind === 'display' ? { kind: 'display' as const, title: '' } : null) } : requested;
+}
+
+/** What the request itself asks for, from the computer owner's display facts frozen at creation. */
+function describeComputerRequest(input: Readonly<{ actionId: string; actionArgs: unknown; preview: unknown }>): ComputerActionApproval | null {
     if (!isComputerApprovalAction(input.actionId)) return null;
     const display = readDisplay(input.preview);
     if (!display) return null;
@@ -82,12 +97,8 @@ export function describeComputerActionApproval(input: Readonly<{
     }
     const parsed = ComputerTargetRequestV1Schema.safeParse(input.actionArgs);
     if (!parsed.success) return null;
-    const produced = readProducedCapture(input.actionId, input.result);
     return { access: 'see', act: input.actionId === 'computer.capture' ? 'see' : 'read',
-        machineId: parsed.data.machineId, ...facts, sent: null,
-        // It ran, so the choice is made. The request may never have known a window's title; a display needs none.
-        ...(produced ? { requiresTargetSelection: false, captureMedia: produced.media,
-            target: facts.target ?? (produced.target.kind === 'display' ? { kind: 'display' as const, title: '' } : null) } : {}) };
+        machineId: parsed.data.machineId, ...facts, sent: null };
 }
 
 /** The owner's picker answer replaces the unchosen display, without retargeting confidential entry. */

@@ -6,7 +6,7 @@ import { noteSessionComputerMachine } from '@/sync/domains/computer/sessionCompu
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 
-import { applyComputerSelection, describeComputerActionApproval, type ComputerActionApproval } from './computerApprovalModel';
+import { describeComputerActionApproval, type ComputerActionApproval } from './computerApprovalModel';
 
 type OpenComputerTargetPicker = typeof import('@/components/computer/openComputerTargetPickerForSession').openComputerTargetPickerForSession;
 
@@ -77,9 +77,12 @@ export function useComputerApprovalChoice(input: Readonly<{
             if (currentOwner.current === owner) currentOwner.current = null;
         };
     }, [accountLifetime, owner]);
+    // The pick goes through the model, which applies what the Action produced after it.
     const presentation = React.useMemo(
-        () => (described ? applyComputerSelection(described, chosenDisplay) : null),
-        [chosenDisplay, described],
+        () => (described && chosenDisplay ? describeComputerActionApproval({ actionId: input.actionId,
+            actionArgs: input.approvedInput ?? input.actionArgs, preview: input.preview, result: input.executionResult,
+            selection: chosenDisplay }) : described),
+        [chosenDisplay, described, input.actionArgs, input.actionId, input.approvedInput, input.executionResult, input.preview],
     );
     const machineName = described?.machineName ?? null;
     React.useEffect(() => {

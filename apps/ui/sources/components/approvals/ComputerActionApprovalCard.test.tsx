@@ -74,6 +74,23 @@ describe('describeComputerActionApproval', () => {
             expect(describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: shared }, result })?.captureMedia?.mediaId).toBe('media_1');
         });
 
+        it('shows the produced picture after the person picked the display on this page and approved', async () => {
+            const accountLifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home-1', accountId: 'account-a' },
+                isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) };
+            let pickerInput: Parameters<typeof import('@/components/computer/openComputerTargetPickerForSession').openComputerTargetPickerForSession>[0] | undefined;
+            const hook = await renderHook((executionResult: unknown) => useComputerApprovalChoice({
+                ...request, preview: { computerApprovalDisplay: unchosen }, executionResult, sessionId: 'session_1',
+                accountLifetime, resolveOpenPicker: () => (params) => { pickerInput = params; },
+            }), { initialProps: undefined });
+            await act(async () => { hook.getCurrent().chooseTarget(); });
+            await act(async () => { pickerInput?.onSelected?.({ consentGranted: true, approvalDisplay: {
+                machineDisplayName: 'Studio laptop', requiresTargetSelection: false, access: 'see', target: { kind: 'display', title: 'primary' },
+            } }); });
+            await hook.rerender({ ...captured, media: produced });
+            expect(hook.getCurrent().presentation).toMatchObject({ requiresTargetSelection: false,
+                target: { kind: 'display', title: 'primary' }, captureMedia: { mediaId: 'media_2' } });
+        });
+
         it('reads a produced picture only from a capture', () => {
             expect(describeComputerActionApproval({ actionId: 'computer.query', actionArgs: { machineId: 'machine_1' },
                 preview: { computerApprovalDisplay: shared }, result: { ...captured, media: produced } })?.captureMedia?.mediaId).toBe('media_1');
