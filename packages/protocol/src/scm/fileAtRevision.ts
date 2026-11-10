@@ -15,6 +15,7 @@ export const ScmFileAtRevisionRequestSchema = lazyZodSchema(() => z.strictObject
   'Expected a repository-relative literal file path')),
   selector: z.union([
     z.strictObject({ blobId: ScmCommitOidSchema }),
+    z.strictObject({ commit: ScmCommitOidSchema }),
     z.strictObject({ side: z.literal('before'), area: ScmDiffAreaSchema }),
   ]),
   /** Caller preview admission only; in-process restore readers omit it. */

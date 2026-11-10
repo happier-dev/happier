@@ -44,8 +44,13 @@ describe('SCM worktree filesystem authority', () => {
     await mkdir(outside);
     await symlink(outside, join(fixture.rootPath, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     for (const cwd of [outside, join(fixture.rootPath, 'escape')]) {
-      expect(bindScmActionToSessionWorkspace('scm.status.snapshot', { cwd }, fixture.rootPath, 'comparison-session'))
-        .toMatchObject({ cwd: fixture.rootPath });
+      const result = await executeScmActionOperation({
+        actionId: 'scm.status.snapshot',
+        input: bindScmActionToSessionWorkspace('scm.status.snapshot', { cwd }, fixture.rootPath, 'comparison-session'),
+        registry, workingDirectory: fixture.rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] },
+      });
+      expect(result).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
     }
     expect(bindScmActionToSessionWorkspace('scm.change.discard', { cwd: join(fixture.rootPath, '.dev', 'worktree', 'first') },
       fixture.rootPath, 'comparison-session')).toMatchObject({ cwd: fixture.rootPath });

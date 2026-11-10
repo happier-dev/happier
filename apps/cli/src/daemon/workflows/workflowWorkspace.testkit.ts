@@ -31,6 +31,8 @@ export function createGitWorkflowWorkspaceTestDependencies() {
   );
 
   return {
+    registry,
+    runWithRuntime: runWithRealGitScmRuntime,
     inspectLocation,
     inspectCommittedRevision: async (directory: string) => (
       (await inspectLocation({ candidatePath: directory }))?.inspection.committedRevision ?? null

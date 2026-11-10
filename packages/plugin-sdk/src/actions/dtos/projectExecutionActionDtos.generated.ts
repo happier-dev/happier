@@ -630,9 +630,6 @@ export type ProjectExecutionActionResultById = {
                     continuation?: undefined | {
                         actionId: 'deployments.bindings.set';
                         input: {
-                            serverId: string;
-                            environmentId: string;
-                            expectedRevision: number;
                             set: ({
                                 access: 'pull' | 'pushPull';
                                 source: {
@@ -659,6 +656,7 @@ export type ProjectExecutionActionResultById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'secret';
                                     ref: 'person_selects';
@@ -747,6 +745,9 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'dataRole';
                                 role: 'readOnlyPassword';
                             })[];
+                            serverId: string;
+                            environmentId: string;
+                            expectedRevision: number;
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -784,6 +785,13 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewDataTargetLinks?: undefined | {
+                                contentArtifactId: string;
+                                contentHeaderVersion: number;
+                                contentBodyVersion: number;
+                                templateDataTargetLinkId: string;
+                                expectedTemplateTargetLinkRevision: number;
+                            }[];
                             firstTargetLink?: undefined | {
                                 machines: {
                                     machineId: string;
@@ -952,6 +960,7 @@ export type ProjectExecutionActionResultById = {
                                             environmentId: string;
                                             export: string;
                                             via: 'auto' | 'privateNetwork' | 'public';
+                                            component?: 'host' | 'port' | undefined;
                                         } | {
                                             kind: 'value';
                                             value: string;
@@ -1013,6 +1022,7 @@ export type ProjectExecutionActionResultById = {
                                         environmentId: string;
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
+                                        component?: 'host' | 'port' | undefined;
                                     } | {
                                         kind: 'value';
                                         value: string;
@@ -2034,9 +2044,6 @@ export type ProjectExecutionActionResultById = {
                     continuation?: undefined | {
                         actionId: 'deployments.bindings.set';
                         input: {
-                            serverId: string;
-                            environmentId: string;
-                            expectedRevision: number;
                             set: ({
                                 access: 'pull' | 'pushPull';
                                 source: {
@@ -2063,6 +2070,7 @@ export type ProjectExecutionActionResultById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'secret';
                                     ref: 'person_selects';
@@ -2151,6 +2159,9 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'dataRole';
                                 role: 'readOnlyPassword';
                             })[];
+                            serverId: string;
+                            environmentId: string;
+                            expectedRevision: number;
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -2188,6 +2199,13 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewDataTargetLinks?: undefined | {
+                                contentArtifactId: string;
+                                contentHeaderVersion: number;
+                                contentBodyVersion: number;
+                                templateDataTargetLinkId: string;
+                                expectedTemplateTargetLinkRevision: number;
+                            }[];
                             firstTargetLink?: undefined | {
                                 machines: {
                                     machineId: string;
@@ -2356,6 +2374,7 @@ export type ProjectExecutionActionResultById = {
                                             environmentId: string;
                                             export: string;
                                             via: 'auto' | 'privateNetwork' | 'public';
+                                            component?: 'host' | 'port' | undefined;
                                         } | {
                                             kind: 'value';
                                             value: string;
@@ -2417,6 +2436,7 @@ export type ProjectExecutionActionResultById = {
                                         environmentId: string;
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
+                                        component?: 'host' | 'port' | undefined;
                                     } | {
                                         kind: 'value';
                                         value: string;
@@ -3438,9 +3458,6 @@ export type ProjectExecutionActionResultById = {
                     continuation?: undefined | {
                         actionId: 'deployments.bindings.set';
                         input: {
-                            serverId: string;
-                            environmentId: string;
-                            expectedRevision: number;
                             set: ({
                                 access: 'pull' | 'pushPull';
                                 source: {
@@ -3467,6 +3484,7 @@ export type ProjectExecutionActionResultById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'secret';
                                     ref: 'person_selects';
@@ -3555,6 +3573,9 @@ export type ProjectExecutionActionResultById = {
                                 purpose: 'dataRole';
                                 role: 'readOnlyPassword';
                             })[];
+                            serverId: string;
+                            environmentId: string;
+                            expectedRevision: number;
                         };
                     } | {
                         actionId: 'deployments.environments.create';
@@ -3592,6 +3613,13 @@ export type ProjectExecutionActionResultById = {
                                 pullRequestId: string;
                                 runtimeTargetLinkId: string;
                             };
+                            previewDataTargetLinks?: undefined | {
+                                contentArtifactId: string;
+                                contentHeaderVersion: number;
+                                contentBodyVersion: number;
+                                templateDataTargetLinkId: string;
+                                expectedTemplateTargetLinkRevision: number;
+                            }[];
                             firstTargetLink?: undefined | {
                                 machines: {
                                     machineId: string;
@@ -3760,6 +3788,7 @@ export type ProjectExecutionActionResultById = {
                                             environmentId: string;
                                             export: string;
                                             via: 'auto' | 'privateNetwork' | 'public';
+                                            component?: 'host' | 'port' | undefined;
                                         } | {
                                             kind: 'value';
                                             value: string;
@@ -3821,6 +3850,7 @@ export type ProjectExecutionActionResultById = {
                                         environmentId: string;
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
+                                        component?: 'host' | 'port' | undefined;
                                     } | {
                                         kind: 'value';
                                         value: string;

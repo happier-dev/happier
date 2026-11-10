@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ScmFileAtRevisionRequest } from '@happier-dev/plugin-sdk/scm';
-import { ScmDiffFileRequestSchema } from '@happier-dev/protocol/scm';
+import { ScmDiffFileRequestSchema, ScmFileAtRevisionRequestSchema } from '@happier-dev/protocol/scm';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createGitScmBackendRuntimeRegistration } from '../backend.js';
@@ -73,6 +73,20 @@ describe('Git file-at-revision bytes through backend registration and the real p
             expect(await read({ path, selector: { side: 'before', area } })).toEqual(expected(committed));
         }
         expect(await read({ path, selector: { blobId } })).toEqual(expected(committed));
+    });
+
+    it('reads a pinned commit after HEAD advances and ignores replacement refs', async () => {
+        await writeFile(join(root, 'file.bin'), 'first');
+        git(root, ['add', 'file.bin']);
+        git(root, ['commit', '--quiet', '-m', 'first']);
+        const commit = git(root, ['rev-parse', 'HEAD']);
+        await writeFile(join(root, 'file.bin'), 'second');
+        git(root, ['add', 'file.bin']);
+        git(root, ['commit', '--quiet', '-m', 'second']);
+        git(root, ['replace', commit, git(root, ['rev-parse', 'HEAD'])]);
+        await writeFile(join(root, 'file.bin'), 'working tree');
+        const request = ScmFileAtRevisionRequestSchema.parse({ path: 'file.bin', selector: { commit } });
+        expect(await read(request)).toEqual(expected(Buffer.from('first')));
     });
 
     it('keeps HEAD replacement selection separate from a pinned immutable blob read', async () => {

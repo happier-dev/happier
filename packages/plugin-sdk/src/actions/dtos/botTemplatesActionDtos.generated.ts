@@ -1867,6 +1867,10 @@ export type BotTemplatesActionInputById = {
                     secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 onComplete?: undefined | {
                     kind: 'originating_session';
                 };

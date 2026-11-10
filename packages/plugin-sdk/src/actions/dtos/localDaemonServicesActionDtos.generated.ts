@@ -153,6 +153,7 @@ export type LocalDaemonServicesActionInputById = {
                 environmentId: string;
                 export: string;
                 via: 'auto' | 'privateNetwork' | 'public';
+                component?: 'host' | 'port' | undefined;
             } | {
                 kind: 'value';
                 value: string;
@@ -684,6 +685,13 @@ export type LocalDaemonServicesActionResultById = {
                 pullRequestId: string;
                 runtimeTargetLinkId: string;
             };
+            previewDataTargetLinks?: undefined | {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                templateDataTargetLinkId: string;
+                expectedTemplateTargetLinkRevision: number;
+            }[];
             firstTargetLink?: undefined | {
                 machines: {
                     machineId: string;
@@ -852,6 +860,7 @@ export type LocalDaemonServicesActionResultById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -913,6 +922,7 @@ export type LocalDaemonServicesActionResultById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;

@@ -1,6 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { validatePath } from '@/rpc/handlers/pathSecurity';
 
 /** Machine-retained review evidence survives its generator Session, including marks-only recovery.
  * This is placement classification, never authority: the caller must still prove current
@@ -29,10 +28,9 @@ export function isRetainedScmReviewAction(actionId: string, input: Readonly<Reco
  */
 export function bindScmActionToSessionWorkspace(actionId: ActionId, input: Readonly<Record<string, unknown>>,
     workingDirectory: string, sessionId: string): Readonly<Record<string, unknown>> {
-    const selected = getActionSpec(actionId).sideEffectClass === 'read'
+    const cwd = getActionSpec(actionId).sideEffectClass === 'read'
         && !isRetainedScmReviewAction(actionId, input) && typeof input.cwd === 'string'
-        ? validatePath(input.cwd, workingDirectory) : null;
-    const cwd = selected?.valid ? selected.resolvedPath : workingDirectory;
+        ? input.cwd : workingDirectory;
     return actionId === 'scm.repository.clone' ? input
         : actionId === 'scm.pullRequest.prepareWorktree' ? { ...input, cwd: workingDirectory, sourcePath: workingDirectory }
             : { ...input, cwd, ...(actionId === 'scm.diffSummary.capture' ? { sessionId } : {}),

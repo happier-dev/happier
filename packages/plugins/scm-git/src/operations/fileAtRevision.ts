@@ -27,12 +27,13 @@ export async function gitFileAtRevision(input: {
         input.context.assertFilesystemPathAuthorized?.(resolve(cwd));
         blobId = request.selector.blobId;
     } else {
-        const pending = request.selector.area === 'pending';
+        const commit = 'commit' in request.selector ? request.selector.commit : undefined;
+        const pending = 'area' in request.selector && request.selector.area === 'pending';
         const listing = await command(pending
             ? ['ls-files', '--stage', '-z', '--', toRepoRootLiteralPathspec(path)]
-            : ['ls-tree', '-z', 'HEAD', '--', toRepoRootLiteralPathspec(path)]);
+            : [...(commit ? ['--no-replace-objects'] : []), 'ls-tree', '-z', commit ?? 'HEAD', '--', toRepoRootLiteralPathspec(path)]);
         if (!listing.success) {
-            if (!pending && !input.signal?.aborted && !listing.timedOut && !listing.outputLimitExceeded) {
+            if (!commit && !pending && !input.signal?.aborted && !listing.timedOut && !listing.outputLimitExceeded) {
                 // Only an absent symbolic ref proves an unborn HEAD. A damaged
                 // detached object or an unreadable repository is unavailable.
                 const symbolic = await command(['symbolic-ref', '--quiet', 'HEAD']);

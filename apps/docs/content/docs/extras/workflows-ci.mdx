@@ -43,10 +43,10 @@ The file is the ordinary JSON import/export document:
 Keep that wrapper; a bare definition or YAML is not the document format.
 
 Before starting, check out the intended commit on the target Machine at the
-target Project directory. `repo_file` reads that Machine's working-tree file;
+target Project directory. `repo_file` reads the file from that Machine's HEAD commit;
 the CI runner's checkout is not uploaded. The Run freezes the accepted definition
-and records the requested path and checkout commit. Uncommitted file edits are
-included, so the recorded commit alone does not identify those edited bytes.
+and records the requested path and immutable commit. Uncommitted file edits are
+excluded, so commit your Workflow changes before starting a new Run.
 
 ## Start and observe the Run
 

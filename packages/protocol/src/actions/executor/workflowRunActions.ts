@@ -527,7 +527,7 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   storage: Storage;
   definitions: DefinitionReader;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
-  /** The target host reads the existing import/export document and its observed repository HEAD. */
+  /** The target host reads the existing import/export document from the returned immutable commit. */
   readRepositoryWorkflow?: (input: Readonly<{ path: string; projectTarget: WorkflowProjectTargetV1; signal?: AbortSignal }>) => Promise<
     Readonly<{ json: string; commit: string }>>;
   resolveEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;

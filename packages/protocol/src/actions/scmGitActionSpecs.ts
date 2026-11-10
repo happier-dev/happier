@@ -278,7 +278,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
   defineScmActionSpec({
     id: 'scm.file.read', approval: { result: 'required' },
     title: 'Read file at revision',
-    description: 'Read the exact bytes of a comparison blob or the before side of a source-control file.',
+    description: 'Read the exact bytes of a comparison blob, a committed file or the before side of a source-control file.',
     safety: 'safe', placements: [],
     bindings: { rpcMethod: 'scm.file.read' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
@@ -289,6 +289,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
       { path: 'cwd', title: 'cwd', widget: 'text' },
       { path: 'path', title: 'path', widget: 'text' },
       { path: 'selector.blobId', title: 'Blob ID', widget: 'text' },
+      { path: 'selector.commit', title: 'Commit', widget: 'text' },
       { path: 'selector.side', title: 'Side', widget: 'text' },
       { path: 'selector.area', title: 'Area', widget: 'text' },
       { path: 'maxBytes', title: 'Preview byte budget', widget: 'number' },

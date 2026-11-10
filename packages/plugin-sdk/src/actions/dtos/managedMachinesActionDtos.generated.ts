@@ -1907,6 +1907,10 @@ export type ManagedMachinesActionInputById = {
                     secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 onComplete?: undefined | {
                     kind: 'originating_session';
                 };
@@ -4078,6 +4082,10 @@ export type ManagedMachinesActionInputById = {
                     secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 onComplete?: undefined | {
                     kind: 'originating_session';
                 };
@@ -4602,6 +4610,13 @@ export type ManagedMachinesActionInputById = {
                     pullRequestId: string;
                     runtimeTargetLinkId: string;
                 };
+                previewDataTargetLinks?: undefined | {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    templateDataTargetLinkId: string;
+                    expectedTemplateTargetLinkRevision: number;
+                }[];
                 firstTargetLink?: undefined | {
                     machines: {
                         machineId: string;
@@ -4770,6 +4785,7 @@ export type ManagedMachinesActionInputById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -4831,6 +4847,7 @@ export type ManagedMachinesActionInputById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -5127,6 +5144,13 @@ export type ManagedMachinesActionInputById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewDataTargetLinks?: undefined | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                        templateDataTargetLinkId: string;
+                        expectedTemplateTargetLinkRevision: number;
+                    }[];
                     firstTargetLink?: undefined | {
                         machines: {
                             machineId: string;
@@ -5295,6 +5319,7 @@ export type ManagedMachinesActionInputById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'value';
                                     value: string;
@@ -5356,6 +5381,7 @@ export type ManagedMachinesActionInputById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -7420,6 +7446,13 @@ export type ManagedMachinesActionInputById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewDataTargetLinks?: undefined | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                        templateDataTargetLinkId: string;
+                        expectedTemplateTargetLinkRevision: number;
+                    }[];
                     firstTargetLink?: undefined | {
                         machines: {
                             machineId: string;
@@ -7588,6 +7621,7 @@ export type ManagedMachinesActionInputById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'value';
                                     value: string;
@@ -7649,6 +7683,7 @@ export type ManagedMachinesActionInputById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -16242,6 +16277,13 @@ export type ManagedMachinesActionResultById = {
                     pullRequestId: string;
                     runtimeTargetLinkId: string;
                 };
+                previewDataTargetLinks?: undefined | {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    templateDataTargetLinkId: string;
+                    expectedTemplateTargetLinkRevision: number;
+                }[];
                 firstTargetLink?: undefined | {
                     machines: {
                         machineId: string;
@@ -16410,6 +16452,7 @@ export type ManagedMachinesActionResultById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -16471,6 +16514,7 @@ export type ManagedMachinesActionResultById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -16664,6 +16708,7 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -19674,6 +19719,13 @@ export type ManagedMachinesActionResultById = {
                             pullRequestId: string;
                             runtimeTargetLinkId: string;
                         };
+                        previewDataTargetLinks?: undefined | {
+                            contentArtifactId: string;
+                            contentHeaderVersion: number;
+                            contentBodyVersion: number;
+                            templateDataTargetLinkId: string;
+                            expectedTemplateTargetLinkRevision: number;
+                        }[];
                         firstTargetLink?: undefined | {
                             machines: {
                                 machineId: string;
@@ -19842,6 +19894,7 @@ export type ManagedMachinesActionResultById = {
                                         environmentId: string;
                                         export: string;
                                         via: 'auto' | 'privateNetwork' | 'public';
+                                        component?: 'host' | 'port' | undefined;
                                     } | {
                                         kind: 'value';
                                         value: string;
@@ -19903,6 +19956,7 @@ export type ManagedMachinesActionResultById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'value';
                                     value: string;
@@ -20096,6 +20150,7 @@ export type ManagedMachinesActionResultById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -21249,6 +21304,13 @@ export type ManagedMachinesActionResultById = {
                         pullRequestId: string;
                         runtimeTargetLinkId: string;
                     };
+                    previewDataTargetLinks?: undefined | {
+                        contentArtifactId: string;
+                        contentHeaderVersion: number;
+                        contentBodyVersion: number;
+                        templateDataTargetLinkId: string;
+                        expectedTemplateTargetLinkRevision: number;
+                    }[];
                     firstTargetLink?: undefined | {
                         machines: {
                             machineId: string;
@@ -21417,6 +21479,7 @@ export type ManagedMachinesActionResultById = {
                                     environmentId: string;
                                     export: string;
                                     via: 'auto' | 'privateNetwork' | 'public';
+                                    component?: 'host' | 'port' | undefined;
                                 } | {
                                     kind: 'value';
                                     value: string;
@@ -21478,6 +21541,7 @@ export type ManagedMachinesActionResultById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;

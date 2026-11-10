@@ -10,8 +10,9 @@ open; the presentation gaps below must not be documented as completed flows.
 Session SCM placement is owned by CLI `scm/actions/placement.ts`, shared by
 the daemon's Action authorization preparation and Session dispatch. Live reads
 may select a child directory or worktree inside the admitted Session workspace;
-the existing filesystem path authorizer resolves symlinks and keeps outside
-paths bound to the Session workspace. Writes and retained review evidence keep
+placement passes the authored cwd to the existing filesystem path authorizer,
+which resolves symlinks and refuses outside paths with `INVALID_PATH`.
+Writes and retained review evidence keep
 their Session placement. This lets Workflow comparison steps inspect candidate
 worktrees under the project checkout without borrowing another Session's scope.
 

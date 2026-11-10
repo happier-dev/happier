@@ -1853,6 +1853,10 @@ export type WorkflowsActionInputById = {
             secondOpinion?: 'encouraged' | 'off' | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         }[];
+        deploymentPreview?: undefined | {
+            serverId: string;
+            environmentId: string;
+        };
         workflow?: string | undefined;
         target?: undefined | {
             kind: 'inline';
@@ -2079,6 +2083,10 @@ export type WorkflowsActionInputById = {
                 secondOpinion?: 'encouraged' | 'off' | undefined;
                 canDelegateToOtherRoles?: boolean | undefined;
             }[];
+            deploymentPreview?: undefined | {
+                serverId: string;
+                environmentId: string;
+            };
             project?: undefined | {
                 machineId: string;
                 directory: string;
@@ -2321,6 +2329,10 @@ export type WorkflowsActionInputById = {
             secondOpinion?: 'encouraged' | 'off' | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         }[];
+        deploymentPreview?: undefined | {
+            serverId: string;
+            environmentId: string;
+        };
         onComplete?: undefined | {
             kind: 'originating_session';
         };
@@ -2553,6 +2565,10 @@ export type WorkflowsActionInputById = {
                 secondOpinion?: 'encouraged' | 'off' | undefined;
                 canDelegateToOtherRoles?: boolean | undefined;
             }[];
+            deploymentPreview?: undefined | {
+                serverId: string;
+                environmentId: string;
+            };
             onComplete?: undefined | {
                 kind: 'originating_session';
             };
@@ -13526,6 +13542,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -14226,6 +14246,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -14928,6 +14952,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -15634,6 +15662,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -16498,6 +16530,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -17210,6 +17246,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -17912,6 +17952,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {
@@ -18614,6 +18658,10 @@ export type WorkflowsActionResultById = {
                     branch?: string | undefined;
                     paths?: string[] | undefined;
                 }[];
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 actionApprovals?: undefined | {
                     triggerId: string;
                     operation: {

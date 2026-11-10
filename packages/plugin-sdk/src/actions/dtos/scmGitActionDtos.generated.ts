@@ -175,6 +175,8 @@ export type ScmGitActionInputById = {
         selector: {
             blobId: string;
         } | {
+            commit: string;
+        } | {
             side: 'before';
             area: 'both' | 'included' | 'pending';
         };

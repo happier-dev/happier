@@ -82,6 +82,11 @@ export type DeploymentsActionInputById = {
         serverId: string;
         environmentId: string;
         expectedDomainRevision?: number | undefined;
+        membershipDeploymentId?: string | undefined;
+        membershipMachines?: undefined | {
+            machineId: string;
+            installationId: string;
+        }[];
         placements?: undefined | {
             machineId: string;
             installationId: string;
@@ -101,6 +106,11 @@ export type DeploymentsActionInputById = {
         serverId: string;
         environmentId: string;
         expectedDomainRevision?: number | undefined;
+        membershipDeploymentId?: string | undefined;
+        membershipMachines?: undefined | {
+            machineId: string;
+            installationId: string;
+        }[];
         placements?: undefined | {
             machineId: string;
             installationId: string;
@@ -447,6 +457,13 @@ export type DeploymentsActionInputById = {
             pullRequestId: string;
             runtimeTargetLinkId: string;
         };
+        previewDataTargetLinks?: undefined | {
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
+            templateDataTargetLinkId: string;
+            expectedTemplateTargetLinkRevision: number;
+        }[];
         firstTargetLink?: undefined | {
             machines: {
                 machineId: string;
@@ -615,6 +632,7 @@ export type DeploymentsActionInputById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -676,6 +694,7 @@ export type DeploymentsActionInputById = {
                     environmentId: string;
                     export: string;
                     via: 'auto' | 'privateNetwork' | 'public';
+                    component?: 'host' | 'port' | undefined;
                 } | {
                     kind: 'value';
                     value: string;
@@ -733,7 +752,6 @@ export type DeploymentsActionInputById = {
         requestKey: string;
         protection: 'nonProduction' | 'production';
         deployerMode: 'chosen' | 'managers' | 'members';
-        name: string;
         projectSourceId?: string | undefined;
         newProject?: undefined | {
             name: string;
@@ -751,6 +769,35 @@ export type DeploymentsActionInputById = {
             principalId: string;
         }[];
         managedRetention?: 'keep' | 'until-delete' | undefined;
+        name?: string | undefined;
+        preview?: undefined | {
+            templateEnvironmentId: string;
+            expectedTemplateRevision: number;
+            pullRequestId: string;
+            runtimeTargetLinkId: string;
+            provenance: {
+                v: 1;
+                templateEnvironmentId: string;
+                runtimeTargetLinkId: string;
+                repository: {
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    deployment: string;
+                    repository: string;
+                };
+                pullRequestId: string;
+                pullRequestNumber: number;
+                author: {
+                    id: string;
+                    login: string;
+                };
+                headRepository: {
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    deployment: string;
+                    repository: string;
+                };
+            };
+            headSha: string;
+        };
         mode?: 'apply' | 'preview' | undefined;
         definition?: undefined | {
             from: 'catalogApp';
@@ -969,6 +1016,7 @@ export type DeploymentsActionInputById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -1138,6 +1186,123 @@ export type DeploymentsActionInputById = {
                     content: string;
                 }[];
             };
+            bindings?: undefined | {
+                set: ({
+                    access: 'pull' | 'pushPull';
+                    source: {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    purpose: 'registry';
+                    targetLinkId: string;
+                    registryOrigin: string;
+                } | {
+                    source: {
+                        kind: 'deploymentFact';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                    } | {
+                        kind: 'deploymentFact';
+                        fact: 'domainUrl';
+                        domainId: string;
+                    } | {
+                        kind: 'reference';
+                        environmentId: string;
+                        export: string;
+                        via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
+                    } | {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    purpose: 'backupDestination';
+                    configKey: 'destination';
+                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    purpose: 'domainCredential';
+                    domainId: string;
+                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    service: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: 'person_selects';
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'secret';
+                    };
+                    targetLinkId: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                })[];
+                remove: ({
+                    purpose: 'backupDestination';
+                    configKey: 'destination';
+                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                } | {
+                    purpose: 'domainCredential';
+                    domainId: string;
+                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                } | {
+                    purpose: 'registry';
+                    targetLinkId: string;
+                    registryOrigin: string;
+                } | {
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                } | {
+                    service: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                } | {
+                    targetLinkId: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                })[];
+            };
             retainPreviousDeployments?: number | undefined;
             previewTemplate?: null | undefined | {
                 v: 1;
@@ -1167,6 +1332,7 @@ export type DeploymentsActionInputById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -1265,6 +1431,7 @@ export type DeploymentsActionInputById = {
         machineId?: string | undefined;
         installationId?: string | undefined;
         replacesLinkId?: string | undefined;
+        drainedDeploymentId?: string | undefined;
         expectedTargetLinkRevision?: number | undefined;
     } | {
         targetId: string;
@@ -1282,6 +1449,7 @@ export type DeploymentsActionInputById = {
         machineId?: string | undefined;
         installationId?: string | undefined;
         replacesLinkId?: string | undefined;
+        drainedDeploymentId?: string | undefined;
         expectedTargetLinkRevision?: number | undefined;
         source?: undefined | {
             kind: 'host';
@@ -1426,6 +1594,7 @@ export type DeploymentsActionInputById = {
         machineId?: string | undefined;
         installationId?: string | undefined;
         replacesLinkId?: string | undefined;
+        drainedDeploymentId?: string | undefined;
         expectedTargetLinkRevision?: number | undefined;
     };
     readonly "deployments.targets.unlink": {
@@ -1589,6 +1758,16 @@ export type DeploymentsActionInputById = {
         restoreBackupId: string;
         expectedRevision: number;
         backupOperationId?: string | undefined;
+        copy?: undefined | {
+            source: {
+                environmentId: string;
+                targetLinkId: string;
+            };
+            destination: {
+                service: string;
+                database: string;
+            };
+        };
     } | {
         mode: 'prepare';
         serverId: string;
@@ -1600,6 +1779,16 @@ export type DeploymentsActionInputById = {
         restoreBackupId: string;
         expectedRevision: number;
         backupOperationId?: string | undefined;
+        copy?: undefined | {
+            source: {
+                environmentId: string;
+                targetLinkId: string;
+            };
+            destination: {
+                service: string;
+                database: string;
+            };
+        };
     };
     readonly "deployments.backups.test": {
         expectedRevision: number;
@@ -1793,6 +1982,7 @@ export type DeploymentsActionInputById = {
             name: string;
             disposition: 'keep';
         })[] | undefined;
+        machines?: string[] | undefined;
         mode?: 'preview' | undefined;
     } | {
         targetLinkId: string;
@@ -1848,9 +2038,6 @@ export type DeploymentsActionInputById = {
         expectedRevision: number;
         serverId: string;
     } | {
-        serverId: string;
-        environmentId: string;
-        expectedRevision: number;
         set: ({
             access: 'pull' | 'pushPull';
             source: {
@@ -1877,6 +2064,7 @@ export type DeploymentsActionInputById = {
                 environmentId: string;
                 export: string;
                 via: 'auto' | 'privateNetwork' | 'public';
+                component?: 'host' | 'port' | undefined;
             } | {
                 kind: 'secret';
                 ref: 'person_selects';
@@ -1965,6 +2153,9 @@ export type DeploymentsActionInputById = {
             purpose: 'dataRole';
             role: 'readOnlyPassword';
         })[];
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
     };
     readonly "deployments.environments.list": {
         serverId: string;
@@ -3233,9 +3424,6 @@ export type DeploymentsActionResultById = {
         continuation?: undefined | {
             actionId: 'deployments.bindings.set';
             input: {
-                serverId: string;
-                environmentId: string;
-                expectedRevision: number;
                 set: ({
                     access: 'pull' | 'pushPull';
                     source: {
@@ -3262,6 +3450,7 @@ export type DeploymentsActionResultById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'secret';
                         ref: 'person_selects';
@@ -3350,6 +3539,9 @@ export type DeploymentsActionResultById = {
                     purpose: 'dataRole';
                     role: 'readOnlyPassword';
                 })[];
+                serverId: string;
+                environmentId: string;
+                expectedRevision: number;
             };
         } | {
             actionId: 'deployments.environments.create';
@@ -3387,6 +3579,13 @@ export type DeploymentsActionResultById = {
                     pullRequestId: string;
                     runtimeTargetLinkId: string;
                 };
+                previewDataTargetLinks?: undefined | {
+                    contentArtifactId: string;
+                    contentHeaderVersion: number;
+                    contentBodyVersion: number;
+                    templateDataTargetLinkId: string;
+                    expectedTemplateTargetLinkRevision: number;
+                }[];
                 firstTargetLink?: undefined | {
                     machines: {
                         machineId: string;
@@ -3555,6 +3754,7 @@ export type DeploymentsActionResultById = {
                                 environmentId: string;
                                 export: string;
                                 via: 'auto' | 'privateNetwork' | 'public';
+                                component?: 'host' | 'port' | undefined;
                             } | {
                                 kind: 'value';
                                 value: string;
@@ -3616,6 +3816,7 @@ export type DeploymentsActionResultById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -3690,6 +3891,7 @@ export type DeploymentsActionResultById = {
                     environmentId: string;
                     export: string;
                     via: 'auto' | 'privateNetwork' | 'public';
+                    component?: 'host' | 'port' | undefined;
                 } | {
                     kind: 'value';
                     value: string;
@@ -4375,6 +4577,13 @@ export type DeploymentsActionResultById = {
                 pullRequestId: string;
                 runtimeTargetLinkId: string;
             };
+            previewDataTargetLinks?: undefined | {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                templateDataTargetLinkId: string;
+                expectedTemplateTargetLinkRevision: number;
+            }[];
             firstTargetLink?: undefined | {
                 machines: {
                     machineId: string;
@@ -4543,6 +4752,7 @@ export type DeploymentsActionResultById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -4604,6 +4814,7 @@ export type DeploymentsActionResultById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -4679,6 +4890,34 @@ export type DeploymentsActionResultById = {
                 principalId: string;
             }[];
             managedRetention?: 'keep' | 'until-delete' | undefined;
+            preview?: undefined | {
+                templateEnvironmentId: string;
+                expectedTemplateRevision: number;
+                pullRequestId: string;
+                runtimeTargetLinkId: string;
+                provenance: {
+                    v: 1;
+                    templateEnvironmentId: string;
+                    runtimeTargetLinkId: string;
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                    pullRequestId: string;
+                    pullRequestNumber: number;
+                    author: {
+                        id: string;
+                        login: string;
+                    };
+                    headRepository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                };
+                headSha: string;
+            };
             mode?: 'apply' | 'preview' | undefined;
             definition?: undefined | {
                 from: 'catalogApp';
@@ -4897,6 +5136,7 @@ export type DeploymentsActionResultById = {
                             environmentId: string;
                             export: string;
                             via: 'auto' | 'privateNetwork' | 'public';
+                            component?: 'host' | 'port' | undefined;
                         } | {
                             kind: 'value';
                             value: string;
@@ -5006,6 +5246,7 @@ export type DeploymentsActionResultById = {
                         environmentId: string;
                         export: string;
                         via: 'auto' | 'privateNetwork' | 'public';
+                        component?: 'host' | 'port' | undefined;
                     } | {
                         kind: 'value';
                         value: string;
@@ -5196,6 +5437,12 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        runtimeTargetLinkId?: string | undefined;
+        previewDataTargets?: undefined | {
+            templateDataTargetLinkId: string;
+            targetLinkId: string;
+            targetLinkRevision: number;
+        }[];
     };
     readonly "deployments.environments.update": {
         error: 'quota_exceeded';
@@ -5271,6 +5518,15 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        previewEnrollment?: undefined | {
+            status: 'disabled';
+        } | {
+            status: 'enrolled';
+        } | {
+            status: 'unavailable';
+            errorCode: string;
+            failureCause?: ActionFailureCauseV1 | undefined;
+        };
     };
     readonly "deployments.environments.controller.set": {
         error: 'quota_exceeded';
@@ -5346,6 +5602,12 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        runtimeTargetLinkId?: string | undefined;
+        previewDataTargets?: undefined | {
+            templateDataTargetLinkId: string;
+            targetLinkId: string;
+            targetLinkRevision: number;
+        }[];
     };
     readonly "deployments.targets.link": {
         error: 'quota_exceeded';

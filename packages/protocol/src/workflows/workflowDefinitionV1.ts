@@ -411,7 +411,7 @@ export const WorkflowAcceptedInlineSourceV1Schema = lazyZodSchema(() => z.strict
 export const WorkflowAcceptedRepositoryFileSourceV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('repo_file'),
   path: z.string().check(z.minLength(1)),
-  /** HEAD observed when the host read the working-tree document, not a claim that its bytes are committed. */
+  /** Immutable repository commit from which the host read the document bytes. */
   commit: WorkflowCommittedRevisionV1Schema,
 }));
 

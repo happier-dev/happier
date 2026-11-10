@@ -59,6 +59,9 @@ export type WorkflowEventCatalogActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        scmPullRequestLifecycle?: undefined | {
+                            providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        };
                         webhookContributionRef?: undefined | {
                             pluginId: string;
                             localId: string;
