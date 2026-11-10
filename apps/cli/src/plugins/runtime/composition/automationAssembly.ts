@@ -21,6 +21,7 @@ export async function assembleAutomationRuntime(input: Readonly<{
     resolveConsumerLifecycle(pluginId: string): ConsumerLifecycle;
     revalidateCallerMaterialization(candidate: PluginMachineMaterializationRefV1): Promise<boolean>;
     revalidateCallerOccurrence(candidate: Readonly<{ pluginId: string; occurrenceId: string }>): Promise<boolean>;
+    onAdopted?(): void;
 }>) {
     const adoptedOwners: Array<Readonly<{
         caller: PluginMachineMaterializationRefV1;
@@ -81,9 +82,10 @@ export async function assembleAutomationRuntime(input: Readonly<{
                     },
                     revalidateCallerMaterialization: input.revalidateCallerMaterialization,
                     revalidateCallerOccurrence: input.revalidateCallerOccurrence,
+                    onAdopted: input.onAdopted,
                 });
-                await owner.refresh(lifecycle.retirementSignal);
                 adoptedOwners.push(Object.freeze({ caller, occurrenceId, transport, owner }));
+                await owner.refresh(lifecycle.retirementSignal);
             }
         }
     }

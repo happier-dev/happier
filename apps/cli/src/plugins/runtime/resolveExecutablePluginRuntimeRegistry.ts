@@ -3098,6 +3098,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
     declaredMcpTransportConnector = createStableDeclaredMcpTransportConnector({
         resolveExecutable: executableResolver,
     });
+    // Initial adoption precedes the health consumers; later adoptions reconcile
+    // synchronously after the canonical source snapshot has been replaced.
+    let reconcileAdoptedHealthChecks: (() => void) | undefined;
     const automationAssembly = await assembleAutomationRuntime({
         credentials: sessionCredentials,
         activationTargets: authoritativeContributes.activationTargets,
@@ -3108,6 +3111,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveConsumerLifecycle: resolveRuntimeConsumerLifecycle,
         revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
         revalidateCallerOccurrence: revalidatePluginActionCallerOccurrence,
+        onAdopted: () => reconcileAdoptedHealthChecks?.(),
     });
     const resolveAutomationEventAdoptedDefinitionSet =
         automationAssembly.resolveAdoptedDefinitionSet;
@@ -3878,10 +3882,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         managedServices: invocationManagedServicesOwner,
     });
-    const domainSourceInvalidation = !params?.accountExecution ? invocationServiceOwners.stableEventsBroker.subscribeHost({
-        target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
-        isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
-        listener: () => {
+    if (!params?.accountExecution) {
+        reconcileAdoptedHealthChecks = () => {
             currentDomainEdgeObservation.reconcile(entry => {
                 const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
                     caller: entry.caller, occurrenceId: entry.occurrenceId,
@@ -3897,10 +3899,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 return batch.kind === 'available' && isDeepStrictEqual(batch.source.subject, entry.subject)
                     && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.check.checkId), entry.check);
             });
-        },
-    }) : null;
+        };
+        reconcileAdoptedHealthChecks();
+    }
     disposeInvocationServiceOwners = async () => {
-        await domainSourceInvalidation?.dispose();
         // A composite can own no new activation components. Its local services
         // may settle while a successor retains its peers, so only dispose local
         // consumers here. Explicit occurrence retirement still fences services.

@@ -58,8 +58,9 @@ it('cold-adopts retained health subscriptions for a new occurrence, preserves se
     const reads: string[] = [];
     let now = 1000;
     let httpStatus = 503;
-    const http: HttpService = { async request(input) {
-        return { status: httpStatus, headers: {}, body: new Uint8Array(), finalUrl: input.url };
+    const http: HttpService = { async requestStream(input) {
+        return { status: httpStatus, headers: {}, chunks: (async function* () {})(), finalUrl: input.url,
+            dispose: async () => {} };
     } } as HttpService;
     const credentials = notices.credentials;
     const actionsSettings = setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),

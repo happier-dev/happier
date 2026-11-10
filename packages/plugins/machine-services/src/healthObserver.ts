@@ -55,51 +55,51 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             const pending = [...(previous.pending ?? [])];
             const replaying = pending.length > 0;
             let changed = false;
-            // An unsettled admission reuses its first observed clock/result,
-            // including after reload. It must not run the endpoint again first.
-            if (!pending.length) {
-                const selected = source.checks.filter(check => {
-                    const deadline = due.get(check.checkId);
-                    return pendingChecks.has(check.checkId) || deadline === undefined || deadline !== null && deadline <= time;
-                });
-                // Consume only hints admitted to this read. A receipt arriving
-                // during it remains pending for the next finite observation.
-                for (const check of selected) pendingChecks.delete(check.checkId);
-                const results = selected.length ? await context.services.healthChecks.read({
-                    sourceInstanceId: definition.sourceInstanceId, checkIds: selected.map(check => check.checkId),
-                }, { signal: context.signal }) : [];
-                for (const check of selected) {
-                    const identity = check.checkId;
-                    const observation = results.find(value => value.checkId === check.checkId);
-                    // Named heartbeat liveness reuses this due loop: null before
-                    // the first ping; one true age deadline; person-chosen period
-                    // observations until D5 settles, then null until a receipt or
-                    // adoption/reconnect hint. No heartbeat means no extra idle work.
-                    due.set(identity, observation?.nextEligibleAt === undefined ? time + check.periodMs : observation.nextEligibleAt);
-                    const result = observation?.result;
-                    if (!result) throw new PluginError({ code: 'health_check_result_unavailable', message: 'The saved check did not return a result' });
-                    if (result.status === 'unknown') { failures.delete(identity); continue; }
-                    if (result.status !== 'up') {
-                        const count = (failures.get(identity) ?? 0) + 1;
-                        failures.set(identity, count);
-                        if (count < check.consecutiveFailuresBeforeAlerting) continue;
-                        if (check.kind.localId === 'heartbeat') due.set(identity, null);
-                    } else failures.delete(identity);
-                    const prior = next.get(check.checkId);
-                    // Down and degraded are the same failed condition. A change
-                    // between them does not recover or open another failure.
-                    if (prior && (prior.status === 'up') === (result.status === 'up')) continue;
-                    const nextOrdinal = (prior?.ordinal ?? 0) + 1;
-                    next.set(check.checkId, { checkId: check.checkId, status: result.status, ordinal: nextOrdinal });
-                    changed = true;
-                    if (result.status === 'up' && !prior) continue;
-                    pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
-                }
-                if (pending.length) {
-                    const written = await storage.set(key, { basis, checks: [...next.values()], pending },
-                        { expectedVersion: version, signal: context.signal });
-                    version = written.version;
-                }
+            const selected = source.checks.filter(check => {
+                const deadline = due.get(check.checkId);
+                return pendingChecks.has(check.checkId) || deadline === undefined || deadline !== null && deadline <= time;
+            });
+            // Consume only hints admitted to this read. A receipt arriving
+            // during it remains pending for the next finite observation.
+            for (const check of selected) pendingChecks.delete(check.checkId);
+            const results = selected.length ? await context.services.healthChecks.read({
+                sourceInstanceId: definition.sourceInstanceId, checkIds: selected.map(check => check.checkId),
+            }, { signal: context.signal }) : [];
+            for (const check of selected) {
+                const identity = check.checkId;
+                const observation = results.find(value => value.checkId === check.checkId);
+                // Named heartbeat liveness reuses this due loop: null before
+                // the first ping; one true age deadline; person-chosen period
+                // observations until D5 settles, then null until a receipt or
+                // adoption/reconnect hint. No heartbeat means no extra idle work.
+                due.set(identity, observation?.nextEligibleAt === undefined ? time + check.periodMs : observation.nextEligibleAt);
+                const result = observation?.result;
+                if (!result) throw new PluginError({ code: 'health_check_result_unavailable', message: 'The saved check did not return a result' });
+                // Current health keeps advancing on its existing due schedule.
+                // Event admission retains its first result/clock until settled,
+                // including after reload; fresh probes cannot replace that Event.
+                if (replaying) continue;
+                if (result.status === 'unknown') { failures.delete(identity); continue; }
+                if (result.status !== 'up') {
+                    const count = (failures.get(identity) ?? 0) + 1;
+                    failures.set(identity, count);
+                    if (count < check.consecutiveFailuresBeforeAlerting) continue;
+                    if (check.kind.localId === 'heartbeat') due.set(identity, null);
+                } else failures.delete(identity);
+                const prior = next.get(check.checkId);
+                // Down and degraded are the same failed condition. A change
+                // between them does not recover or open another failure.
+                if (prior && (prior.status === 'up') === (result.status === 'up')) continue;
+                const nextOrdinal = (prior?.ordinal ?? 0) + 1;
+                next.set(check.checkId, { checkId: check.checkId, status: result.status, ordinal: nextOrdinal });
+                changed = true;
+                if (result.status === 'up' && !prior) continue;
+                pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
+            }
+            if (!replaying && pending.length) {
+                const written = await storage.set(key, { basis, checks: [...next.values()], pending },
+                    { expectedVersion: version, signal: context.signal });
+                version = written.version;
             }
             const observations = pending.flatMap(value => {
                 const localId = value.result.status === 'up' ? HEALTH_CHECK_RECOVERED_EVENT : HEALTH_CHECK_FAILED_EVENT;

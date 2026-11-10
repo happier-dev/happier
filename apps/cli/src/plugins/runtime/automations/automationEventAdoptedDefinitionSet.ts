@@ -409,6 +409,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   pageSize?: number;
   occurrenceSignal: AbortSignal;
   isOccurrenceCurrent(): boolean;
+  onAdopted?(): void;
   revalidateCallerMaterialization(
     caller: PluginMachineMaterializationRefV1,
     signal?: AbortSignal,
@@ -747,6 +748,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           return { kind: 'discarded', reason: 'cursorStale' };
         }
         adopted = snapshot;
+        params.onAdopted?.();
         return { kind: 'adopted', revision: expectedRevision };
       }
       if (seenCursors.has(result.nextCursor)) {

@@ -225,6 +225,9 @@ service row's health. Finite Action completion leaves the result available, whil
 observer retirement, source withdrawal or service retirement removes it. Service
 reads and existing pushed row updates consume that same projection; no UI health
 inference or additional polling is involved.
+Successful source adoption reconciles retained service and Domain health after
+the adopted snapshot changes. An earlier invalidation signal alone does not
+establish that a source has been withdrawn.
 
 The development daemon service `services.healthChecks.read({ sourceInstanceId,
 checkIds }, { signal })` spends saved selectors against the existing adopted
@@ -233,8 +236,12 @@ observer override. The first-party Machine-services HTTP/certificate observer
 consumes this binding through the shared checkpointed Event runner; P30 admits
 the live service reference and the existing HTTP owner retains network/cancel
 policy. Its cursor retains effective status and pending first-observation
-evidence, not a tick history. Equal results emit and persist nothing. The
-binding is daemon-only. Machine-services bundled activation still requires its
+evidence, not a tick history. Equal results emit and persist nothing. The current
+health result continues to refresh on the saved check's existing due
+schedule while Event admission is pending. Replays retain the first Event's
+result, occurrence identity and observation clock; fresh probes do not replace
+that Event. Once it settles, the next due observation can admit a recovery.
+The binding is daemon-only. Machine-services bundled activation still requires its
 package membership and generated locator; source/testkit registration alone is
 not installed availability.
 

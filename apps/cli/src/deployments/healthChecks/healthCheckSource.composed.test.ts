@@ -164,17 +164,19 @@ describe('saved health source registration and finite cycles', () => {
         expect(f.read).toHaveBeenCalledTimes(reads);
     });
 
-    it('replays pending evidence and occurrence time after unsettled admission and reload without another probe', async () => {
+    it('refreshes current health while replaying the original pending Event after reload', async () => {
         const f = fixture();
         await f.cycle(); f.tick('down'); f.safe(false); await f.cycle();
         const first = f.admissions[0];
         const reads = f.read.mock.calls.length;
         f.tick('up'); f.safe(true);
         await f.cycle(createHealthCheckSourceAdapter(f.now));
-        expect(f.read).toHaveBeenCalledTimes(reads);
+        expect(f.read).toHaveBeenCalledTimes(reads + 1);
         expect(f.admissions[1]).toMatchObject({ occurrenceId: first?.occurrenceId,
             occurredAt: first?.occurredAt, payload: first?.payload });
         expect(f.writes.at(-1)).not.toHaveProperty('pending');
+        f.tick('up'); await f.cycle();
+        expect(f.admissions.at(-1)?.payload).toMatchObject({ transition: 'recovered' });
     });
 
     it('discards an incomplete live failure streak when its watcher assignment is withdrawn', async () => {

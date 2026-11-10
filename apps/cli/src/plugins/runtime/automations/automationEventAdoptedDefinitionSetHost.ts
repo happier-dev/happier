@@ -190,6 +190,7 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
   transport: AutomationEventSourcesListTransportV1;
   occurrenceSignal: AbortSignal;
   isOccurrenceCurrent(): boolean;
+  onAdopted?(): void;
   revalidateCallerMaterialization(
     caller: PluginMachineMaterializationRefV1,
     signal?: AbortSignal,
@@ -244,6 +245,7 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
     transport: params.transport,
     occurrenceSignal: params.occurrenceSignal,
     isOccurrenceCurrent: params.isOccurrenceCurrent,
+    onAdopted: params.onAdopted,
     revalidateCallerMaterialization: params.revalidateCallerMaterialization,
     resolveAccountEncryption,
     readStoredDefinitions: async (request) => await readStoredDefinitions({

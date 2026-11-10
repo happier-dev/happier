@@ -8,7 +8,11 @@ import { createServer } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import type { HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
+import type { HealthCheckSourceConfigV1, JsonValue } from '@happier-dev/plugin-sdk';
+import type { AccountKvEntry, AccountKvService } from '@happier-dev/plugin-sdk/storage';
+import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import { AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { createHealthCheckSourceAdapter } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { MachineServicesDetailResultV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1,
     createActionExecutor, type AutomationEventStoredDefinitionProjectionV1 } from '@happier-dev/protocol';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
@@ -170,7 +174,41 @@ describe('saved source finite native producer binding', () => {
                     http: { requestStream: async () => ({ status, finalUrl: 'http://127.0.0.1:40797', headers: {},
                         chunks: (async function* () {})(), dispose: async () => {} }) } as unknown as HttpService });
                 try {
-                    const read = () => service!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
+                    let admissionSettles = false;
+                    const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
+                    const cursors = new Map<string, AccountKvEntry>();
+                    const kv = {
+                        async get(key: string) { return cursors.get(key) ?? null; },
+                        async set(key: string, value: JsonValue, options: { expectedVersion: number | 'absent' }) {
+                            const previous = cursors.get(key);
+                            if ((previous?.version ?? 'absent') !== options.expectedVersion) throw new Error('CAS conflict');
+                            const version = (previous?.version ?? 0) + 1;
+                            cursors.set(key, { version, value }); return { version };
+                        },
+                    };
+                    // Account storage and Action IPC are plugin host boundaries;
+                    // the SDK runner, saved check, publisher and row owner are real.
+                    const context = { ...f.seed, materialization: f.seed.resolveCurrentPluginMaterializationRef!(),
+                        services: { healthChecks: service, storage: { account: { kv: kv as AccountKvService } },
+                            actions: { async execute(id: string, input: unknown) {
+                                if (id === 'automation.event.sources.list') {
+                                    const projection = f.owner.readPublicProjection();
+                                    if (projection.kind !== 'available') throw new Error('Fixture adoption is unavailable');
+                                    return { ...projection, kind: 'page', nextCursor: null };
+                                }
+                                if (id === 'automation.event.source.status.report') return { kind: 'reported' };
+                                if (id === 'automation.event.admit') {
+                                    const request = AutomationEventAdmitInputV1Schema.parse(input);
+                                    admissions.push(request);
+                                    return { results: admissionSettles ? request.definitions.map(() => ({
+                                        kind: 'admitted', checkpointSafe: true, runId: 'run',
+                                    })) : [] };
+                                }
+                                throw new Error(`Unexpected host Action ${id}`);
+                            } }, events: { host: { subscribe: () => ({ dispose() {} }) } } },
+                    } as unknown as BackgroundServiceContext;
+                    const adapter = createHealthCheckSourceAdapter(() => now);
+                    const read = () => runCheckpointedPluginEventObserverV1({ context, source: adapter, mode: 'once', now: () => now });
                     await read();
                     expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current', observedAtMs: 1000 });
                     expect(changes).toHaveLength(1);
@@ -180,9 +218,21 @@ describe('saved source finite native producer binding', () => {
                     status = 503; now += 60000; await read();
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
                     expect(changes).toHaveLength(2);
+                    now += 60000; await read();
+                    const failed = admissions.at(-1);
+                    expect(failed?.payload).toMatchObject({ transition: 'failed' });
                     await publishSavedServiceHealthResult(owner, { ...published[0]!, serverId: 'srv_unrelated_home' });
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
                     expect(changes).toHaveLength(2);
+                    status = 200; now += 60000; await read();
+                    expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+                    expect(changes).toHaveLength(3);
+                    expect(admissions.at(-1)).toMatchObject({ occurrenceId: failed?.occurrenceId,
+                        occurredAt: failed?.occurredAt, payload: failed?.payload });
+                    admissionSettles = true; now += 60000; await read();
+                    expect(admissions.at(-1)?.payload).toMatchObject({ transition: 'failed' });
+                    now += 60000; await read();
+                    expect(admissions.at(-1)?.payload).toMatchObject({ transition: 'recovered' });
                     const page = await f.readStoredDefinitions.mock.results[0]!.value;
                     f.readStoredDefinitions.mockResolvedValueOnce({ ...page, revision: '2', definitions: [] });
                     expect(await f.owner.refresh()).toEqual({ kind: 'adopted', revision: '2' });
@@ -191,7 +241,7 @@ describe('saved source finite native producer binding', () => {
                         sourceInstanceId: entry.sourceInstanceId, signal: f.seed.signal,
                     }).kind === 'available');
                     expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
-                    expect(changes).toHaveLength(3);
+                    expect(changes).toHaveLength(4);
                 } finally { subscription.dispose(); await handle.dispose(); await runtime.dispose(); }
             });
         } finally { env.restore(); reloadConfiguration(); }

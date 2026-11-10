@@ -24,6 +24,7 @@ function fixture() {
     let safe = true;
     let failCurrentRead = false;
     let failCatalogStatus = false;
+    let failSourceStatus = false;
     let admissionFailure: unknown;
     let admissionResult: unknown;
     let unsafeOccurrence: string | undefined;
@@ -39,6 +40,10 @@ function fixture() {
         if (id === 'automation.event.source.status.report' && input.kind === 'catalogReconciliation' && failCatalogStatus) {
             failCatalogStatus = false;
             throw new Error('Catalog status transport unavailable');
+        }
+        if (id === 'automation.event.source.status.report' && input.kind === 'source' && failSourceStatus) {
+            failSourceStatus = false;
+            throw new Error('Source status transport unavailable');
         }
         if (id === 'automation.event.sources.list') {
             const transport = input.transport;
@@ -86,9 +91,10 @@ function fixture() {
         replace(next: readonly PluginCheckpointedEventSourceDefinitionV1[]) { definitions = next; revision = String(Number(revision) + 1); invalidated(); },
         invalidate: invalidated,
         empty() { definitions = []; },
-        failBoundary(kind: 'current read' | 'catalog status') {
+        failBoundary(kind: 'current read' | 'catalog status' | 'source status') {
             if (kind === 'current read') failCurrentRead = true;
-            else failCatalogStatus = true;
+            else if (kind === 'catalog status') failCatalogStatus = true;
+            else failSourceStatus = true;
         },
     };
 }
@@ -504,13 +510,39 @@ describe('checkpointed observer ownership', () => {
         expect({ admissions: admissions(), clock: clock >= 11_000 }).toEqual({ admissions: 10, clock: true });
     });
 
-    it('keeps status transport failures observational rather than blocking valid work', async () => {
+    it.each(['catalog status', 'source status'] as const)('preserves finite observations and Event custody after a %s transport failure', async boundary => {
         const f = fixture();
-        f.failBoundary('catalog status');
-        await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, mode: 'once', now: () => 1000 });
-        expect(f.observe).toHaveBeenCalledOnce();
-        expect(f.save).toHaveBeenCalledOnce();
-        expect(f.runCount()).toBe(1);
+        f.failBoundary(boundary);
+        let clock = 1000;
+        const resume: (() => void)[] = [];
+        const sleep = vi.fn((_delay: number, signal: AbortSignal) => new Promise<void>(resolve => {
+            resume.push(resolve);
+            signal.addEventListener('abort', () => resolve(), { once: true });
+        }));
+        f.observe.mockImplementation(async () => ({ ...f.observation(),
+            observations: [{ ...f.observation().observations[0]!, occurrenceId: `event-${clock}` }],
+            nextEligibleAt: clock + 1000, status: { state: 'observing', code: 'none' } }));
+        const source: typeof f.source = { ...f.source,
+            retryAt: ({ definition, now }) => definition === undefined ? null : now + 1000 };
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source, sleep, now: () => clock });
+        try {
+            await vi.waitFor(() => expect(sleep).toHaveBeenCalledOnce());
+            expect(sleep.mock.calls[0]?.[0]).toBe(1000);
+            expect(f.runCount()).toBe(1);
+            expect(f.save).toHaveBeenCalledOnce();
+            const reportKind = boundary === 'catalog status' ? 'catalogReconciliation' : 'source';
+            const failedReport = f.execute.mock.calls.findIndex(([id, value]) => id === 'automation.event.source.status.report' && value.kind === reportKind);
+            await expect(f.execute.mock.results[failedReport]!.value).rejects.toBeInstanceOf(Error);
+            clock = 2000;
+            resume.shift()?.();
+            await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(2));
+            expect(f.runCount()).toBe(2);
+            expect(f.save).toHaveBeenCalledTimes(2);
+            expect(sleep.mock.calls[1]?.[0]).toBe(1000);
+        } finally {
+            f.controller.abort();
+            await running;
+        }
     });
 
     it('counts an unsafe observation once while retry admission remains idempotent', async () => {
