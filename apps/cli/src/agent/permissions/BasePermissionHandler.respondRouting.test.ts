@@ -12,6 +12,7 @@ import type { PermissionResult } from './BasePermissionHandler';
 import { abortPendingAcpPermissionRequests } from '@/agent/acp/permissions/permissionFinalization';
 import { SessionActionConfirmationsV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
+import { createDeferred } from '@/testkit/async/deferred';
 
 beforeEach(() => {
   resetActiveAccountSettingsSnapshotForTests();
@@ -66,6 +67,96 @@ class FakeSession {
 }
 
 describe('BasePermissionHandler permission-response routing (gap 28/29)', () => {
+  it('retires an aborted Run waiter without dispatching another native answer', async () => {
+    const session = new FakeSession();
+    new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Run withdrawal]' });
+    const store = session.getAgentStateRequestStore()!;
+    let applications = 0;
+    store.registerResponseTargetHandler('execution_run_host_bridge', async () => {
+      applications++;
+      return false;
+    }, { application: 'beforeCompletion' });
+    try {
+      await store.publishRequestAndWait({ requestId: 'withdrawn-run-waiter', toolName: 'Bash',
+        toolInput: { command: 'echo harmless' }, createdAt: 1,
+        responseTarget: { kind: 'execution_run_host_bridge' } });
+      await expect(store.completeRequest({ requestId: 'withdrawn-run-waiter', status: 'canceled', decision: 'abort',
+        reason: 'The local waiter was detached', extraCompletedFields: { responseTarget: undefined } })).resolves.toBe(true);
+      expect(session.agentState.requests['withdrawn-run-waiter']).toBeUndefined();
+      expect(session.agentState.completedRequests['withdrawn-run-waiter']).toMatchObject({ status: 'canceled', decision: 'abort' });
+      expect(applications).toBe(0);
+    } finally { store.dispose(); }
+  });
+
+  it.each(['refused', 'notHandled', 'pending', 'replaced'] as const)('keeps a Run question answer pending until native application is acknowledged: %s', async state => {
+    const session = new FakeSession();
+    new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Run question application]' });
+    const store = session.getAgentStateRequestStore()!;
+    const entered = createDeferred<void>();
+    const nativeAck = createDeferred<void>();
+    let refuse = state === 'refused';
+    let notHandled = state === 'notHandled';
+    let applications = 0;
+    // Only the native application boundary is replaced; question RPC admission,
+    // answer validation, request coordination and persistence remain real.
+    store.registerResponseTargetHandler('execution_run_host_bridge', async dispatch => {
+      applications++;
+      expect(dispatch.completedRequest).toMatchObject({ structuredAnswersV1: { color: ['Blue'] },
+        answerDetails: { color: { note: 'Native note' } } });
+      if (refuse) throw new Error('Native answer refused');
+      if (notHandled) return false;
+      entered.resolve();
+      await nativeAck.promise;
+      return true;
+    }, { application: 'beforeCompletion' });
+    await store.publishRequestAndWait({ requestId: 'run-native-question', toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ id: 'color', question: 'Color?', selection: 'single',
+        options: [{ id: 'Blue', label: 'Blue' }], allowCustom: true, allowNote: true }] },
+      createdAt: 1, lifetime: 'occurrence', kind: 'user_action', source: 'native-question',
+      questionV1: { mode: 'wait', lasting: false, type: 'decision' }, currentHandler: { kind: 'person' },
+      responseTarget: { kind: 'execution_run_host_bridge' } });
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer')!;
+    const answer = { id: 'run-native-question', approved: true, answers: { color: ['Blue'] },
+      answerDetails: { color: { note: 'Native note' } } };
+    let acknowledged = false;
+    try {
+      if (refuse) {
+        await expect(rpc(answer)).rejects.toThrow('Native answer refused');
+        expect(session.agentState.requests['run-native-question']).toBeDefined();
+        expect(session.agentState.completedRequests['run-native-question']).toBeUndefined();
+        refuse = false;
+      }
+      if (notHandled) {
+        await expect(rpc(answer)).resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+        expect(session.agentState.requests['run-native-question']).toBeDefined();
+        expect(session.agentState.completedRequests['run-native-question']).toBeUndefined();
+        notHandled = false;
+      }
+      const answering = Promise.resolve(rpc(answer)).then(value => { acknowledged = true; return value; });
+      await entered.promise;
+      expect(acknowledged).toBe(false);
+      expect(session.agentState.requests['run-native-question']).toBeDefined();
+      expect(session.agentState.completedRequests['run-native-question']).toBeUndefined();
+      if (state === 'replaced') {
+        session.updateAgentState((current: import('@/api/types').AgentState) => ({ ...current, requests: { ...current.requests,
+          'run-native-question': { ...current.requests?.['run-native-question'], createdAt: 2 } } }));
+      }
+      nativeAck.resolve();
+      if (state === 'replaced') {
+        await expect(answering).resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+        expect(session.agentState.requests['run-native-question'].createdAt).toBe(2);
+        expect(session.agentState.completedRequests['run-native-question']).toBeUndefined();
+      } else {
+        await expect(answering).resolves.toBeUndefined();
+        expect(session.agentState.requests['run-native-question']).toBeUndefined();
+        expect(session.agentState.completedRequests['run-native-question']).toMatchObject({ status: 'approved',
+          structuredAnswersV1: answer.answers, answerDetails: answer.answerDetails });
+        expect(session.agentState.completedRequests['run-native-question'].responseTarget).toBeFalsy();
+      }
+      expect(applications).toBe(state === 'refused' || state === 'notHandled' ? 2 : 1);
+    } finally { nativeAck.resolve(); store.dispose(); }
+  });
+
   it('preserves selected answers, custom text and notes through RPC application and completed state', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Question details]' });

@@ -137,21 +137,32 @@ export type AgentStateResponseTargetHandler = (
     dispatch: AgentStateResponseTargetDispatch,
 ) => boolean | void | PromiseLike<boolean | void>;
 export type AgentStateRequestStoreUnsubscribe = () => void;
+export type AgentStateResponseTargetRegistration = Readonly<{ application?: 'beforeCompletion' }>;
 
 /** Session-owned delivery registrations shared by permission store views. */
 export class AgentStateResponseTargetDispatcher {
-    private readonly handlers = new Map<string, AgentStateResponseTargetHandler>();
+    private readonly handlers = new Map<string, Readonly<{
+        handler: AgentStateResponseTargetHandler;
+        application?: 'beforeCompletion';
+    }>>();
 
-    register(kind: string, handler: AgentStateResponseTargetHandler): AgentStateRequestStoreUnsubscribe {
+    register(kind: string, handler: AgentStateResponseTargetHandler,
+        options?: AgentStateResponseTargetRegistration): AgentStateRequestStoreUnsubscribe {
         const normalizedKind = kind.trim();
         if (!normalizedKind) throw new Error('Response target handler kind must be a non-empty string');
         if (this.handlers.has(normalizedKind)) {
             throw new Error(`Response target handler already registered for kind ${normalizedKind}`);
         }
-        this.handlers.set(normalizedKind, handler);
+        const registration = { handler, ...options };
+        this.handlers.set(normalizedKind, registration);
         return () => {
-            if (this.handlers.get(normalizedKind) === handler) this.handlers.delete(normalizedKind);
+            if (this.handlers.get(normalizedKind) === registration) this.handlers.delete(normalizedKind);
         };
+    }
+
+    readBeforeCompletionHandler(kind: string): AgentStateResponseTargetHandler | null {
+        const registration = this.handlers.get(kind);
+        return registration?.application === 'beforeCompletion' ? registration.handler : null;
     }
 
     kinds(): IterableIterator<string> {
@@ -165,7 +176,7 @@ export class AgentStateResponseTargetDispatcher {
     dispatch(dispatch: AgentStateResponseTargetDispatch | null, logPrefix: string): Promise<boolean> | null {
         if (!dispatch) return null;
 
-        const handler = this.handlers.get(dispatch.responseTarget.kind);
+        const handler = this.handlers.get(dispatch.responseTarget.kind)?.handler;
         if (!handler) {
             logger.debug(
                 `${logPrefix} No response target handler registered for kind ${dispatch.responseTarget.kind} (non-fatal)`,
@@ -840,8 +851,9 @@ export class AgentStateRequestStore {
     registerResponseTargetHandler(
         kind: string,
         handler: AgentStateResponseTargetHandler,
+        options?: AgentStateResponseTargetRegistration,
     ): AgentStateRequestStoreUnsubscribe {
-        const unsubscribe = this.responseTargetDispatcher.register(kind, handler);
+        const unsubscribe = this.responseTargetDispatcher.register(kind, handler, options);
         this.replayCompletedResponseTargetsForHandler(kind.trim());
         return unsubscribe;
     }
@@ -1060,6 +1072,32 @@ export class AgentStateRequestStore {
     }
 
     async completeRequest(params: AgentStateRequestCompletion): Promise<boolean> {
+        if (!params.applicationAcknowledged) {
+            const state = this.target.readState();
+            const responseTarget = readResponseTarget(state?.requests?.[params.requestId]?.responseTarget);
+            const apply = responseTarget && this.responseTargetDispatcher.readBeforeCompletionHandler(responseTarget.kind);
+            if (state && apply) {
+                const acknowledged = { ...params,
+                    extraCompletedFields: { ...params.extraCompletedFields, responseTarget: undefined } };
+                const retained = this.readAppliedCompletion(acknowledged);
+                if (retained) {
+                    if (!retained.matches) return false;
+                    await this.recoverAppliedCompletions();
+                    return await retained.acknowledgement;
+                }
+                const application = this.captureRequestApplication(params.requestId);
+                const preview = this.buildRequestCompletion(state, params, new Set());
+                if (!application || !preview.didCompleteRequest) return false;
+                if (preview.responseDispatch) {
+                    // This target owns the native application. Refusal leaves the same
+                    // outstanding occurrence answerable; only a positive ACK completes it.
+                    if (await apply(preview.responseDispatch) !== true) return false;
+                    return await this.completeRequest({ ...acknowledged, applicationAcknowledged: application });
+                }
+                // An explicit withdrawal cleared its answer target; there is no
+                // native answer to apply before the ordinary terminal write.
+            }
+        }
         const publication = this.pendingPublications.get(params.requestId);
         if (params.applicationAcknowledged && !deepEqual(
             pendingIdentity(this.target.readState()?.requests?.[params.requestId]),
