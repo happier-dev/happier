@@ -3,6 +3,8 @@ import { z } from 'zod/mini';
 
 import { VoiceMediaApplicationKindV1Schema } from './voiceMediaV1.js';
 import { LocalServicePreviewDirectBindingV1Schema } from '../../../local/services/preview/v1.js';
+import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { LocalServiceLoopbackHostV1Schema } from '../../../local/services/hosts.js';
 
 const PositiveIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
@@ -24,12 +26,32 @@ export const BoundedTransferScopedGrantScopeV1Schema = lazyZodSchema(() => z.str
   maxIdleMs: PositiveIntSchema,
 }));
 
+/** Exact export selected by the managed-service owner, verified by B at open. */
+export const TcpTunnelServiceExportBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  exportKey: z.string().check(z.minLength(1)),
+  service: MachineDeploymentServiceIdentityV1Schema,
+  installationId: z.string().check(z.minLength(1)),
+  deploymentId: z.string().check(z.minLength(1)),
+  generation: z.string().check(z.minLength(1)),
+  destination: z.strictObject({
+    host: LocalServiceLoopbackHostV1Schema,
+    port: z.number().check(z.int(), z.minimum(1), z.maximum(65_535)),
+  }),
+}));
+export type TcpTunnelServiceExportBindingV1 = z.infer<typeof TcpTunnelServiceExportBindingV1Schema>;
+
 export const TcpTunnelGrantScopeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('tcp_tunnel'),
   tunnelId: z.string().check(z.minLength(1)),
   allowedPorts: z.array(z.number().check(z.int(), z.minimum(1), z.maximum(65_535))).check(z.minLength(1)),
   preview: z.optional(LocalServicePreviewDirectBindingV1Schema),
-}));
+  serviceExport: z.optional(TcpTunnelServiceExportBindingV1Schema),
+}).check(z.superRefine((scope, ctx) => {
+  if (scope.serviceExport && (scope.preview || scope.allowedPorts.length !== 1
+    || scope.allowedPorts[0] !== scope.serviceExport.destination.port)) {
+    ctx.addIssue({ code: 'custom', path: ['serviceExport'], message: 'A service export grants only its exact destination and cannot carry preview authority.' });
+  }
+})));
 
 export const VoiceMediaGrantScopeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('voice_media'),

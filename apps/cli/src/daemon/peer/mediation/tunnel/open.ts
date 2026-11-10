@@ -1,4 +1,4 @@
-import { connect as connectSocket } from 'node:net';
+import { connect as connectSocket, type Socket } from 'node:net';
 
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES, PEER_TCP_TUNNEL_STREAM_PATH, PeerTcpTunnelOpenResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
@@ -13,6 +13,7 @@ import {
     type DirectRouteGrantV2VerifyReasonCode,
 } from '../verifyDirectRouteGrant';
 import type { AtomicRouteGrantConsumption } from './grantConsumption';
+import { createCanonicalJsonSigningInput, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol';
 import type { PeerTcpTunnelStreamConnection } from './frames';
 
 export type PeerTcpTunnelTcpConnection = PeerTcpTunnelStreamConnection;
@@ -35,6 +36,7 @@ export type OpenPeerTcpTunnelReasonCode =
     | 'tcp_connect_failed'
     | 'route_kind_unsupported'
     | 'preview_registration_unavailable'
+    | 'service_export_unavailable'
     | DirectRouteGrantV2VerifyReasonCode;
 
 export type OpenPeerTcpTunnelResult =
@@ -77,6 +79,12 @@ export type OpenPeerTcpTunnelInput = Readonly<{
     maxFrameBytes?: number;
     connectTcp?: (target: Readonly<{ host: string; port: number }>) => Promise<PeerTcpTunnelTcpConnection>;
     signal?: AbortSignal;
+    /** B's export owner resolves from its own content and current managed services. */
+    resolveServiceExport?: (input: Readonly<{
+        binding: TcpTunnelServiceExportBindingV1;
+        requesterAccountId: string;
+        signal?: AbortSignal;
+    }>) => Promise<TcpTunnelServiceExportBindingV1 | null>;
     acquirePreviewApplication?: (binding: LocalServicePreviewDirectBindingV1, grantId: string, signal?: AbortSignal) => Promise<Readonly<{
         destination: PeerTcpTunnelDestinationV1; signal: AbortSignal; close: () => Promise<void>;
     }>>;
@@ -98,10 +106,7 @@ export async function connectPeerTcpTunnelTcp(
     target: Readonly<{ host: string; port: number }>,
 ): Promise<PeerTcpTunnelTcpConnection> {
     const socket = connectSocket({ host: target.host, port: target.port, allowHalfOpen: true });
-    let connectionError: unknown;
-    // Keep the error fact even if a peer resets between connect and session
-    // subscription. Node also requires an error listener throughout that gap.
-    socket.on('error', (error) => { connectionError = error; });
+    const connection = peerTcpTunnelSocketConnection(socket);
     await new Promise<void>((resolve, reject) => {
         socket.once('error', reject);
         socket.once('connect', () => {
@@ -109,6 +114,14 @@ export async function connectPeerTcpTunnelTcp(
             resolve();
         });
     });
+    return connection;
+}
+
+/** The same socket adapter serves destination dials and accepted local clients. */
+export function peerTcpTunnelSocketConnection(socket: Socket): PeerTcpTunnelTcpConnection {
+    let connectionError: unknown;
+    // Retain an error arriving before the frame session subscribes.
+    socket.on('error', (error) => { connectionError = error; });
     return {
         write: (bytes) => new Promise<void>((resolve, reject) => {
             socket.write(bytes, (error) => {
@@ -171,6 +184,10 @@ function validateDestination(
     if (scope.kind === 'tcp_tunnel' && !scope.allowedPorts.includes(destination.port)) {
         return 'destination_port_not_allowed';
     }
+    if (scope.kind === 'tcp_tunnel' && scope.serviceExport && (
+        scope.serviceExport.destination.host !== normalizeHostnameForLoopbackCheck(destination.host)
+        || scope.serviceExport.destination.port !== destination.port
+    )) return 'grant_scope_mismatch';
     if (scope.kind === 'tcp_tunnel' && scope.preview && (
         scope.preview.target.host !== destination.host || scope.preview.target.port !== destination.port
     )) return 'grant_scope_mismatch';
@@ -220,7 +237,8 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
             // not this listener's custodian. Its Home signature/proof are still verified here,
             // and the exact current stored grant/control lease is required below before IO.
             accountId: open.routeKind === 'iroh_peer' && requestedScope.kind === 'tcp_tunnel'
-                && requestedScope.preview?.serviceTarget && requestedScope.preview.sessionId === undefined
+                && (requestedScope.serviceExport
+                    || requestedScope.preview?.serviceTarget && requestedScope.preview.sessionId === undefined)
                 ? open.grant.payload.accountId : input.expected.accountId,
             machineId: input.expected.machineId,
             flowKind: requestedFlowKind,
@@ -267,6 +285,22 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
         nowMs: input.nowMs,
     });
     if (!reservation) return fallback('grant_already_consumed');
+
+    if (scope.kind === 'tcp_tunnel' && scope.serviceExport) {
+        let current: TcpTunnelServiceExportBindingV1 | null | undefined;
+        try {
+            current = await input.resolveServiceExport?.({ binding: scope.serviceExport,
+                requesterAccountId: grantVerification.payload.accountId, signal: input.signal });
+            input.signal?.throwIfAborted();
+        } catch (error) {
+            reservation.activationFailed();
+            throw error;
+        }
+        if (!current || createCanonicalJsonSigningInput(current) !== createCanonicalJsonSigningInput(scope.serviceExport)) {
+            reservation.activationFailed();
+            return fallback('service_export_unavailable');
+        }
+    }
 
     if (scope.kind === 'voice_media') {
         reservation.commit();
