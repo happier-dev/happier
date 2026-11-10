@@ -613,6 +613,9 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/pi' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.mcpApproval.config.ts' ] || [ "$policy_config" = 'vitest.realOwners.config.ts' ] || [ "$policy_config" = 'vitest.spawnedRealOwners.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'
   fi
+  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/qwen' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+    policy_kind='source-test'
+  fi
   if { [ "$policy_kind" = 'source-test' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_workerTool" = 'vitest' ]; }; then
     policy_workspaceLock=''
   fi

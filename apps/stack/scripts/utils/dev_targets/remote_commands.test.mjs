@@ -5234,6 +5234,53 @@ test('unlisted Vitest configs retain their inherited workspace-source resolver i
   }
 });
 
+test('SDK resolver forwarding is source preparation across plugin defaults and dispatchers', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sdk-source-policy-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  const owner = fileURLToPath(new URL('./remote_commands.mjs', import.meta.url));
+  // These producers reuse SDK plugins without spreading the SDK config.
+  for (const name of ['antigravity', 'gemini', 'kilo', 'opencode']) {
+    const component = `packages/plugins/${name}`;
+    const cwd = join(root, component);
+    const args = ['pnpm', 'exec', 'vitest', 'run'];
+    for (const [argv, requestCwd] of [
+      [args, cwd],
+      [['vitest', 'run', '--config', 'vitest.config.ts'], cwd],
+      [['pnpm', '--dir', component, 'exec', 'vitest', 'run'], root],
+    ]) {
+      const policy = resolveRemoteCommandPolicy(argv, { repoRoot: root, cwd: requestCwd });
+      assert.equal(policy.kind, 'source-test', `${name}: ${argv.join(' ')}`);
+      assert.equal(policy.workspaceLock, '', name);
+    }
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c',
+      '. "$1"; repo_root=$2; invoked_cwd=$3; projection_command_policy=$4; shift 4; resolve_native_command_policy "$@" || exit $?; printf "%s,%s" "$policy_kind" "$policy_workspaceLock"',
+      'policy', artifact, root, cwd, owner, ...args], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'source-test,', name);
+  }
+  const cwd = fixture.path('packages/plugins/opencode');
+  await mkdir(cwd, { recursive: true });
+  for (const plugins of ['[]', '[customResolver()]']) {
+    await writeFile(join(cwd, 'vitest.config.ts'),
+      `import sdkConfig from '../../plugin-sdk/vitest.config'; export default { plugins: ${plugins} };`);
+    const policy = resolveRemoteCommandPolicy(['vitest', 'run'], { repoRoot: fixture.root, cwd });
+    assert.equal(policy.kind, 'runtime', 'unused source resolver cannot skip preparation');
+  }
+});
+
+test('complete host source maps and merged plugin configs skip dist preparation', () => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  for (const [name, config] of [['qwen', 'vitest.config.ts'], ['muse', 'vitest.g3-composed.config.ts']]) {
+    const policy = resolveRemoteCommandPolicy(['vitest', 'run', '--config', config], {
+      repoRoot: root, cwd: join(root, 'packages/plugins', name),
+    });
+    assert.equal(policy.kind, 'source-test', `${name}/${config}`);
+  }
+});
+
 test('entry-load preparation emits runtime outputs without a strict type verdict', () => {
   const policy = resolveRemoteCommandPolicy(['node', 'apps/stack/scripts/perf/entry-load.mjs'], { cwd: '.' });
   assert.equal(policy.preparationBuildMode, 'qa-runtime');

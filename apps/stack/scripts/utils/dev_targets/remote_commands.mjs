@@ -142,6 +142,8 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'packages/plugins/kilo': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/opencode': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
     'packages/plugins/pi': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.realOwners.config.ts', 'vitest.spawnedRealOwners.config.ts']),
+    // Like Pi, Qwen derives the complete transitive host workspace source map.
+    'packages/plugins/qwen': Object.freeze(['vitest.config.ts']),
   }),
   // Server Vitest lanes share the workspace-source resolver. Derive their
   // configs from the package so specialized lanes also skip dist publication.

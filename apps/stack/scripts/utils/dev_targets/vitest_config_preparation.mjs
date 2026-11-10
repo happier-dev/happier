@@ -25,7 +25,16 @@ export function readVitestSourcePreparation(repoRoot, configPath, isKnownSourceC
     let inherited;
     if (!directResolver) {
       for (const match of source.matchAll(/import\s+(\w+)\s+from\s+['"]((?:\.\.?\/)[^'"]*vitest(?:\.[\w-]+)*\.config)(?:\.ts)?['"]/gu)) {
-        if (!new RegExp(`\\.\\.\\.${match[1]}\\s*[,}]`, 'u').test(source)) continue;
+        // Forwarding the complete plugin list preserves the source resolver
+        // without inheriting the base config's test/globalSetup options.
+        if (new RegExp(`\\bplugins\\s*:\\s*${match[1]}\\.plugins\\s*[,}]`, 'u').test(source)) {
+          const base = read(resolve(dirname(path), `${match[2]}.ts`));
+          if (base && !base.buildsDist) { inherited = base; break; }
+        }
+        const spreadsBase = new RegExp(`\\.\\.\\.${match[1]}\\s*[,}]`, 'u').test(source);
+        const mergesBase = new RegExp(`\\bmergeConfig\\(\\s*${match[1]}\\s*,`, 'u').test(source)
+          && /import\s*\{[^}]*\bmergeConfig\b[^}]*\}\s*from\s*['"]vitest\/config['"]/u.test(source);
+        if (!spreadsBase && !mergesBase) continue;
         if (hasPlugins && !new RegExp(`\\.\\.\\.\\(?${match[1]}\\.plugins\\b`, 'u').test(source)) continue;
         inherited = read(resolve(dirname(path), `${match[2]}.ts`));
         if (inherited) break;
