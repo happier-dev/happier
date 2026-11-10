@@ -549,10 +549,9 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     }
     if (domainEffect && isReadOnlyArtifactPurpose?.(proof)) return admit(true);
     if (updateEffect && (method === 'PATCH' || proof.path === '/v1/artifacts' || proof.path.startsWith('/v1/artifacts/'))) {
-        const native = proof.reviewedChild?.deploymentNativeAdmission;
-        if (isDeploymentEnvironmentUpdateNativeAdmissionV1(native) && native.environmentId !== environmentId) return null;
         const prepared = await readDeploymentEnvironmentContentPreparationHttpPurpose(tx, binding, effectActionId, proof, environmentId!);
-        return prepared === null ? null : admit(prepared);
+        if (prepared !== null) return admit(prepared);
+        if (method !== 'GET') return null;
     }
     if (effectActionId === 'projects.sources.read') {
         if (method !== 'GET' || proof.body !== undefined) return null;
