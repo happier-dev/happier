@@ -27,7 +27,7 @@ import {
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import {
-    ManagedMachineError, requireManagedControllerInTx, resolveManagedDeclarationInTx,
+    ManagedMachineError, managedPresetMachineName, requireManagedControllerInTx, resolveManagedDeclarationInTx,
     sameManagedInput, projectManagedControllerAccess, readManagedProjectionFactsInTx,
     type ManagedDeclaration, type ManagedProjectionFacts, readManagedReviewedDeclaration,
 } from "./managedRows";
@@ -148,7 +148,8 @@ async function projectPresetInTx(tx: Tx, row: StoredPreset,
             const provisioner = MachineProvisionerContributionV1Schema.parse(declaration.provisioner);
             return ManagedMachinePresetV1Schema.parse({ ...publicPreset, delegatedAcquire: { kind: 'ready', controller: access,
                 provisioner, reviewedFacts: buildManagedConfigurationFactsV1({
-                    choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema), launch, controller: preset.controller,
+                    choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema),
+                    launch: { ...launch, name: managedPresetMachineName(declaration.provisioner) }, controller: preset.controller,
                     optionStatus: 'current', prerequisites: [], billing: declaration.billing, retentionCapabilities: declaration.retention,
                     preset: { id: preset.id, revision: preset.revision, name: preset.name,
                         retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage }, setup: preset.setup,

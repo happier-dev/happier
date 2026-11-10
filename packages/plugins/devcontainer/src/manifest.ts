@@ -117,7 +117,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         try {
           const reviewed = await readDevcontainerEffectReview(await nativeTools(context, input), input);
-          return { base: { available: true, prerequisites: [], guestPlatform: 'linux' as const, ...reviewed }, dimensions };
+          // An image launch names its image, the native fact a receipt and review say for a local machine.
+          const image = input.configuration?.kind === 'image' ? input.configuration.image : undefined;
+          return { base: { available: true, prerequisites: [], guestPlatform: 'linux' as const, ...reviewed,
+            ...(image ? { nativeFacts: { image: { id: image, title: image } } } : {}) }, dimensions };
         } catch (error) {
           if (!(error instanceof MissingDependency)) throw error;
           return { base: { launch: input, available: false,

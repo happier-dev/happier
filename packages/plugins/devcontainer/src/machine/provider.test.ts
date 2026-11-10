@@ -156,6 +156,8 @@ describe('Devcontainer native roles', () => {
       const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { runtime, configuration: {
         kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } }, { surface: 'plugin' }));
       if (!options.base?.available) throw new Error('Expected selected runtime availability');
+      // The image is the container's one native choice: the receipt and review name it.
+      expect(options.base.nativeFacts?.image).toEqual({ id: 'example:latest', title: 'example:latest' });
       const selectedLaunch = DevcontainerLaunchSchema.parse(options.base.launch);
       const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'] };
       const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a', guestHome }, { surface: 'plugin' }));

@@ -255,9 +255,11 @@ export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraf
 export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projection?: ReturnType<typeof managedConfiguratorProjection>): ManagedConfigurationFactsV1 | null {
     if (draft.delegatedFacts) {
         const facts = draft.delegatedFacts;
+        // The Machine's own name is this draft's; the rest stays exactly what the preset owner reviewed.
         return draft.preset?.id === facts.preset?.id && draft.preset?.revision === facts.preset?.revision
-            && draft.name === facts.launch.name && pluginJsonValuesEqual(draft.controller ?? null, facts.controller ?? null)
-            && pluginJsonValuesEqual(draft.selected?.launch, facts.launch.choices) ? facts : null;
+            && !!draft.name.trim() && pluginJsonValuesEqual(draft.controller ?? null, facts.controller ?? null)
+            && pluginJsonValuesEqual(draft.selected?.launch, facts.launch.choices)
+            ? facts.launch.name === draft.name ? facts : { ...facts, launch: { ...facts.launch, name: draft.name } } : null;
     }
     const selected = draft.selected;
     if (!selected || selected.launch === undefined || !draft.name.trim()) return null;
@@ -285,7 +287,7 @@ export function managedConfiguratorAcquireInput(draft: ManagedConfiguratorDraft,
     const facts = managedConfiguratorFacts(draft);
     if (!facts || facts.optionStatus !== 'current' || draft.check?.available === false || !draft.enrollmentIdentity) return null;
     if (draft.preset) return ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: draft.enrollmentIdentity,
-        selection: { kind: 'preset', homeId, id: draft.preset.id, revision: draft.preset.revision },
+        selection: { kind: 'preset', homeId, id: draft.preset.id, revision: draft.preset.revision, ...(draft.name.trim() ? { name: draft.name.trim() } : {}) },
         controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage, reviewedFacts: facts });
     const { setup: _environment, ...oneOffFacts } = facts;
     return ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: draft.enrollmentIdentity, selection: { kind: 'one-off', homeId, launch: facts.launch,

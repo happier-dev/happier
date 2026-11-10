@@ -679,6 +679,23 @@ describe('provisioner picker demand', () => {
     expect(second.getCurrent().controller?.machineId).toBe('z');
     await second.unmount();
   });
+  it('starts a later Add visit on an online controller when the last picked one has gone offline', async () => {
+    await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { useManagedControllerScope } = await import('./useManagedControllerScope');
+    const machine = (id: string, online: boolean) => createControllerMachineFixture({ id, installationId: `${id}-installation`,
+      active: online, activeAt: online ? Date.now() : 0, metadata: null });
+    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('z', true)] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    const first = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
+    const target = first.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === 'z')?.candidate.target;
+    await act(async () => first.getCurrent().selection?.selectTarget(target!));
+    await first.unmount();
+    // The remembered pick is a preference among online machines, not a reason to land on one that is away.
+    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('z', false)] } }));
+    const second = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
+    expect(second.getCurrent().controller?.machineId).toBe('a');
+    await second.unmount();
+  });
   it('retains a resolved controller after a failed request proves it unreachable', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');

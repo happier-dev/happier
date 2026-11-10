@@ -16,6 +16,8 @@ import { t } from '@/text';
 
 import { machineSetupItemPresentation } from './machineSetupItems';
 import { describeMachineSetup, machineSetupItemReadRow } from './MachineSetupSection';
+import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
+import { machineSetupScriptCommandLines } from './machineSetupReviewChanges';
 import { MachineSetupReviewFooter } from './MachineSetupPlanReview';
 import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
 
@@ -66,11 +68,13 @@ function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalIn
         const read = machineSetupItemReadRow(item, machineSetupItemPresentation(item, offers));
         return <Item key={`${item.kind}:${read.title}`} {...read} subtitleLines={0} mode="info" showChevron={false} />;
     };
-    const setupFacts = describeMachineSetup(props.setup).filter(fact => fact.id !== 'setup-items');
+    // The setup script is what the person approves to run: its exact lines, through the review's Custom commands row.
+    const setupFacts = describeMachineSetup(props.setup).filter(fact => fact.id !== 'setup-items' && fact.id !== 'setup-script');
+    const commandLines = machineSetupScriptCommandLines(props.setup.scripts);
     const recipesOf = (kind: 'setupRecipe' | 'softwareRecipe') => recipes.filter(item => item.kind === kind).length;
     // The headline counts read as quiet facts above the sections (lab `q/review` Summary), not as a row of their own.
     const summary: FactStripFact[] = ([
-        ['machinePresets.setup.tab.recipesSetup', recipesOf('setupRecipe') + setupFacts.length],
+        ['machinePresets.setup.tab.recipesSetup', recipesOf('setupRecipe') + setupFacts.length + (commandLines.length ? 1 : 0)],
         ['machinePresets.setup.tab.recipesSoftware', recipesOf('softwareRecipe')],
         ['machinePresets.setup.tab.recipesApps', apps.length],
     ] as const).flatMap(([label, count]) => count > 0 ? [{ key: label, label: t(label), value: String(count) }] : []);
@@ -87,10 +91,12 @@ function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalIn
                 <Item testID="managed-config.review.server" icon={props.server.mark} title={props.server.title} subtitle={props.server.spec}
                     subtitleLines={0} mode="info" showChevron={false} />
             </ItemGroup>
-            {recipes.length || setupFacts.length ? <ItemGroup title={t('managedMachines.creationReview.setupAndSoftware')}
+            {recipes.length || setupFacts.length || commandLines.length ? <ItemGroup title={t('managedMachines.creationReview.setupAndSoftware')}
                 description={t('managedMachines.creationReview.fromPresetInOrder', { preset: props.preset.name, revision: props.preset.revision })}>
                 {recipes.map(row)}
                 {setupFacts.map(fact => <Item key={fact.id} title={fact.label} subtitle={fact.value} subtitleLines={0} mode="info" showChevron={false} />)}
+                {commandLines.length ? <MachineSetupChangeGroupRow testID="managed-config.review.script" targetCount={0} nameOf={String}
+                    group={{ kind: 'commands', lines: commandLines, added: commandLines.length, removed: 0 }} /> : null}
             </ItemGroup> : null}
             {apps.length ? <ItemGroup title={t('machinePresets.setup.review.apps')}
                 description={t('managedMachines.creationReview.fromPreset', { preset: props.preset.name })}>

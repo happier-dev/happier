@@ -419,7 +419,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const seed = handOff?.draft.creation ?? preset;
         const initial = createManagedConfiguratorDraft({ provisioner, controller: seed.controllerPoolId ? undefined : catalogController ?? seed.controller,
             controllerPoolId: seed.controllerPoolId,
-            name: handOff ? handOff.draft.name : preset.launch.name,
+            // The editor's one name is the preset's; a Machine made from it starts with the provider's default name, as a one-off does.
+            name: handOff ? handOff.draft.name : props.presetOnly ? preset.launch.name : title,
             enrollmentIdentity: props.initialEnrollmentIdentity,
             credentials: delegatedAcquire && !props.presetOnly ? undefined : seed.launch.credentials, setup: handOff ? continuationSeed : preset.setup,
             delegatedFacts: delegatedReview?.reviewedFacts,
@@ -495,7 +496,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             // Explicit conflict review advances the basis without replacing the person's edited launch or policy.
             setDraft(current => current?.preset?.id === row.id ? { ...current,
                 ...(creationRow.delegatedAcquire?.kind === 'ready' && !props.presetOnly ? { delegatedFacts: creationRow.delegatedAcquire.reviewedFacts,
-                    controller: creationRow.controller, controllerPoolId: creationRow.controllerPoolId, name: creationRow.launch.name,
+                    controller: creationRow.controller, controllerPoolId: creationRow.controllerPoolId,
                     selected: { ...current.selected, id: `preset:${row.id}`, title: row.name, launch: creationRow.launch.choices },
                     optionStatus: creationRow.delegatedAcquire.reviewedFacts.optionStatus, check: { available: true,
                         prerequisites: creationRow.delegatedAcquire.reviewedFacts.prerequisites } } : creationRow.delegatedAcquire?.kind === 'unavailable'
@@ -777,7 +778,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 cost: billing?.location === 'local' && (pooledDraft || knownControllerName)
                     ? { kind: 'local' as const, computer: pooledDraft ? controllerSentence : knownControllerName!, meters: [] }
                     : { kind: 'unpriced' as const, provider: title } }),
-        onRename: !preset || props.presetOnly ? () => { void rename(); } : undefined,
+        onRename: () => { void rename(); },
         keep: keepPolicy && defaultPolicy ? { policy: keepPolicy, defaultPolicy, inherited: !draft?.override && (!props.presetOnly || !draft?.preset?.retention && draft?.preset?.wakeOnAcceptedMessage === undefined),
             finiteOnly, deadline: !props.presetOnly,
             ...(finiteOnly && draft && provisioner ? { nativeDuration: {
@@ -823,7 +824,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // The bar names the rate it shows, then the same size, place and Keep facts as the receipt.
     const summaryFacts = receiptFacts ? describeManagedConfigurationSummary(receiptFacts,
         value => localized(receiptFacts.launch.provider.pluginId, value)) : null;
-    const summarySpec = [summaryLabel, summaryFacts ?? selectedTitle].filter(Boolean).join(' · ');
+    // A preset's selected title is its own name, which the receipt already shows as the machine's: never the spec.
+    const summarySpec = [summaryLabel, summaryFacts ?? (draft?.preset ? null : selectedTitle)].filter(Boolean).join(' · ');
     if (props.presetId && (teamDenied || presetQuery.state.error && isMachinePresetAccessLost(presetQuery.state.error)))
         return <SurfaceStateCard kind="denied" title={t('machinePresets.accessLost')} testID="managed-config.error"
             action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} />;

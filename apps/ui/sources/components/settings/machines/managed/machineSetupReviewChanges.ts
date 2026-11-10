@@ -29,6 +29,11 @@ export type MachineSetupChangeGroup = Readonly<{
 // Remove carries source copies for review context, never as executable setup operands.
 export type MachineSetupReviewChangeTarget = MachineSetupApplyInputV1['targets'][number] | MachineSetupRemoveInputV1;
 
+/** A setup's scripts as the review's Custom commands lines: the exact commands, as the person approves them. */
+export function machineSetupScriptCommandLines(scripts: readonly Readonly<{ body: string }>[] | undefined, machineIds: readonly string[] = []): MachineSetupChangeLine[] {
+    return (scripts ?? []).filter(script => script.body.trim()).map(script => ({ machineIds, operand: `$ ${script.body.trim()}`, removes: false }));
+}
+
 /** Count the same Plan operands that the grouped review describes. */
 export function countMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget): number {
     let count = 0;
@@ -76,8 +81,8 @@ function visitMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget,
             const { toolchain, scripts } = merged.setup;
             if (toolchain) add('files', { machineId: target.machineId,
                 operand: `${toolchain.adapterId} · ${toolchain.config}`, removes: false });
-            for (const script of scripts ?? []) {
-                if (script.body) add('commands', { machineId: target.machineId, operand: `$ ${script.body}`, removes: false });
+            for (const line of machineSetupScriptCommandLines(scripts)) {
+                add('commands', { machineId: target.machineId, operand: line.operand, removes: false });
             }
         }
     }

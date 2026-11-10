@@ -1,3 +1,4 @@
+import { resolvePluginLocalizedStringV2Text } from "@happier-dev/protocol/plugins/contributions/publicTypes";
 import { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
 export { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
@@ -82,6 +83,14 @@ export function createManagedMachineRetainedSchema(native: PluginJsonSchemaV2, n
 export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunchSnapshotV1 {
     return createStoredReadSchema(RetainedManagedLaunchSnapshotV1Schema).parse(value);
 }
+/**
+ * The name of a Machine made from a preset: the one given at creation, else its provider's default name, as a one-off
+ * Create starts with. Never the preset's own launch name: a preset is reused, and each Machine is named for itself.
+ */
+export function managedPresetMachineName(provisioner: Readonly<{ id: string; title: unknown }>, name?: string): string {
+    return name?.trim() || resolvePluginLocalizedStringV2Text(provisioner.title).trim() || provisioner.id;
+}
+
 export class ManagedMachineError extends Error {
     constructor(readonly code: z.infer<typeof ManagedRefusalCodeV1Schema>) {
         super(code);

@@ -156,7 +156,8 @@ describe("Machine preset relational owner", () => {
             .toContainEqual(expect.objectContaining({ id: definition.id, controllerDisplayName: definition.controllerDisplayName }));
         expect(result.delegatedAcquire).toMatchObject({ kind: 'ready', controller: { custodian: { accountId: owner },
             installationPublicKey: encodeBase64(installationPublicKey, 'base64url') },
-            reviewedFacts: { controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false,
+            // The reviewed Machine is named for itself (the provider's default), not after the preset's launch.
+            reviewedFacts: { controller, launch: { ...launch, name: 'Guest' }, retention: definition.retention, wakeOnAcceptedMessage: false,
                 preset: { id: definition.id, revision: 0 } } });
         expect(result.delegatedAcquire).not.toHaveProperty('credentialPurposes');
         expect(result.delegatedAcquire.controller).not.toHaveProperty('metadata');
@@ -390,6 +391,11 @@ describe("Machine preset relational owner", () => {
                 homeId, id: definition.id, revision: 0 }, controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } } };
         const admitted = await admitManagedAcquire(request);
         expect(admitted.machine.machineSetup).toEqual({ setup, state: 'pending' });
+        // A preset is reused: its Machine takes the provider's default name, not the preset's launch name, unless one is given.
+        expect(admitted.machine.launch.name).toBe('Guest');
+        const named = await admitManagedAcquire({ ...request, requestEnvelopeDigest: 'setup-snapshot-named', input: { ...request.input,
+            requestId: 'setup-snapshot-named', input: { ...request.input.input, selection: { ...request.input.input.selection, name: 'web-2' } } } });
+        expect(named.machine.launch.name).toBe('web-2');
         expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
             patch: { setup: { scripts: [{ body: 'echo new' }] } } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
         expect((await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 1 })).json()).toMatchObject({ kind: 'saved' });
@@ -571,7 +577,8 @@ describe("Machine preset relational owner", () => {
         await expect(admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId,
             requestEnvelopeDigest: 'plural-removed', input: { input: reviewed, requestId: 'plural-after-removal', continuationPresent: false } }))
             .rejects.toMatchObject({ code: 'credential_unavailable' });
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } })).launch).toEqual(selected);
+        // Stored as reviewed, named for the Machine itself (the provider's default), not after the preset.
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } })).launch).toEqual({ ...selected, name: 'Guest' });
     });
     it("admits one resource under concurrent preset cap and replays it after archive without admitting another", async () => {
         const accountId = "preset-admission-owner";
@@ -582,7 +589,8 @@ describe("Machine preset relational owner", () => {
         expect(created.statusCode).toBe(200);
         const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: "preset-admission", revision: 0 }, controller,
             retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false,
-            reviewedFacts: { launch: launch, controller, optionStatus: "current" as const, prerequisites: [{ requirement: { kind: "systemTool" as const, id: "native-cli" }, status: "available" as const }],
+            // The reviewed launch is named as the Machine will be: its provider's default, not the preset's launch name.
+            reviewedFacts: { launch: { ...launch, name: "Guest" }, controller, optionStatus: "current" as const, prerequisites: [{ requirement: { kind: "systemTool" as const, id: "native-cli" }, status: "available" as const }],
                 billing: { location: "local" as const, stoppedBilling: "not-billed" as const }, retentionCapabilities: { supportedIntents: ["start" as const, "stop" as const, "delete" as const] },
                 retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false, prices: [{ amount: "0", currency: "USD", unit: "hour", source: "native", observedAt: 17 }],
                 preset: { id: "preset-admission", revision: 0, name: "Limited" } } };
@@ -793,7 +801,7 @@ describe("Machine preset relational owner", () => {
         const provisioner = selected.declaration.provisioner;
         const reviewedFacts = { ...buildManagedConfigurationFactsV1({
             choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
-            launch, controller, optionStatus: 'current', prerequisites: [],
+            launch: { ...launch, name: 'Guest' }, controller, optionStatus: 'current', prerequisites: [],
             provisioner: { ...provisioner, schemaVersion: provisioner.schemaVersion + 1 },
             billing: provisioner.billing, retentionCapabilities: provisioner.retention,
             preset: { ...definition, revision: 1 },
@@ -823,7 +831,7 @@ describe("Machine preset relational owner", () => {
                 homeId, controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false },
         } } })).rejects.toMatchObject({ code: 'permission_denied' });
         const acquired = await admitManagedAcquire(request);
-        expect(acquired.machine).toMatchObject({ launch, retention: definition.retention, enrollmentAccountId: member });
+        expect(acquired.machine).toMatchObject({ launch: { ...launch, name: 'Guest' }, retention: definition.retention, enrollmentAccountId: member });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)
             .toEqual({ ...reviewedFacts, provisioner,
                 retentionCapabilities: selected.declaration.retention, billing: selected.declaration.billing });

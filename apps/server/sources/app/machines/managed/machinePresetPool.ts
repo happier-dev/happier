@@ -10,7 +10,7 @@ import { getMachineDaemonPresenceInventory, type MachineDaemonPresenceInventory,
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { ManagedMachineError, projectManagedControllerAccess, readManagedProjectionFactsInTx, sameManagedInput } from './managedRows';
+import { ManagedMachineError, managedPresetMachineName, projectManagedControllerAccess, readManagedProjectionFactsInTx, sameManagedInput } from './managedRows';
 import { getMachinePresetInTx, resolveMachinePresetForAcquireInTx, validateStoredManagedLaunchInTx } from './machinePresetService';
 
 type Context = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext> }>;
@@ -73,7 +73,8 @@ export async function readManagedPresetPoolCandidatesInTx(tx: Tx, context: Conte
 export function buildManagedPoolPresetReview(preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1,
     declaration: Awaited<ReturnType<typeof readManagedPresetPoolCandidatesInTx>>['candidates'][number]['declaration'],
     controller?: ManagedControllerV1) {
-    const { credentials: _credentials, ...launch } = preset.launch;
+    const { credentials: _credentials, ...stored } = preset.launch;
+    const launch = { ...stored, name: managedPresetMachineName(declaration.provisioner) };
     return buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema),
         launch, ...(controller ? { controller } : {}), provisioner: declaration.provisioner,
         optionStatus: 'current', prerequisites: declaration.provisioner.prerequisites.map(requirement => ({ requirement, status: 'unknown' as const })),
@@ -121,7 +122,7 @@ export async function resolveManagedPresetPool(params: Context & Readonly<{
         return { ok: true, value: { kind: 'resolved', poolId: params.input.poolId, machineId: controller.machineId,
             priorityTier: selected.poolPriorityTier, managedPreset: { controller, controllerAccess: selected.controllerAccess,
                 provisioner: selected.declaration.provisioner,
-                reviewedFacts: selected.delegated ? reviewedFacts : { ...reviewedFacts, launch: selected.preset.launch } } } };
+                reviewedFacts: selected.delegated ? reviewedFacts : { ...reviewedFacts, launch: { ...selected.preset.launch, name: reviewedFacts.launch.name } } } } };
     } catch (error) {
         if (!(error instanceof ManagedMachineError)) throw error;
         return unavailable(error.code, error.code === 'controller_unavailable' ? 'no_available_machine' : 'managed_preset_unavailable');

@@ -39,7 +39,8 @@ export function ManagedStartFromSection(props: Readonly<{
     return <ItemGroup testID={props.testID} title={title} description={t('managedMachines.config.startFromDescription')}
         accessibilityRole="radiogroup" accessibilityLabel={title}>
         {props.presets.map(preset => {
-            const items = preset.setup?.items?.length ?? 0;
+            // The setup script is part of what it sets up.
+            const items = (preset.setup?.items?.length ?? 0) + (preset.setup?.scripts?.some(script => script.body.trim()) ? 1 : 0);
             return row(preset.id, preset.name,
                 items ? t('managedMachines.config.startFromSetsUp', { items: t('machinePresets.setup.itemCount', { count: items }) }) : undefined,
                 preset.id);

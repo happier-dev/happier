@@ -1394,7 +1394,8 @@ describe('mounted managed configurator', () => {
     const launch = { provider: provisioner.contribution, schemaVersion: 1, name: 'web-2', choices: { cpu: 2 } };
     const owner = { kind: 'account', accountId: 'owner' };
     const setup = { items: [MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: {
-      ref: { pluginId: 'tools.example', recipeId: 'editor', revision: 'pinned' }, inputs: {} } })] };
+      ref: { pluginId: 'tools.example', recipeId: 'editor', revision: 'pinned' }, inputs: {} } })],
+      scripts: [{ body: 'corepack enable\npnpm install', affects: 'none' as const }] };
     const screen = await mountAddRoute('start-from', 'server', 'linux', undefined, true, false, [
       { id: 'hardened', homeId: 'srv_add_server', revision: 3, name: 'Hardened server', owner, controller: defaultController, launch, setup },
       { id: 'other-provider', homeId: 'srv_add_server', revision: 1, name: 'Other provider', owner, controller: defaultController,
@@ -1420,10 +1421,17 @@ describe('mounted managed configurator', () => {
     const setChrome = vi.fn();
     const review = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={() => {}} />);
     await waitForHomeGovernance(() => expect(review.getTextContent()).toContain('editor'));
+    // The server line is its spec, not the machine's name.
+    expect(String(review.findByTestId('managed-config.review.server')?.props.subtitle ?? '')).not.toContain('Hardened server');
     const chrome = setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> };
     await act(async () => chrome.footer.props.primary.onPress());
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1));
     expect(acquiredIdentity()).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_add_server', id: 'hardened', revision: 3 } });
+    // The Machine gets the provider's default name, as a one-off Create does, never the preset's.
+    expect(acquiredIdentity()).toMatchObject({ selection: { name: 'Virtual machine' } });
+    expect(review.getTextContent()).not.toContain('web-2');
+    // The script the person approves is shown by its lines.
+    expect(review.getTextContent()).toContain('corepack enable');
     await review.unmount();
     await screen.unmount();
   });

@@ -7,7 +7,7 @@ import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
-    ManagedMachineError, invalidateManagedMachineInTx, projectManagedMachine,
+    ManagedMachineError, invalidateManagedMachineInTx, managedPresetMachineName, projectManagedMachine,
     requireManagedControllerInTx, resolveManagedDeclarationInTx, sameManagedInput,
     type ManagedDeclaration,
     createManagedMachineDeclaredSchema,
@@ -100,7 +100,8 @@ export async function admitManagedAcquire(params: Readonly<{
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
                 if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
-                launch = selected.preset.launch;
+                // A preset is reused for many Machines: each takes its own name, or the provider's default (as a one-off Create does), never the preset's.
+                launch = { ...selected.preset.launch, name: managedPresetMachineName(selected.declaration.provisioner, request.input.selection.name) };
                 preset = { id: selected.preset.id, revision: selected.preset.revision };
                 setup = selected.preset.setup;
                 declaration = selected.declaration;
