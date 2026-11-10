@@ -48,6 +48,12 @@ export function createOpenCodeNativeSessionControls() {
           diagnostic: diagnostic('opencode_vendor_catalog_unsupported'),
         };
       }
+      if (request.kind === 'models') {
+        return {
+          status: 'unsupported',
+          diagnostic: diagnostic('opencode_models_catalog_unsupported'),
+        };
+      }
       const binding = activeSkillsReaders.get(context.session.id);
       if (context.session.activity !== 'active' || !binding) {
         return {
