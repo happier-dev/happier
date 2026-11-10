@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
@@ -32,16 +32,25 @@ export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.tri
 export const OwnServerEnvironmentReleasePolicyV1Schema = z.strictObject({
     rollout: z.enum(['recreate', 'startFirst']), autoRestorePreviousRelease: z.boolean(),
 });
+const migrationArgv = z.array(z.string()).check(z.minLength(1),
+    z.refine(argv => (argv[0]?.trim().length ?? 0) > 0, { message: 'A migration command requires an executable.' }));
+/** Saved candidate commands and reviewed updates consume the same migration policy. */
+export const OwnServerEnvironmentMigrationPolicyV1Schema = z.strictObject({
+    migration: z.optional(z.strictObject({ service: DeploymentTextV1Schema, argv: migrationArgv,
+        pendingCheck: z.optional(z.strictObject({ argv: migrationArgv })) })),
+    backupBeforeMigration: z.optional(z.boolean()),
+    migrationFailurePolicy: z.optional(z.enum(['ask', 'restoreBackupAndRollbackCode', 'rollbackCodeOnly'])),
+});
 function serviceExportNetworkMatchesExposure(value: Readonly<{
     exposure: string; privateNetwork?: string; transport?: Readonly<{ kind: 'iroh' }>;
 }>): boolean {
-    if (value.transport?.kind === 'iroh') return value.exposure === 'loopback' && value.privateNetwork === undefined;
+    if (value.transport?.kind === 'iroh' && value.exposure === 'public') return false;
     return value.exposure === 'privateNetwork' ? value.privateNetwork !== undefined : value.privateNetwork === undefined;
 }
 function serviceExportKeysAreUnique(exports: ReadonlyArray<Readonly<{ key: string }>>): boolean {
     return new Set(exports.map(value => value.key)).size === exports.length;
 }
-/** Stored declarations retain public exports; Iroh exports publish only on loopback. */
+/** Stored declarations retain public exports; Iroh destinations stay loopback even when an export also names a private network. */
 export const DeploymentServiceExportV1Schema = lazyZodSchema(() => z.strictObject({
     key: DeploymentTextV1Schema, service: DeploymentTextV1Schema,
     containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
@@ -49,7 +58,7 @@ export const DeploymentServiceExportV1Schema = lazyZodSchema(() => z.strictObjec
     exposure: z.enum(['public', 'privateNetwork', 'loopback']), privateNetwork: z.optional(DeploymentTextV1Schema),
     transport: z.optional(z.strictObject({ kind: z.literal('iroh') })),
 }).check(z.refine(serviceExportNetworkMatchesExposure,
-    { message: 'Private network exports name their exact network; Iroh exports require loopback without a private network.' })));
+    { message: 'Private network exports name their exact network; Iroh transport requires privateNetwork or loopback exposure.' })));
 export const DeploymentServiceExportsV1Schema = lazyZodSchema(() => z.array(DeploymentServiceExportV1Schema)
     .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
 export type DeploymentServiceExportV1 = z.infer<typeof DeploymentServiceExportV1Schema>;
@@ -95,9 +104,8 @@ export const DeploymentStoredDefinitionV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export const DeploymentRepositoryComposeV1Schema = lazyZodSchema(() => z.strictObject({
     path: ScmRepositoryContainedSubdirV1Schema, ...DeploymentComposeSelectorsV1Schema.shape,
-    augmentation: z.optional(z.pick(DeploymentStoredDefinitionV1Schema, { document: true, publicFiles: true })),
 }));
-/** Repository selection and its exact additive Compose source share one persisted owner. */
+/** Repository selection provenance shares one persisted owner. */
 export const DeploymentRepositoryDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema),
 }));
@@ -173,12 +181,17 @@ export const DeploymentReferenceSourceV1Schema = lazyZodSchema(() => z.strictObj
     kind: z.literal('reference'), environmentId: id, export: DeploymentTextV1Schema, via: z.enum(['auto', 'privateNetwork', 'public']),
     component: z.optional(z.enum(['host', 'port'])),
 }));
+const deploymentVariableFact = z.enum(['primaryUrl', 'commitSha', 'deploymentId', 'environmentName']);
+const deploymentVariableDomainFact = z.enum(['domainUrl']);
+/** Authoring choices come from the same fact schemas that admit saved bindings. */
+export const DeploymentVariableFactOptionsV1 = [...deploymentVariableFact.options, ...deploymentVariableDomainFact.options] as const;
+export type DeploymentVariableFactV1 = typeof DeploymentVariableFactOptionsV1[number];
 export const DeploymentNonSecretVariableBindingSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     publicValue,
     DeploymentReferenceSourceV1Schema,
     z.discriminatedUnion('fact', [
-        z.strictObject({ kind: z.literal('deploymentFact'), fact: z.enum(['primaryUrl', 'commitSha', 'deploymentId', 'environmentName']) }),
-        z.strictObject({ kind: z.literal('deploymentFact'), fact: z.literal('domainUrl'), domainId: id }),
+        z.strictObject({ kind: z.literal('deploymentFact'), fact: deploymentVariableFact }),
+        z.strictObject({ kind: z.literal('deploymentFact'), fact: deploymentVariableDomainFact, domainId: id }),
     ]),
 ]));
 export const DeploymentVariableBindingSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -235,6 +248,13 @@ function environmentSecretBindingSchema<TSource extends z.core.$ZodType>(secretS
 }
 export const EnvironmentSecretBindingV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(DeploymentSecretBindingSourceV1Schema));
 export type EnvironmentSecretBindingV1 = z.infer<typeof EnvironmentSecretBindingV1Schema>;
+const bindingIdentityProjectionSchema = lazyZodSchema(() => z.union(
+    EnvironmentSecretBindingIdentityV1Schema._zod.def.options.map(identity => z.object(identity.shape)),
+));
+/** Keep only the canonical address when removing a persisted binding. */
+export function projectEnvironmentSecretBindingIdentityV1(binding: EnvironmentSecretBindingV1): EnvironmentSecretBindingIdentityV1 {
+    return bindingIdentityProjectionSchema.parse(binding);
+}
 /** A pending choice exists only in Action custody, never in an Environment Artifact. */
 const secretBindingInputSource = lazyZodSchema(() => z.union([
     DeploymentSecretBindingSourceV1Schema, z.strictObject({ kind: z.literal('secret'), ref: z.literal('person_selects') }),

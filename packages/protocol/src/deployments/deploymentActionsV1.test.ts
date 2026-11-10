@@ -338,8 +338,9 @@ describe('Domain admitted child transport', () => {
     expect(projectDeploymentChildRoutingV1(privateJob)).toEqual(wire);
     expect(DeploymentChildRoutingV1Schema.safeParse(privateJob).success).toBe(false);
     expect(doesDeploymentChildInputMatchRootV1({ rootActionId: wire.actionId, rootInput: root, child: job! })).toBe(true);
+    // Membership reconciliation retains the reduced native packet; Home proves its exact admitted capture.
     expect(readDeploymentChildRpcV1({ deploymentChildRoot: true, rootActionId: 'deployments.deploy', effectActionId: wire.actionId,
-      method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: wire })).toBeNull();
+      method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: wire })).toEqual(wire);
     expect(doesDeploymentChildInputMatchRootV1({ rootActionId: wire.actionId, rootInput: { ...root, domainId: 'foreign' }, child: job! })).toBe(false);
     expect(DeploymentChildRpcV1Schema.safeParse({ ...wire, installationId: 'foreign' }).success).toBe(false);
     expect(DeploymentChildRpcV1Schema.safeParse({ ...wire, actionOperationId: 'foreign' }).success).toBe(false);
@@ -379,7 +380,7 @@ describe('Domain admitted child transport', () => {
     expect(readDeploymentChildRpcV1({ ...transport, rootPreparationAdmission: rootPreparationAdmission?.operation === 'create'
       ? { ...rootPreparationAdmission, mode: 'preview' } : undefined })).toBeNull();
   });
-  it('derives teardown Domain discovery from the same Environment root without allowing another Domain effect', () => {
+  it('derives teardown Domain discovery and membership reconciliation from the same Environment root', () => {
     const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.remove',
       input: { serverId: root.serverId, environmentId: root.environmentId, domainId: root.domainId,
         expectedRevision: root.expectedRevision, expectedDomainRevision: 2, requestKey: root.requestKey,
@@ -410,8 +411,9 @@ describe('Domain admitted child transport', () => {
       rootBinding: { ...rootBinding, serverIdentityId: 'foreign' } })).toBe(false);
     expect(doesDeploymentChildInputMatchRootV1({ ...derivation, rootInput: { ...rootInput, environmentId: 'foreign' } })).toBe(false);
     expect(doesDeploymentChildInputMatchRootV1({ ...derivation, rootInput: { ...rootInput, serverId: 'foreign' } })).toBe(false);
+    // Partial teardown reconciles routes for remaining members through the existing Add owner.
     expect(doesDeploymentChildInputMatchRootV1({ ...derivation,
-      child: DeploymentChildRpcV1Schema.parse({ ...nativeChild, actionId: 'deployments.domains.add' }) })).toBe(false);
+      child: DeploymentChildRpcV1Schema.parse({ ...nativeChild, actionId: 'deployments.domains.add' }) })).toBe(true);
     expect(readDeploymentChildRpcV1({ deploymentChildRoot: true, rootActionId: 'deployments.teardown',
       effectActionId: 'deployments.domains.remove', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: child })).toEqual(child);
   });
@@ -1002,6 +1004,8 @@ describe('deployment build placement update', () => {
     const irohExport = { ...serviceExport, exposure: 'loopback', privateNetwork: undefined, transport: { kind: 'iroh' } };
     const irohInput = { ...input, patch: { ownServer: { serviceExports: [irohExport] } } };
     expect(DeploymentEnvironmentUpdateInputV1Schema.parse(irohInput)).toEqual(irohInput);
+    const dualInput = { ...input, patch: { ownServer: { serviceExports: [{ ...serviceExport, transport: { kind: 'iroh' } }] } } };
+    expect(DeploymentEnvironmentUpdateInputV1Schema.parse(dualInput)).toEqual(dualInput);
     expect(omitDeploymentEnvironmentPrivateContentPatchV1(irohInput.patch)).toEqual({});
     expect(omitDeploymentEnvironmentPrivateContentPatchV1(input.patch)).toEqual({});
     expect(omitDeploymentEnvironmentPrivateContentPatchV1({ ...input.patch,
@@ -1010,7 +1014,6 @@ describe('deployment build placement update', () => {
       [{ ...serviceExport, exposure: 'public', privateNetwork: undefined }],
       [{ ...serviceExport, exposure: 'loopback', privateNetwork: undefined }],
       [{ ...irohExport, exposure: 'public' }],
-      [{ ...serviceExport, transport: { kind: 'iroh' } }],
       [{ ...irohExport, privateNetwork: 'network-a' }],
       [{ ...irohExport, transport: { kind: 'other' } }],
       [{ ...serviceExport, privateNetwork: undefined }],

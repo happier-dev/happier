@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1,
+import { DeploymentBackupConfigurationV1Schema,
   type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupInventoryResultV1, DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
@@ -13,7 +13,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { createDeploymentActions } from './deploymentActions';
-import { deploymentDataTargetOperands } from './deploymentRestore';
+import { deploymentDataTargetOperands, prepareDeploymentBackupConfigurationV1 } from '@happier-dev/deployments';
+import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
@@ -30,16 +31,37 @@ import { ActionInputFields } from '@/components/sessions/actions/ActionInputFiel
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { engineNames } from './DeploymentDataCard';
+import { Switch } from '@/components/ui/forms/Switch';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { DeploymentBackupConfigureInputV1, DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
+import { DeploymentBackupAnotherMachineSetupV1Schema, type DeploymentBackupAnotherMachineSetupV1 } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
+import { sourceWord } from './DeploymentCreationDefaultsRows';
+import { formatAutomationScheduleLabel } from '@/components/automations/list/automationListFormatting';
+import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
+import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
+import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { useMachineListForServer } from '@/sync/store/hooks';
+import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
+import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputs';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
+  deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
+  type DeploymentBackupKeepField as KeepField } from './deploymentBackupRetention';
+export { retentionFromDraft } from './deploymentBackupRetention';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -146,8 +168,8 @@ const LOADING_FACTS: DeploymentBackupFacts = Object.freeze({ status: 'loading' }
 const NO_MISSED: readonly MissedSchedule[] = Object.freeze([]);
 
 /**
- * Backup history (`deployments.backups.history`) and missed schedules (`workflow.trigger.list` deploymentBackup) for one
- * capture target, read when the surface is presented and again on `reload` (after its own Back up now). No timer, no poll.
+ * Exact capture history and stable Environment schedules, read through their Action owners when the surface is presented
+ * and again on `reload` (after its own Back up now). No timer, no poll.
  * Shared by Settings › Backups and the Database page.
  */
 export function useDeploymentBackupFacts(
@@ -161,8 +183,7 @@ export function useDeploymentBackupFacts(
   React.useEffect(() => {
     if (!actions || !input || !presented) return;
     let live = true;
-    const { expectedRevision: _expectedRevision, ...target } = input;
-    void Promise.allSettled([actions.backupHistory(input), actions.missedBackupSchedules(target)]).then(([history, missed]) => {
+    void Promise.allSettled([actions.backupHistory(input), actions.missedBackupSchedules({ environmentId: input.environmentId })]).then(([history, missed]) => {
       if (!live) return;
       if (history.status === 'rejected' && missed.status === 'rejected') { setFacts({ status: 'unavailable' }); return; }
       setFacts({ status: 'ready', history: history.status === 'fulfilled' ? history.value : null,
@@ -197,7 +218,7 @@ function useBackupTarget(detail: DeploymentEnvironmentReadDetailV1, configuratio
   return target && deploymentId ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
 }
 
-/** Names the saved destination the way a person set it up: bucket and prefix, then where it is. */
+/** The saved S3 repository's authored bucket and prefix. */
 function destinationTitle(configuration: DeploymentBackupConfigurationV1): string {
   const text = (key: string) => {
     const value = configuration.config[key];
@@ -226,8 +247,8 @@ function testOutcome(result: DeploymentBackupTestResultV1): Readonly<{ ok: boole
 }
 
 /**
- * Settings › Backups destination (lab `d7d/destfail`): the saved bucket and prefix, and Test, a read-only probe of that
- * repository through `deployments.backups.test`. One line says the result; a failure names what to check.
+ * Settings › Backups destination and its explicit repository probe. Test writes and reads back a temporary
+ * object through `deployments.backups.test`; a failure names what to check.
  */
 export function DeploymentBackupDestinationRow(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
@@ -269,35 +290,9 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   );
 }
 
-const KEEP_FIELDS = ['last', 'daily', 'weekly', 'monthly'] as const;
-type KeepField = typeof KEEP_FIELDS[number];
-const KEEP_LABEL: Readonly<Record<KeepField, 'keepLast' | 'keepDaily' | 'keepWeekly' | 'keepMonthly'>> = {
-  last: 'keepLast', daily: 'keepDaily', weekly: 'keepWeekly', monthly: 'keepMonthly',
-};
-
-function draftFrom(retention: Retention): Record<KeepField, string> {
-  const count = (field: KeepField) => retention.kind === 'keep' && retention[field] !== undefined ? String(retention[field]) : '';
-  return { last: count('last'), daily: count('daily'), weekly: count('weekly'), monthly: count('monthly') };
-}
-
-/** Empty or 0 everywhere keeps every backup; any other entry must be a whole number. */
-export function retentionFromDraft(draft: Readonly<Record<KeepField, string>>): Retention | null {
-  const counts: Partial<Record<KeepField, number>> = {};
-  for (const field of KEEP_FIELDS) {
-    const text = draft[field].trim();
-    if (text === '') continue;
-    if (!/^\d+$/.test(text)) return null;
-    const value = Number(text);
-    if (!Number.isSafeInteger(value)) return null;
-    // 0 means this rule keeps nothing extra, the same as leaving it empty (lab `database/keep`).
-    if (value > 0) counts[field] = value;
-  }
-  return Object.keys(counts).length === 0 ? { kind: 'keepEverything' } : { kind: 'keep', ...counts };
-}
-
 /**
  * Settings › Backups keep counts (lab `database/keep`) and Remove old backups now. Change edits the counts in place and
- * Save writes them once through `deployments.environments.update` (patch.backupRetention); Remove runs
+ * Save writes them through `deployments.backups.configure`; Remove runs
  * `deployments.backups.prune` with the saved counts. Both are the Actions an agent calls.
  */
 export function DeploymentBackupRetentionRows(props: Readonly<{
@@ -397,241 +392,322 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
 
 type CredentialRole = DeploymentBackupConfigurationV1['credentialBindings'][number]['role'];
 const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'credentialSecretAccessKey'
-  | 'credentialRepositoryPassword' | 'credentialSessionToken'>> = {
+  | 'credentialRepositoryPassword' | 'credentialSessionToken' | 'credentialSshPrivateKey'>> = {
   accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
-  repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken',
+  repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken', sshPrivateKey: 'credentialSshPrivateKey',
 };
 /** A search seed for the Store, not an identity: it only finds the plugins that add backup storage. */
 const STORE_BACKUP_QUERY = 'backup';
 const BACKUP_DESTINATION_SECTIONS = Object.freeze(['familiesById.backupDestinations']);
+const BACKUP_RECEIVER_SECTIONS = Object.freeze(['familiesById.machineRecipes']);
+const BACKUP_RECEIVER_SUPPLIED_INPUTS = Object.freeze(['senderPublicKey']);
 const destinationFieldOptions = buildSessionActionFieldOptionsResolver({});
 
 type BackupDestination = NonNullable<NonNullable<ReturnType<typeof usePluginUiProjectionCurrentness>['pluginUiProjection']>['backupDestinationsById']>[string];
 
-/** One database the setup dumps: the template's data services, named the way Overview's Data section names them. */
-function setupDatabases(detail: DeploymentEnvironmentReadDetailV1) {
-  return detail.content.template?.data ?? [];
-}
+type BackupConfigurePreparation = Exclude<DeploymentBackupConfigureInputV1, { intent: 'markNotNeeded' }>;
+type BackupConfigureDraft = Omit<BackupConfigurePreparation, 'serverId' | 'environmentId' | 'expectedRevision'>;
+type BackupDefaults = Awaited<ReturnType<ActionsFactory['prepareConfigurationDefaults']>>;
 
-/**
- * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): the row opens one sheet that asks where the copies
- * go (the S3-transport destination the backup-destinations family publishes, its fields and credential roles from that
- * descriptor) and how many to keep, saved once as `environments.update` patch.backup. Credentials and the nightly
- * schedule follow on the saved setup, through their own Actions. No database means nothing to back up yet: the row says
- * so and leads to Add a database rather than asking for a service.
- */
+/** One captured defaults/source review opens the controller-owned Configure flow. */
 export function DeploymentBackupSetup(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  serverId: string;
-  review: DeploymentReviewHandle;
-  save: (configuration: DeploymentBackupConfigurationV1) => ReturnType<ActionsFactory['updateEnvironment']>;
-  onChanged: () => void;
-  machineName: (machineId: string) => string;
-  onAddDatabase?: (() => void) | null;
-  testID: string;
+  detail: DeploymentEnvironmentReadDetailV1; serverId: string; review: DeploymentReviewHandle;
+  actions: Pick<ActionsFactory, 'configureBackup' | 'prepareConfigurationDefaults' | 'addBackupSchedule'>;
+  lifetime: ServerAccountScopeLifetime; onChanged: () => void;
+  machineName: (machineId: string) => string; onAddDatabase?: (() => void) | null; testID: string;
 }>) {
   const router = useRouter();
-  // environments.update prepares this configuration against the controller's leased registry.
-  // The Account's selected plugin origin may belong to a different Machine and release.
+  const mounted = React.useRef(true);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const currentEnvironment = React.useRef(props.detail.environment.id);
+  currentEnvironment.current = props.detail.environment.id;
   const projection = usePluginUiProjectionCurrentness({ serverId: props.serverId,
     machineId: props.detail.environment.controllerMachineId, sections: BACKUP_DESTINATION_SECTIONS });
-  const destinations = projection.pluginUiProjection?.backupDestinationsById;
-  const destination = React.useMemo(() => Object.values(destinations ?? {})
-    .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
+  const destinations = React.useMemo(() => Object.values(projection.pluginUiProjection?.backupDestinationsById ?? {}),
+    [projection.pluginUiProjection?.backupDestinationsById]);
+  const change = useDeploymentChangePress(props.review, noop);
   const id = `${props.testID}.setup`;
-  const databases = setupDatabases(props.detail);
-  if (databases.length === 0) {
-    return (
-      <Item
-        testID={`${id}.noDatabase`}
-        title={t('projects.deployments.settingsSections.setupNoDatabaseTitle')}
-        subtitle={t('projects.deployments.settingsSections.setupNoDatabaseBody')}
-        mode="info"
-        rightElement={props.onAddDatabase ? (
-          <SectionActionButton testID={`${id}.addDatabase`} title={t('projects.deployments.dataAdd')}
-            onPress={props.onAddDatabase} />
-        ) : undefined}
-      />
-    );
-  }
-  if (projection.phase === 'establishing') {
-    return <Item testID={id} title={t('projects.deployments.loading')} mode="info" />;
-  }
-  if (!destination && projection.phase !== 'current') {
-    return <Item testID={id} title={t('projects.deployments.settingsSections.setupTitle')}
-      subtitle={t('projects.deployments.backupStatusUnavailable')} mode="info" />;
-  }
-  if (!destination) {
-    // No storage is installed for backups yet: the next step is the Store, searched for backup storage.
-    const openStore = () => router.push(buildPluginsHomeRoute('app', { view: 'search', query: STORE_BACKUP_QUERY }));
-    return (
-      <Item
-        testID={id}
-        title={t('projects.deployments.settingsSections.setupTitle')}
-        subtitle={t('projects.deployments.settingsSections.setupNoDestination')}
-        onPress={openStore}
-        rightElement={
-          <SectionActionButton testID={`${id}.store`} title={t('projects.deployments.settingsSections.setupOpenStore')}
-            onPress={openStore} />
-        }
-      />
-    );
-  }
-  const target = deploymentDataTargetOperands(props.detail);
-  const open = () => {
-    if (!projection.interactionEnabled) return;
-    showDeploymentSheet({
-      component: DeploymentBackupSetupSheet,
-      props: { detail: props.detail, destination, databases, testID: id, review: props.review, save: props.save,
-        onChanged: props.onChanged,
-        machine: props.machineName(target?.machineId ?? props.detail.environment.controllerMachineId) },
-      title: t('projects.deployments.settingsSections.setupSheetTitle'),
-      testID: `${id}.modal`,
+  const open = React.useCallback(() => {
+    const destination = destinations[0];
+    if (!projection.interactionEnabled || !destination) return;
+    void change.press(async () => {
+      const defaults = await props.actions.prepareConfigurationDefaults(props.detail.environment, 'backups');
+      if (!mounted.current || currentEnvironment.current !== props.detail.environment.id || !props.lifetime.isCurrent()) return { ok: false, error: 'action_account_scope_changed' };
+      showDeploymentSheet({ component: DeploymentBackupSetupSheet,
+        props: { detail: props.detail, destinations, destination, defaults,
+          sourceChoices: defaults.backupSourceChoices ?? [], projection: projection.pluginUiProjection,
+          lifetime: props.lifetime, testID: id, review: props.review,
+          configure: (draft: BackupConfigureDraft) => props.actions.configureBackup(props.detail.environment, draft),
+          onConfigured: (configuration: DeploymentBackupConfigurationV1, schedule: NonNullable<BackupDefaults['values']['backupSchedule']>) =>
+            props.actions.addBackupSchedule({ environmentId: props.detail.environment.id,
+              controllerMachineId: props.detail.environment.controllerMachineId, configuration, schedule }).then(() => {}),
+          onChanged: props.onChanged, machine: props.machineName(props.detail.environment.controllerMachineId) },
+        title: t('projects.deployments.settingsSections.setupSheetTitle'), testID: `${id}.modal` });
+      return { ok: true };
     });
-  };
-  return (
-    <Item
-      testID={id}
-      title={t('projects.deployments.settingsSections.setupTitle')}
-      subtitle={t('projects.deployments.settingsSections.setupBody')}
-      onPress={open}
-      rightElement={
-        <SectionActionButton testID={`${id}.start`} title={t('projects.deployments.settingsSections.setupStart')}
-          icon="plus" disabled={!projection.interactionEnabled} onPress={open} />
-      }
-    />
-  );
+  }, [change.press, destinations, id, projection.interactionEnabled, projection.pluginUiProjection, props]);
+  const finish = (content: React.ReactNode) => <>{content}
+    <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
+      <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededTitle')}
+        disabled={change.running} onPress={() => change.press(async () => {
+          const result = await props.actions.configureBackup(props.detail.environment, { intent: 'markNotNeeded' });
+          if (result.kind === 'notNeeded') props.onChanged();
+          return { ok: true };
+        })} />} />
+    {change.outcome ? <DeployOutcomeBanner outcome={change.outcome}
+      pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.review.open}
+      onRetry={change.retry} copy="setting" /> : null}</>;
+  if (projection.phase === 'establishing') return finish(<Item testID={id} title={t('projects.deployments.loading')} mode="info" />);
+  if (!destinations.length && projection.phase !== 'current') return finish(<Item testID={id}
+    title={t('projects.deployments.settingsSections.setupTitle')} subtitle={t('projects.deployments.backupStatusUnavailable')} mode="info" />);
+  if (!destinations.length) {
+    const openStore = () => router.push(buildPluginsHomeRoute('app', { view: 'search', query: STORE_BACKUP_QUERY }));
+    return finish(<Item testID={id} title={t('projects.deployments.settingsSections.setupTitle')}
+      subtitle={t('projects.deployments.settingsSections.setupNoDestination')} onPress={openStore}
+      rightElement={<SectionActionButton testID={`${id}.store`} title={t('projects.deployments.settingsSections.setupOpenStore')} onPress={openStore} />} />);
+  }
+  return finish(<Item testID={id} title={t('projects.deployments.settingsSections.setupTitle')}
+    subtitle={t('projects.deployments.settingsSections.setupBody')} onPress={open}
+    rightElement={<SectionActionButton testID={`${id}.start`} title={t('projects.deployments.settingsSections.setupStart')}
+      icon="plus" disabled={change.running || !projection.interactionEnabled} onPress={open} />} />);
 }
 
-/**
- * The setup form as one composition (lab `database/destination`): where the copies go, the optional transport settings
- * folded away, which database when there is more than one, and the keep counts. Nothing is written until Save.
- */
-function DeploymentBackupSetupSheet(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  destination: BackupDestination;
-  databases: ReturnType<typeof setupDatabases>;
-  machine: string;
-  review: DeploymentReviewHandle;
-  save: (configuration: DeploymentBackupConfigurationV1) => ReturnType<ActionsFactory['updateEnvironment']>;
+type PreviewDestinationIntent = NonNullable<Extract<DeploymentPreviewDataSelectionV1, { kind: 'template' }>['destinationBackup']>;
+type BackupSetupCommonProps = Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1; destination: BackupDestination;
+  destinations?: readonly BackupDestination[]; sourceChoices: readonly DeploymentBackupConfigurationV1['sources'][number][];
+  defaults?: BackupDefaults; projection?: PluginUiProjectionModel | null; lifetime?: ServerAccountScopeLifetime;
+  machine: string; testID: string;
+}>;
+type BackupSetupMode = Readonly<{
+  mode?: 'configure'; review: DeploymentReviewHandle;
+  configure: (draft: BackupConfigureDraft) => Promise<DeploymentBackupConfigureResultV1>;
+  onConfigured?: (configuration: DeploymentBackupConfigurationV1, schedule: NonNullable<BackupDefaults['values']['backupSchedule']>) => Promise<void>;
   onChanged: () => void;
-  testID: string;
-}> & CustomModalInjectedProps) {
-  const { destination, databases, onClose, setChrome } = props;
+}> | Readonly<{ mode: 'intent'; initialIntent?: PreviewDestinationIntent; onIntent: (intent: PreviewDestinationIntent) => void }>;
+
+/** One descriptor-driven draft: Configure applies it; preview authoring only returns intent. */
+export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & BackupSetupMode & CustomModalInjectedProps) {
+  const { onClose, setChrome } = props;
   const id = props.testID;
-  const inputHints = React.useMemo(() => deriveActionInputHints(destination.definition.configSchema, undefined), [destination]);
-  const [fields, setFields] = React.useState<Record<string, unknown>>(() => Object.fromEntries(
-    resolveEffectiveInputFields({ inputHints }, {}).filter(field => field.required && (field.widget === 'text' || field.widget === 'url'))
-      .map(field => [field.path, ''])));
-  const [service, setService] = React.useState(databases[0]?.service ?? '');
-  const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
-  const [more, setMore] = React.useState(false);
-  const save = useDeploymentChangePress({ request: (artifactId) => { onClose(); props.review.request(artifactId); } },
-    () => { onClose(); props.onChanged(); });
-  const retention = retentionFromDraft(keep);
+  const localize = usePluginLocalizedTextResolver({ projection: props.projection ?? null });
+  const destinations = props.destinations ?? [props.destination];
+  const intent = props.mode === 'intent' ? props : null;
+  const configure = props.mode === 'intent' ? null : props.configure;
+  const onChanged = props.mode === 'intent' ? noop : props.onChanged;
+  const onConfigured = props.mode === 'intent' ? undefined : props.onConfigured;
+  const preferred = intent?.initialIntent?.configuration.destinationRef ?? props.defaults?.values.backupDestination;
+  const [destinationId, setDestinationId] = React.useState(() => destinations.find(entry => preferred
+    && entry.pluginId === preferred.pluginId && entry.definition.id === preferred.localId)?.id ?? props.destination.id);
+  const receiverDestination = destinations.find(entry => entry.pluginId === SFTP_BACKUP_DESTINATION_REF_V1.pluginId
+    && entry.definition.id === SFTP_BACKUP_DESTINATION_REF_V1.localId);
+  const anotherMachine = !intent && destinationId === 'anotherMachine' && receiverDestination !== undefined;
+  const destination = anotherMachine ? receiverDestination : destinations.find(entry => entry.id === destinationId) ?? props.destination;
+  const inputHints = React.useMemo(() => deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints), [destination]);
+  const [fields, setFields] = React.useState<Record<string, unknown>>(() => intent?.initialIntent?.configuration.config ?? {});
+  const [sourceIds, setSourceIds] = React.useState(() => intent?.initialIntent?.configuration.sources.map(choice => choice.sourceId) ?? props.sourceChoices.map(choice => choice.sourceId));
+  const [keep, setKeep] = React.useState(() => draftFrom(intent?.initialIntent?.configuration.retention ?? props.defaults?.values.backupRetention ?? { kind: 'keepEverything' }));
+  const [bindings, setBindings] = React.useState<NonNullable<BackupConfigurePreparation['backupBindings']>>(() => intent?.initialIntent?.bindings ?? []);
+  const [prefix, setPrefix] = React.useState(() => intent?.initialIntent?.prefix ?? '');
+  const [destinationSetup, setDestinationSetup] = React.useState<DeploymentBackupAnotherMachineSetupV1>();
+  const serverId = props.lifetime?.scope.serverId ?? props.detail.environment.serverId;
+  const machines = useMachineListForServer(serverId);
+  const receiverProjection = usePluginUiProjectionCurrentness({ serverId, machineId: destinationSetup?.machineId,
+    enabled: anotherMachine && !!destinationSetup, sections: BACKUP_RECEIVER_SECTIONS });
+  const receiverSetup = React.useMemo(() => ({ items: [{ kind: 'setupRecipe' as const,
+    selection: { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: destinationSetup?.receiverInputs ?? {} } }] }) satisfies MachineSetupV1,
+  [destinationSetup?.receiverInputs]);
+  const receiverInputState = React.useMemo(() => readMachineSetupRecipeInputState(receiverSetup,
+    receiverProjection.pluginUiProjection, { suppliedInputKeys: BACKUP_RECEIVER_SUPPLIED_INPUTS }),
+  [receiverSetup, receiverProjection.pluginUiProjection]);
+  const [result, setResult] = React.useState<DeploymentBackupConfigureResultV1 | null>(null);
+  const change = useDeploymentChangePress(props.mode === 'intent' ? null : props.review, noop);
+  const scheduleChange = useDeploymentChangePress(props.mode === 'intent' ? null : props.review, noop);
+  const retention = React.useMemo(() => retentionFromDraft(keep), [keep]);
   const config = React.useMemo(() => {
     const parsed = DeploymentBackupConfigurationV1Schema.shape.config.safeParse(
       Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)));
-    return parsed.success && validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.definition, config: parsed.data })
-      ? parsed.data : null;
-  }, [fields, destination]);
-  const configFields = resolveEffectiveInputFields({ inputHints }, fields);
-  const required = configFields.filter(field => field.required);
-  const optional = configFields.filter(field => !field.required);
-  const complete = retention !== null && service !== '' && config !== null;
-  const busy = save.running;
-  const submit = () => {
-    if (!retention || !config || !complete || busy) return;
-    void save.press(() => props.save({
+    return parsed.success ? parsed.data : null;
+  }, [fields]);
+  const sources = React.useMemo(() => props.sourceChoices.filter(entry => sourceIds.includes(entry.sourceId)), [props.sourceChoices, sourceIds]);
+  const candidate = React.useMemo(() => !retention || !config || !sources.length ? null : DeploymentBackupConfigurationV1Schema.safeParse({
       configRevision: 1, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
-      // The host captures the destination's current occurrence when it prepares the setup.
-      occurrenceId: destination.definition.id,
-      config,
-      // Required roles must be bound before backups run; optional roles stay out until the storage needs them.
-      credentialBindings: destination.definition.credentialRoles.filter((entry) => entry.optional !== true).map((entry) => entry.role)
-        .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
-      sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
-      ownership: { environmentId: props.detail.environment.id, prefix: typeof config.prefix === 'string' ? config.prefix : '' },
-      retention,
-    }));
+      occurrenceId: destination.definition.id, config, sources,
+      credentialBindings: bindings.map(({ purpose, configKey, role }) => ({ purpose, configKey, role })),
+      ownership: { environmentId: props.detail.environment.id, prefix: '' }, retention }),
+  [retention, config, sources, destination, bindings, props.detail.environment.id]);
+  const prepared = React.useMemo(() => !candidate?.success ? null : prepareDeploymentBackupConfigurationV1({
+    environmentId: props.detail.environment.id, configuration: candidate.data,
+    destination: { ref: { pluginId: destination.pluginId, localId: destination.definition.id },
+      occurrenceId: destination.definition.id, descriptor: destination.definition },
+    bindings,
+  }), [candidate, destination, bindings, props.detail.environment.id]);
+  const configuration = anotherMachine ? destinationSetup && receiverProjection.interactionEnabled
+    && receiverInputState.rows.length > 0 && receiverInputState.valid && candidate?.success ? candidate.data : null
+    : prepared?.ok ? prepared.configuration : null;
+  const complete = configuration !== null && (!intent || (prepared?.ok && prepared.bindingState === 'bound'));
+  const busy = change.running || scheduleChange.running;
+  const configured = result?.kind === 'configured';
+  const locked = busy || configured;
+  const chooseDestination = (next: string) => { setDestinationId(next); setFields({}); setBindings([]); setDestinationSetup(undefined); setResult(null); };
+  const submit = React.useCallback((intent: BackupConfigurePreparation['intent']) => {
+    if (!configuration || !configure || busy || configured) return;
+    void change.press(async () => {
+      let next: DeploymentBackupConfigureResultV1;
+      try { next = await configure({ intent, ...(destinationSetup ? { destinationSetup } : {}), configuration, backupBindings: bindings,
+        explicit: { backupDestination: { pluginId: destination.pluginId, localId: destination.definition.id },
+          backupRetention: configuration.retention, ...(props.defaults?.values.backupSchedule !== undefined
+            ? { backupSchedule: props.defaults.values.backupSchedule } : {}) } });
+      } catch (error) {
+        const outcome = readDeploymentActionError(error);
+        const details = outcome.kind === 'refused' ? outcome.failure?.details : undefined;
+        if (details && typeof details === 'object' && !Array.isArray(details) && 'destinationSetup' in details) {
+          const retained = DeploymentBackupAnotherMachineSetupV1Schema.safeParse(details.destinationSetup);
+          if (retained.success) setDestinationSetup(retained.data);
+        }
+        throw error;
+      }
+      if ('destinationSetup' in next && next.destinationSetup) setDestinationSetup(next.destinationSetup);
+      setResult(next);
+      if (next.kind === 'configured') {
+        onChanged();
+        const schedule = props.defaults?.values.backupSchedule;
+        if (schedule && onConfigured) {
+          await scheduleChange.press(async () => {
+            await onConfigured(next.configuration, schedule);
+            onClose();
+            return { ok: true };
+          });
+        } else onClose();
+      }
+      return { ok: true };
+    });
+  }, [configuration, configure, busy, configured, change.press, scheduleChange.press, props.defaults, onChanged, onConfigured,
+    destination, bindings, destinationSetup, onClose]);
+  const saveIntent = React.useCallback(() => {
+    if (!intent || !complete || !configuration) return;
+    const { ownership: _ownership, ...authored } = configuration;
+    intent.onIntent({ configuration: authored, prefix, bindings });
+    onClose();
+  }, [intent, complete, configuration, prefix, bindings, onClose]);
+  const chooseSecret = async (role: CredentialRole) => {
+    if (!props.lifetime) return;
+    const controller = new AbortController();
+    const selection = await presentSavedSecretReferencePicker({ accountLifetime: props.lifetime, signal: controller.signal,
+      isCurrent: () => props.lifetime?.isCurrent() === true });
+    if (selection) { setBindings(current => [...current.filter(binding => binding.role !== role), {
+      purpose: 'backupDestination', configKey: 'destination', role,
+      source: { kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision } }]); setResult(null); }
   };
-  const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
-  const footer = (
-    <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}>
-      <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
-        disabled={!complete || busy} loading={busy} onPress={submit} />
-    </ModalCardFooterActions>
-  );
-  React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
+  const footer = React.useMemo(() => <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}>
+    {intent ? null : <SectionActionButton testID={`${id}.test`} title={t('projects.deployments.settingsSections.destinationTest')}
+      disabled={!complete || locked} onPress={() => submit('test')} />}
+    {intent ? null : <SectionActionButton testID={`${id}.initialize`} title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
+      disabled={!complete || locked} onPress={() => submit('initializeAndSave')} />}
+    <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
+      disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />
+  </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent]);
+  const chrome = React.useMemo(() => ({ kind: 'card' as const, footer }), [footer]);
+  useModalCardChrome(setChrome, chrome);
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
-  const refused = save.outcome?.kind === 'refused' ? save.outcome : null;
-  const inputs = (subset: typeof configFields) => (
-    <ActionInputFields fields={subset} input={fields} editable={!busy} busy={busy}
+  const configFields = resolveEffectiveInputFields({ inputHints }, fields);
+  const refused = change.outcome?.kind === 'refused' ? change.outcome : null;
+  return <ListPresentationProvider value="page" pageInsets="contained"><View testID={id} style={deploymentSheetStyles.body}>
+    <Text style={deploymentSheetStyles.lead}>{intent ? t('projects.deployments.settingsSections.previewEditor.backupIntentBody')
+      : t('projects.deployments.settingsSections.setupSheetLead', { machine: props.machine })}</Text>
+    {intent ? <FieldItem label={t('projects.deployments.settingsSections.previewEditor.backupPrefix')}>
+      <FieldTextInput testID={`${id}.prefix`} value={prefix} onChangeText={setPrefix}
+        accessibilityLabel={t('projects.deployments.settingsSections.previewEditor.backupPrefix')} />
+    </FieldItem> : null}
+    {destinations.length > 1 || (!intent && receiverDestination) ? <FieldItem label={t('projects.deployments.settingsSections.setupDestination')}>
+      <ValueFieldSelect testID={`${id}.destination`} label={t('projects.deployments.settingsSections.setupDestination')}
+        items={[...destinations.map(entry => ({ id: entry.id, title: localize(entry.pluginId, entry.definition.title) })),
+          ...(!intent && receiverDestination ? [{ id: 'anotherMachine', title: t('projects.deployments.settingsSections.setupAnotherMachine') }] : [])]}
+        selectedId={destinationId} disabled={locked} onSelect={chooseDestination} fill /></FieldItem> : null}
+    {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
+      subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}
+    {anotherMachine ? <>
+      <EnvironmentMachineChoice serverId={serverId} testID={`${id}.receiver`} icon={null}
+        title={t('projects.deployments.settingsSections.setupReceiverMachine')}
+        currentMachineId={destinationSetup?.machineId ?? null} fallback={t('projects.deployments.settingsSections.setupReceiverMachine')}
+        disabled={locked} onChoose={machineId => {
+          const selected = machines?.find(machine => machine.id === machineId);
+          if (!selected?.installationId) return;
+          setDestinationSetup({ kind: 'anotherMachine', machineId, expectedInstallationId: selected.installationId, receiverInputs: {} });
+          setResult(null);
+        }} />
+      {destinationSetup && receiverProjection.interactionEnabled ? <MachineSetupRecipeInputs setup={receiverSetup}
+        projection={receiverProjection.pluginUiProjection} scope={props.lifetime?.scope}
+        suppliedInputKeys={BACKUP_RECEIVER_SUPPLIED_INPUTS} testID={`${id}.receiver.inputs`}
+        onChange={setup => {
+          const item = setup.items?.[0];
+          if (item?.kind !== 'setupRecipe') return;
+          const parsed = DeploymentBackupAnotherMachineSetupV1Schema.shape.receiverInputs.safeParse(item.selection.inputs);
+          if (parsed.success) setDestinationSetup(current => current ? { ...current, receiverInputs: parsed.data } : current);
+          setResult(null);
+        }} /> : null}
+    </> : <ActionInputFields fields={configFields} input={fields} editable={!locked} busy={busy}
       resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
-      onPatch={patch => setFields(current => ({ ...current, ...patch }))} />
-  );
-  return (
-    <ListPresentationProvider value="page" pageInsets="contained">
-      <View testID={id} style={deploymentSheetStyles.body}>
-        <Text style={deploymentSheetStyles.lead}>
-          {t('projects.deployments.settingsSections.setupSheetLead', { machine: props.machine })}
-        </Text>
-        {inputs(required)}
-        {more ? inputs(optional) : null}
-        <ItemGroup header="none">
-          {optional.length > 0 && !more ? (
-            <Item testID={`${id}.more`} title={t('projects.deployments.settingsSections.setupMoreOptions')}
-              subtitle={optional.map((field) => field.title).join(', ')} onPress={() => setMore(true)} />
-          ) : null}
-          {databases.length > 1 ? (
-            <FieldItem label={t('projects.deployments.settingsSections.setupService')}>
-              <ValueFieldSelect testID={`${id}.service`} label={t('projects.deployments.settingsSections.setupService')}
-                items={databases.map((database) => ({ id: database.service, title: `${engineNames[database.engine]}${database.version ? ` ${database.version}` : ''} · ${database.service}` }))}
-                selectedId={service} onSelect={setService} fill />
-            </FieldItem>
-          ) : null}
-          {(['daily', 'weekly'] as const).map((field) => (
-            <FieldValueItem
-              key={field}
-              testID={`${id}.keep.${field}`}
-              fieldTestID={`${id}.keep.${field}.input`}
-              title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)}
-              kind="integer"
-              allowEmpty
-              value={keep[field]}
-              stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
-              compactStepper
-              disabled={busy}
-              onDraftChange={setKeepField(field)}
-              onCommit={(text) => { setKeepField(field)(text); return text; }}
-            />
-          ))}
-        </ItemGroup>
-        {/* The storage's own credential roles, chosen as Saved Secrets once the destination is saved. */}
-        <ItemGroup header="none">
-          {destination.definition.credentialRoles.map(({ role, optional }) => (
-            <Item
-              key={role}
-              testID={`${id}.role.${role}`}
-              title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
-              subtitle={optional
-                ? t('projects.deployments.settingsSections.setupRoleOptional')
-                : t('projects.deployments.settingsSections.setupRoleRequired')}
-              mode="info"
-            />
-          ))}
-        </ItemGroup>
-        {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
-          reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : (
-            <Text style={deploymentSheetStyles.lead}>
-              {complete ? t('projects.deployments.settingsSections.setupSheetNext')
-                : t('projects.deployments.settingsSections.setupIncomplete')}
-            </Text>
-          )}
-        {setChrome ? null : footer}
-      </View>
-    </ListPresentationProvider>
-  );
+      onPatch={patch => { setFields(current => ({ ...current, ...patch })); setResult(null); }} />}
+    {props.sourceChoices.length ? <ItemGroup title={t('projects.deployments.backupSources')}>
+      {props.sourceChoices.map(choice => <Item key={choice.sourceId} testID={`${id}.source.${choice.sourceId}`}
+        title={choice.kind === 'dump' ? t('projects.deployments.backupSourceDump', { service: choice.service })
+          : t('projects.deployments.backupSourceVolume', { service: choice.service, volume: choice.volume })}
+        mode="info" rightElement={<Switch value={sourceIds.includes(choice.sourceId)} disabled={locked}
+          onValueChange={include => { setSourceIds(current => include ? [...current, choice.sourceId]
+            : current.filter(value => value !== choice.sourceId)); setResult(null); }} />} />)}
+      </ItemGroup> : <Item title={t('projects.deployments.settingsSections.setupNoDatabaseTitle')}
+        subtitle={t('projects.deployments.settingsSections.setupNoDatabaseBody')} mode="info" />}
+    <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')}>
+      <Item title={retention?.kind === 'keepEverything' ? t('projects.deployments.backupKeepEverything')
+        : t('projects.deployments.settingsSections.keepTitle')} subtitle={sourceWord(props.defaults?.sources.backupRetention)} mode="info" />
+      {KEEP_FIELDS.map(field => <FieldValueItem key={field} testID={`${id}.keep.${field}`} fieldTestID={`${id}.keep.${field}.input`}
+        title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)} kind="integer" allowEmpty value={keep[field]}
+        stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }} compactStepper disabled={locked}
+        onDraftChange={text => setKeep(current => ({ ...current, [field]: text }))}
+        onCommit={text => { setKeep(current => ({ ...current, [field]: text })); return text; }} />)}
+    </ItemGroup>
+    {!intent && props.defaults?.values.backupSchedule !== undefined ? <Item testID={`${id}.schedule`} mode="info"
+      title={t('projects.deployments.settingsSections.scheduleTitle')}
+      detail={props.defaults.values.backupSchedule ? formatAutomationScheduleLabel({ schedule: props.defaults.values.backupSchedule })
+        : t('projects.deployments.settingsSections.scheduleOff')}
+      subtitle={sourceWord(props.defaults.sources.backupSchedule)} /> : null}
+    {anotherMachine ? null : <ItemGroup header="none">{destination.definition.credentialRoles.map(({ role, optional }) => <Item key={role}
+      testID={`${id}.role.${role}`} title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+      subtitle={bindings.some(binding => binding.role === role) || (!intent && props.detail.content.bindings.some(binding => binding.purpose === 'backupDestination' && binding.role === role))
+        ? t('projects.deployments.settingsSections.credentialSet') : t(`projects.deployments.settingsSections.${optional ? 'setupRoleOptional' : 'setupRoleRequired'}`)}
+      mode="info" rightElement={props.lifetime ? <SectionActionButton testID={`${id}.role.${role}.choose`}
+        title={t('projects.deployments.settingsSections.credentialChoose')} disabled={locked} onPress={() => { void chooseSecret(role); }} /> : undefined} />)}</ItemGroup>}
+    <DeploymentBackupConfigurationResult result={result} machine={props.machine} testID={id} />
+    {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
+      reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : null}
+    {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner outcome={scheduleChange.outcome}
+      pending={scheduleChange.outcome.kind === 'approval' && props.review.pendingId === scheduleChange.outcome.artifactId}
+      machine={props.machine} onOpenReview={props.review.open} onRetry={scheduleChange.retry} copy="setting" /> : null}
+    {setChrome ? null : footer}
+  </View></ListPresentationProvider>;
+}
+
+/** The typed Configure result is shared by first setup and edits of a saved configuration. */
+export function DeploymentBackupConfigurationResult(props: Readonly<{
+  result: DeploymentBackupConfigureResultV1 | null; machine: string; testID: string;
+}>) {
+  const { result } = props;
+  const id = props.testID;
+  return <>
+    {result?.review?.capacity ? <Item testID={`${id}.capacity`} mode="info"
+      title={t(`projects.deployments.settingsSections.${result.review.capacity.status === 'known' ? 'setupCapacityKnown' : 'setupCapacityUnknown'}`)}
+      detail={result.review.capacity.status === 'known' ? formatMachineBytes(result.review.capacity.freeBytes, 'storage') : undefined}
+      subtitle={result.review.capacity.status === 'known' ? [props.machine, result.review.capacity.volume?.label,
+        result.review.capacity.volume?.mount ?? result.review.capacity.path, formatAsOfTime(result.review.capacity.observedAt)].filter(Boolean).join(' · ')
+        : `${props.machine} · ${result.review.capacity.path} · ${result.review.capacity.reason}`} /> : null}
+    {result?.kind === 'tested' ? <Item testID={`${id}.tested`} title={testOutcome(result.test).line} mode="info" /> : null}
+    {result?.kind === 'needsBinding' ? <Item testID={`${id}.needsBinding`} title={t('projects.deployments.settingsSections.credentialMissing')}
+      subtitle={result.missingRoles.join(', ')} mode="info" /> : null}
+    {result?.kind === 'setupIncomplete' ? <SurfaceStateCard testID={`${id}.setupIncomplete`} kind="error" size="line"
+      title={t('projects.deployments.settingsSections.setupIncomplete')} diagnosticCode={result.errorCode} /> : null}
+  </>;
 }
 
 /**
@@ -690,8 +766,7 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
 }
 
 /**
- * The nightly schedule: the built-in Nightly backups Workflow for this exact capture target, read and added through the
- * trigger owner (`workflow.trigger.list` deploymentBackup, `workflow.trigger.add`).
+ * Backup schedules for the stable Environment, read and added through the trigger owner.
  */
 export function DeploymentBackupScheduleRow(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
@@ -699,7 +774,6 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   actions: ActionsFactory | null;
   testID: string;
 }>) {
-  const target = useBackupTarget(props.detail, props.configuration);
   const { actions } = props;
   const [scheduled, setScheduled] = React.useState<boolean | null>(null);
   const [failure, setFailure] = React.useState<string | null>(null);
@@ -710,25 +784,24 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
       ?? { ok: false, errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
     setFailure(presented?.reason ?? t('common.error'));
   };
-  const targetKey = target ? JSON.stringify(target) : null;
+  const environmentId = props.detail.environment.id;
   React.useEffect(() => {
-    if (!actions || !target) return;
+    if (!actions) return;
     let live = true;
-    const { expectedRevision: _expectedRevision, ...identity } = target;
-    actions.backupScheduleSets(identity).then((count) => {
+    actions.backupScheduleSets({ environmentId }).then((count) => {
       if (live) { setScheduled(count > 0); setFailure(null); }
     }, (error) => {
       if (live) { setScheduled(null); showFailure(error); }
     });
     return () => { live = false; };
-    // The target key carries every identity field the read uses.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, targetKey]);
+  }, [actions, environmentId]);
   const turnOn = async () => {
-    if (!actions || !target || adding) return;
+    if (!actions || adding) return;
     setAdding(true);
     try {
-      await actions.addBackupSchedule({ target, retention: props.configuration.retention,
+      const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'nightly-backups');
+      if (starter?.triggerSeed?.kind !== 'schedule') throw new Error('workflow_starter_unavailable');
+      await actions.addBackupSchedule({ environmentId, configuration: props.configuration, schedule: starter.triggerSeed.schedule,
         controllerMachineId: props.detail.environment.controllerMachineId });
       setScheduled(true);
       setFailure(null);
@@ -744,7 +817,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
       title={t('projects.deployments.settingsSections.scheduleTitle')}
       subtitle={failure ? `${status} · ${failure}` : status}
       mode="info"
-      rightElement={actions && target && scheduled === false ? (
+      rightElement={actions && scheduled === false ? (
         <SectionActionButton testID={`${props.testID}.schedule.on`}
           title={t('projects.deployments.settingsSections.scheduleTurnOn')} disabled={adding} onPress={turnOn} />
       ) : undefined}

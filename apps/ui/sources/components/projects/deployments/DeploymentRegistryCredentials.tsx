@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1,
   type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol/v1';
+import { projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
@@ -52,15 +53,18 @@ export function DeploymentRegistryCredentials(props: Readonly<{
   };
   const save = async () => {
     if (!setBindings || !draft || !candidate?.success) return;
+    const previousIdentity = draft.original ? environmentSecretBindingIdentityV1(draft.original) : null;
     const success = await change.press(() => setBindings({ environmentId: props.detail.environment.id,
       expectedRevision: props.detail.environment.revision,
-      remove: draft.original ? [environmentSecretBindingIdentityV1(draft.original)] : [], set: [candidate.data] }));
+      remove: draft.original && previousIdentity !== environmentSecretBindingIdentityV1(candidate.data)
+        ? [projectEnvironmentSecretBindingIdentityV1(draft.original)] : [],
+      set: [candidate.data] }));
     if (success) setDraft(null);
   };
   const remove = () => {
     if (!setBindings || !selected) return;
     void change.press(() => setBindings({ environmentId: props.detail.environment.id,
-      expectedRevision: props.detail.environment.revision, set: [], remove: [environmentSecretBindingIdentityV1(selected)] }));
+      expectedRevision: props.detail.environment.revision, set: [], remove: [projectEnvironmentSecretBindingIdentityV1(selected)] }));
   };
   return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.registryTitle')}
     description={t('projects.deployments.settingsSections.registryBody')}
