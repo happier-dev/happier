@@ -207,6 +207,15 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
     return {
         resolveOpenTarget,
         get sectionPathname() { return sectionPathname; },
+        /**
+         * The person went back to the main tabs' shared root (`/`), which no workspace section owns: the section they
+         * left stops answering for section-scoped readers (the phone bar), and the next open selects a section again.
+         */
+        clearSection(): void {
+            if (sectionPathname === null) return;
+            sectionPathname = null;
+            input.onChange();
+        },
         get history() { return history; },
         get canGoBack() { return input.transport.canTraverse?.(-1) ?? history.index > 0; },
         get canGoForward() { return input.transport.canTraverse?.(1) ?? history.index < history.entries.length - 1; },

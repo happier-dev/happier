@@ -1,13 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import type { TranslationKeyNoParams } from '@/text';
-import { Typography } from '@/constants/Typography';
-import { Text } from '@/components/ui/text/Text';
 import { DefaultBackButton } from '@/components/navigation/Header';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -15,6 +10,7 @@ import { LEGACY_PROMPT_STACKS_ROUTE, PROMPTS_CONTEXT_ROUTE } from '@/components/
 import { MACHINE_RETENTION_CATEGORIES_V1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { readMachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
+import { hasNewSessionPickerContinuation } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -210,12 +206,13 @@ export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: s
     }>();
     const searchOrigin = params[SETTINGS_SEARCH_RETURN_QUERY_PARAM];
     const returnToOrigin = params[SETTINGS_RETURN_QUERY_PARAM] === '1';
+    const pickerContinuation = hasNewSessionPickerContinuation(params);
     const parentHref = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentHref(pathname, params);
     const parentPathname = parentHref?.split('?')[0] ?? null;
     const goToParent = React.useCallback(() => {
         if (!parentHref) return;
         const result = runGuardedNavigation(() => {
-            if (returnToOrigin && router.canGoBack()) {
+            if ((returnToOrigin || pickerContinuation) && router.canGoBack()) {
                 router.back();
             } else {
                 router.dismissTo(parentHref as never);
@@ -224,7 +221,7 @@ export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: s
         if (result !== true) {
             fireAndForget(result, { tag });
         }
-    }, [parentHref, returnToOrigin, router, tag]);
+    }, [parentHref, returnToOrigin, pickerContinuation, router, tag]);
     return { parentPathname, goToParent };
 }
 
@@ -248,35 +245,14 @@ function SettingsParentBackButton({
     }
 
     const parentTitleKey = parentLabel ? resolveSettingsRouteTitleKey(parentPathname) : null;
-    // Android and the web draw the app's own bar, with its one Back. iPhone's native bar keeps the system chevron.
-    if (Platform.OS !== 'ios') {
-        return React.createElement(DefaultBackButton, {
-            accessibilityLabel,
-            ...(tintColor ? { tintColor } : {}),
-            onPress: goToParent,
-            ...(parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
-        });
-    }
-    return React.createElement(HappierPressable, {
+    // The one Back of a phone on every platform: Android and the web draw it in the app's bar, iPhone stands it
+    // in the native bar as its own item (`unstable_headerLeftItems`, without the shared glass background).
+    return React.createElement(DefaultBackButton, {
         accessibilityLabel,
-        accessibilityRole: 'button',
+        ...(tintColor ? { tintColor } : {}),
         onPress: goToParent,
-        style: {
-            alignItems: 'center',
-            flexDirection: 'row',
-            justifyContent: 'center',
-            marginLeft: -8,
-            paddingHorizontal: 8,
-            paddingVertical: 6,
-        },
-    }, React.createElement(Ionicons, {
-        color: tintColor,
-        name: 'chevron-back',
-        size: 28,
-    }), parentLabel && parentTitleKey ? React.createElement(Text, {
-        numberOfLines: 1,
-        style: [Typography.default(), { color: tintColor, fontSize: 16, marginLeft: 4, flexShrink: 1 }],
-    }, parentLabel(parentTitleKey)) : null);
+        ...(parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
+    });
 }
 
 export function getSettingsStackScreenDefinitions(
@@ -303,12 +279,17 @@ export function getSettingsStackScreenDefinitions(
         }
         if ((definition.name !== 'index' || definition.navigator) && options.headerShown !== false) {
             const accessibilityLabel = t('common.back');
-            options.headerLeft = ({ tintColor }) => React.createElement(SettingsParentBackButton, {
+            const renderBack = (tintColor: string | undefined) => React.createElement(SettingsParentBackButton, {
                 accessibilityLabel,
                 tintColor,
                 hideOnTopLevel: false,
                 parentLabel: t,
             });
+            options.headerLeft = ({ tintColor }) => renderBack(tintColor);
+            // iOS 26 gives a bar's custom items a shared glass backing; the app's Back paints none (lab p5).
+            options.unstable_headerLeftItems = ({ tintColor }) => [
+                { type: 'custom', element: renderBack(tintColor), hidesSharedBackground: true },
+            ];
         }
         return {
             name: definition.name,

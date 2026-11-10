@@ -7,6 +7,8 @@ import { HappierPressable, HAPPIER_PAGE_METRICS, HAPPIER_PRESS_FEEDBACK_V1, happ
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { BACK_GLYPH_INK_INSET_PX, DefaultBackButton } from '@/components/navigation/Header';
+import { useHeaderControlMetrics, type HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
@@ -326,6 +328,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const insets = useChromeSafeAreaInsets();
     const onNavigationPlane = useContainingGlassSurfaceGroup() === 'sidebar';
     const topInset = props.navigation?.includeTopInset ? insets.top : 0;
+    const navigationBandEdges = useNavigationBandEdges();
     const hasTitle = props.title.trim().length > 0 || Boolean(props.leading) || Boolean(props.titleControl) || chipVisible;
     const titleText = (
         <Text
@@ -345,13 +348,12 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const contents = (
         <>
             {props.navigation ? (
-                <IconButton
+                // The phone's one Back (`DefaultBackButton`): its ink on the page's text edge, as on every bar.
+                <DefaultBackButton
                     testID={props.navigation.backTestID ?? `${testID}.back`}
-                    iconName={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
-                    accessibilityLabel={t('common.back')}
-                    variant="plain"
+                    tintColor={theme.colors.chrome.header.foreground}
                     // The identity mark sits one band gap to its right: Back's hit area takes half of it.
-                    interactiveTargetEdgesPx={{ trailing: theme.space.s2 / 2 }}
+                    trailingReachPx={theme.space.s2 / 2}
                     onPress={props.navigation.onBack}
                 />
             ) : null}
@@ -410,7 +412,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     );
     return (
         <View testID={testID} style={[large ? styles.large : [styles.band, { height: height + topInset, paddingTop: topInset }],
-            props.onBack || props.navigation ? styles.bandWithBack : null,
+            props.navigation ? navigationBandEdges : props.onBack ? styles.bandWithBack : null,
             columnMaxWidthPx === null ? null : styles.bandOverColumn,
             // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.
             { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
@@ -421,6 +423,21 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
         </View>
     );
 });
+
+const NAVIGATION_BAND_POINTER_CONTROL: HeaderControlMetrics = Object.freeze({ sizePx: HAPPIER_PAGE_METRICS.controlHeightPx, glyphPx: ICON_SIZE.md });
+
+/**
+ * A phone screen's navigation band stands on the page's edges (phone-system lab D1): Back's chevron ink starts on
+ * the page text line, and the trailing action's glyph box ends on the same line from the other side, so its 44 pt
+ * hit area stops 8 pt short of the screen edge.
+ */
+function useNavigationBandEdges(): Readonly<{ paddingLeft: number; paddingRight: number }> {
+    const control = useHeaderControlMetrics(NAVIGATION_BAND_POINTER_CONTROL);
+    return React.useMemo(() => ({
+        paddingLeft: HAPPIER_PAGE_METRICS.pageTextInsetPx - BACK_GLYPH_INK_INSET_PX,
+        paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx - (control.sizePx - control.glyphPx) / 2,
+    }), [control.glyphPx, control.sizePx]);
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     // The band stands above its body, so the shade beneath it overlays the content scrolling under it.

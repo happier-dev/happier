@@ -75,7 +75,7 @@ import { syncPerformanceTelemetry } from "@/sync/runtime/syncPerformanceTelemetr
 import { openNewSessionSourceContextNavigation } from "@/components/sessions/new/navigation/newSessionSourceContextNavigation";
 import { requireActionSuccess } from "@/sync/ops/actions/frontDoorRuntimeActionExecutor";
 import { useDestinationParams, useDestinationPathname, useDestinationVisibility, useDestinationInstanceKey } from "@/components/appShell/workspace/DestinationInstanceHost";
-import { useNewSessionEntryRouter } from '@/components/sessions/new/navigation/newSessionEntry';
+import { useNewSessionDockHoldsComposerSeat, useNewSessionEntryRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import * as React from "react";
 import { AtmosphereSurfaceFrame } from "@/components/atmosphere/AtmosphereSurfaceFrame";
 import { useWorkspaceFileOriginReturn } from "@/components/workspaces/files/useWorkspaceFileOriginReturn";
@@ -106,7 +106,7 @@ import { EmbeddedSessionUnavailable } from "./embedded/EmbeddedSessionUnavailabl
 import { PluginSurfaceNestingBoundary } from "@/components/plugins/surfaces/pluginSurfaceNesting";
 import { Text } from "@/components/ui/text/Text";
 import { SessionPageTabs, SessionRightSidebarProvider } from "@/components/sessions/panes/SessionRightPanel";
-import { PaneMainBody, PaneMainComposerAnchor, PaneMainTopAnchor } from '@/components/ui/panels/paneMainComposerAnchor';
+import { PaneMainComposerAnchor, PaneMainTopAnchor } from '@/components/ui/panels/paneMainComposerAnchor';
 import { createSessionPaneSurfaceScope } from "@/components/sessions/plugins/useSessionPluginRuntime";
 import { PaneMainHideButton } from "@/components/appShell/panes/mainColumn/PaneMainColumnControls";
 import { AppPaneScopeHost } from "@/components/appShell/panes/AppPaneScopeHost";
@@ -2172,7 +2172,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     openWorkStateRequestKey: number | null;
 } & SessionComposerView) {
     const { theme } = useUnistyles();
-    const input = shouldShowInput ? <SessionComposerSlot renderComposer={renderComposer} /> : null;
+    // A phone's open New card holds this seat: the Session composer yields until it closes (one composer, L11).
+    const dockHoldsComposerSeat = useNewSessionDockHoldsComposerSeat();
+    const input = shouldShowInput && !dockHoldsComposerSeat ? <SessionComposerSlot renderComposer={renderComposer} /> : null;
 
     const mountedBoard = useMountedSessionBoardController(companionAddress);
     const presentationPaneRef = React.useRef(pane);
@@ -2463,13 +2465,16 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                   ) } });
               } } : {})} />
           : null;
+      // Session-level notices stand in the composer seat, above the composer like its own banners, and
+      // alone there when this Session shows no composer (access removed, signed out, read-only).
+      const authRecoveryNotice = authSurfaceState && !(inactiveUi.shouldShowInput && !isEncryptedSessionLocked)
+          ? <ComposerAuxiliaryFrame><SessionAuthRecoveryBanner /></ComposerAuxiliaryFrame>
+          : null;
+      const sessionNotices = authRecoveryNotice || requesterRecoveryBanner || startFailureBanner
+          ? <>{authRecoveryNotice}{requesterRecoveryBanner}{startFailureBanner}</>
+          : null;
       const content = (
           <>
-              {authSurfaceState && !(inactiveUi.shouldShowInput && !isEncryptedSessionLocked) ? (
-                  <View style={{ marginTop: theme.space.s8, marginHorizontal: theme.space.s8 }}>
-                      <SessionAuthRecoveryBanner />
-                  </View>
-              ) : null}
               <SessionTranscriptContent
                   sessionId={sessionId}
                   sessionSurfaceKey={sessionSurfaceKey}
@@ -2524,14 +2529,18 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         />
     ) : null;
     // On a phone, an open Find seats its bar in this slot in place of the composer (Find lab F1p).
-    const inputWithTranscriptSelection = transcriptSelectionToolbar || input ? (
+    const inputWithTranscriptSelection = transcriptSelectionToolbar || input || sessionNotices ? (
         // A session-group tab presented in this column stops at the composer's top (lab AR1 EFv).
         <PaneMainComposerAnchor style={{ gap: theme.space.s8 }}>
             {transcriptSelectionToolbar}
             <SessionPhoneTrackWatchCapsule sessionId={sessionId} serverId={sessionRouteServerId.trim() || null} />
             <TranscriptCodeAskControls sessionId={sessionId} serverId={sessionRouteServerId.trim() || null}
                 scopeId={pane.scopeId} active={surfaceFocused && surfacePresented} />
-            <FindComposerSlotHost composer={input} />
+            {/* The notices and the composer share one stack, spaced as the composer's own banners are. */}
+            <View>
+                {sessionNotices}
+                <FindComposerSlotHost composer={input} />
+            </View>
         </PaneMainComposerAnchor>
     ) : null;
 
@@ -2650,7 +2659,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             </PaneMainTopAnchor>}
             {/* The transcript's own positioning context: its floating notices anchor below the header. */}
             <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
-            {requesterRecoveryBanner || startFailureBanner ? <PaneMainBody>{requesterRecoveryBanner}{startFailureBanner}</PaneMainBody> : null}
             <SessionTranscriptSelectionBoundary
                 sessionId={sessionId}
                 metadata={ownerMetadata}

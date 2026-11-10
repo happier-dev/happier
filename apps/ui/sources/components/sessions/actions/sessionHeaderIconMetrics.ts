@@ -1,3 +1,5 @@
+import * as React from 'react';
+import { useHappierTouchTargetSize } from '@happier-dev/plugin-ui/environment';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -18,3 +20,24 @@ export const SESSION_HEADER_ICON_SIZE_PX = ICON_SIZE.md;
 
 /** The drawn square of a direct session-header action: the page's control height. */
 export const SESSION_HEADER_ACTION_SIZE_PX = HAPPIER_PAGE_METRICS.controlHeightPx;
+
+/** Between two actions under a precise pointer; their hit areas meet in the middle of it. */
+const SESSION_HEADER_POINTER_GAP_PX = 6;
+
+export type SessionHeaderActionMetrics = Readonly<{ glyphPx: number; gapPx: number }>;
+
+const POINTER_METRICS: SessionHeaderActionMetrics = Object.freeze({ glyphPx: SESSION_HEADER_ICON_SIZE_PX, gapPx: SESSION_HEADER_POINTER_GAP_PX });
+
+/**
+ * The session header's actions as the shared hit-area owner decides the pointer (`useHappierTouchTargetSize`, the
+ * same decision that reaches each action's hit area to the touch target). Under a finger the glyph is the header's
+ * `lg` and neighbouring actions stand one touch target apart, so their hit areas abut without overlapping
+ * (phone-system lab D1); under a precise pointer they keep the compact glyph and gap.
+ */
+export function useSessionHeaderActionMetrics(): SessionHeaderActionMetrics {
+    const targetPx = useHappierTouchTargetSize();
+    return React.useMemo(() => targetPx === undefined ? POINTER_METRICS : {
+        glyphPx: ICON_SIZE.lg,
+        gapPx: Math.max(0, targetPx - SESSION_HEADER_ACTION_SIZE_PX),
+    }, [targetPx]);
+}

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Text } from '@/components/ui/text/Text';
+import { DefaultBackButton } from '@/components/navigation/Header';
 import { getSettingsStackScreenDefinitions, shouldShowSettingsParentBackButton } from './settingsRouteRegistry';
 
 import {
@@ -15,6 +16,7 @@ const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
 const paramsState = vi.hoisted(() => ({
     category: undefined as string | undefined,
     settingsReturn: undefined as string | undefined,
+    draftId: undefined as string | undefined,
 }));
 const historyState = vi.hoisted(() => ({ canGoBack: true }));
 const backSpy = vi.hoisted(() => vi.fn());
@@ -35,6 +37,7 @@ afterEach(() => {
     pathnameState.value = '/settings';
     paramsState.category = undefined;
     paramsState.settingsReturn = undefined;
+    paramsState.draftId = undefined;
     historyState.canGoBack = true;
     backSpy.mockReset();
     navigateSpy.mockReset();
@@ -107,6 +110,20 @@ describe('getSettingsStackScreenDefinitions', () => {
 });
 
 describe('settings header Back', () => {
+    it('returns an Add subflow to its invoking composer through history', async () => {
+        pathnameState.value = '/settings/machines/add';
+        paramsState.draftId = 'original-composer';
+        const headerLeft = getSettingsStackScreenDefinitions(identity, { navigator: 'machines' })
+            .find((candidate) => candidate.name === 'add')?.options.headerLeft;
+        let tree!: ReactTestRenderer;
+        await act(async () => { tree = create(React.createElement(headerLeft as React.ElementType, { tintColor: '#111111' })); });
+        try {
+            const back = tree.root.findAll((node) => node.props?.accessibilityLabel === 'common.back' && typeof node.props?.onPress === 'function')[0];
+            await act(async () => { back.props.onPress(); });
+            expect(backSpy).toHaveBeenCalledOnce();
+            expect(dismissToSpy).not.toHaveBeenCalled();
+        } finally { await act(async () => { tree.unmount(); }); }
+    });
     it.each([true, false])('returns to the invoking page for a repair open when history exists (%s)', async (canGoBack) => {
         pathnameState.value = '/settings/plugins/happier.scm.github/settings';
         paramsState.settingsReturn = '1';
@@ -205,6 +222,25 @@ describe('a page that heads itself on a phone', () => {
         const page = await renderBackLabels(pathname, name);
         expect(page.title).toBe('');
         expect(page.labels).toEqual([parent]);
+    });
+
+    // One Back on a phone (NATIVE-SWEEP L8): iPhone's bar stands the app's Back as its own item, without the
+    // glass background UIKit otherwise shares across bar items, and it is the same Back the other bars draw.
+    it('stands the same Back in the iPhone bar without a shared glass background', async () => {
+        pathnameState.value = '/settings/appearance';
+        const definition = getSettingsStackScreenDefinitions(identity).find((candidate) => candidate.name === 'appearance');
+        const items = definition?.options.unstable_headerLeftItems?.({ tintColor: '#111111', canGoBack: true }) ?? [];
+        expect(items).toHaveLength(1);
+        const item = items[0]!;
+        expect(item.type).toBe('custom');
+        if (item.type !== 'custom') return;
+        expect(item.hidesSharedBackground).toBe(true);
+        let tree!: ReactTestRenderer;
+        await act(async () => { tree = create(item.element); });
+        try {
+            expect(tree.root.findAllByType(DefaultBackButton)).toHaveLength(1);
+            expect(tree.root.findAllByType(Text).flatMap((node) => node.props.children as string)).toEqual(['settings.title']);
+        } finally { await act(async () => { tree.unmount(); }); }
     });
 
     it('keeps the Settings hub titled by the bar: it is not a subpage', async () => {

@@ -485,6 +485,37 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
+  it('takes the Session composer seat on a phone while shown, so one composer is on screen (L11)', async () => {
+    const { useNewSessionDockHoldsComposerSeat } = await import('../navigation/newSessionEntry');
+    function SessionComposerSeat() {
+      return useNewSessionDockHoldsComposerSeat() ? null : React.createElement('SessionComposer');
+    }
+    const sessionComposers = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree.root.findAllByType('SessionComposer' as never).length;
+    boundary.width = 390;
+    // The page's own composer reads the same shell as the dock.
+    await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });
+    const page = await renderScreen(<NavigationContext.Provider value={createNavigationPropMock()}><HeaderHeightContext.Provider value={0}>
+      <NewSessionShellHostProvider><Entry /><NewSessionDockedHost><SessionComposerSeat /></NewSessionDockedHost></NewSessionShellHostProvider>
+    </HeaderHeightContext.Provider></NavigationContext.Provider>);
+    expect(sessionComposers(page)).toBe(1);
+    await page.pressByTestIdAsync('open-dock');
+    await act(async () => {});
+    expect(sessionComposers(page)).toBe(0);
+    await page.pressByTestIdAsync('close-dock');
+    await act(async () => {});
+    expect(sessionComposers(page)).toBe(1);
+    await act(async () => page.unmount());
+    // A desktop dock stands in its own seat under the Session composer, which stays.
+    boundary.width = 1440;
+    const desk = await renderScreen(<NavigationContext.Provider value={createNavigationPropMock()}><HeaderHeightContext.Provider value={0}>
+      <NewSessionShellHostProvider><Entry /><NewSessionDockedHost><SessionComposerSeat /></NewSessionDockedHost></NewSessionShellHostProvider>
+    </HeaderHeightContext.Provider></NavigationContext.Provider>);
+    await desk.pressByTestIdAsync('open-dock');
+    await act(async () => {});
+    expect(sessionComposers(desk)).toBe(1);
+    await act(async () => desk.unmount());
+  });
+
   it('gives the page under a shown phone dock a bottom inset as tall as the dock', async () => {
     boundary.width = 390;
     await account.restore({ settings: { newSessionPresentationModeV1: 'docked', glassPreset: 'solid' } });

@@ -19,12 +19,13 @@ import {
     type HappierCollectionListTextRole,
     type HappierCollectionListProps,
     type HappierCollectionRowRole,
+    HAPPIER_ICON_BUTTON_SIZE,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { useHeaderActionGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
+import { useHeaderControlMetrics, type HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -34,6 +35,9 @@ import { t } from '@/text';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import { CollectionRowNeedsYouLeading } from './CollectionRowNeedsYouHighlight';
 
 /**
  * Happier core's binding of the Collection `list` presentation: the app's own text, grouped list
@@ -51,7 +55,7 @@ function listText(role: keyof typeof HAPPIER_COLLECTION_LIST_TEXT) {
 }
 
 import type { NavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { PhoneDestinationBackLine } from '@/components/ui/layout/usePageBackControl';
+import { PhonePageBackLine } from '@/components/ui/layout/usePageBackControl';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
@@ -205,15 +209,19 @@ const collectionListHost: HappierCollectionListHost = {
     useGroupGlyphColor: useCollectionListGroupGlyphColor,
 };
 
+/** A column's search toggle under a precise pointer: the IconButton's own size with the header's `sm` glyph. */
+const COLLECTION_SEARCH_TOGGLE_CONTROL: HeaderControlMetrics = Object.freeze({ sizePx: HAPPIER_ICON_BUTTON_SIZE, glyphPx: ICON_SIZE.sm });
+
 function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>>) {
-    const glyphPx = useHeaderActionGlyphSize(ICON_SIZE.sm);
+    const control = useHeaderControlMetrics(COLLECTION_SEARCH_TOGGLE_CONTROL);
     return (
         <IconButton
             {...(props.testID === undefined ? {} : { testID: props.testID })}
             accessibilityLabel={props.accessibilityLabel}
             tooltip={props.accessibilityLabel}
             variant="plain"
-            iconSize={glyphPx}
+            size={control.sizePx}
+            iconSize={control.glyphPx}
             selected={props.open}
             iconName="magnifying-glass"
             onPress={props.onPress}
@@ -263,7 +271,7 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
     const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;
     return (
         <>
-            <PhoneDestinationBackLine control={PageBack ?? null} />
+            <PhonePageBackLine control={PageBack ?? null} />
             <HappierCollectionList
                 host={surface === 'plane' ? collectionListPlaneHost : PageBack || largeTitle ? collectionListPhonePageHost : collectionListHost}
                 {...(resolvedToolsInsetPx === undefined ? {} : { toolsInsetPx: resolvedToolsInsetPx })}
@@ -305,6 +313,8 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     rowRole?: Exclude<HappierCollectionRowRole, 'catalogRow'>;
     /** An inline mark before the subtitle: the collection's trouble dot when the row needs the person. */
     subtitleLeading?: React.ReactNode;
+    /** Trouble already decided by the work owner: the shared mark and opt-in needs-you treatment. */
+    needsYouStatus?: WorkStatusPresentation | null;
     /** An inline mark on the title's line, after the title and its qualifier. */
     titleAccessory?: React.ReactNode;
     /** A quiet qualifier on the title's line, after the title (a project's Team, a folded machine). */
@@ -361,6 +371,8 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     const reducedMotion = useReducedMotionPreference();
     const onPlane = props.surface !== 'page';
     const rowRole = props.rowRole ?? 'item';
+    const needsYouFacts = React.useMemo(() => props.needsYouStatus
+        ? { unopened: !props.selected, visible: true } : null, [props.needsYouStatus, props.selected]);
     // A disclosure's count speaks for rows it hides: while it is open its rows are listed and the count says
     // nothing more, so the end column keeps only what the row adds ("+", a state) (owner 11-01).
     const hasCount = props.count !== undefined && props.count !== null && props.count !== ''
@@ -417,13 +429,15 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     const row = (
         <Item
             testID={props.testID}
+            underlay={needsYouFacts ? <CollectionRowNeedsYouLeading {...needsYouFacts} testID={`${props.testID}:needs-you`} /> : undefined}
             rightElement={rightElement}
             rightElementOutsidePressable={Boolean(props.rightElement || disclosureTarget)}
             title={props.title}
             rowRole={rowRole}
             titleLines={1}
             subtitle={props.subtitle}
-            subtitleLeading={props.subtitleLeading}
+            subtitleLeading={props.needsYouStatus ? <WorkStatusRowMark status={props.needsYouStatus}
+                testIDSuffix={props.testID} needsYouHighlight={needsYouFacts} /> : props.subtitleLeading}
             titleAccessory={props.titleAccessory}
             titleQualifier={props.titleQualifier}
             accessibilityExpanded={props.disclosure ? props.disclosure.expanded : undefined}

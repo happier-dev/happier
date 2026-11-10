@@ -1102,7 +1102,7 @@ describe('DocumentTabStrip actions', () => {
     expect(pin.insets.left).toBe(0);
   });
 
-  it('keeps a scrolling tab and its close inside the scroll viewport: the finger reach stops at the tab edge', async () => {
+  it('keeps a scrolling tab and its close inside the scroll viewport: the bar stops at the tab edge, the phone rail reaches a full finger inside its own padding', async () => {
     const { HappierUiPlatformProvider } =
       await import('@happier-dev/plugin-ui/environment');
     const { readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
@@ -1151,11 +1151,15 @@ describe('DocumentTabStrip actions', () => {
         screen.findByTestId('close-a')!,
         closeDrawn,
       );
+      // The rail's viewport keeps (44 - 30) / 2 above and below its pills: a rail tab is 44 tall to a finger.
+      const railReach = variant === 'rail' ? 7 : 0;
       expect(tabArea.insets, `${variant} tab`).toMatchObject({
-        top: 0,
-        bottom: 0,
+        top: railReach,
+        bottom: railReach,
+        left: 0,
+        right: 0,
       });
-      const inset = (tabDrawn.height - closeDrawn.height) / 2;
+      const inset = (tabDrawn.height - closeDrawn.height) / 2 + railReach;
       expect(closeArea.insets.top, `${variant} close top`).toBeLessThanOrEqual(
         inset,
       );
@@ -1168,7 +1172,8 @@ describe('DocumentTabStrip actions', () => {
       expect(
         closeArea.width,
         `${variant} close width`,
-      ).toBeGreaterThanOrEqual(24);
+      ).toBeGreaterThanOrEqual(variant === 'rail' ? 44 : 24);
+      if (variant === 'rail') expect(closeArea.height, 'rail close height').toBeGreaterThanOrEqual(44);
       expect(closeArea.insets.right, `${variant} close trailing`).toBeLessThanOrEqual(5);
     }
   });

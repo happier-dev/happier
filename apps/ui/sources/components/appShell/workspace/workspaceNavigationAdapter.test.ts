@@ -168,6 +168,15 @@ describe('workspace navigation adapter', () => {
     expect(h.adapter.openHref('/unregistered', { section: true })).toBe(false);
     expect(h.adapter.sectionPathname).toBe('/workflows');
   });
+  it('clears the section when the person returns to the main tabs\' shared root, which no workspace section owns', () => {
+    const h = harness();
+    h.adapter.initialize('/session/A1?serverId=home-a');
+    h.adapter.openHref('/workflows', { section: true });
+    expect(h.adapter.sectionPathname).toBe('/workflows');
+    // The Sessions tab opens `/` through the app router: the Workflows section no longer answers for the bar.
+    h.adapter.clearSection();
+    expect(h.adapter.sectionPathname).toBeNull();
+  });
   it('qualifies a restored resource before adopting its matching address', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });
     h.adapter.openHref('/machines/machine-a');

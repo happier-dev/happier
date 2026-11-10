@@ -54,7 +54,8 @@ import {
 import { useSessionConversationsAvailability } from '@/components/sessions/conversations/useSessionConversationsAvailability';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import type { NavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionDisplayNameProjections, useSetting } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -195,6 +196,9 @@ export function DiscussionsList(props: Readonly<{
     const bindings = useServerCredentialAccountScopeBindings(requestedServerIds);
     const binding = React.useMemo(() => [...bindings.values()][0] ?? null, [bindings]);
     const available = useSessionConversationsAvailability(props.address.serverId);
+    // One Back for the page in every state: the list's line, or above a whole-page state in its place.
+    const pageBack = usePhoneDestinationBack('discussions-column:back');
+    const ownPageBack = props.surface === 'page' ? pageBack : null;
     const unavailableReason = !available
         ? t('session.collaboration.discussion.featureUnavailable')
         : !binding
@@ -202,13 +206,16 @@ export function DiscussionsList(props: Readonly<{
             : !areServerAccountScopesEqual(binding.scope, props.scope)
                 ? t('session.collaboration.discussion.scopeMismatch')
                 : null;
-    if (unavailableReason || !binding) return <DiscussionsListPaneState footer={props.footer}><SurfaceStateCard
-        testID="session-conversations-unavailable"
-        kind="unavailable"
-        title={t('session.collaboration.discussion.unavailable')}
-        reason={unavailableReason ?? t('session.collaboration.discussion.bindingUnavailable')}
-    /></DiscussionsListPaneState>;
-    return <DiscussionsListReady address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
+    if (unavailableReason || !binding) return <>
+        <PhonePageBackLine control={ownPageBack} />
+        <DiscussionsListPaneState footer={props.footer}><SurfaceStateCard
+            testID="session-conversations-unavailable"
+            kind="unavailable"
+            title={t('session.collaboration.discussion.unavailable')}
+            reason={unavailableReason ?? t('session.collaboration.discussion.bindingUnavailable')}
+        /></DiscussionsListPaneState>
+    </>;
+    return <DiscussionsListReady pageBack={ownPageBack} address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
 }
 
 /** A whole-list state in the pane: the state, and the host's footer still in reach below it. */
@@ -234,10 +241,10 @@ function DiscussionsListReady(props: Readonly<{
     presentation: DiscussionsListPresentation;
     surface: 'plane' | 'page';
     footer: React.ReactElement | null;
+    pageBack: NavigationBackControl | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const column = props.presentation === 'column';
-    const pageBack = usePhoneDestinationBack('discussions-column:back');
     const statusWords = useSetting('sessionListStatusWords');
     const presented = useLayoutPresentationActive();
     const focused = useIsFocused();
@@ -601,7 +608,7 @@ function DiscussionsListReady(props: Readonly<{
             <CollectionList
                 testID="discussions-column"
                 surface={props.surface}
-                pageBack={props.surface === 'page' ? pageBack : null}
+                pageBack={props.pageBack}
                 title={t('session.collaboration.discussion.title')}
                 // The title names the space and opens its menu (R9, the Sessions title chevron).
                 titleControl={spaceHeader.titleControl}

@@ -43,8 +43,9 @@ describe('resolveSessionViewHeaderProps workspace sync on Android', () => {
             workspaceSyncAttention: { conflictedLinkCount: 2, unknownLinkCount: 0 },
             onOpenWorkspaceSyncConflicts: () => {},
         });
-        const row = result.rightElement as React.ReactElement<{ children?: React.ReactNode; style?: { gap?: number } }>;
-        const rowGap = row.props.style?.gap ?? 0;
+        const row = result.rightElement as React.ReactElement<{ children?: React.ReactNode }>;
+        // Under a finger the actions stand one touch target apart: Android's 48 less the 32 action square.
+        const rowGap = 48 - 32;
         const conflictButton = React.Children.toArray(
             row.props.children,
         ).find((child) => React.isValidElement<{ accessibilityLabel?: string }>(child)

@@ -5,11 +5,12 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { Href } from 'expo-router';
 
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
-import { DefaultBackButton } from '@/components/navigation/Header';
+import { BACK_GLYPH_INK_INSET_PX, DefaultBackButton } from '@/components/navigation/Header';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { NavigationBackControl } from './NavigationBackChrome';
+import { useChromeSafeAreaInsets } from './useChromeSafeAreaInsets';
 
 function PageBackControl(props: Readonly<{ style: React.ComponentProps<NavigationBackControl>['style']; testID: string; onBackRef: React.RefObject<() => void> }>) {
     const { theme } = useUnistyles();
@@ -48,13 +49,13 @@ export function usePhoneDestinationBack(testID: string, fallbackHref: Href = '/'
     return phone ? control : null;
 }
 
-const backLineStyles = StyleSheet.create((theme) => ({
-    // The same line a pushed page's bar gives its Back: the glyph on the page's edge, its target past it.
+const backLineStyles = StyleSheet.create(() => ({
+    // The same line a pushed page's bar gives its Back: the chevron's ink on the page's text edge, its target past it.
     line: {
         flexDirection: 'row',
         alignItems: 'center',
         height: HAPPIER_PAGE_METRICS.paneHeaderUnderNativeChromeHeightPx,
-        paddingLeft: theme.space.s16,
+        paddingLeft: HAPPIER_PAGE_METRICS.pageTextInsetPx - BACK_GLYPH_INK_INSET_PX,
     },
 }));
 
@@ -62,4 +63,14 @@ const backLineStyles = StyleSheet.create((theme) => ({
 export function PhoneDestinationBackLine(props: Readonly<{ control: NavigationBackControl | null }>) {
     const Control = props.control;
     return Control ? <Control style={backLineStyles.line} /> : null;
+}
+
+/**
+ * The Back line of a whole phone page with no native bar above it (Discussions, Boards): it stands under the
+ * status bar, in every state the page shows (its list, or a whole-page state in the list's place).
+ */
+export function PhonePageBackLine(props: Readonly<{ control: NavigationBackControl | null }>) {
+    const topInset = useChromeSafeAreaInsets().top;
+    if (!props.control) return null;
+    return <View style={{ paddingTop: topInset }}><PhoneDestinationBackLine control={props.control} /></View>;
 }

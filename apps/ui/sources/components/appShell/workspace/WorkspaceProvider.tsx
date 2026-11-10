@@ -596,7 +596,11 @@ export function WorkspaceProvider(props: Readonly<{
             return true;
         }
         if (!isCurrentUiOwner() || !latest.current.hostsRoute
-            || !resolveDestinationRefFromHref(latest.current.catalog, href)) return false;
+            || !resolveDestinationRefFromHref(latest.current.catalog, href)) {
+            // The main tabs' shared root is no workspace section: selecting it leaves the one the person was in.
+            if (options?.section && href.split(/[?#]/, 1)[0] === '/') runtime.adapter.clearSection();
+            return false;
+        }
         const presented = requestAppWindowOpen(href);
         if (presented) {
             fireAndForget(presented.then(result => { if (result.ok) options?.onOpened?.(); }), { tag: 'Workspace.windowNavigation' });

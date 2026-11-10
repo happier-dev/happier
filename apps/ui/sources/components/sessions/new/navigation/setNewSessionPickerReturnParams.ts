@@ -78,7 +78,25 @@ function isRouteParamValue(value: unknown): value is NewSessionRouteParamValue {
 }
 
 function routeIsNestedNewSessionPicker(routeName: string, routePath: string): boolean {
-    return routeName.includes('/new/pick') || routeName.includes('(app)/new/pick') || routePath.startsWith('/new/pick');
+    return isNewSessionPickerSubflowPath(routeName) || isNewSessionPickerSubflowPath(routePath);
+}
+
+export function isNewSessionPickerSubflowPath(pathname: string): boolean {
+    const path = `/${pathname.replace(/^\/?\(app\)\//, '').replace(/^\/+/, '')}`;
+    return path.startsWith('/new/pick/') || path === '/settings/machines/add' || path.startsWith('/settings/machines/add/');
+}
+
+export function hasNewSessionPickerContinuation(params: Readonly<Record<string, unknown>>): boolean {
+    return isNonEmptyString(params.draftId) || isNonEmptyString(params.newSessionHostDraftId);
+}
+
+/** Subflows carry the existing draft context; their own route fields win. */
+export function buildNewSessionPickerSubflowHref(href: string, currentParams: Readonly<Record<string, unknown>>, routeParams: RouteParams = {}) {
+    const context: RouteParams = hasNewSessionPickerContinuation(currentParams) ? pickNewSessionRouteParams(currentParams) : {};
+    // Add's `path` names a connection way, not the composer's folder alias.
+    delete context.path;
+    const [pathname = href, query] = href.split('?');
+    return { pathname, params: { ...context, ...Object.fromEntries(new URLSearchParams(query)), ...routeParams } };
 }
 
 function routeHasExplicitDescriptor(route: RouteLike | null | undefined): boolean {
@@ -99,6 +117,8 @@ function routeLooksLikeNewSession(route: RouteLike | null | undefined): boolean 
 
     const params = route.params;
     if (!params || typeof params !== 'object') return false;
+    if (isNonEmptyString((params as UnknownRouteParams).newSessionHostDraftId)) return true;
+    if (name || path) return false;
     for (const key of Object.keys(params)) {
         if (NEW_SESSION_PARAM_KEYS.has(key)) return true;
     }
@@ -263,4 +283,21 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
         params: normalizeNewSessionRouteParams(mergedRawParams),
     });
     return 'replace';
+}
+
+/** Apply once, then leave every pushed step of this picker continuation. */
+export function completeNewSessionPickerReturn(params: Parameters<typeof setNewSessionPickerReturnParams>[0]): 'dispatch' | 'replace' {
+    const result = setNewSessionPickerReturnParams(params);
+    if (result !== 'dispatch') return result;
+    const state = params.navigation.getState();
+    const routes = state?.routes ?? [];
+    const index = state?.index ?? routes.length - 1;
+    const key = resolveNewSessionPickerReturnRouteKey(state);
+    let target = key ? routes.findIndex(route => route.key === key) : -1;
+    if (target < 0 && isNonEmptyString(params.currentParams?.newSessionHostDraftId)) {
+        const first = routes.findIndex(route => (route.params as UnknownRouteParams | undefined)?.newSessionHostDraftId === params.currentParams?.newSessionHostDraftId);
+        target = first - 1;
+    }
+    if (target >= 0 && index > target) params.navigation.dispatch({ type: 'POP', payload: { count: index - target } });
+    return result;
 }

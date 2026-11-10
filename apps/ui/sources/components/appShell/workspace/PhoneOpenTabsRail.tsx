@@ -33,9 +33,9 @@ type RailItem = DocumentTabItem & Readonly<{
 }>;
 
 const styles = StyleSheet.create((theme) => ({
+    // The strip keeps a finger's room above and below its pills inside its own viewport (44 pt tab targets).
     root: {
-        paddingTop: theme.space.s2,
-        paddingBottom: theme.space.s8,
+        paddingBottom: theme.space.s2,
     },
     synced: {
         flexDirection: 'row',

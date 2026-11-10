@@ -1278,8 +1278,10 @@ describe('SessionHeaderActionMenu handoff', () => {
         expect(area.drawn).toEqual({ width: SESSION_HEADER_ACTION_SIZE_PX, height: SESSION_HEADER_ACTION_SIZE_PX });
         expect(area.height).toBeGreaterThanOrEqual(48);
       }
-      // The actual header has a six-point gap; each neighbour owns half.
-      expect(hitAreaOverlap(directArea, menuArea, { axis: 'horizontal', gap: 6 })).toBe(0);
+      // Under a finger the header stands its actions one touch target apart (48 on Android); each neighbour owns half the gap.
+      const gap = 48 - SESSION_HEADER_ACTION_SIZE_PX;
+      expect(hitAreaOverlap(directArea, menuArea, { axis: 'horizontal', gap })).toBe(0);
+      expect(directArea.width).toBe(48);
     } finally {
       (Platform as { OS: string }).OS = previousPlatform;
     }

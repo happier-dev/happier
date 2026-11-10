@@ -18,6 +18,7 @@ import { Typography } from '@/constants/Typography';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { BACK_INK_ON_EDGE_STYLE } from '@/components/navigation/Header';
 import { Text } from '@/components/ui/text/Text';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
@@ -172,7 +173,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     // history, so the identity starts on the same edge however the page was opened (DESIGN-9 P12).
     const publishesBack = Boolean(setChromeBack && chromeShowsTitle && BackControl && (chromeShowsBack || props.alwaysShowTitle === true || props.alwaysShowBack === true));
     const renderBack = React.useMemo(
-        () => (BackControl && !chromeShowsBack && !publishesBack ? (style: StyleProp<ViewStyle>) => <BackControl style={style} /> : null),
+        () => (BackControl && !chromeShowsBack && !publishesBack ? (style: StyleProp<ViewStyle>) => <BackControl style={[BACK_INK_ON_EDGE_STYLE, style]} /> : null),
         [BackControl, chromeShowsBack, publishesBack],
     );
     React.useEffect(() => {

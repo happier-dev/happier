@@ -113,6 +113,17 @@ describe('SessionListIdentity', () => {
         expect(normalizeSessionListIdentityDisplay(undefined)).toBe('auto');
         expect(normalizeSessionListIdentityDisplay('unrecognized')).toBe('auto');
     });
+    it('marks a Session with no known Agent with the neutral Session glyph, not a monogram of "Unknown Backend" (NATIVE-SWEEP L7)', async () => {
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const screen = await renderScreen(
+            <SessionAgentCatalogIdentityIcon agentId="" machineId={null} serverId="server-a" color="currentColor" size={14} testID="mark" />,
+        );
+        const texts = screen.tree.root.findAll(node => typeof node.type === 'string' && node.children.some(child => typeof child === 'string'))
+            .flatMap(node => node.children.filter((child): child is string => typeof child === 'string'));
+        expect(texts).not.toContain('U');
+        expect(texts).not.toContain('?');
+        expect(screen.tree.root.findAllByType(Icon)).toHaveLength(1);
+    });
     it('projects the selected provider logo with the exact Home context', async () => {
         const { SessionListIdentity } = await import('./SessionListIdentity');
         const session = createSessionFixture({

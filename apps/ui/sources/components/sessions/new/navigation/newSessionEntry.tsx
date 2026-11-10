@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { router as appRouter, type Href, type Router } from 'expo-router';
+import { useWindowDimensions } from 'react-native';
 
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSetting, useActiveServerAccountScope } from '@/sync/store/hooks';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useResolveNewSessionOrdinaryEntryRoute } from './newSessionOrdinaryEntryRoute';
 import { newSessionBackgroundLaunches } from '@/components/sessions/new/modules/newSessionBackgroundLaunches';
 import { useNewSessionEmbeddedHostState } from './useNewSessionEmbeddedHostState';
@@ -134,6 +136,17 @@ export function NewSessionShellHostProvider(props: React.PropsWithChildren) {
 }
 
 export function useNewSessionShellHost(): NewSessionShellHost | null { return React.useContext(ShellHostContext); }
+
+/**
+ * Whether the shown dock holds this screen's composer seat (L11). A phone seats the open card where the page's
+ * Session composer stands, so that composer yields while the card is shown and returns when it closes or folds:
+ * one composer on screen. A desktop card stands in its own seat under the Session composer, which stays.
+ */
+export function useNewSessionDockHoldsComposerSeat(): boolean {
+    const shell = React.useContext(ShellHostContext);
+    const { width } = useWindowDimensions();
+    return shell?.visible === true && !shell.collapsed && isMobileLayoutWidth(width);
+}
 
 export function useNewSessionPickerReturnHost(): NewSessionShellHost['returnToHost'] | null {
     return React.useContext(ShellHostContext)?.returnToHost ?? null;

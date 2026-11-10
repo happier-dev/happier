@@ -137,15 +137,40 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
     headerSubtitleStyle?: any;
 }
 
+/** The Back glyph's drawn size: the phone header's icon size (phone-system lab D1). */
+const BACK_GLYPH_SIZE_PX = 24;
+
+/**
+ * How far the Back chevron's ink starts inside its 24 px glyph box (the default family's chevron is drawn
+ * from x 8.25 of 24). A page puts Back's ink, not its box, on the line its title starts on (lab D1: ink on 18).
+ */
+export const BACK_GLYPH_INK_INSET_PX = 8;
+
+/** Where a page draws Back on its own line, this puts the chevron's ink on that line's leading edge. */
+export const BACK_INK_ON_EDGE_STYLE: ViewStyle = Object.freeze({ marginLeft: -BACK_GLYPH_INK_INSET_PX });
+
 // Default back button component; also the explicit back of a route whose stack reports no `back`.
-// The one Back of a phone's navigation bar: every page's glyph and the title after it sit on the same lines.
-export const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void; testID?: string; label?: string; accessibilityLabel?: string }> = ({ tintColor = '#000', onPress, testID, label, accessibilityLabel }) => {
+// The one Back of a phone: the Settings bar, a destination's own line and a Session's header all draw this
+// (a bare chevron, with the parent's name where the bar names it). It paints no backing; a finger reaches
+// 44 through the shared pressable's hit area, never a bigger drawn box.
+export const DefaultBackButton: React.FC<{
+    tintColor?: string;
+    onPress: () => void;
+    testID?: string;
+    label?: string;
+    accessibilityLabel?: string;
+    /** A neighbour flush after Back (an identity mark): Back's reach on that side stops at half the gap to it. */
+    trailingReachPx?: number;
+}> = ({ tintColor = '#000', onPress, testID, label, accessibilityLabel, trailingReachPx }) => {
     const styles = stylesheet;
+    const bounded = trailingReachPx !== undefined;
     return (
-        <HappierPressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID} style={styles.backButtonTarget}>
+        <HappierPressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID}
+            style={bounded ? [styles.backButtonTarget, styles.backButtonTargetBoundedTrailing] : styles.backButtonTarget}
+            {...(bounded ? { hitReach: { right: trailingReachPx } } : {})}>
             <Icon
                 name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
-                size={24}
+                size={BACK_GLYPH_SIZE_PX}
                 color={tintColor}
             />
             {label ? <Text numberOfLines={1} style={[Typography.variant('reading'), styles.backButtonLabel, { color: tintColor }]}>{label}</Text> : null}
@@ -356,6 +381,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         padding: theme.space.s8,
         margin: -theme.space.s8,
+    },
+    // The trailing side draws to the glyph and reaches only as far as the caller allows.
+    backButtonTargetBoundedTrailing: {
+        paddingRight: 0,
+        marginRight: 0,
     },
     backButtonLabel: {
         marginLeft: theme.space.s4,

@@ -14,7 +14,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_FOCUS_RING_V1, happierFocusRingStyle, isHappierFocusVisible, resolveHappierTabKeySelection, useHappierHitArea, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import type { EntityDragItemV1, EntityDragKindV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { measureWindowBounds, readWindowBounds, useEntityDragSource, useEntityDropTarget, useEntityDropTargetState, type EntityDragDropRuntime, type EntityDragInput, type WindowBounds } from '@/components/ui/treeDragDrop';
@@ -197,6 +197,16 @@ const B = DOCUMENT_TAB_BAR_METRICS;
  * padding (WCAG 2.5.8): one pixel at these metrics, never the neighbour's side of the strip gap.
  */
 const BAR_CLOSE_LEADING_REACH_PX = Math.max(0, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE - B.trailingSlotPx - B.tabPaddingEndPx);
+/**
+ * The phone rail is touched, never pointed at: every tab is at least a finger wide (a pinned mark sits
+ * centred in that slot), and the scroll viewport keeps room above and below the 30 pt pill so the tab's
+ * hit area reaches the full finger height without leaving the clip. Neighbours never share a slot: the
+ * reach is vertical only, the width is the tab's own.
+ */
+const RAIL_TOUCH_PX = HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE;
+const RAIL_TAB_REACH_PX = (RAIL_TOUCH_PX - B.tabHeightPx) / 2;
+/** The open rail tab's close takes a finger's width from its own tab (already open, so nothing is lost). */
+const RAIL_CLOSE_LEADING_REACH_PX = Math.max(0, RAIL_TOUCH_PX - B.trailingSlotPx - B.tabPaddingEndPx);
 /**
  * Room above and below the bar's tabs, inside its scroll clip, for a tab's keyboard focus ring (drawn
  * outside the tab at the shared ring's width and gap). The open tab is a flat fill, so nothing else
@@ -421,10 +431,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s6,
         paddingHorizontal: theme.space.s12,
+        paddingVertical: RAIL_TAB_REACH_PX,
     },
     railTab: {
         borderRadius: B.tabHeightPx / 2,
         borderColor: theme.colors.border.default,
+        minWidth: RAIL_TOUCH_PX,
         maxWidth: 168,
         flexShrink: 0,
     },
@@ -1017,6 +1029,7 @@ function DocumentBar<T extends DocumentTabItem>(props: Readonly<{
 
 /** The rail's scrolled-edge fade: the bar's 20. */
 const RAIL_EDGE_FADE_PX = 20;
+const RAIL_TAB_HIT_REACH = Object.freeze({ top: RAIL_TAB_REACH_PX, bottom: RAIL_TAB_REACH_PX, left: 0, right: 0 });
 
 /**
  * The phone's open-tabs rail: the bar's tabs as scrolling pills. The open tab is kept in view when it
@@ -1156,9 +1169,10 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
         : t('session.detailsPanel.closeTabA11y')}: ${tab.title}`;
     // The tab keeps its designed height under every pointer. The tabs sit flush and the scroll viewport
     // that holds them is exactly one tab tall, which clips any reach past it: the hit area is the tab.
+    // The rail's viewport keeps a finger's room above and below its pills, so a rail tab reaches into it.
     const tabHitArea = useHappierHitArea({
         restingStyle: () => [stylesheet.barTabPress, { height: props.heightPx }],
-        hitReach: 0,
+        hitReach: props.rail ? RAIL_TAB_HIT_REACH : 0,
     });
     const content = (
         <View
@@ -1166,7 +1180,7 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
             style={[
                 styles.barTab,
                 { height: props.heightPx },
-                pinned ? [styles.barTabPinned, { width: props.heightPx }] : null,
+                pinned ? [styles.barTabPinned, { width: props.rail ? RAIL_TOUCH_PX : props.heightPx }] : null,
                 props.active ? styles.barTabOpen : null,
                 hovered && !props.active ? styles.barTabHovered : null,
                 // Hover paints in and out on the hover curve; selecting a tab fills it at once.
@@ -1273,10 +1287,10 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
                                 // (+ New tab) keeps its own side of the gap. Above and below it stops at the tab
                                 // edge, where the scroll viewport clips.
                                 interactiveTargetEdgesPx={{
-                                    leading: BAR_CLOSE_LEADING_REACH_PX,
+                                    leading: props.rail ? RAIL_CLOSE_LEADING_REACH_PX : BAR_CLOSE_LEADING_REACH_PX,
                                     trailing: B.tabPaddingEndPx,
-                                    top: (props.heightPx - B.trailingSlotPx) / 2,
-                                    bottom: (props.heightPx - B.trailingSlotPx) / 2,
+                                    top: (props.heightPx - B.trailingSlotPx) / 2 + (props.rail ? RAIL_TAB_REACH_PX : 0),
+                                    bottom: (props.heightPx - B.trailingSlotPx) / 2 + (props.rail ? RAIL_TAB_REACH_PX : 0),
                                 }}
                                 iconSize={M.tabCloseGlyphPx}
                                 icon={props.unsaved && !hovered ? (
@@ -1297,7 +1311,8 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
     );
     return entitySource
         ? <DocumentEntityTab tab={tab} binding={entitySource} dropBinding={props.entityDrop} enabled={props.dragEnabled} gapPx={B.stripGapPx} first={props.first}
-            fixed={pinned && !props.rail}
+            // A rail scrolls, so every rail tab keeps its own width; a bar crushes all but its pinned marks.
+            fixed={pinned || Boolean(props.rail)}
             endMark={props.endMark}>{content}</DocumentEntityTab>
         : content;
 }
