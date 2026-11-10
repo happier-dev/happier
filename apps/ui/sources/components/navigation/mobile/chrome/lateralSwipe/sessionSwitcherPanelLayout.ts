@@ -9,8 +9,11 @@ import type { SessionSwitcherSection, SessionSwitcherSource } from '@/sync/domai
 import type { SessionSwitcherRow } from './sessionSwitcherRows';
 import type { SessionSwitcherMode } from './useSessionSwitcher';
 
-export const SESSION_SWITCHER_ROW_HEIGHT = 52;
-const HEADER_HEIGHT = 30;
+/** One row: the title line (name, status glyph, when) over one line of status or draft. */
+export const SESSION_SWITCHER_ROW_HEIGHT = 48;
+const HEADER_HEIGHT = 24;
+/** The docked panel's "Switch to" title row; the list viewport sits beneath it. */
+export const SESSION_SWITCHER_DOCKED_HEADER_HEIGHT = 44;
 const END_NOTE_HEIGHT = 60;
 /** Breathing room at the list's top and bottom, inside the panel. */
 export const SESSION_SWITCHER_LIST_INSET = 8;

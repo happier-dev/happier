@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { CockpitTabBar, type CockpitTabBarTabDefinition } from '@/components/navigation/mobile/chrome/bars/CockpitTabBar';
 import { SessionSwitcherPanel, SessionSwitcherStayPill } from '@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherPanel';
-import { layoutSessionSwitcherPanel } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherPanelLayout';
+import { layoutSessionSwitcherPanel, SESSION_SWITCHER_DOCKED_HEADER_HEIGHT } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherPanelLayout';
 import { resolveSessionSwitcherContentMotion } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherMotion';
 import type { SessionSwitcherRow } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherRows';
 import type { SessionSwitcherMode } from '@/components/navigation/mobile/chrome/lateralSwipe/useSessionSwitcher';
@@ -121,7 +121,7 @@ export function PhoneSwitcherSpecimen(props: Readonly<{ frame: string | null }>)
         mode: frame.mode, rows: frame.rows, current: CURRENT, source: frame.mode === 'up' ? 'recent' : 'list', syncOn: true,
     }), [frame]);
     const room = window.height - 44 - 90 - 8 - (frame.mode === 'up' && !frame.docked ? 72 : 0) - 132;
-    const viewportHeight = Math.max(Math.min(200, layout.contentHeight), Math.min(layout.contentHeight + (frame.docked ? 52 : 0), room));
+    const viewportHeight = Math.max(Math.min(200, layout.contentHeight), Math.min(layout.contentHeight + (frame.docked ? SESSION_SWITCHER_DOCKED_HEADER_HEIGHT : 0), room));
     const selected = frame.index >= 0 ? frame.rows[frame.index] ?? null : null;
     const recede = resolveSessionSwitcherContentMotion(frame.ghost, false);
     const sessionStyle = useAnimatedStyle(() => ({ transform: [{ translateY: recede.translateY }, { scale: recede.scale }] }));

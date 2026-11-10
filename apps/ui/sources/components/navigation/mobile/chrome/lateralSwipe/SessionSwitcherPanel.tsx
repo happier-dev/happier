@@ -17,6 +17,7 @@ import { t } from '@/text';
 
 import { resolveSessionSwitcherPanelMotion, resolveSessionSwitcherRowReveal } from './sessionSwitcherMotion';
 import {
+    SESSION_SWITCHER_DOCKED_HEADER_HEIGHT,
     SESSION_SWITCHER_ROW_HEIGHT,
     type SessionSwitcherHeading,
     type SessionSwitcherPanelLayout,
@@ -41,7 +42,6 @@ const PANEL_RADIUS = 28;
 const PANEL_PADDING = 6;
 /** The raised row overhangs the list by this much, so it reads as lifted out of it. */
 const RAISE_OVERHANG = 6;
-const DOCKED_HEADER_HEIGHT = 52;
 
 const styles = StyleSheet.create((theme) => ({
     panel: {
@@ -81,22 +81,34 @@ const styles = StyleSheet.create((theme) => ({
         width: 22,
         alignItems: 'center',
     },
+    // A docked row takes taps through a Pressable that must span the row, or the body collapses.
+    rowPress: {
+        flex: 1,
+        alignSelf: 'stretch',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s12,
+    },
     body: {
         flex: 1,
         minWidth: 0,
     },
-    title: {
-        ...Typography.variant('heading'),
-        color: theme.colors.text.primary,
-    },
-    titleUnavailable: {
-        color: theme.colors.text.tertiary,
-    },
-    statusLine: {
+    titleLine: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
-        marginTop: 1,
+    },
+    title: {
+        flexShrink: 1,
+        ...Typography.variant('heading'),
+        color: theme.colors.text.primary,
+    },
+    titleEnd: {
+        marginLeft: 'auto',
+        paddingLeft: theme.space.s8,
+    },
+    titleUnavailable: {
+        color: theme.colors.text.tertiary,
     },
     status: {
         flexShrink: 1,
@@ -147,7 +159,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s12,
     },
     dockedHeader: {
-        height: DOCKED_HEADER_HEIGHT,
+        height: SESSION_SWITCHER_DOCKED_HEADER_HEIGHT,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -215,29 +227,28 @@ const RowMark = React.memo(function RowMark(props: Readonly<{ row: SessionSwitch
     return <Icon name={row.icon ?? 'file'} size={props.size} color={theme.colors.text.secondary} />;
 });
 
+/** The row's state glyph, on the title line: a draft's pencil, work in progress, or a tone that needs you. */
+function StatusGlyph(props: Readonly<{ row: SessionSwitcherRow }>) {
+    const { theme } = useUnistyles();
+    const { row } = props;
+    if (row.draft) return <Icon name="pencil-simple" size={13} color={theme.colors.text.secondary} />;
+    if (!row.status) return null;
+    if (row.status.tone === 'working') return <ActivitySpinner size={11} color={theme.colors.text.secondary} />;
+    if (row.status.tone === 'attention' || row.status.tone === 'failed') {
+        return <StatusDot color={toneColor(row.status.tone, theme.colors)} size={7} />;
+    }
+    return null;
+}
+
+/** One line under the title: the draft being written, or what the session is doing. */
 function StatusLine(props: Readonly<{ row: SessionSwitcherRow }>) {
     const { theme } = useUnistyles();
     const { row } = props;
     if (row.draft) {
-        return (
-            <View style={styles.statusLine}>
-                <Icon name="pencil-simple" size={13} color={theme.colors.text.secondary} />
-                <Text style={styles.status} numberOfLines={1}>{t('phoneNav.switcher.draft', { text: row.draft })}</Text>
-            </View>
-        );
+        return <Text style={styles.status} numberOfLines={1}>{t('phoneNav.switcher.draft', { text: row.draft })}</Text>;
     }
     if (!row.status) return null;
-    const color = toneColor(row.status.tone, theme.colors);
-    return (
-        <View style={styles.statusLine}>
-            {row.status.tone === 'working'
-                ? <ActivitySpinner size={11} color={theme.colors.text.secondary} />
-                : row.status.tone === 'attention' || row.status.tone === 'failed'
-                    ? <StatusDot color={color} size={7} />
-                    : null}
-            <Text style={[styles.status, { color }]} numberOfLines={1}>{row.status.text}</Text>
-        </View>
-    );
+    return <Text style={[styles.status, { color: toneColor(row.status.tone, theme.colors) }]} numberOfLines={1}>{row.status.text}</Text>;
 }
 
 const SwitcherRow = React.memo(function SwitcherRow(props: Readonly<{
@@ -255,19 +266,22 @@ const SwitcherRow = React.memo(function SwitcherRow(props: Readonly<{
         <>
             <View style={styles.mark}><RowMark row={props.row} size={19} /></View>
             <View style={styles.body}>
-                <Text style={[styles.title, props.row.unavailable && styles.titleUnavailable]} numberOfLines={1}>{props.row.title}</Text>
+                <View style={styles.titleLine}>
+                    <Text style={[styles.title, props.row.unavailable && styles.titleUnavailable]} numberOfLines={1}>{props.row.title}</Text>
+                    <StatusGlyph row={props.row} />
+                    {props.here
+                        ? <View style={styles.titleEnd}><Text style={styles.here}>{t('phoneNav.switcher.here')}</Text></View>
+                        : props.row.timeLabel ? <Text style={[styles.time, styles.titleEnd]}>{props.row.timeLabel}</Text> : null}
+                </View>
                 <StatusLine row={props.row} />
             </View>
-            {props.here
-                ? <Text style={styles.here}>{t('phoneNav.switcher.here')}</Text>
-                : props.row.timeLabel ? <Text style={styles.time}>{props.row.timeLabel}</Text> : null}
         </>
     );
     return (
         <Animated.View style={[styles.row, { bottom: props.bottom }, revealStyle]} testID={SESSION_SWITCHER_ROW_TEST_ID}>
             {props.interactive ? (
                 <Pressable
-                    style={[styles.row, { position: 'relative', paddingHorizontal: 0 }]}
+                    style={styles.rowPress}
                     onPress={() => props.onPress?.(props.row)}
                     accessibilityRole="button"
                     accessibilityLabel={props.row.status ? `${props.row.title}, ${props.row.status.text}` : props.row.title}
@@ -314,7 +328,7 @@ export const SessionSwitcherPanel = React.memo(function SessionSwitcherPanel(pro
     const { ghost, lift, index, scroll, reducedMotion, layout } = props;
     const rowBottoms = layout.rowBottoms;
     const hereBottom = layout.hereBottom;
-    const chromeHeight = props.docked ? DOCKED_HEADER_HEIGHT : 0;
+    const chromeHeight = props.docked ? SESSION_SWITCHER_DOCKED_HEADER_HEIGHT : 0;
 
     const panelStyle = useAnimatedStyle(() => {
         const motion = resolveSessionSwitcherPanelMotion({ ghost: ghost.value, lift: lift.value, reducedMotion });

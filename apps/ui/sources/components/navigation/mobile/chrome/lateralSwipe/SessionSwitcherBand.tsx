@@ -40,6 +40,7 @@ import {
 } from './sessionSwitcherGesture';
 import { resolveSessionSwitcherRevealScroll } from './sessionSwitcherMotion';
 import {
+    SESSION_SWITCHER_DOCKED_HEADER_HEIGHT,
     SESSION_SWITCHER_ROW_HEIGHT,
     layoutSessionSwitcherPanel,
     type SessionSwitcherPanelLayout,
@@ -172,7 +173,7 @@ export function SessionSwitcherBand(props: Readonly<{
         const bandHeight = window.height - bandTop.value;
         const rise = mode === 'up' && !docked ? SESSION_SWITCHER_LOCK_PX * SESSION_SWITCHER_LIFT_GAIN : 0;
         const room = window.height - insets.top - bandHeight - PANEL_GAP - rise - PEEK_ROOM;
-        return Math.max(Math.min(MIN_VIEWPORT, content), Math.min(content + (docked ? 52 : 0), room));
+        return Math.max(Math.min(MIN_VIEWPORT, content), Math.min(content + (docked ? SESSION_SWITCHER_DOCKED_HEADER_HEIGHT : 0), room));
     }, [bandTop, insets.top, window.height]);
 
     const prepare = React.useCallback(() => {
@@ -235,7 +236,7 @@ export function SessionSwitcherBand(props: Readonly<{
         const height = measureViewport(mode, docked, layout.contentHeight);
         rowBottoms.value = [...layout.rowBottoms];
         contentHeight.value = layout.contentHeight;
-        viewportHeight.value = height - (docked ? 52 : 0);
+        viewportHeight.value = height - (docked ? SESSION_SWITCHER_DOCKED_HEADER_HEIGHT : 0);
         count.value = rows.length;
         reveal();
         setLocked(mode !== 'up' || docked);
