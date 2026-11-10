@@ -55,17 +55,40 @@ describe('Session visual copy through the Action', () => {
     expect(saved).toEqual([]);
     expect(confirmations).toEqual([]);
   });
-  it.each(['ui', 'agent', 'mcp'] as const)('copies the observed revision into an empty destination through %s', async surface => {
+  it.each(['ui', 'agent', 'mcp'] as const)('copies the observed revision into its current destination through %s', async surface => {
     const { executor, saved, sourceReads } = copyExecutor();
     const result = await executor.execute('session.board.item.upsert', copyInput, {
-      surface, serverId: 'home', defaultSessionId: surface === 'ui' ? 'destination' : 'source',
+      surface, serverId: 'home', defaultSessionId: 'destination',
       ...(surface === 'ui' ? { authority: 'present_user' as const } : {}),
-      ...(surface === 'ui' ? {} : { ...(surface === 'mcp' ? { sessionListAccess: 'current_session' as const } : {}),
+      ...(surface === 'ui' ? {} : { sessionListAccess: 'current_session' as const,
         actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } }) }),
     });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sessionId: 'destination', result: { itemId: 'independent-copy' } } });
     expect(saved).toEqual([visual]);
     expect(sourceReads()).toBe(1);
+  });
+
+  // Owner ruling 2026-11-10: copy sources may be cross-Session; destinations may not.
+  it.each(['agent', 'mcp'] as const)('refuses a foreign destination for current-Session %s access', async surface => {
+    const { executor, saved, confirmations } = copyExecutor();
+    const result = await executor.execute('session.board.item.upsert', copyInput, {
+      surface, serverId: 'home', defaultSessionId: 'source', sessionListAccess: 'current_session',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } }),
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'current_session_only' } });
+    expect(saved).toEqual([]);
+    expect(confirmations).toEqual([]);
+  });
+
+  it.each(['agent', 'ui'] as const)('preserves cross-Session destinations for unrestricted %s callers', async surface => {
+    const { executor, saved } = copyExecutor();
+    const result = await executor.execute('session.board.item.upsert', copyInput, {
+      surface, serverId: 'home', defaultSessionId: 'source',
+      ...(surface === 'ui' ? { authority: 'present_user' as const } : {}),
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } }),
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(saved).toEqual([visual]);
   });
 
   it('confirms the retained source network and origins, even when new HTML creation is off', async () => {

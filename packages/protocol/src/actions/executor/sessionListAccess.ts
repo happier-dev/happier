@@ -186,10 +186,11 @@ export async function resolveActionCurrentSessionScopeFailure(
   // Compact's contextual safety admission owns own-versus-other approval.
   // A current-Session default is selection, not a restriction on this control.
   if (actionId === 'session.compact' && context.surface === 'agent') return null;
-  // Copy names an explicit destination rather than the contextual current Session.
-  // Its Action reads the exact source and writes the destination through the
-  // server's existing readTranscript/editSessionRecords authority.
-  if (isSessionBoardActionIdV1(actionId) && inputRecord.copySource !== undefined) return null;
+  // Own-Session destinations already passed above. Copy may read any authorized
+  // source, but current-Session access still restricts where it writes.
+  if (isSessionBoardActionIdV1(actionId) && inputRecord.copySource !== undefined) {
+    return context.sessionListAccess === 'current_session' ? refuse('current_session_only') : null;
+  }
   if (!defaultSessionId) {
     return refuse('default_session_unavailable');
   }
