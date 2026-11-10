@@ -616,7 +616,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       return apiFailure('plugins.install', 'present_user_required');
     });
     await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
-      const signedRoot = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, externalActionClient: true });
+      const signedRoot = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl });
       await expect(signedRoot.execute('plugins.install', { source: '/workspace/plugin' },
         { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { installed: true } });
       expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {

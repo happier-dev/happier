@@ -23,6 +23,11 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionDeps } from '../createCliActionDeps';
+import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import * as daemonPublication from '@/daemon/multiDaemon';
+import * as daemonHttp from '@/daemon/controlHttp';
+import { createDaemonControlApp } from '@/daemon/controlServer';
 import tweetnacl from 'tweetnacl';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { computeExternalActionRequestEnvelopeDigestV1, openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
@@ -36,6 +41,8 @@ import { createCliApprovalsArtifactStore } from './artifactStore';
 // binding, approval parser, and lifecycle transition owner remain in the path.
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), defaults: {} }));
 vi.mock('axios', () => ({ default: http }));
+// Process startup is outside this composed in-process daemon fixture.
+vi.mock('@/daemon/ensureDaemon', () => ({ ensureDaemonRunningForSessionCommand: async () => undefined }));
 vi.mock('@/configuration', () => ({ configuration: {
   apiServerUrl: 'http://plugin-approval.invalid', activeServerId: 'home-1',
   activeServerDir: '/tmp/happier-plugin-approval-test',
@@ -124,6 +131,82 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+  it('installs a non-dev archive from a saved Home through daemon review and one approval without a Machine flag', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-saved-home-install-'));
+    const happyHomeDir = join(root, 'home');
+    const source = join(root, 'plugin.tgz');
+    const pluginId = 'acme.saved-home-review';
+    await mkdir(happyHomeDir, { recursive: true });
+    await writeFile(source, await createTestNpmTarball([
+      { name: 'package/package.json', body: JSON.stringify({ name: '@acme/saved-home-review', version: '1.0.0',
+        keywords: ['happier-plugin'], files: ['.happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' } }) },
+      { name: 'package/.happier-plugin/plugin.json', body: JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, version: '1.0.0', entrypoints: undefined, engines: undefined,
+      })) },
+    ]));
+    const storedCredentials: StoredCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1',
+      tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' };
+    const store = createCliApprovalsArtifactStore({ credentials: storedCredentials, getAccountEncryptionMode: async () => 'plain' });
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const origin = { machineId: 'machine-1', serverIdentityId: 'home-identity' };
+    const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController, staleCandidateCleanup: 'disabled',
+      approvalStore: store, connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      managedResourcePreflight: { credentials: storedCredentials, serverUrl: 'http://plugin-approval.invalid',
+        homeId: origin.serverIdentityId, controller: { machineId: origin.machineId, installationId: 'installation-1' } },
+      resolveCurrentMachineExecutionOriginContext: async () => origin });
+    const replayExecutor = createActionExecutor({ ...createCliActionDeps({ token: storedCredentials.token,
+      credentials: storedCredentials, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'home-1',
+      serverHttpBaseUrl: 'http://plugin-approval.invalid', happyHomeDir, pluginChangeService: owner.changeService }), ...store,
+      isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-1',
+        ...origin, serverId: 'home-1', resolveCurrentMachineExecutionOriginContext: async () => origin,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: storedCredentials }),
+        isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }) }) });
+    const daemonExecutor = createCliActionExecutorFromCredentials({ credentials: storedCredentials,
+      serverId: 'home-1', serverApiUrl: 'http://plugin-approval.invalid', serverIdentityId: origin.serverIdentityId,
+      machineId: origin.machineId, happyHomeDir, pluginChangeService: owner.changeService,
+      pluginActionExecutionOwner: 'current_process' });
+    // OS publication and local HTTP are the process boundaries. Keep CLI routing,
+    // daemon ingress, candidate preparation, Artifact custody and execution real.
+    const publication = vi.spyOn(daemonPublication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue({
+      pid: process.pid, httpPort: 1, controlToken: 'test-control', machineId: origin.machineId, accountId: 'account-1' });
+    const app = createDaemonControlApp({ machineId: origin.machineId, controlToken: 'test-control',
+      getChildren: () => [], stopSession: async () => { throw new Error('Unexpected stop'); }, spawnSession: async () => { throw new Error('Unexpected spawn'); },
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, pluginChangeService: owner.changeService,
+      externalActionApi: { currentServerId: 'home-1', currentAccountId: 'account-1', executor: daemonExecutor,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: storedCredentials }),
+        resolvePluginExecutionOriginContext: async () => origin, resolveInstallationId: () => 'installation-1',
+        verifyPat: async () => { throw new Error('Unexpected PAT'); } } });
+    const control = vi.spyOn(daemonHttp, 'daemonPost').mockImplementation(async (path, body) => {
+      const response = await app.inject({ method: 'POST', url: path,
+        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body === undefined ? {} : { payload: body }) });
+      return response.json();
+    });
+    try {
+      const cli = createCliActionExecutorFromCredentials({ credentials: storedCredentials, serverId: 'home-1',
+        serverApiUrl: 'http://plugin-approval.invalid', serverIdentityId: origin.serverIdentityId,
+        actionsSettingsProvider: createActionSettingsProvider() });
+      const started = await cli.execute('plugins.install', { kind: 'archive', path: source }, {
+        surface: 'cli', authority: 'present_user', actionRequestId: 'saved-home-install' });
+      expect(started, JSON.stringify(started)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      if (!started.ok) throw new Error('Install did not reach review');
+      const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(started.result);
+      expect(await store.approvalsGet({ artifactId, serverId: 'home-1' })).toMatchObject({ status: 'open',
+        executionOriginV1: { ...origin, accountId: 'account-1', target: { kind: 'machine', machineId: origin.machineId } } });
+      const decision = () => replayExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account-1',
+        serverId: 'home-1', serverIdentityId: origin.serverIdentityId });
+      expect(await decision()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+      expect(await decision()).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(control).toHaveBeenCalledTimes(1);
+    } finally {
+      control.mockRestore(); publication.mockRestore();
+      await app.close();
+      await owner.changeService.shutdown(); await reloadController.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it.each([['install', 'plain'], ['install', 'e2ee'], ['superseded', 'plain'], ['changed_target', 'plain']] as const)(
     'binds UI-created approval Artifacts to each real Machine candidate: %s in %s', async (outcome, mode) => {
       accountMode = mode;

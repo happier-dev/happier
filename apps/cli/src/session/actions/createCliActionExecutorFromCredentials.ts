@@ -98,6 +98,7 @@ import { createCliActionExecutor } from './createCliActionExecutor';
 import { isControllerDeploymentMutationAction } from './createCliActionDeps';
 import { consumeDeferredCliApprovalResult, isOriginalCliApprovalPreservedAtAccount, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
 import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
+import { executeOriginalAccountCliApprovalRequest } from './approvals/originalAccountRequest';
 import { readControllerDeploymentDispatch } from './controllerDeploymentDispatch';
 import { createCredentialedWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { readWorkflowActionPolicyContext } from '@/daemon/workflows/workflowActionContext';
@@ -1773,9 +1774,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const managedMachineDaemonIngress = requiresManagedMachineDaemonIngress(spec.id, executionPlacement, controlControllerTarget);
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && executionPlacement === 'client';
+      const declaredDaemonIngress = spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true;
       const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput)
-        || spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true)
+        || declaredDaemonIngress)
         && (executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
         ? resolveSelectedExternalActionMachineTarget({ actionId: spec.id, rawInput: admittedInput,
           target: context.externalActionTarget ?? controlControllerTarget ?? undefined, fallbackMachineId: params.machineId }) : null;
@@ -1866,7 +1868,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // A semantic Machine selector needs the same admitted delivery as an
       // outer CLI selector, even for Machine-placed friendly commands.
       const usesDaemonIngress = params.externalActionClient || managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
-        || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined || liveResultCustody || requireDaemonIngress;
+        || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined || liveResultCustody || requireDaemonIngress || declaredDaemonIngress;
       const originalDaemonTarget = usesDaemonIngress && originalCliCaller
         ? await (await import('@/daemon/multiDaemon')).resolveLiveDaemonControlTargetForServer(
           fixedServerId ?? approvalServerId,
@@ -1977,8 +1979,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                     return actionFailure('approval_context_unavailable');
                   }
                 }
-                const requester = await dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
-                  requestId: context.actionRequestId ?? randomUUID(), target, credentials,
+                const requestId = context.actionRequestId ?? randomUUID();
+                const requesterTarget = target;
+                const run = (requestSignal?: AbortSignal) => dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
+                  requestId, target: requesterTarget, credentials,
                   serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
                   invocation: { caller: { kind: 'host' }, surface: 'cli',
                     // This original-host branch has stored CLI credentials. Resolve
@@ -1991,7 +1995,16 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   ...(originalContext.authority ? { authority: originalContext.authority } : {}),
                   ...(params.onRequesterSessionCredentialDisclosure
                     ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-                  ...(signal ? { signal } : {}) });
+                  ...(requestSignal ? { signal: requestSignal } : {}) });
+                const requester = spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody === 'live_only'
+                  && params.onApprovalRequested && accountId && context.serverIdentityId
+                  ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,
+                    target: requesterTarget, accountId, homeId: context.serverIdentityId,
+                    token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
+                    onApprovalRequested: params.onApprovalRequested,
+                    execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+                    context: signal ? { ...context, signal } : context, run })
+                  : await run(signal);
                 if (requester) return requester;
               } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
             }
