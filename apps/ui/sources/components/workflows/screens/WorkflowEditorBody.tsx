@@ -125,7 +125,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { formatWorkflowIssueText } from '../editor/workflowIssueText';
-import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX } from '../editor/workflowEditorStyles';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -1775,7 +1775,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     pointerEvents: 'none' as const,
                 } : {})}
             >
-                {blockList}
+                {/* A phone's document has no header mark to hang under: its numbers take the mark's place. */}
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
                 {/* Icon controls on a phone too: the change's label is their accessible name (DESIGN-6 N20). */}
                 {compactLayout ? historyIcons : null}
             </View>

@@ -33,7 +33,7 @@ import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/w
 import { WorkflowNumberField } from './WorkflowNumberField';
 import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
 import { WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 type LoopBlock = Extract<WorkflowBlock, Readonly<{ kind: 'loop' }>>;
@@ -351,6 +351,7 @@ export function WorkflowLoopEditor(props: Readonly<{
     renderContinuation?: () => React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const grid = useWorkflowDocumentGridStyles();
     const { block, testIDPrefix } = props;
     const { theme } = useUnistyles();
     const displayName = workflowBlockReferenceLabel(block);
@@ -365,7 +366,7 @@ export function WorkflowLoopEditor(props: Readonly<{
     const roundLimit = repetition.kind === 'until' || repetition.kind === 'evaluate' ? formatWorkflowRoundLimit(repetition.maxIterations) : null;
     const turnSentence = roundRule === null ? null : roundLimit === null ? roundRule : `${roundRule} · ${roundLimit}`;
     const turn = turnSentence === null ? null : (
-        <View testID={`${idPrefix}-turn`} style={workflowEditorStyles.laneTurn}>
+        <View testID={`${idPrefix}-turn`} style={grid.laneTurn}>
             <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                 style={workflowEditorStyles.laneTurnMark}>
                 <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} />
@@ -423,7 +424,7 @@ export function WorkflowLoopEditor(props: Readonly<{
                         {/* The deciding step sits on its lane's grid like a listed block: ordinal in the gutter. */}
                         <View>
                             <WorkflowSpineSegment reach="end" />
-                            <View style={workflowEditorStyles.blockColumn}>{props.renderContinuation?.()}</View>
+                            <View style={grid.blockColumn}>{props.renderContinuation?.()}</View>
                         </View>
                     </WorkflowContainerLane>
                 ) : null}

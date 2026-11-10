@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { resolveAgentInputPanelLayoutStyle } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
@@ -769,3 +770,41 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexBasis: 'auto',
     },
 }));
+
+/**
+ * The document's grid on a phone (owner 25: the composer started far right of its number). A phone page
+ * draws no header mark, so a step's number stands where that mark would and its name follows at the
+ * header's own mark-to-title gap; the wide grid hangs numbers under the header's mark. The editor
+ * publishes which grid its document uses, and every grid-dependent row reads it through
+ * `useWorkflowDocumentGridStyles`, so names, lanes and the spine move together.
+ */
+export type WorkflowDocumentGrid = 'wide' | 'compact';
+export const WorkflowDocumentGridContext = React.createContext<WorkflowDocumentGrid>('wide');
+
+const COMPACT_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
+const COMPACT_GUTTER_PX = ORDINAL_SIZE + COMPACT_ORDINAL_GAP_PX;
+const COMPACT_LANE_LEFT_PX = -(COMPACT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2;
+
+const compactDocumentGrid = StyleSheet.create({
+    blockColumn: { paddingLeft: COMPACT_GUTTER_PX },
+    blockGap: { paddingLeft: COMPACT_GUTTER_PX },
+    listEnd: { paddingLeft: COMPACT_GUTTER_PX },
+    listNote: { paddingLeft: COMPACT_GUTTER_PX },
+    laneEndInserter: { paddingLeft: COMPACT_GUTTER_PX },
+    laneLabelRow: { paddingLeft: COMPACT_GUTTER_PX },
+    laneTurn: { paddingLeft: COMPACT_GUTTER_PX },
+    laneFork: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX - LANE_BEND },
+    laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX + SPINE_WIDTH },
+    heading: { gap: COMPACT_ORDINAL_GAP_PX, marginLeft: -COMPACT_GUTTER_PX },
+});
+type WorkflowDocumentGridKey = keyof typeof compactDocumentGrid;
+const GRID_KEYS = Object.keys(compactDocumentGrid) as WorkflowDocumentGridKey[];
+const WIDE_GRID_STYLES = Object.fromEntries(GRID_KEYS.map((key) => [key, workflowEditorStyles[key]])) as
+    Readonly<Record<WorkflowDocumentGridKey, (typeof workflowEditorStyles)[WorkflowDocumentGridKey]>>;
+const COMPACT_GRID_STYLES = Object.fromEntries(GRID_KEYS.map((key) => [key, [workflowEditorStyles[key], compactDocumentGrid[key]]])) as
+    Readonly<Record<WorkflowDocumentGridKey, readonly [(typeof workflowEditorStyles)[WorkflowDocumentGridKey], (typeof compactDocumentGrid)[WorkflowDocumentGridKey]]>>;
+
+/** The grid-dependent document styles for the grid the editor publishes (stable per grid). */
+export function useWorkflowDocumentGridStyles(): typeof WIDE_GRID_STYLES | typeof COMPACT_GRID_STYLES {
+    return React.useContext(WorkflowDocumentGridContext) === 'compact' ? COMPACT_GRID_STYLES : WIDE_GRID_STYLES;
+}

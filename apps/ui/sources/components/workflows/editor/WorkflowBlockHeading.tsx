@@ -10,7 +10,7 @@ import type { WorkflowUnnamedHeading } from '@/sync/domains/workflows/workflowBl
 import { t } from '@/text';
 
 import { WorkflowBlockActionsMenu, type WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 
 export type WorkflowBlockNameEditor = InlineTextEditor;
 
@@ -70,6 +70,7 @@ export function WorkflowBlockHeading(props: Readonly<{
     testID: string;
     actionsTestID: string;
 }>): React.ReactElement {
+    const grid = useWorkflowDocumentGridStyles();
     const { theme } = useUnistyles();
     // A container's name (or a card's title) is sized to its words so its meta follows it ("Side by
     // side · 3 lanes", "Notify me · Happier"); a leaf's name takes the line, as a field does.
@@ -121,7 +122,7 @@ export function WorkflowBlockHeading(props: Readonly<{
     const source = props.sourceLabel === undefined ? null
         : <Text testID={`${props.testID}-source`} numberOfLines={1} style={workflowEditorStyles.headingMeta}>{'· '}{props.sourceLabel}</Text>;
     return (
-        <View style={workflowEditorStyles.heading}>
+        <View style={grid.heading}>
             <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.ordinalColumn]}>
                 {numbered ? (
                     <View

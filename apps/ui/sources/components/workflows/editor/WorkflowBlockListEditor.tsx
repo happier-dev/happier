@@ -95,7 +95,7 @@ import {
 } from './workflowRowEngagement';
 import { duplicateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
-  workflowEditorStyles,
+  useWorkflowDocumentGridStyles, workflowEditorStyles,
 } from './workflowEditorStyles';
 import type { WorkflowDocumentPresentation } from './workflowDocumentPresentation';
 import { WorkflowAgentChangeTint } from './WorkflowAgentChangeTint';
@@ -209,6 +209,7 @@ export type WorkflowBlockListEditorProps = Readonly<{
 export function WorkflowBlockListEditor(
   props: WorkflowBlockListEditorProps,
 ): React.ReactElement {
+  const grid = useWorkflowDocumentGridStyles();
   const {
     draft,
     list,
@@ -378,13 +379,13 @@ export function WorkflowBlockListEditor(
           <Text
             style={[
               workflowEditorStyles.metaText,
-              workflowEditorStyles.listNote,
+              grid.listNote,
             ]}
           >
             {props.presentation.note}
           </Text>
         ) : (
-          <View style={workflowEditorStyles.listNote}>
+          <View style={grid.listNote}>
             {props.presentation.note}
           </View>
         )
@@ -495,7 +496,7 @@ export function WorkflowBlockListEditor(
             initiallyVisible={summary === null}
             placeholder={(
               <>
-                {leadingGap ? <View style={workflowEditorStyles.blockGap} /> : null}
+                {leadingGap ? <View style={grid.blockGap} /> : null}
                 <View style={{ minHeight: WORKFLOW_SUMMARY_ROW_ESTIMATE[block.kind] }} />
               </>
             )}
@@ -509,7 +510,7 @@ export function WorkflowBlockListEditor(
       list.kind === 'root' &&
       !(props.rootAddRow === false && props.onUseExample === undefined) ? (
         <View
-          style={blocks.length === 0 ? undefined : workflowEditorStyles.listEnd}
+          style={blocks.length === 0 ? undefined : grid.listEnd}
         >
           <WorkflowAddBlockMenu
             composerScope={composerScope}
@@ -591,6 +592,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
     resolveActionFieldOptions?: ResolveSessionActionFieldOptions;
   }>,
 ): React.ReactElement {
+  const grid = useWorkflowDocumentGridStyles();
   const props = row.owner.current;
   const draft = row.definition ?? props.draft;
   const validation = row.validation ?? props.validation;
@@ -831,7 +833,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       {row.leadingGap ? (
         <View
           testID={`${testIDPrefix}-gap-${block.id}`}
-          style={workflowEditorStyles.blockGap}
+          style={grid.blockGap}
           {...reach}
         >
           <WorkflowRunWhenCaption
@@ -893,7 +895,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         ) : null}
         {/* The block and its condition line, one column: a sibling here must
                             never take width from the block's card. A container draws the rail. */}
-        <View style={workflowEditorStyles.blockColumn}>
+        <View style={grid.blockColumn}>
           {row.summary !== null &&
           (block.kind === 'step' || block.kind === 'wait') ? (
             <SummaryRowFrame
@@ -1496,7 +1498,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       </View>
       {/* A nested list's last gap appends there; the root's end row adds after its last block. */}
       {editable && index === blocks.length - 1 && list.kind !== 'root' ? (
-        <View style={workflowEditorStyles.laneEndInserter}>
+        <View style={grid.laneEndInserter}>
         <WorkflowAddBlockMenu
           composerScope={composerScope}
           variant="inserter"

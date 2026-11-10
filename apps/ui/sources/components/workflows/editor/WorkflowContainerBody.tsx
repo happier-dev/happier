@@ -9,7 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/InlineTextField';
 
 import { WorkflowBlockActionsMenu, type WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 
 /** A container's body (lab `.uwe-cb`): its lanes one ordinal column in, each forking off its spine. */
 export function WorkflowContainerBody(props: Readonly<{
@@ -71,6 +71,7 @@ export function WorkflowContainerLane(props: Readonly<{
     /** What ends the lane before it joins back (a loop's stop rule and round limit). */
     footer?: React.ReactNode;
 }>): React.ReactElement {
+    const grid = useWorkflowDocumentGridStyles();
     const { theme } = useUnistyles();
     // An editable lane name is sized to its words, so its caret sits right after it (DESIGN-6 M1).
     const [nameWidth, setNameWidth] = React.useState<number | null>(null);
@@ -102,7 +103,7 @@ export function WorkflowContainerLane(props: Readonly<{
             );
     return (
         <View accessibilityRole="none">
-            <View style={workflowEditorStyles.laneLabelRow}>
+            <View style={grid.laneLabelRow}>
                 {props.nameEditor === undefined ? null : (
                     <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                         style={workflowEditorStyles.headingNameMeasure}>
@@ -117,7 +118,7 @@ export function WorkflowContainerLane(props: Readonly<{
                     pointerEvents="none"
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
-                    style={workflowEditorStyles.laneFork}
+                    style={grid.laneFork}
                 />
                 <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                     style={workflowEditorStyles.laneLead} />
@@ -132,7 +133,7 @@ export function WorkflowContainerLane(props: Readonly<{
             {props.footer}
             <View testID={`${props.labelTestID}-join`} pointerEvents="none" accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" style={workflowEditorStyles.laneJoin}>
-                <View style={workflowEditorStyles.laneJoinBend} />
+                <View style={grid.laneJoinBend} />
             </View>
         </View>
     );
