@@ -4,6 +4,7 @@ export const MUSE_MSP_DECISION_PLAYBACK = String.raw`
 function createDecisionPlayback(recording, scenario) {
     const slices = {
         'approval-abort': { turnStart: 11, decide: 24, terminal: 44, kind: 'approval' },
+        'approval-late-child': { turnStart: 7, decide: 37, terminal: 47, kind: 'approval' },
         'approval-allow-once': { turnStart: 12, decide: 25, terminal: 48, kind: 'approval' },
         // Explicit cross-capture composition: advanced startup plus lifecycle's
         // first approval. Persistence and the alternate outcome are synthetic.
@@ -24,6 +25,7 @@ function createDecisionPlayback(recording, scenario) {
     let decisionCount = 0;
     let released = false;
     let persistentChoice;
+    let pendingAcknowledgements = [];
     const policyPath = process.env.MUSE_TEST_POLICY_PATH;
     function remap(value) {
         if (typeof value === 'string') return identities.get(value) || value;
@@ -47,7 +49,8 @@ function createDecisionPlayback(recording, scenario) {
         });
     }
     return {
-        inspect() { return { receiptCount, decisionCount, released }; },
+        inspect() { return { receiptCount, decisionCount, released, decisionAckPending: pendingAcknowledgements.length > 0 }; },
+        releaseAcknowledgements() { const messages = pendingAcknowledgements; pendingAcknowledgements = []; return messages; },
         observe(message) {
             if (selected.kind === 'approval' && message.method === 'approval/updated'
                 && message.params.approvalId === expected.approvalId) {
@@ -99,21 +102,33 @@ function createDecisionPlayback(recording, scenario) {
             } else {
                 if (params.userInputId !== expected.userInputId) return refuse(message, -32055, 'userInputNotFound');
                 if (released) return refuse(message, -32056, 'userInputAlreadySettled');
-                const answer = params.answers?.[0];
-                if (!Array.isArray(params.answers) || params.answers.length !== 1 || answer?.questionId !== expected.answers[0].questionId
-                    || !request.params.questions[0].options.some(option => option.label === answer.selectedLabel)
-                    || (typeof answer.note === 'string' && Array.from(answer.note).length > 500)
-                    || (typeof answer.freeText === 'string' && Array.from(answer.freeText).length > 500)) {
+                if (!Array.isArray(params.answers) || params.answers.length !== expected.answers.length) {
                     return refuse(message, -32057, 'userInputAnswerInvalid');
                 }
-                if (answer.selectedLabel !== expected.answers[0].selectedLabel || answer.freeText !== undefined || answer.selectedLabels !== undefined) {
-                    return unsupportedVector(message);
+                for (const answer of params.answers) {
+                    const question = request.params.questions.find(question => question.id === answer.questionId);
+                    const expectedAnswer = expected.answers.find(expectedAnswer => expectedAnswer.questionId === answer.questionId);
+                    const selectedLabels = answer.selectedLabels ?? (answer.selectedLabel === undefined ? [] : [answer.selectedLabel]);
+                    if (!question || !expectedAnswer || !Array.isArray(selectedLabels)
+                        || selectedLabels.some(label => !question.options.some(option => option.label === label))
+                        || (typeof answer.note === 'string' && Array.from(answer.note).length > 500)
+                        || (typeof answer.freeText === 'string' && Array.from(answer.freeText).length > 500)) {
+                        return refuse(message, -32057, 'userInputAnswerInvalid');
+                    }
+                    for (const field of ['selectedLabel', 'selectedLabels', 'freeText', 'note']) {
+                        if (JSON.stringify(answer[field]) !== JSON.stringify(expectedAnswer[field])) return unsupportedVector(message);
+                    }
                 }
             }
             identities.set(expected.commandId, params.commandId);
             decisionCount++;
             released = true;
-            return capturedRange(selected.decide + 1, selected.terminal + 1, recordedDecision.id, message.id);
+            const received = capturedRange(selected.decide + 1, selected.terminal + 1, recordedDecision.id, message.id);
+            if (process.env.MUSE_TEST_DECISION_ACK_PATH) {
+                pendingAcknowledgements = received.filter(value => !value.method && value.id === message.id);
+                return received.filter(value => value.method || value.id !== message.id);
+            }
+            return received;
         },
     };
 }

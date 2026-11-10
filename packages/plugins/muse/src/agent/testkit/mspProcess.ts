@@ -34,6 +34,8 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
     nativeNotificationPath?: string;
     /** Synthetic native policy store; the host never reads or writes it. */
     nativePolicyPath?: string;
+    /** Schema-derived ordering gate: captured settlement/effects precede the held native command ACK. */
+    decisionAckPath?: string;
     cwd?: string;
 }>) {
     const recordingPath = options?.recordingPath ?? (options?.scenario
@@ -55,6 +57,7 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
             ...(options?.auditPath ? { MUSE_TEST_AUDIT_PATH: options.auditPath } : {}),
             ...(options?.nativeNotificationPath ? { MUSE_TEST_NOTIFICATION_PATH: options.nativeNotificationPath } : {}),
             ...(options?.nativePolicyPath ? { MUSE_TEST_POLICY_PATH: options.nativePolicyPath } : {}),
+            ...(options?.decisionAckPath ? { MUSE_TEST_DECISION_ACK_PATH: options.decisionAckPath } : {}),
         } }),
         resolvePath: async () => options?.cwd ?? process.cwd(),
     };
@@ -95,6 +98,7 @@ export type MuseMspProcessAudit = Readonly<{
     nativeResponseCount: number;
     decisionCount: number;
     released: boolean;
+    decisionAckPending: boolean;
     earlyTurnCount: number;
     readinessState: 'busy' | 'ready';
 }>;
@@ -173,6 +177,15 @@ const notificationWatcher = notificationPath ? require('node:fs').watch(require(
         writeAudit();
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }) : undefined;
+const decisionAckPath = process.env.MUSE_TEST_DECISION_ACK_PATH;
+const decisionAckWatcher = decisionAckPath ? require('node:fs').watch(require('node:path').dirname(decisionAckPath), (_event, filename) => {
+    if (filename !== require('node:path').basename(decisionAckPath)) return;
+    try {
+        require('node:fs').unlinkSync(decisionAckPath);
+        for (const acknowledgement of decisionPlayback.releaseAcknowledgements()) send(acknowledgement);
+        writeAudit();
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}) : undefined;
 let initialized = false;
 let initializeCount = 0;
 let initializedCount = 0;
@@ -196,7 +209,7 @@ function writeAudit() {
         commandCount: commands.length, commandTargets, turnInputs, modelSelections, modelListSessionIds, viewPages, sessionReads, earlyTurnCount, readinessState, cwd: process.cwd(),
         autoUpdate: process.env.MUSE_NO_AUTO_UPDATE, selectedHome: process.env.MUSE_TEST_SELECTED_HOME,
         nativeResponseCount: receipts.length,
-        ...(decisionPlayback?.inspect() ?? { receiptCount: receipts.length, decisionCount: 0, released: false }) }));
+        ...(decisionPlayback?.inspect() ?? { receiptCount: receipts.length, decisionCount: 0, released: false, decisionAckPending: false }) }));
     fs.renameSync(path + '.tmp', path);
 }
 function remap(value) {
@@ -362,6 +375,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     }
 }).on('close', () => {
     notificationWatcher?.close();
+    decisionAckWatcher?.close();
     writeAudit();
     const closed = rows.find(row => row.message.method === 'session/closed');
     if (closed) send(closed.message);

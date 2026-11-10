@@ -11,8 +11,6 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 import { signExternalActionApprovalInputV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1, SessionPendingAdmissionSettlementRequestV1Schema,
-  SessionPendingAdmissionSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
 import fastify from 'fastify';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +50,8 @@ import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/di
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createRetainedPendingHome } from './testkit/retainedPendingHome';
+import type { SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -89,10 +89,7 @@ import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { SessionMessageContent } from '@/api/types';
-import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2,
-  SessionPendingExecutionRunMaterializeNextRequestV2Schema, SessionPendingExecutionRunAcceptedRequestV2Schema,
-  SessionPendingExecutionRunMaterializeNextResponseV2Schema, SessionExecutionRunPendingEnqueueRequestV1Schema,
-  SessionPendingExecutionRunEnqueueByMachineRequestV2Schema, SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
+import { SessionPendingExecutionRunEnqueueByMachineRequestV2Schema, SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
 } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 
 const nativeOpen = vi.hoisted(() => vi.fn<(request: AgentSessionOpenRequest) => Promise<AgentSessionRuntime>>());
@@ -396,11 +393,8 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       encryption: { type: 'legacy', secret: legacySecret }, credentialProvenance: 'stored_session',
     } : credentials;
     type Row = { id: string; seq: number; localId: string | null; sidechainId?: string;
-      content: SessionMessageContent; createdAt: number; updatedAt: number };
+      content: SessionMessageContent; deliveryResolution?: SessionMessageDeliveryResolutionV1; createdAt: number; updatedAt: number };
     const rows: Row[] = [];
-    let pending: { localId: string; content: SessionMessageContent; requestedAction?: unknown } | undefined;
-    let claimed: typeof pending;
-    let claimCount = 0;
     let nativeSequence = 0;
     const nativeInputs: string[][] = [];
     let emit: ((event: AgentSessionRuntimeEvent) => void) | undefined;
@@ -424,58 +418,29 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     const notify = () => observers.forEach(socket => socket.trigger('ephemeral', {
       type: 'activity', id: sessionId, active: true, activeAt: Date.now(), thinking: false,
     }));
+    const pendingHome = createRetainedPendingHome({ sessionId, authorAccountId: external ? null : 'account-1',
+      inputAdmissionReceipt,
+      onMaterialize: request => expect(request).toMatchObject({ recipient, sidechainId }),
+      onRejected: code => boundaryFailures.push({ decision: 'reject', code }),
+      onEnqueued: (_runId, pendingVersion) => socket.trigger('update', { id: 'fresh-pending', seq: 1, createdAt: 1,
+        body: { t: 'pending-changed', sid: sessionId, recipient,
+          pendingCount: 1, pendingBlockedCount: 0, pendingVersion } }),
+      commit: input => {
+        const message = { id: 'committed-fresh-input', seq: rows.length + 1, localId: input.localId,
+          content: input.content, ...(input.deliveryResolution ? { deliveryResolution: input.deliveryResolution } : {}), createdAt: 1, updatedAt: 1 };
+        rows.push({ ...message, sidechainId: input.sidechainId });
+        return message;
+      },
+      onAccepted: notify,
+    });
     const socket = createApiSessionSocketStub({ emit: (event, args) => {
       if (!boundedRecovery || event !== 'execution-run-updated') return;
       const packet = z.object({ sid: z.string(), run: z.unknown() }).parse(args[0]);
       const update = EphemeralUpdateSchema.parse({ type: 'execution-run-updated', sessionId: packet.sid, run: packet.run });
       observers.forEach(observer => observer.trigger('ephemeral', update));
     }, emitWithAck: (event, raw) => {
-      if (event === SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2) {
-        const request = SessionPendingExecutionRunMaterializeNextRequestV2Schema.parse(raw);
-        expect(request).toMatchObject({ recipient, sidechainId });
-        const input = pending;
-        const base = { v: 2, ok: true, recipient, sidechainId,
-          authorAccountId: external ? null : 'account-1',
-          pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1,
-          deliveryState: { mode: 'provider', unresolved: Boolean(input) } };
-        if (!input) return { ...base, didMaterialize: false };
-        if (!claimed) claimCount += 1;
-        claimed = input;
-        const response = { ...base, didMaterialize: true, didWrite: false, message: {
-          id: null, seq: null, ...input, inputAdmissionReceipt, messageRole: 'user', providerAction: 'send',
-          requestedAction: input.requestedAction ?? { v: 1, kind: 'enqueue' }, createdAt: 1, updatedAt: 1,
-        } };
-        const parsed = SessionPendingExecutionRunMaterializeNextResponseV2Schema.safeParse(response);
-        if (!parsed.success) boundaryFailures.push(parsed.error.issues.map(issue => ({ code: issue.code, path: issue.path })));
-        return response;
-      }
-      if (event === SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1) {
-        const request = SessionPendingAdmissionSettlementRequestV1Schema.parse(raw);
-        if (request.decision.kind === 'reject') {
-          boundaryFailures.push({ decision: request.decision.kind, code: request.decision.code });
-          return SessionPendingAdmissionSettlementResponseV1Schema.parse({ v: 1,
-            result: { status: 'rejected', code: request.decision.code } });
-        }
-        if (request.decision.kind === 'admit' && pending) {
-          pending.content = request.decision.finalContent;
-          if (claimed) claimed.content = request.decision.finalContent;
-        }
-        return SessionPendingAdmissionSettlementResponseV1Schema.parse({ v: 1,
-          result: { status: 'accepted', localId: request.localId } });
-      }
-      if (event === SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2) {
-        const request = SessionPendingExecutionRunAcceptedRequestV2Schema.parse(raw);
-        const content = claimed?.content;
-        if (!content) throw new Error('Expected accepted delivery content');
-        pending = undefined;
-        const message = { id: 'committed-fresh-input', seq: rows.length + 1, localId: request.localId,
-          content, createdAt: 1, updatedAt: 1 };
-        rows.push({ ...message, sidechainId });
-        notify();
-        return { v: 2, recipient, sidechainId, result: { ok: true, didResolve: true,
-          pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2,
-          message: { ...message, providerAction: 'send', requestedAction: claimed?.requestedAction ?? { v: 1, kind: 'enqueue' } } } };
-      }
+      const pendingAnswer = pendingHome.answer(event, raw);
+      if (pendingAnswer !== null) return pendingAnswer;
       return resolveApiSessionSocketDefaultAck(event, raw);
     } });
     const connection = () => {
@@ -521,6 +486,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode }));
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 0 }));
     app.get('/v1/account/profile', async () => ({ id: 'account-1' }));
+    app.get('/v1/auth/ping', async () => ({}));
     app.get('/v2/account/settings', async () => ({ content: cliEntry ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
       kind: 'account_settings', material: { type: 'legacy', secret: legacySecret }, payload: {}, randomBytes: size => new Uint8Array(size).fill(7),
     }) } : { t: 'plain', v: {} }, version: 1 }));
@@ -542,7 +508,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       return message ? { message } : reply.code(404).send({ error: 'Message not found' });
     });
     app.get(`/v2/sessions/${sessionId}/execution-runs/:runId/pending`, async () => ({ recipient,
-      pending: boundedRecovery && pending ? [{ ...pending, status: 'queued', deliveryStatus: { status: 'queued' } }] : [] }));
+      pending: boundedRecovery && pendingHome.readPending(recipient.runId) ? [{ ...pendingHome.readPending(recipient.runId), status: 'queued', deliveryStatus: { status: 'queued' } }] : [] }));
     app.get(`/v1/sessions/${sessionId}/messages`, async request => {
       observedPaths.push(request.url);
       const query = new URL(request.url, origin).searchParams;
@@ -554,25 +520,19 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     let manager: ExecutionRunHostBridge | undefined;
     let recoveryPhase = 'session_setup';
     onTestFailed(() => {
-      if (boundedRecovery) console.info(JSON.stringify({ recoveryPhase, nativeOpens: nativeOpen.mock.calls.length,
-        nativeInputCount: nativeInputs.length, claimCount, pending: Boolean(pending),
+      const pending = pendingHome.readPending(recipient.runId);
+      console.info(JSON.stringify({ recoveryPhase, nativeOpens: nativeOpen.mock.calls.length,
+        nativeInputCount: nativeInputs.length, claimCount: pendingHome.readClaimCount(recipient.runId), pending: Boolean(pendingHome.readPending(recipient.runId)),
         pendingEnvelopeValid: pending?.content.t === 'plain' && UserMessageSchema.safeParse(pending.content.v).success,
-        runStatus: manager?.getPublic(recipient.runId)?.status }));
+        runStatus: manager?.getPublic(recipient.runId)?.status, observedRunCount: observedRuns.length }));
     });
     let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
     let restoreIdentity: (() => void) | undefined;
     let retirePendingTarget: (() => void) | undefined;
     let retireWorkerPublication: (() => void) | undefined;
-    const admitPending = (input: Readonly<{ localId: string; content: SessionMessageContent; requestedAction?: unknown }>) => {
-      pending = { localId: input.localId, content: input.content, requestedAction: input.requestedAction };
-      socket.trigger('update', { id: 'fresh-pending', seq: 1, createdAt: 1,
-        body: { t: 'pending-changed', sid: sessionId, recipient,
-          pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 } });
-    };
-    app.post(`/v2/sessions/${sessionId}/execution-runs/:runId/pending`, async request => {
-      admitPending(SessionExecutionRunPendingEnqueueRequestV1Schema.parse(request.body));
-      return { didWrite: true, terminal: false };
-    });
+    const admitPending = (input: Parameters<typeof pendingHome.admit>[1]) => pendingHome.admit(recipient.runId, input);
+    app.post(`/v2/sessions/${sessionId}/execution-runs/:runId/pending`, async request =>
+      pendingHome.enqueue(recipient.runId, request.body));
     await app.ready();
     const restore = installAxiosFastifyAdapter({ app, origin });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId }, session: {
@@ -671,6 +631,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
         retirePendingTarget = session.subscribeExecutionRunPendingTarget(runId => harness.manager.reconcilePendingExecutionRunTarget(runId));
       }
       await sessionContractReady;
+      recoveryPhase = 'session_contract_ready';
       if (boundedRecovery) {
         recoveryPhase = 'initial_start';
         const started = await manager.start({ sessionId, cwd: directory, intent: 'delegate',
@@ -879,7 +840,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
         });
       });
       const diagnostic = JSON.stringify({ result,
-        claimCount, pending: Boolean(pending), claimed: Boolean(claimed), boundaryFailures, observedRuns, observedPaths, homePaths, homeStatuses,
+        claimCount: pendingHome.readClaimCount(recipient.runId), pending: Boolean(pendingHome.readPending(recipient.runId)), claimed: Boolean(pendingHome.readClaimed(recipient.runId)), boundaryFailures, observedRuns, observedPaths, homePaths, homeStatuses,
         socketEvents: socket.emitWithAck.mock.calls.map(([event]) => event), rows: rows.map(row => ({ seq: row.seq, localId: row.localId })) });
       if (turnFailure) {
         expect(nativeInputs).toEqual([['initial-input'], [localId]]);
@@ -943,7 +904,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       if (boundedRecovery) {
         expect(manager.getPublic(recipient.runId)).toMatchObject({ status: 'succeeded' });
       }
-      expect(claimCount).toBe(1);
+      expect(pendingHome.readClaimCount(recipient.runId)).toBe(1);
       expect(rows.filter(row => row.localId === localId)).toHaveLength(1);
       expect(observedRuns.length).toBeGreaterThan(external || boundedRecovery ? 0 : 1);
       expect(observedRuns.every(runId => runId === recipient.runId)).toBe(true);

@@ -6,24 +6,29 @@ import { isDeepStrictEqual } from 'node:util';
 import { mkdir, readFile } from 'node:fs/promises';
 import fastify, { type FastifyInstance } from 'fastify';
 import { Server as SocketIoServer } from 'socket.io';
-import { createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub, createSessionTurnMutationAppliedSocketAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { configuration, reloadConfiguration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
-import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createRequesterSessionCredentialCustody, readRequesterSessionCredentialsForChild, REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createExecutionRunLiveWorkProducer } from '@/daemon/executionRunRegistry';
 import { createLiveWorkProducerGroup, createManagedActivityInventory, type LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
 import { projectMachineWorkSummary } from '@/daemon/machines/machineWorkSummary';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { CURRENT_PENDING_INPUT_PROTOCOL_VERSION, SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY } from '@happier-dev/protocol/clientCompatibility/primitives';
-import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, FeaturesResponseSchema, WorkflowAcceptedSnapshotV1Schema,
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, FeaturesResponseSchema, SessionTurnMutationV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, WorkflowAcceptedSnapshotV1Schema,
   openWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, type HookEventEnvelopeV1 } from '@happier-dev/protocol';
 import { AccountEncryptionModeResponseSchema, AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
 import { PluginAccountSettingsReadResponseV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema,
+  PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -66,6 +71,8 @@ import type { TrackedSession } from '@/daemon/types';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import { RunnerDaemonPluginServiceOperationV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceRequestV1Schema,
+  AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -84,6 +91,10 @@ import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgen
 import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 import type { HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
 import { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
+import { createRetainedPendingHome } from './retainedPendingHome';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { SessionMessageContent } from '@/api/types';
+import type { SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 // This is a host attribution contract, not Claude codec/process certification.
@@ -103,6 +114,11 @@ type AdmittedSessionRunOptions = Readonly<{
   beforeTranscriptAck?: () => Promise<void>;
   observeTranscriptObservation?: (payload: unknown) => void;
   runtimePluginIds?: readonly string[];
+  parentCapabilitySelection?: import('@happier-dev/protocol').SessionCapabilitySelectionV1;
+  /** Consume ordinary host startup's captured Account reader and runtime controls. */
+  parentRuntime?: boolean;
+  /** External executable lookup/process environment; native host composition stays real. */
+  nativeToolEnvironment?: Readonly<Record<string, string>>;
   acpCatalog?(directory: string): ReturnType<typeof AcpCatalogRecordV1Schema.parse>;
   run(fixture: AdmittedSessionRunFixture): Promise<void>;
 }>;
@@ -114,6 +130,8 @@ export type AdmittedSessionRunFixture = Readonly<{
   directory: string;
   agentIdentity: Readonly<{ pluginId: string; localId: string }>;
   nativeOpen: typeof nativeOpen;
+  daemonObservations: readonly Readonly<{ operation: string; status: number; errorCode?: string; schemaIssuePaths?: readonly string[] }>[];
+  readHomeBoundary(): readonly Readonly<{ operation: string; count: number }>[];
   bridge?: ExecutionRunHostBridge;
   lifecycleEvents: readonly HookEventEnvelopeV1[];
   activationDisposals: readonly string[];
@@ -193,11 +211,13 @@ export async function withAdmittedSessionRun(options: AdmittedSessionRunOptions)
 
 export async function runRequesterAttributionCase(source: 'protected child' | 'ordinary accepted marker' | 'legacy metadata only' | 'admitted Workflow', skillsScenario = false, options?: AdmittedSessionRunOptions) {
   vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+  for (const [key, value] of Object.entries(options?.nativeToolEnvironment ?? {})) vi.stubEnv(key, value);
   home = fastify();
   await new Promise<void>(resolve => home!.server.listen(0, '127.0.0.1', resolve));
   const homeAddress = home.server.address();
   if (!homeAddress || typeof homeAddress === 'string') throw new Error('Missing composed Home address');
   const origin = `http://127.0.0.1:${homeAddress.port}`;
+  let parentSessionRow: ReturnType<typeof createSessionRecordFixture> | undefined;
   vi.stubEnv('HAPPIER_SERVER_URL', origin);
   reloadConfiguration();
   const accountId = source === 'ordinary accepted marker' ? 'alice' : 'bob';
@@ -258,8 +278,33 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   // explicit Account mode through this same authenticated Home boundary.
   const lifecycleEvents: HookEventEnvelopeV1[] = [];
   const activationDisposals: string[] = [];
+  const homeBoundary = new Map<string, number>();
+  const unansweredHomeEvents = new Set<string>();
+  home.addHook('onResponse', async (request, reply) => {
+    const operation = `${request.method} ${new URL(request.url, origin).pathname} ${reply.statusCode}`;
+    homeBoundary.set(operation, (homeBoundary.get(operation) ?? 0) + 1);
+  });
   const activityHome = createSessionRuntimeActivityHomeStub({ machineId: attribution.machineId });
   const transcriptHome = createSessionTranscriptHomeStub();
+  const committedPendingInputs: Array<{ id: string; seq: number; localId: string; content: SessionMessageContent;
+    sidechainId: string; deliveryResolution?: SessionMessageDeliveryResolutionV1; createdAt: number; updatedAt: number }> = [];
+  const pendingHome = options?.parentRuntime ? createRetainedPendingHome({
+    sessionId: 'admitted-session', authorAccountId: accountId,
+    inputAdmissionReceipt: SessionInputAdmissionReceiptV1Schema.parse({ v: 1, issuer: 'authenticatedAccount',
+      actorAccountId: accountId, sessionRelationship: 'owner', admittedTarget: {
+        homeId: 'srv_admitted_home', accountId, sessionId: 'admitted-session',
+        machineId: attribution.machineId, installationId: attribution.installationId } }),
+    onEnqueued: (runId, pendingVersion) => socketHome?.emit('update', { id: randomUUID(), seq: pendingVersion, createdAt: 1,
+      body: { t: 'pending-changed', sid: 'admitted-session', recipient: { kind: 'execution_run', runId },
+        pendingCount: 1, pendingBlockedCount: 0, pendingVersion } }),
+    commit: input => {
+      const message = { localId: input.localId, content: input.content,
+        ...(input.deliveryResolution ? { deliveryResolution: input.deliveryResolution } : {}),
+        id: randomUUID(), seq: committedPendingInputs.length + 1, createdAt: 1, updatedAt: 1 };
+      committedPendingInputs.push({ ...message, sidechainId: input.sidechainId });
+      return message;
+    },
+  }) : undefined;
   socketHome = new SocketIoServer(home.server, { path: '/v1/updates/' });
   socketHome.use((socket, next) => next(socket.handshake.auth.token === token ? undefined : new Error('Unauthorized fixture socket')));
   socketHome.on('connection', socket => {
@@ -274,12 +319,18 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
         return;
       }
       const callback = args.at(-1);
-      const answer = activityHome.answer(event, args[0]) ?? transcriptHome.answer(event, args[0]);
+      const answer = event === 'session-turn-mutation'
+        ? createSessionTurnMutationAppliedSocketAck(SessionTurnMutationV1Schema.parse(args[0]))
+        : pendingHome?.answer(event, args[0]) ?? activityHome.answer(event, args[0]) ?? transcriptHome.answer(event, args[0]);
       if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
         options?.observeTranscriptObservation?.(args[0]);
         await options?.beforeTranscriptAck?.();
       }
       if (answer !== null && typeof callback === 'function') callback(answer);
+      else if (options?.parentRuntime && typeof callback === 'function' && !unansweredHomeEvents.has(event)) {
+        unansweredHomeEvents.add(event);
+        console.error('Actual unanswered parent Home ACK', { event });
+      }
     });
   });
   home.addHook('preHandler', async (request, reply) => {
@@ -289,13 +340,48 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     }
   });
   const features = FeaturesResponseSchema.parse({ features: { execution: { enabled: true, runs: { enabled: true } } },
-    capabilities: { session: { runtimeActivity: { protocolVersion: SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY },
+    capabilities: { ...(options?.parentRuntime ? { serverIdentity: { serverIdentityId: 'srv_admitted_home' } } : {}),
+      session: { runtimeActivity: { protocolVersion: SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY },
       pendingInput: { protocolVersion: CURRENT_PENDING_INPUT_PROTOCOL_VERSION },
       publisherAuthority: { protocolVersion: 1 } } },
   });
   home.get('/v1/features', async () => features);
   home.get('/v1/features/authenticated', async () => features);
   home.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: accountId }));
+  if (options?.parentRuntime) {
+    home.get('/v1/auth/ping', async () => ({}));
+    home.post<{ Params: { runId: string } }>('/v2/sessions/admitted-session/execution-runs/:runId/pending', async request =>
+      pendingHome!.enqueue(request.params.runId, request.body));
+    home.get<{ Params: { runId: string } }>('/v2/sessions/admitted-session/execution-runs/:runId/pending', async request => {
+      const pending = pendingHome!.readPending(request.params.runId);
+      return { recipient: { kind: 'execution_run', runId: request.params.runId },
+        pending: pending ? [{ ...pending, status: 'queued', deliveryStatus: { status: 'queued' } }] : [] };
+    });
+    home.get<{ Params: { localId: string } }>('/v2/sessions/admitted-session/messages/by-local-id/:localId', async (request, reply) => {
+      const message = committedPendingInputs.find(row => row.localId === request.params.localId);
+      return message ? { message } : reply.code(404).send({ error: 'Message not found' });
+    });
+    home.get('/v1/sessions/admitted-session/messages', async () => ({ messages: committedPendingInputs }));
+    home.get('/v2/sessions/admitted-session', async (_request, reply) => parentSessionRow
+      ? { session: parentSessionRow } : reply.code(404).send({ error: 'session-not-found' }));
+    home.patch('/v2/sessions/admitted-session', async (request, reply) => {
+      if (!parentSessionRow) return reply.code(404).send({ error: 'session-not-found' });
+      const patch = SessionMetadataTuplePatchV1Schema.parse(request.body);
+      if (patch.mode !== 'owner') throw new Error('The fixture parent has owner tuple authority');
+      if (patch.sharedMetadata.expectedVersion !== parentSessionRow.metadataVersion
+        || patch.agentState.expectedVersion !== parentSessionRow.agentStateVersion) {
+        return reply.code(409).send({ code: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+          sharedMetadata: { version: parentSessionRow.metadataVersion }, agentState: { version: parentSessionRow.agentStateVersion } });
+      }
+      parentSessionRow.metadata = patch.sharedMetadata.ciphertext;
+      parentSessionRow.ownerMetadata = patch.ownerMetadata;
+      parentSessionRow.metadataVersion += 1;
+      parentSessionRow.agentState = patch.agentState.ciphertext;
+      parentSessionRow.agentStateVersion = (parentSessionRow.agentStateVersion ?? 0) + 1;
+      return SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: parentSessionRow.metadataVersion }, agentState: { version: parentSessionRow.agentStateVersion } });
+    });
+  }
   // This owned Session starts with no queued inputs. Child input enters through
   // the real Run RPC, not a fabricated pending row or provider admission.
   home.get('/v2/sessions/admitted-session/pending', async () => ({ pending: [], pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 }));
@@ -317,6 +403,14 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   });
   home.get('/v1/account/plugin-settings/:pluginId', async () =>
     PluginAccountSettingsReadResponseV1Schema.parse({ status: 'absent' }));
+  home.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+    const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+    return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+      pluginIds: ids, failedPluginIds: [], intentReads: ids.map(pluginId => ({ pluginId,
+        response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
+          release: null, uiArtifacts: [], packageAssets: [] },
+      })) });
+  });
   home.get('/v1/account/encryption', async () =>
     AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }));
   // Every executable catalog row admits the persisted Account mode/currentness,
@@ -414,6 +508,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       currentGlobalMcp: projection.services.mcp, currentGlobalExternalSessions: projection.services.sessions.external };
   } });
   const services = runnerServices;
+  const daemonObservations: Array<{ operation: string; status: number; errorCode?: string; schemaIssuePaths?: readonly string[] }> = [];
+  const daemonDispatchFailures = new Map<string, { errorCode?: string; schemaIssuePaths: string[] }>();
   daemon = createDaemonControlApp({
     ...(skillStore ? { skillStore } : {}),
     getChildren: () => tracked, machineId: 'admitted-machine', controlToken,
@@ -473,7 +569,19 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
           if (!retained) await lease.release();
         }
       }
-      if (request.operation.kind.startsWith('execution_run.')) return await snapshots.dispatch(request, context);
+      if (request.operation.kind.startsWith('execution_run.')) {
+        try { return await snapshots.dispatch(request, context); }
+        catch (error) {
+          const issues = error && typeof error === 'object' && 'issues' in error ? error.issues : undefined;
+          const schemaIssuePaths = Array.isArray(issues) ? issues.flatMap((issue: unknown) =>
+            issue && typeof issue === 'object' && 'path' in issue && Array.isArray(issue.path)
+              ? [issue.path.map(String).join('.')] : []) : [];
+          const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+          daemonDispatchFailures.set(request.operation.kind, { schemaIssuePaths,
+            ...(typeof code === 'string' ? { errorCode: code } : {}) });
+          throw error;
+        }
+      }
       const serviceOperation = RunnerDaemonPluginServiceOperationV1Schema.safeParse(request.operation);
       if (serviceOperation.success) {
         const closesPluginServices = serviceOperation.data.kind === 'plugin_services.close_v1';
@@ -492,6 +600,25 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     requestShutdown: () => undefined, onHappySessionWebhook: () => undefined,
     verifyRunMaterializeToken: provided => isValidConnectedServiceRunMaterializeToken(provided, controlToken),
     pluginChangeService: pluginChanges,
+  });
+  // Observe only the real daemon HTTP response contract. No request values,
+  // response content, credentials, or native arguments enter this diagnostic.
+  daemon.addHook('onSend', async (request, reply, payload) => {
+    if (request.url !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return payload;
+    const issued = AgentRuntimeDaemonServiceRequestV1Schema.safeParse(request.body);
+    if (!issued.success) return payload;
+    let candidate: unknown;
+    try { candidate = JSON.parse(typeof payload === 'string' ? payload : Buffer.isBuffer(payload) ? payload.toString('utf8') : 'null'); }
+    catch { candidate = null; }
+    const response = AgentRuntimeDaemonServiceResponseV1Schema.safeParse(candidate);
+    const dispatchFailure = daemonDispatchFailures.get(issued.data.operation.kind);
+    daemonObservations.push({ operation: issued.data.operation.kind, status: reply.statusCode,
+      ...(response.success ? response.data.ok ? {} : { errorCode: response.data.error.code }
+        : { schemaIssuePaths: [...response.error.issues.map(issue => issue.path.join('.')),
+          ...(dispatchFailure?.schemaIssuePaths.map(path => `dispatch.${path}`) ?? [])] }),
+      ...(dispatchFailure?.errorCode ? { errorCode: dispatchFailure.errorCode } : {}),
+    });
+    return payload;
   });
   await daemon.listen({ host: '127.0.0.1', port: 0 });
   const daemonAddress = daemon.server.address();
@@ -657,20 +784,34 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     return await createExecutionRunHostBackendFromConversationRuntime({
       request, openConversation: () => nativeConversationOpen(request) });
   });
-  const parentProcessIdentity = skillsScenario ? await processIdentity.readProcessIdentityByPid(process.pid) : null;
-  if (skillsScenario && parentProcessIdentity?.processStartTimeMs === undefined) {
+  const parentProcessIdentity = skillsScenario || options?.parentRuntime ? await processIdentity.readProcessIdentityByPid(process.pid) : null;
+  if ((skillsScenario || options?.parentRuntime) && parentProcessIdentity?.processStartTimeMs === undefined) {
     throw new Error('Missing actual parent process generation for Session-owned Run');
   }
-  const parentMetadata = skillsScenario ? createSessionMetadata({
+  const parentMetadata = skillsScenario || options?.parentRuntime ? createSessionMetadata({
     flavor: 'claude', machineId: attribution.machineId, directory, startedBy: 'daemon',
     hostProcessStartTimeMs: parentProcessIdentity?.processStartTimeMs,
     launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }),
     augmentMetadata: metadata => ({ ...metadata, homeDir: directory }),
   }).metadata : { path: directory, host: 'host', homeDir: directory, happyHomeDir: directory, happyLibDir: directory,
     happyToolsDir: directory, flavor: 'claude', machineId: 'metadata-decoy-machine' };
-  const session = source === 'admitted Workflow' ? undefined : createTestApiSessionClient(ApiSessionClient, token, createPlainSessionFixture({ id: 'admitted-session',
-    metadata: parentMetadata,
-  }), { localMachineId: attribution.machineId,
+  const initialParentSession = createPlainSessionFixture({ id: 'admitted-session',
+    metadata: options?.parentCapabilitySelection
+      ? writeSessionCapabilitySelectionToMetadataV1(parentMetadata, options.parentCapabilitySelection, { sessionActive: false })
+      : parentMetadata,
+  });
+  const parentTuple = options?.parentRuntime ? buildSessionMetadataEnvelopeFields({ credentials,
+    accountEncryptionMode: 'plain', metadata: initialParentSession.metadata,
+    agentState: initialParentSession.agentState, storedContentMode: 'plain' }) : null;
+  if (parentTuple) parentSessionRow = createSessionRecordFixture({ id: initialParentSession.id,
+    metadataLayoutVersion: 1, metadata: parentTuple.sharedMetadata.ciphertext,
+    metadataVersion: initialParentSession.metadataVersion, ownerMetadata: parentTuple.ownerMetadata,
+    agentState: parentTuple.agentState, agentStateVersion: initialParentSession.agentStateVersion,
+    encryptionMode: 'plain', share: null });
+  const session = source === 'admitted Workflow' ? undefined : createTestApiSessionClient(ApiSessionClient, token,
+    parentTuple ? { ...initialParentSession, metadataLayoutVersion: 1,
+      ownerMetadata: parentTuple.ownerMetadataValue, ownerMetadataEnvelope: parentTuple.ownerMetadata } : initialParentSession,
+    { localMachineId: attribution.machineId,
     initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({
       sessionId: 'admitted-session', agentRuntimeApplicability: 'not_applicable' })],
     metadataAuthority: { kind: 'owner', credentials, readCurrentCredentials: async () => credentials } });
@@ -706,6 +847,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     ...(source === 'admitted Workflow' ? [workflowOwners] : [])] });
   let runId: string | undefined;
   let stopObservingRun: (() => void) | undefined;
+  let stopParentRuntime: (() => Promise<void>) | undefined;
   let workflowExecution: Promise<unknown> | undefined;
   let lastMachineFailure: string | undefined;
   let phase = 'admission';
@@ -753,14 +895,35 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
           error: parsed.data.run.error, inputTurns: parsed.data.run.inputTurns } : JSON.stringify(raw);
       }
     } catch (error) { nativeRun = { readFailure: error instanceof Error ? error.message : JSON.stringify(error) }; }
+    let parentStartup: readonly string[] = [];
+    if (options?.parentRuntime) {
+      logger.flushSync();
+      const ownLog = await readFile(logger.logFilePath, 'utf8').catch(() => '');
+      parentStartup = ownLog.split('\n').filter(line => line.includes('[MCP parent fixture] Startup'));
+    }
     console.error('Actual requester Run fixture failure phase', JSON.stringify({ source, phase, nativeRun,
+      ...(options?.parentRuntime ? { homeBoundary: [...homeBoundary], unansweredHomeEvents: [...unansweredHomeEvents], parentStartup } : {}),
       nativeOpenCount: nativeOpen.mock.calls.length,
       machineObservations, workflowState: workflowStorage?.run().state, lastMachineFailure }));
   });
   try {
+    if (options?.parentRuntime) {
+      if (!session) throw new Error('Ordinary parent startup requires a real Session');
+      phase = 'parent_startup';
+      expect(configuration.apiServerUrl).toBe(origin);
+      expect(session.getServerBinding().serverUrl).toBe(origin);
+      const [{ ApiClient }, { startMcpRequesterParent }] = await Promise.all([
+        import('@/api/api'), import('@/agent/runtime/session/loop/runHostSessionRuntime.mcpRequester.testkit'),
+      ]);
+      const parent = await startMcpRequesterParent({ credentials, session,
+        api: await ApiClient.create(credentials), machineId: attribution.machineId,
+        snapshot: accountSettings, pluginRuntimeRegistryLease: admittedFixture.lease });
+      stopParentRuntime = parent.stop;
+    }
     if (options) {
       if (!session) throw new Error('The composed Session Run fixture requires a real Session');
-      await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, bridge, lifecycleEvents, activationDisposals,
+      await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
+        readHomeBoundary: () => [...homeBoundary].map(([operation, count]) => ({ operation, count })),
         get admittedRuntime() { return admittedRuntimeFixture!; },
         async replaceAgent(selection) {
           const previous = admittedRuntimeFixture;
@@ -928,7 +1091,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       inventory.dispose();
       workflowOwners.dispose();
       phase = 'cleanup_session';
-      await session?.close();
+      try { await stopParentRuntime?.(); }
+      finally { await session?.close(); }
       completed = true;
     }
   }
