@@ -1,8 +1,8 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
 import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
-  AgentSessionHostServices, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+  AgentSessionHostServices, AgentSessionCompactResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ACTIVITY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
   buildWorkflowRunSystemRecordLocalId, createWorkflowActivityPublisher, SessionWorkflowRunSnapshotV1Schema,
@@ -54,7 +54,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
     ...(server.env === undefined ? {} : { env: { ...server.env } }),
     mode: request.mcpServersStrictMode === false ? 'optional' : 'required',
   }]));
-  const nativeMcpConfig = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
+  const nativeMcpConfig: Readonly<Record<string, JsonValue>> = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
   const intent = request.configuration?.permissionIntent.value;
   if ((intent && intent !== 'default') || request.configuration?.workspaceWrites === 'deny') {
     throw new PluginError({ code: 'unsupported', message: 'The requested permission intent has no characterized native Muse mapping.' });
@@ -63,7 +63,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
   const workflowSnapshots = new Map<string, SessionWorkflowRunSnapshotV1>();
   const workflowAddress = (runId: string) => ({ owner: 'host' as const,
     namespace: SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE, kind: ACTIVITY_SESSION_SYSTEM_RECORD_KINDS[0],
-    localId: buildWorkflowRunSystemRecordLocalId(runId) });
+    localId: buildWorkflowRunSystemRecordLocalId({ runId }) });
   const workflowPublisher = sessionServices ? createWorkflowActivityPublisher({ backendId: MUSE_AGENT.id, agentId: MUSE_AGENT.id,
     async readCommittedRunSnapshot(runId) {
       const record = await context.services.sessions.current?.readSystemRecord({ address: workflowAddress(runId) });
@@ -337,7 +337,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
           } };
         }
       },
-      async compact(request, options) {
+      async compact(request, options): Promise<AgentSessionCompactResult> {
         if (request.trigger !== 'manual' || request.instructions) return { status: 'unsupported', retryable: false,
           diagnostic: { code: 'unsupported', severity: 'error' } };
         const expected = projection.expectCompaction(request);

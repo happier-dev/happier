@@ -73,8 +73,10 @@ async function mintAccountKey(context: AuthContext, options?: SignalOptions): Pr
   }
   signal.throwIfAborted();
   if (response.status < 200 || response.status >= 300) {
-    return { status: response.status >= 400 && response.status < 500 && response.status !== 429 ? 'rejected' : 'outcomeUnknown',
-      diagnostic: diagnostic('connected_account_authentication_failed', 'key_mint_http', response.status) };
+    const failure = diagnostic('connected_account_authentication_failed', 'key_mint_http', response.status);
+    return response.status >= 400 && response.status < 500 && response.status !== 429
+      ? { status: 'rejected', diagnostic: failure }
+      : { status: 'outcomeUnknown', diagnostic: failure };
   }
   let body: Record<string, unknown> | null;
   try { body = museRecord(JSON.parse(new TextDecoder().decode(response.body))); } catch { body = null; }
@@ -168,7 +170,10 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
   async materialize(request, context, options) {
     const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(context.credentials, name, options)));
     if (!mode || !key) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
-    if (request.kind === 'environment') return { kind: 'environment', env: mode === 'manual' && request.keys.includes('META_API_KEY') ? { META_API_KEY: key } : {} };
+    if (request.kind === 'environment') {
+      const env: Record<string, string> = mode === 'manual' && request.keys.includes('META_API_KEY') ? { META_API_KEY: key } : {};
+      return { kind: 'environment', env };
+    }
     if (request.kind === 'httpHeaders') {
       if (request.headerNames.some(name => !['authorization', 'x-api-version'].includes(name.toLowerCase()))) {
         throw new PluginError({ code: 'plugin_connected_account_materialization_unsupported', message: 'Muse does not support this credential destination.' });
@@ -176,10 +181,13 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       const requested = new Set(request.headerNames.map(name => name.toLowerCase()));
       return { kind: 'httpHeaders', headers: { ...(requested.has('authorization') ? { Authorization: `Bearer ${key}` } : {}), ...(requested.has('x-api-version') ? { 'x-api-version': '1.0.0' } : {}) } };
     }
-    if (mode !== 'native') return { kind: 'files', files: {} };
+    const files: Record<string, Uint8Array> = {};
+    if (mode !== 'native') return { kind: 'files', files };
     if (expiry && Number(expiry) <= Date.now()) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token has expired; reconnect the account.' });
-    if (!request.fileIds.includes(MUSE_NATIVE_AUTH_FILE_ID)) return { kind: 'files', files: {} };
-    return { kind: 'files', files: { [MUSE_NATIVE_AUTH_FILE_ID]: new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(await readNativeMeta(context.credentials, options)))) } };
+    if (request.fileIds.includes(MUSE_NATIVE_AUTH_FILE_ID)) {
+      files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(await readNativeMeta(context.credentials, options))));
+    }
+    return { kind: 'files', files };
   },
 };
 

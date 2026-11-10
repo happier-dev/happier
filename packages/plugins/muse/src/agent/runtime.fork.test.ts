@@ -6,7 +6,7 @@ import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testin
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { evaluateAgentSessionCapabilitySupport } from '@happier-dev/agents';
 import type { AgentSessionProviderCheckpoint } from '@happier-dev/plugin-sdk/agents/runtime';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
 it('refuses a relocated native fork before starting a process or changing the source workspace', async () => {

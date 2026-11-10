@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeAgentSessionOperations, type NativeAgentNewTurnAdmissionWitness } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 type Operations = ReturnType<typeof createNativeAgentSessionOperations>;

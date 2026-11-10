@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
 it.each(['inline', 'snapshot'] as const)('resumes the same native conversation, restores %s history and pending state, then continues once', async historyMode => {

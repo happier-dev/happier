@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { readMuseRecord } from './events.js';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 
 async function assertSelectedMcp(strictMode: boolean) {
   // Exact captured sessionMcp grant and PEBBLE tool events; the harmless selected

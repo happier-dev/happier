@@ -16,9 +16,13 @@ type NativeItem = { value: NativeRecord; revision: number; streamedText: string;
 type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: string; workflowRunId?: string };
 type ChildObservation = AgentSessionSubagentObservation;
 
+function isMuseRecord(value: JsonValue | undefined): value is NativeRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /** MSP objects are decoded once at this plugin's native boundary. */
 export function readMuseRecord(value: JsonValue | undefined): NativeRecord {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return isMuseRecord(value) ? value : {};
 }
 
 export function readMuseNativeJson(value: JsonValue | undefined): JsonValue {

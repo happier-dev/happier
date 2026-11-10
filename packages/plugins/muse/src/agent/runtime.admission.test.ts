@@ -1,29 +1,31 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
-import { SessionWorkflowRunSnapshotV1Schema, SessionWorkflowActivityHeadlineV1Schema,
+import { buildWorkflowRunSystemRecordLocalId, SessionWorkflowRunSnapshotV1Schema, SessionWorkflowActivityHeadlineV1Schema,
   SessionAgentActivityHeadlineV1Schema } from '@happier-dev/plugin-sdk/sessions/work-state';
-import { createApiSessionSocketStub, createSessionTranscriptHomeStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { SessionTranscriptObservationInputSchema, SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture, MUSE_SESSION_FIXTURE_MACHINE_ID } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 
 // Only the remote Socket.IO boundary is replaced; the Session client remains real.
-const socketObservations = vi.hoisted(() => ({ committed: [] as unknown[], acknowledgments: [] as unknown[],
-  sockets: [] as ReturnType<typeof createApiSessionSocketStub>[] }));
-vi.mock('socket.io-client', () => ({ io: () => {
+const socketObservations = { committed: [] as unknown[], acknowledgments: [] as unknown[],
+  sockets: [] as ReturnType<typeof createApiSessionSocketStub>[] };
+function createTranscriptSocket(onConnect: () => void) {
   const home = createSessionTranscriptHomeStub();
-  const socket = createApiSessionSocketStub({ connected: true, emitWithAck(event, payload) {
+  const activityHome = createSessionRuntimeActivityHomeStub({ machineId: MUSE_SESSION_FIXTURE_MACHINE_ID });
+  const socket = createApiSessionSocketStub({ onConnect, emitWithAck(event, payload) {
     if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) socketObservations.committed.push(SessionTranscriptObservationInputSchema.parse(payload));
-    const answer = home.answer(event, payload) ?? resolveApiSessionSocketDefaultAck(event, payload);
+    const answer = home.answer(event, payload) ?? activityHome.answer(event, payload) ?? resolveApiSessionSocketDefaultAck(event, payload);
     if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) socketObservations.acknowledgments.push(answer);
     return answer;
   } });
   socketObservations.sockets.push(socket);
   return socket;
-} }));
+}
 
 it.each([undefined, 'default'])('admits Muse with model %s and streams one native owning turn', async selectedModel => {
   const agentId = 'muse';
@@ -129,12 +131,26 @@ it('projects partial native arguments through the real Session tool snapshot con
         params: { ...params, item: { ...item, revision: 2, args: '{' } } } }];
     return [{ ...readMuseRecord(row), message: { ...message, params: { ...params, item: { ...item, revision: 3 } } } }];
   });
-  const fixture = await createAdmittedMuseSessionFixture({ native: { recording: { ...readMuseRecord(captured), rows: partialRows } } });
+  let socketCreated: (() => void) | undefined;
+  const connectedBoundary = new Promise<void>(resolve => { socketCreated = resolve; });
+  const fixture = await createAdmittedMuseSessionFixture({ native: { recording: { ...readMuseRecord(captured), rows: partialRows } },
+    createSessionSocketTransport(binding) {
+      expect(binding).toEqual({ sessionId: 'host-admitted-muse', machineId: MUSE_SESSION_FIXTURE_MACHINE_ID });
+      const socket = createTranscriptSocket(() => socketCreated?.());
+      // Canonical Socket.IO boundary stub; the real adapter and Session connection owner remain active.
+      return { socket: socket as never, transport: createSocketTransportAdapter(socket as never) };
+    },
+  });
   const events = createAgentSessionRuntimeHarness();
   let projected: Promise<Awaited<ReturnType<typeof projectRuntimeTranscriptEvent>>[]> = Promise.resolve([]);
   try {
     const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
-    expect(socketObservations.sockets.slice(firstSocket).some(socket => socket.connected)).toBe(true);
+    await connectedBoundary;
+    const sockets = socketObservations.sockets.slice(firstSocket);
+    expect(sockets.some(socket => socket.connected), JSON.stringify({ requests: fixture.boundaryRequests,
+      connectionStates: fixture.connectionStates, sockets: sockets.map(socket => ({ connected: socket.connected,
+        connects: socket.connect.mock.calls.length, disconnects: socket.disconnect.mock.calls.length,
+        closes: socket.close.mock.calls.length })) })).toBe(true);
     session.watch(event => {
       events.recordRuntimeEvent(event);
       if (event.kind !== 'tool-call' && event.kind !== 'tool-progress' && event.kind !== 'tool-result') return;
@@ -212,6 +228,9 @@ it('publishes native child custody and workflow records after the foreground tur
       && JSON.stringify(mutation.content.v).includes('57eb5081-f640-7bd6-8b7f-19602770febe'))).toBe(true);
     const record = fixture.storedWrites.at(-1);
     if (!record || record.content.t !== 'plain') throw new Error('Expected a host-sealed plain workflow record');
+    expect(record.address.localId).toBe(buildWorkflowRunSystemRecordLocalId({
+      runId: SessionWorkflowRunSnapshotV1Schema.parse(record.content.v).runId,
+    }));
     expect(SessionWorkflowRunSnapshotV1Schema.parse(record.content.v)).toMatchObject({
       runId: 'workflow-run-model-tool-call_01a1bf905346757f812d3092658adbe9', status: 'complete', totalAgents: 1, completedAgents: 1,
       agents: [{ id: '01a1bf90-5807-7400-8dc6-5c1330a65971', title: 'printf-child', status: 'complete' }],

@@ -6,7 +6,7 @@ import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testin
 import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol';
 import { projectNativeSkillCatalog } from '@/session/catalogControls/nativeSkillCatalog';
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
 async function skillRecording() {

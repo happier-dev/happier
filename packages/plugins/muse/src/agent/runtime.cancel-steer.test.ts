@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
-import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.js';
+import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 

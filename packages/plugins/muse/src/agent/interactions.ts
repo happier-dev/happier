@@ -32,17 +32,17 @@ function mapDecision(value: JsonValue | undefined): SessionPermissionDecision | 
 function toolInput(params: NativeRecord): Record<string, JsonValue> {
     if (typeof params.rawArgs === 'string') {
         const parsed = readMuseNativeJson(params.rawArgs);
-        return { ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { rawArgs: params.rawArgs }),
+        return { ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? readMuseRecord(parsed) : { rawArgs: params.rawArgs }),
             nativeApproval: params.subject ?? null };
     }
     return { nativeApproval: params.subject ?? null };
 }
-function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagentId: string) => NativePermissionChoicesV1['origin'] | undefined): NativePermissionChoicesV1 {
+function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagentId: string) => Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined): NativePermissionChoicesV1 {
     const requirement = readMuseRecord(params.currentRequirementId);
     requiredString(requirement, 'approvalId');
     if (typeof requirement.sourceIndex !== 'number') throw protocolError('Muse omitted the approval requirement source index');
     if (!Array.isArray(params.availableChoices)) throw protocolError('Muse omitted the offered approval choices');
-    const choices = params.availableChoices.map(readMuseRecord).map(choice => {
+    const choices = params.availableChoices.map(readMuseRecord).map((choice): NativePermissionChoicesV1['choices'][number] => {
         const decision = mapDecision(choice.decision);
         const scope = choice.scope;
         if (!decision || (scope !== 'once' && scope !== 'session' && scope !== 'localPersistent')) {
@@ -101,7 +101,7 @@ export function createMuseInteractions(options: Readonly<{
     command: MuseMsp['command'];
     onError?(error: unknown, params?: NativeRecord): void;
     onNativeQuestionSettlement?(params: NativeRecord): void;
-    readNativeChildOrigin?(subagentId: string): NativePermissionChoicesV1['origin'] | undefined;
+    readNativeChildOrigin?(subagentId: string): Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined;
 }>) {
     const approvals = new Map<string, Occurrence>();
     const questions = new Map<string, Occurrence>();

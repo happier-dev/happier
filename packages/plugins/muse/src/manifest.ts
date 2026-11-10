@@ -91,7 +91,7 @@ export const MUSE_PLUGIN = definePlugin({
       cliSessionCommand: {
         sessionRuntimeId: MUSE_AGENT.id,
         accountSettingsAgentId: MUSE_AGENT.id,
-        buildSessionOptions: () => ({ ok: true, options: {} }),
+        buildSessionOptions: () => ({ ok: true as const, options: {} }),
       },
       sessionRunnerFactory: { module: './agent/runtime', export: 'createMuseAgentRuntime', runtimeApiVersion: 1,
         externalSessionsExport: 'museExternalSessionsContribution' },
