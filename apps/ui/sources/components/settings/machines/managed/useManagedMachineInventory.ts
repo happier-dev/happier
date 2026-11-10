@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -170,9 +170,10 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                                 if (isCurrent() && !cancellation.signal.aborted) publish({ ...entry, status: 'loading', errorCode: undefined, approval });
                                 return { approvalPending: true };
                             }
+                            // The Action terminal owner already admitted this output; inventory consumes its typed receipt.
                             const machines = input.managedId
-                                ? [ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(outcome.result)]
-                                : ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(outcome.result).machines;
+                                ? [outcome.result as ManagedMachineActionOutputV1<'machines.managed.get'>]
+                                : (outcome.result as ManagedMachineActionOutputV1<'machines.managed.list'>).machines;
                             return { kind: 'succeeded', machines };
                         },
                         succeeded: machines => ({ kind: 'succeeded', machines }), failed: code => ({ kind: 'failed', code }),

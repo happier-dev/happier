@@ -23,6 +23,11 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { storage } from '@/sync/domains/state/storageStore';
 
@@ -31,6 +36,61 @@ const { t } = await import('@/text');
 afterEach(async () => { await standardCleanup(); retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
 
 describe('managed Machine inventory', () => {
+    it('publishes changed admitted inventory without a third output admission and rejects malformed HTTP rows', async () => {
+        const homeId = 'srv_inventory_admission_cost';
+        const native = defineProtocolObject(Object.fromEntries(Array.from({ length: 64 }, (_, index) =>
+            [`field${index}`, defineProtocolString()])), { policy: 'closed' });
+        const provisioner = MachineProvisionerContributionV1Schema.parse({
+            id: 'native', title: 'Native', icon: 'server', resourceKind: 'sandbox', schemaVersion: 1,
+            launchSchema: native.jsonSchema, resourceSchema: native.jsonSchema, platforms: ['linux'], prerequisites: [],
+            billing: { location: 'cloud', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['delete'] },
+            actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+        });
+        const launch = { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1,
+            name: 'Guest', choices: Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`field${index}`, 'value'])) };
+        const reviewedFacts = buildManagedConfigurationFactsV1({
+            choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema), launch, provisioner,
+            optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+            retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        const machines = Array.from({ length: 16 }, (_, index) => ManagedMachineV1Schema.parse({
+            id: `managed-${index}`, homeId, custodianAccountId: 'owner', enrolledMachineId: `guest-${index}`,
+            launch, reviewedFacts, allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now',
+            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        }));
+        let malformed = false;
+        const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://inventory-admission-cost.test',
+            serverIdentityId: homeId, accountId: 'owner' }], route: request => request.path === '/v1/machines/managed/actions/list'
+            ? Response.json({ machines: malformed ? [{ ...machines[0], allocation: 'invalid' }] : machines }) : undefined });
+        const serverId = homes.homes.a!.id;
+        const ids = [serverId];
+        // Default dispatch traverses the real lazy Action front door, HTTP adapter and terminal settlement.
+        const hook = await renderHook(() => useManagedMachineInventory(ids));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries[serverId]?.status).toBe('ready'));
+            await flushHookEffects({ cycles: 30 });
+            const initialReads = homes.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length;
+            const output = ManagedMachineActionOutputSchemasV1['machines.managed.list'];
+            // Transparent call-through observations count full output admissions, without replacing any validation.
+            const parse = vi.spyOn(output, 'parse');
+            const safeParse = vi.spyOn(output, 'safeParse');
+            machines[8] = { ...machines[8]!, intentRevision: 2 };
+            await act(async () => publishHomeAccountChange(serverId));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().machinesByEnrolledMachineIdByServerId[serverId]?.['guest-8']?.intentRevision).toBe(2));
+            await flushHookEffects({ cycles: 30 });
+            expect(homes.requests.filter(request => request.path === '/v1/machines/managed/actions/list')).toHaveLength(initialReads + 1);
+            // HTTP response admission and canonical terminal settlement each validate once; inventory trusts their result.
+            expect(parse.mock.calls.length + safeParse.mock.calls.length).toBe(2);
+            malformed = true;
+            await act(async () => publishHomeAccountChange(serverId));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries[serverId]?.status).toBe('error'));
+            expect(hook.getCurrent().entries[serverId]?.errorCode).toBe('managed_response_invalid');
+            expect(hook.getCurrent().machinesByEnrolledMachineIdByServerId[serverId]?.['guest-8']?.intentRevision).toBe(2);
+        } finally {
+            await hook.unmount();
+            await homes.dispose();
+        }
+    });
     it('publishes zero equal automatic failures while initial load, changed failures and recovery still settle', async () => {
         let reply: 'unavailable' | 'denied' | 'unsupported' | 'ready' = 'unavailable';
         const initial = createDeferred<Response>();
