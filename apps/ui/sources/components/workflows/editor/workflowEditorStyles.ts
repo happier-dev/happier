@@ -451,7 +451,8 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         flexShrink: 1,
         minWidth: 0,
-        paddingVertical: theme.space.s4,
+        // The name's line box is the ordinal's, so the number centres on the name (owner 25: it sat high).
+        paddingVertical: Math.max(0, (ORDINAL_SIZE - Number(Typography.variant('heading').lineHeight)) / 2),
     },
     headingActions: {
         flexDirection: 'row',
