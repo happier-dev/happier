@@ -386,17 +386,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const agentId = permission.status === 'pending'
         ? liveAgentId
         : (historicalAgentId ?? liveAgentId);
-    // An installed Agent's footer copy and behavior both come from its own
-    // descriptor, bundled or not; each owner already falls back to a neutral
-    // default for one that ships none, so the footer always renders and a
-    // pending request is always answerable.
-    //
-    // The read is scoped to the machine that owns this Session. An installed
-    // Agent's descriptor is a per-machine fact, and two machines can hold
-    // different versions of it: without the machine, a request on machine B
-    // could be answered with machine A's stop handling, permission-update or
-    // exec-policy behavior. Bundled behavior is local/static; projected external
-    // behavior therefore requires an owning machine and otherwise fails closed.
+    // Stored occurrences without offered choices use frozen predecessor
+    // response semantics. Live occurrences render their producer's choices;
+    // current descriptors do not decide those answers.
     const permissionBehavior = resolveSessionPermissionBehavior({ agentId, metadata, accountScope });
     const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
     // The primary Allow once / Always for this session / Deny decisions share

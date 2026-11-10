@@ -224,8 +224,8 @@ bounded inputs and host ownership.
 
 ## Client UI behavior
 
-An Agent's client presentation behavior — permission-footer handling,
-selectable transcript storage modes, composer facts, and declarative component
+An Agent's client presentation behavior — selectable transcript storage modes,
+composer facts, and declarative component
 slots — comes from an optional `ui` block on the same contribution:
 
 ```json
@@ -233,14 +233,6 @@ slots — comes from an optional `ui` block on the same contribution:
   "id": "example",
   "ui": {
     "behavior": {
-      "permissions": {
-        "footer": {
-          "usePermissionUpdates": true,
-          "forceReadOnlyAfterStop": false,
-          "supportsExecPolicyAmendment": true,
-          "stopHandling": "denyOnly"
-        }
-      },
       "newSession": { "transcriptStorageModes": ["persisted", "direct"] }
     }
   }
@@ -252,9 +244,13 @@ projection and never interprets it; the client owns the one fail-closed
 interpreter that reads it, so a malformed field is dropped with a diagnostic
 rather than failing the Agent.
 
-An Agent that declares no `ui` block keeps the neutral default: permission
-updates off, read-only after a stop, no exec-policy amendment, stop denies and
-aborts the run, and no selectable transcript storage mode.
+An Agent that declares no `ui` block has no selectable transcript storage mode.
+
+In unreleased 0.3, live permission requests publish `nativeChoices` with their
+readable labels, scopes, and native response payloads. The shared client renders
+those offered choices; `ui.behavior` does not decide permission responses.
+Stored occurrences created before offered choices retain their frozen reader.
+The Agent's `display.permissions` declaration supplies presentation facts only.
 
 ## Resume file evidence (unreleased 0.3)
 
