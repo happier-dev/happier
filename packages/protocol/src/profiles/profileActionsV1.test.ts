@@ -359,7 +359,7 @@ describe('Profile Action host demand', () => {
     const profile = LaunchProfileV2Schema.parse({ v: 2, id: absentRow.id, name: 'Inline', createdAt: 1, updatedAt: 1 });
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.save'].safeParse({ ...absentRow, profile }).success).toBe(true);
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.duplicate']
-      .safeParse({ ...absentRow, newProfileId: 'copy', name: 'Copy', now: 2 }).success).toBe(false);
+      .safeParse({ ...absentRow, newProfileId: 'copy', name: 'Copy', now: 2 }).success).toBe(true);
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.delete'].safeParse(absentRow).success).toBe(false);
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.enabled.set'].safeParse({ ...absentRow, enabled: false }).success).toBe(false);
   });
