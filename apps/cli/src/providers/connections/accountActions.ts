@@ -23,11 +23,9 @@ export function createCliAccountProviderActionExecuteV1(params: Readonly<{
   preparedSavedSecret?: Parameters<typeof promoteSavedSecretWithProviderConnectionsCatalog>[0]['preparedSavedSecret'];
 }>): NonNullable<ActionExecutorDeps['providerActionExecute']> {
   return (request, context) => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, async (): Promise<ActionExecuteResult> => {
-    const { createCliProviderConnectionsStoreForOperation, createCliProviderConnectionsStore } = await import("@/providers/settings/catalogStore");
-    const store = params.operationContext
-      ? createCliProviderConnectionsStoreForOperation({ operationContext: params.operationContext, signal: context.signal })
-      : createCliProviderConnectionsStore({ credentials: params.credentials, signal: context.signal,
-        isCredentialCurrent: params.isCredentialCurrent });
+    const { prepareCliProviderConnectionsStore } = await import("@/providers/settings/catalogStore");
+    const store = await prepareCliProviderConnectionsStore({ credentials: params.credentials,
+      operationContext: params.operationContext, signal: context.signal, isCredentialCurrent: params.isCredentialCurrent });
     const demandsCatalog = request.actionId === 'providers.connections.create_contribution'
       || request.actionId === 'providers.connections.create_custom' || request.actionId === 'providers.connections.describe';
     if (demandsCatalog && (await store.readRow()).status === 'absent') {

@@ -184,11 +184,10 @@ export function createCliMachineActionDeps(
         }
         const home = params.savedSecretOperationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
         return runWithServerHttpBaseUrl(home, async () => {
-          const { createCliProviderConnectionsStoreForOperation, createCliProviderConnectionsStore } = await import("@/providers/settings/catalogStore");
-          const store = params.savedSecretOperationContext
-            ? createCliProviderConnectionsStoreForOperation({ operationContext: params.savedSecretOperationContext, signal: context.signal })
-            : createCliProviderConnectionsStore({ credentials, signal: context.signal,
-              isCredentialCurrent: params.isCredentialCurrent });
+          const { prepareCliProviderConnectionsStore } = await import("@/providers/settings/catalogStore");
+          const store = await prepareCliProviderConnectionsStore({ credentials,
+            operationContext: params.savedSecretOperationContext, signal: context.signal,
+            isCredentialCurrent: params.isCredentialCurrent });
           const outcome = await revokeMachineWithProviderCleanup(input.machineId, {
             revoke: async () => {
               try {

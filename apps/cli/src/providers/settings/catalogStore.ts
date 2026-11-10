@@ -67,6 +67,21 @@ export function createCliProviderConnectionsStoreForOperation(input: Readonly<{ 
 
 function retired(): never { throw Object.assign(new Error('Captured Provider Account retired'), { code: 'scope-retired' }); }
 
+/** Action admission can be cold even when its signed policy is already bound. */
+export async function prepareCliProviderConnectionsStore(input: Readonly<{
+  credentials: StoredCredentials; operationContext?: SavedSecretOperationContextV1;
+  signal?: AbortSignal; isCredentialCurrent?(): boolean | Promise<boolean>;
+}>) {
+  if (input.operationContext) return createCliProviderConnectionsStoreForOperation({
+    operationContext: input.operationContext, signal: input.signal,
+  });
+  if (!getActiveAccountSettingsSnapshot()) {
+    const { bootstrapAccountSettingsContext } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
+    await bootstrapAccountSettingsContext({ credentials: input.credentials, mode: 'blocking', signal: input.signal });
+  }
+  return createCliProviderConnectionsStore(input);
+}
+
 function createCapturedStore(input: Readonly<{
   credentials: StoredCredentials; scopeKey: string; serverHttpBaseUrl: string; signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1; assertCurrent(): void; verifyCurrent?(): Promise<void>;
