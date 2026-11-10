@@ -1,10 +1,12 @@
+import { logger } from '@/ui/logger';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, accountSettingsParse,
-    DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
+    DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
     type ActionExecutorContext, type DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentBindingsSetStorageInputV1Schema,
@@ -19,7 +21,7 @@ import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActio
 import { createOwnServerDeploymentRuntimeForHost } from '../targets/ownServer/ownServerDeploymentHostRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
-import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey, getRandomBytes } from '@/api/encryption';
+import { encodeBase64, encryptWithDataKey, getRandomBytes } from '@/api/encryption';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
@@ -31,8 +33,10 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { sealMachineSecretGrant } from './machineSecretGrant';
@@ -45,22 +49,35 @@ afterEach(async () => {
 });
 
 it.each([
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, name: 'authors plain backup credential references before any target exists' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, preTarget: true, name: 'authors E2EE backup credential references before any target exists' },
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, preTargetWithBuilder: true,
+        name: 'authors backup credential references with retained builder grants before any target exists' },
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, replay: true, configureChild: true,
+        name: 'publishes the reviewed configure binding child with its distinct admitted artifact identity' },
     { placementChange: false, mode: 'plain' as const, external: false, name: 'prepares plain authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'e2ee' as const, external: false, name: 'prepares E2EE authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'plain' as const, external: false, replay: true, name: 'uses the reacquired root requester custody for approved copy bindings' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, name: 'uses the reacquired E2EE root requester custody for approved copy bindings' },
+    { placementChange: false, mode: 'plain' as const, external: false, replay: true, missingCustody: true,
+        name: 'refuses missing requester custody before plain owner material can be acquired' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, missingCustody: true,
+        name: 'refuses missing requester custody before E2EE owner material can be acquired' },
     { placementChange: false, mode: 'plain' as const, external: false, atomicMove: true, name: 'saves reviewed database connection definition and ordinary secret bindings in one Environment update' },
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, missingCustody }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
         document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17", volumes: ["data:/var/lib/postgresql/data"]}}\nvolumes: {data: {}}',
         profiles: [], services: ['app', 'database'] });
-    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const fixture = { mode, preTarget, preTargetWithBuilder, configureChild, replay, missingCustody, atomicMove, placementChange, external };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', fixture })).toString('base64url')}.signature`;
+    const requesterToken = `header.${Buffer.from(JSON.stringify({ sub: 'requester', fixture })).toString('base64url')}.signature`;
     const machineKey = new Uint8Array(32).fill(47);
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : {
-        type: 'dataKey', machineKey, publicKey: libsodiumPublicKeyFromSecretKey(machineKey) } };
+        type: 'dataKey', machineKey, publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey } };
     const resource = await createResourceDataKey({ credentials, mode });
     const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
         : encodeBase64(encryptWithDataKey(value, resource.dataKey));
@@ -92,7 +109,8 @@ it.each([
             installationId: installation.installationId } });
     const builderKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
     const builder = { machineId: 'machine-c', installationId: 'installation-c', publicKey: Buffer.from(builderKeys.publicKey).toString('base64url') };
-    let environment = { ...detail.environment, buildMachineId: placementChange ? builder.machineId : installation.machineId };
+    let environment = { ...detail.environment, revision: configureChild ? 2 : detail.environment.revision, buildMachineId: preTarget && !preTargetWithBuilder ? undefined : placementChange ? builder.machineId : installation.machineId,
+        runtimeTargetLinkId: preTarget ? undefined : detail.environment.runtimeTargetLinkId };
     vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
         installationId: installation.installationId, publicKey: installation.publicKey,
         privateKey: Buffer.from(keys.secretKey).toString('base64url'), createdAt: 1 });
@@ -106,12 +124,19 @@ it.each([
             source: { kind: 'secret', ref, resourceRevision: 1 } },
     ] : [];
     if (atomicMove) detail.content.bindings = operational;
-    const bindings: EnvironmentSecretBindingV1[] = [{ purpose: 'variable', phase: 'runtime', name: 'SECRET',
-        source: { kind: 'secret', ref, resourceRevision: 1 } }];
+    const bindings: EnvironmentSecretBindingV1[] = preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
+        role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
+        : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', source: { kind: 'secret', ref, resourceRevision: 1 } }];
+    if (preTargetWithBuilder) {
+        const build: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
+            source: { kind: 'secret', ref, resourceRevision: 1 } };
+        bindings.push(build);
+        detail.content.bindings = [build];
+    }
     if (placementChange) bindings.push({ purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
         source: { kind: 'secret', ref, resourceRevision: 1 } });
     const content = { ...detail.content, bindings };
-    const incumbentOperationalGrants = atomicMove ? [installation, builder].map(recipient => sealMachineSecretGrant({
+    const incumbentOperationalGrants = atomicMove || preTargetWithBuilder ? (preTargetWithBuilder ? [installation] : [installation, builder]).map(recipient => sealMachineSecretGrant({
         subject: { v: 1, kind: 'secret', environmentId: environment.id, machineId: recipient.machineId,
             installationId: recipient.installationId, resourceId: 'credential', resourceRevision: 1 },
         installationPublicKey: Buffer.from(recipient.publicKey, 'base64url'),
@@ -129,6 +154,7 @@ it.each([
     put('candidate', content);
     let materialReads = 0;
     let environmentReads = 0;
+    const boundaryIssues: unknown[] = [];
     let bindingAdmissionReads = 0;
     let current = true;
     let denyBindingAdmission = false;
@@ -144,8 +170,11 @@ it.each([
     const writes: ReturnType<typeof DeploymentBindingsSetStorageInputV1Schema.parse>[] = [];
     const placementWrites: unknown[] = [];
     vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
-        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
-        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (url.endsWith('/v1/account/profile')) return { status: 200,
+            data: { id: options?.headers?.Authorization === `Bearer ${requesterToken}` ? 'requester' : 'owner' } };
+        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: credentials.encryption
+            ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: credentials.encryption,
+                payload: {}, randomBytes: getRandomBytes }) } : { t: 'plain', v: {} }, version: 1 } };
         if (url === 'https://vault.test/field') {
             nativeVaultReads++;
             expect(options?.params).toEqual({ account: 'vault-owner', reference: 'op://selected/field' });
@@ -207,13 +236,15 @@ it.each([
             const buildMachineId = 'kind' in admission ? admission.buildMachineId
                 : admission.materialization.kind === 'bindings' ? admission.materialization.buildMachineId : undefined;
             return { status: 200, data: { ok: true, grants,
-            bindingPreparation: { runtimeInstallations: [installation],
-                buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation,
+            bindingPreparation: { runtimeInstallations: preTarget ? [] : [installation],
+                ...(environment.buildMachineId ? { buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation } : {}),
                 ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}) } } };
         }
         environmentReads++;
-        return { status: 200, data: { ok: true, environment,
-            targetLinks: detail.targetLinks.map(item => item.targetLink) } };
+        const data = { ok: true, environment, targetLinks: detail.targetLinks.map(item => item.targetLink) };
+        const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(data);
+        if (!parsed.success) boundaryIssues.push(parsed.error.issues.map(issue => ({ code: issue.code, path: issue.path })));
+        return { status: 200, data };
     });
     await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
         const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl,
@@ -223,27 +254,41 @@ it.each([
             async isCurrent() { return current; } });
         let replayContext: ActionExecutorContext = {};
         if (replay) {
+            const refusalDiagnostics = vi.spyOn(logger, 'warnLocalFile');
             const channel = await createRequesterCurrentnessSocketHarness();
             onTestFinished(() => channel.close());
-            const requester = await admitRequesterAccountActionContext({ credentials, serverId: 'home', serverIdentityId: 'home',
+            const requester = await admitRequesterAccountActionContext({ credentials: missingCustody ? { ...credentials, token: requesterToken } : credentials,
+                serverId: 'home', serverIdentityId: 'home',
                 serverHttpBaseUrl, isCurrent: async () => current,
                 authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'approved-copy-root', binding: {
-                    accountId: 'owner', custodianAccountId: 'owner', accountEncryptionMode: mode, serverIdentityId: 'home',
+                    accountId: missingCustody ? 'requester' : 'owner', custodianAccountId: 'owner', accountEncryptionMode: mode, serverIdentityId: 'home',
                     machineId: installation.machineId, installationId: installation.installationId,
-                    actionId: 'deployments.bindings.set', requestId: 'copy-request', requestEnvelopeDigest: 'a'.repeat(43),
+                    actionId: configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
+                    requestId: 'copy-request', requestEnvelopeDigest: 'a'.repeat(43),
                     target: { kind: 'machine', machineId: installation.machineId }, authentication: { kind: 'account', tokenEpoch: 1 },
                 } }) });
-            expect(requester).not.toBeNull();
+            expect(requester, JSON.stringify(refusalDiagnostics.mock.calls
+                .filter(([message]) => message === '[external-action-phase]'))).not.toBeNull();
             if (!requester) throw new Error('The root requester must be admitted');
             onTestFinished(() => requester.dispose());
             const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
                 serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl, target: requester.authorization.binding.target,
                 installationId: installation.installationId, privateKey: keys.secretKey, rootAdmitted: true });
             if (!authorization) throw new Error('The root requester HTTP custody must be projected');
-            replayContext = { externalActionExecutionAuthorization: authorization };
+            replayContext = { externalActionExecutionAuthorization: authorization,
+                ...(configureChild ? { runtimeAccountId: 'owner', externalActionTarget: authorization.binding.target,
+                    surface: 'api' as const, actionCaller: { kind: 'host' as const } } : {}) };
+            if (missingCustody) {
+                // A valid signed requester projection can outlive its private
+                // author packet; it must never borrow the daemon owner's packet.
+                const projection = { ...authorization.requesterAccountProjection! };
+                Reflect.deleteProperty(projection, requesterActionContext);
+                replayContext = { externalActionExecutionAuthorization: { ...authorization,
+                    requesterAccountProjection: projection, requesterHttpProjection: authorization.requesterHttpProjection } };
+            }
         }
         const host = { credentials, serverId: 'home', serverHttpBaseUrl,
-            machineId: installation.machineId, ...(replay ? {} : { savedSecretOperationContext: operation }) };
+            machineId: installation.machineId, ...(replay && !missingCustody ? {} : { savedSecretOperationContext: operation }) };
         const runtime = createOwnServerDeploymentRuntimeForHost({
             resolveRequesterIdentity: async () => requesterIdentity,
             ...host,
@@ -255,6 +300,56 @@ it.each([
         const daemon = createDaemonDeploymentActionDeps({
             resolveRequesterIdentity: async () => requesterIdentity,
             ...host, runtime });
+        if (missingCustody) {
+            const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
+                environmentId: environment.id, expectedRevision: environment.revision, set: bindings, remove: [] }, replayContext);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'client_required' });
+            expect(materialReads).toBe(0);
+            expect(writes).toHaveLength(0);
+            return;
+        }
+        if (preTarget) {
+            for (let attempt = 0; attempt < (configureChild ? 1 : 2); attempt++) {
+                const bindingInput = { serverId: 'home', environmentId: environment.id,
+                    expectedRevision: environment.revision, set: bindings, remove: [] };
+                const configure = { action: 'deployments.backups.configure' as const, role: 'preview.backup',
+                    input: { serverId: 'home', environmentId: environment.id, expectedRevision: environment.revision - 1,
+                        intent: 'save', configuration: { configRevision: 1,
+                            destinationRef: { pluginId: 'happier.backup.local', localId: 'local' }, occurrenceId: 'destination',
+                            config: { path: '/private/repository' }, credentialBindings: [],
+                            sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
+                            ownership: { environmentId: environment.id, prefix: '' }, retention: { kind: 'keepEverything' } } } };
+                const bindingChild = { action: 'deployments.bindings.set' as const, role: 'backup.bindings', input: bindingInput };
+                const result = configureChild ? await invokeHostReviewedChildV1({
+                    parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } },
+                    child: configure, context: replayContext,
+                    admittedReview: { action: configure.action, role: configure.role, surface: 'api' },
+                    execute: async (_input, configureContext) => invokeHostReviewedChildV1({
+                        parent: { actionId: configure.action, input: configure.input }, child: bindingChild,
+                        context: configureContext,
+                        admittedReview: { action: bindingChild.action, role: bindingChild.role, surface: 'api' },
+                        execute: async (_input, bindingContext) => daemon.deploymentAction!('deployments.bindings.set', bindingInput, bindingContext),
+                    }),
+                }) : await daemon.deploymentAction!('deployments.bindings.set', bindingInput, {});
+                expect(result, JSON.stringify({ result, attempt, artifactWrites, bindingAdmissionReads, environmentReads, boundaryIssues })).toMatchObject({ ok: true });
+                const written = writes.at(-1)!;
+                if (configureChild) expect(written.contentArtifactId).toBe(createDeploymentEnvironmentContentArtifactIdV1({
+                    ...replayContext.externalActionExecutionAuthorization!.binding,
+                    actionId: 'deployments.bindings.set', environmentId: environment.id }));
+                expect(written).toMatchObject({ grants: incumbentOperationalGrants,
+                    referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] });
+                const opened = readDeploymentEnvironmentArtifactV1(written,
+                    await createCredentialedAccountArtifactStore(credentials).read(written.contentArtifactId, {
+                        prepareRecipients: false, includeSharedAudience: false }));
+                expect(opened).toMatchObject({ ok: true, content: { bindings: expect.arrayContaining(bindings) } });
+                if (opened.ok) expect(opened.content.bindings).toHaveLength(bindings.length);
+                put(environment.contentArtifactId, { ...detail.content, bindings });
+            }
+            expect(writes).toHaveLength(configureChild ? 1 : 2);
+            expect(materialReads).toBe(0);
+            expect(bindingAdmissionReads).toBe(preTargetWithBuilder ? 2 : 0);
+            return;
+        }
         if (atomicMove) {
             const definition = { from: 'compose' as const, profiles: [], services: ['app'],
                 document: 'services: {app: {image: "example/app:1", environment: {DATABASE_URL: "postgres://user:${SECRET}@${DB_HOST}:${DB_PORT}/app"}}}' };
@@ -282,7 +377,8 @@ it.each([
                 }, {})).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
                 expect(placementWrites).toHaveLength(0);
             }
-            expect(await daemon.deploymentAction!('deployments.environments.update', update, {})).toMatchObject({ ok: true });
+            const updated = await daemon.deploymentAction!('deployments.environments.update', update, {});
+            expect(updated, JSON.stringify(updated)).toMatchObject({ ok: true });
             expect(placementWrites).toHaveLength(1);
             expect(writes).toHaveLength(0);
             const written = DeploymentEnvironmentUpdateStorageInputV1Schema.parse(placementWrites[0]);

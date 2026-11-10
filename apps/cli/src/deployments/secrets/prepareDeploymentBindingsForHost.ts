@@ -6,13 +6,16 @@ import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Sc
     EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import { createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext, DeploymentActionIdV1 } from '@happier-dev/protocol';
-import { readDeploymentEnvironmentArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
+import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1, DeploymentEnvironmentGetResultV1 } from '@happier-dev/protocol';
+import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
     isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
-    machineSecretGrantSubjectKey, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+    machineSecretGrantSubjectKey, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+    type DeploymentTargetLinkContentV1, type DeploymentTargetLinkHeaderV1, type MachineSecretGrantV1,
+    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -21,10 +24,10 @@ import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { DeploymentBindingPreparationRequestV1, PreparedDeploymentBindingStorageV1 } from '../createCliDeploymentActionDeps';
 import { createDeploymentArtifactForHost } from '../createArtifactForHost';
-import { prepareEnvironmentSecretBindings } from './environmentSecretBindingService';
+import { prepareEnvironmentSecretBindings, type EnvironmentSecretInstallation } from './environmentSecretBindingService';
 import { assertDeploymentSecretInvocationCurrent, readEnvironmentSecretBindingPreparationForHost } from './readEnvironmentSecretLaunchAdmissionForHost';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -36,6 +39,28 @@ function failure(error: unknown): ActionExecuteFailure {
 }
 export { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 
+/** The native data owner resolves exact service destinations before any selected secret is acquired. */
+export type PrepareDataRoleBindingsForHost = (input: Readonly<{
+    input: DeploymentBindingsSetInputV1;
+    environment: Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
+    content: DeploymentEnvironmentContentV1;
+    previousContent: DeploymentEnvironmentContentV1;
+    context: ActionExecutorContext;
+    runtimeInstallations: readonly EnvironmentSecretInstallation[];
+    existingGrants: readonly MachineSecretGrantV1[];
+}>) => Promise<Readonly<{
+    operationalDestinations: NonNullable<Parameters<typeof prepareEnvironmentSecretBindings>[0]['operationalDestinations']>;
+    complete(grants: readonly MachineSecretGrantV1[]): Promise<void>;
+    dispose(): Promise<void> | void;
+}>>;
+
+export type PreparePlatformBindingsForHost = (request: Readonly<{
+    input: DeploymentBindingsSetInputV1; environment: Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
+    content: DeploymentEnvironmentContentV1; previousContent: DeploymentEnvironmentContentV1;
+    targetLink: DeploymentTargetLinkHeaderV1; linkContent: DeploymentTargetLinkContentV1; context: ActionExecutorContext;
+}>) => Promise<Readonly<{ linkContent: DeploymentTargetLinkContentV1;
+    providerVariables: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']> }>>;
+
 /** Explicit author preparation only. P40's single bindings CAS remains the sole writer. */
 export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     credentials: StoredCredentials;
@@ -44,15 +69,23 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
+    prepareDataRoleBindings?: PrepareDataRoleBindingsForHost;
+    preparePlatformBindings?: PreparePlatformBindingsForHost;
     resolveRequestHeaders(context: ActionExecutorContext, actionId: DeploymentActionIdV1,
         request: Parameters<ArtifactRequestAuthorizationHeaders>[0]):
         Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>) {
-    const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     return async (request: DeploymentBindingPreparationRequestV1):
         Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure> => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
+        let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
         let admission: Awaited<ReturnType<typeof readEnvironmentSecretBindingPreparationForHost>> | undefined;
+        let dataRolePreparation: Awaited<ReturnType<PrepareDataRoleBindingsForHost>> | undefined;
         try {
+            const { credentials, operation } = resolveRequesterSavedSecretActionCustody({
+                authorization: request.context.externalActionExecutionAuthorization,
+                credentials: host.credentials, operationContext: host.savedSecretOperationContext,
+            });
+            const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(credentials);
             const input = DeploymentBindingsSetInputV1Schema.parse(request.input);
             if ('set' in input && input.set.some(binding => binding.source.kind === 'secret'
                 && binding.source.ref === 'person_selects')) return refuse('client_required');
@@ -94,12 +127,14 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             if (!candidate.ok) return refuse(candidate.error);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
                 : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content)) return refuse('deployment_invalid');
+            if ('providerVariables' in input && input.providerVariables) {
+                const keep = new Set(input.providerVariables.keepTheirs);
+                candidate.content.bindings = candidate.content.bindings.filter(binding => binding.purpose !== 'variable' || !keep.has(binding.name));
+            }
             const selectedCaptures = captureDeploymentBindingSavedSecretRevisionsV1(candidate.content.bindings);
             if (!request.buildMachineId && !request.environmentUpdate && 'referencedSavedSecretRevisions' in input
                 && !matchesDeploymentBindingSavedSecretCapturesV1(selectedCaptures,
                 input.referencedSavedSecretRevisions)) return refuse('deployment_invalid');
-            const operation = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)
-                ?.savedSecretOperationContext ?? host.savedSecretOperationContext;
             const assertCurrent = async () => {
                 await assertAuthority();
                 if (operation && !await operation.isCurrent(context.signal)) return refuse('action_forbidden');
@@ -111,8 +146,11 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 // after current resource/installation custody has settled.
                 await assertCurrent();
                 const binding = context.externalActionExecutionAuthorization?.binding;
-                const artifactId = binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                    ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: input.environmentId }) : undefined;
+                const child = readHostAdmittedReviewedChildV1(context);
+                const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                    || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && child.role === 'backup.bindings')
+                    ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                        environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
                     ...(artifactId ? { publication: 'create' as const } : {}),
                     content: { ...(artifactId ? { artifactId } : {}),
@@ -125,25 +163,48 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };
+            const platformLink = loaded.targetLinks.find(link => link.id === targetLinkId && link.source.kind === 'plugin');
+            if (platformLink && !request.buildMachineId && !request.environmentUpdate) {
+                if (!host.preparePlatformBindings) return refuse('unsupported_action');
+                if (readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
+                    bindings: candidate.content.bindings, existingGrants: [], writer: 'variables' }) === null) return refuse('deployment_invalid');
+                const opened = readDeploymentTargetLinkArtifactV1(platformLink, await open(platformLink.contentArtifactId));
+                if (!opened.ok) return refuse(opened.error);
+                const synchronized = await host.preparePlatformBindings({ input, environment: loaded, content: candidate.content,
+                    previousContent: current.content, targetLink: platformLink, linkContent: opened.content, context });
+                providerVariables = synchronized.providerVariables;
+                const binding = context.externalActionExecutionAuthorization?.binding;
+                const artifactId = binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                    ? createDeploymentLinkContentArtifactIdV1({ ...binding, deploymentLinkAdmission: { environmentId: input.environmentId } }) : undefined;
+                const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
+                    ...(artifactId ? { publication: 'create' as const } : {}), content: { ...(artifactId ? { artifactId } : {}),
+                        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: candidate.content.name },
+                        body: JSON.stringify(synchronized.linkContent), signal: context.signal, beforeWrite: assertCurrent, authorizationHeaders: headers } });
+                return { ...await complete([]), providerVariables, targetLinkContent: { targetLinkId: platformLink.id,
+                    expectedTargetLinkRevision: platformLink.revision, contentArtifactId: created.artifactId,
+                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion } };
+            }
             if (candidate.content.bindings.length === 0 && current.content.bindings.length === 0) {
                 await assertAuthority();
                 return await complete([]);
             }
             // References can be authored before placement. The shared binding owner
             // decides which uses need a destination; no secret is acquired without one.
-            if (!targetLinkId && !loaded.environment.buildMachineId && !request.buildMachineId
-                && current.content.bindings.every(binding => binding.purpose === 'variable')) {
+            if (!targetLinkId && !loaded.environment.buildMachineId && !request.buildMachineId) {
                 const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
                     bindings: candidate.content.bindings, previousBindings: current.content.bindings,
                     runtimeInstallations: [], existingGrants: [], assertCurrent });
                 return await complete(prepared.grants);
             }
-            if (!targetLinkId || !loaded.targetLinks.some(link => link.id === targetLinkId)) return refuse('deployment_unavailable');
+            if (targetLinkId && !loaded.targetLinks.some(link => link.id === targetLinkId)) return refuse('deployment_unavailable');
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('secret_missing');
-            admission = await readEnvironmentSecretBindingPreparationForHost({ credentials: host.credentials,
+            admission = await readEnvironmentSecretBindingPreparationForHost({ credentials,
                 serverId: storageServerId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
-                installationId: identity.installationId, environmentId: input.environmentId, targetLinkId,
+                installationId: identity.installationId, environmentId: input.environmentId,
+                ...(targetLinkId ? { targetLinkId } : {}),
+                createRequestHeaders: body => headers({ method: 'POST',
+                    path: `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`, body }),
                 expectedRevision: input.expectedRevision, ...(request.buildMachineId ? { buildMachineId: request.buildMachineId } : {}),
                 ...(request.environmentUpdate ? { environmentUpdate: true } : {}),
                 domainIds: request.environmentUpdate ? [] : [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
@@ -159,7 +220,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 return refuse('deployment_conflict');
             }
             const materializer = operation ? async () => {
-                if (operation.credentials.token !== host.credentials.token || !await operation.isCurrent(context.signal)) return refuse('action_forbidden');
+                if (!await operation.isCurrent(context.signal)) return refuse('action_forbidden');
                 const snapshot = operation.readSnapshot();
                 if (!snapshot?.scopeKey) return refuse('client_required');
                 const admitted = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
@@ -177,17 +238,26 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 domains: domainDestinations.domains.map(domain => ({ domainId: domain.domainId,
                     installations: domain.installations.map(decodeInstallation) })) } : undefined;
             const preparedBindings = request.environmentUpdate
-                ? candidate.content.bindings.filter(isEnvironmentSecretBindingManagedByBindingsWriterV1) : candidate.content.bindings;
+                ? candidate.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : candidate.content.bindings;
             const previousBindings = request.environmentUpdate
-                ? current.content.bindings.filter(isEnvironmentSecretBindingManagedByBindingsWriterV1) : current.content.bindings;
+                ? current.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : current.content.bindings;
+            if (!request.environmentUpdate && [...preparedBindings, ...previousBindings].some(binding =>
+                binding.purpose === 'dataRole' && 'service' in binding) && host.prepareDataRoleBindings) {
+                dataRolePreparation = await host.prepareDataRoleBindings({ input, environment: loaded, content: candidate.content,
+                    previousContent: current.content, context,
+                    runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
+                    existingGrants: retainedAdmission.grants });
+            }
             const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
                 bindings: preparedBindings, previousBindings,
                 runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                 ...(buildInstallation ? { buildInstallation: decodeInstallation(buildInstallation) } : {}),
                 ...(decodedDomainDestinations ? { domainDestinations: decodedDomainDestinations } : {}),
+                ...(dataRolePreparation ? { operationalDestinations: dataRolePreparation.operationalDestinations } : {}),
                 ...(request.buildMachineId ? { previousDestinations: {
                     runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                     ...(decodedDomainDestinations ? { domainDestinations: decodedDomainDestinations } : {}),
+                    ...(dataRolePreparation ? { operationalDestinations: dataRolePreparation.operationalDestinations } : {}),
                     ...(retainedAdmission.bindingPreparation.buildInstallation
                         ? { buildInstallation: decodeInstallation(retainedAdmission.bindingPreparation.buildInstallation) } : {}),
                 } } : {}),
@@ -197,8 +267,12 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 prepared.referencedSavedSecretRevisions)) return refuse('deployment_invalid');
             const grants = new Map([...prepared.grants, ...retainedOperationalGrants]
                 .map(grant => [machineSecretGrantSubjectKey(grant), grant]));
+            await dataRolePreparation?.complete([...grants.values()]);
             return await complete([...grants.values()]);
-        } catch (error) { return failure(request.context.signal?.aborted ? { code: 'cancelled' } : error); }
-        finally { admission?.release(); }
+        } catch (error) {
+            const result = failure(request.context.signal?.aborted ? { code: 'cancelled' } : error);
+            return providerVariables ? { ...result, effectAttempted: true, details: { providerVariables } } : result;
+        }
+        finally { try { await dataRolePreparation?.dispose(); } finally { admission?.release(); } }
     });
 }

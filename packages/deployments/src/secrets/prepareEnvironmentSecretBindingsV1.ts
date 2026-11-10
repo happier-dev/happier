@@ -123,8 +123,10 @@ export async function prepareEnvironmentSecretBindingsV1(input: Destinations & R
     }
     for (const binding of bindings) {
         const destinations = destinationsFor(binding, input, operational);
-        // Runtime variables may be authored before a target is linked; there is nothing to seal yet.
-        if (!destinations.length && (binding.purpose !== 'variable' || binding.phase !== 'runtime')) return refuse('secret_missing');
+        // Runtime variables and backup references may be authored before placement;
+        // their current installations alone determine whether anything is sealed.
+        if (!destinations.length && binding.purpose !== 'backupDestination'
+            && (binding.purpose !== 'variable' || binding.phase !== 'runtime')) return refuse('secret_missing');
         for (const { installation, use } of destinations) {
             const subject = subjectFor(use, installation);
             const key = machineSecretGrantSubjectKey(subject);

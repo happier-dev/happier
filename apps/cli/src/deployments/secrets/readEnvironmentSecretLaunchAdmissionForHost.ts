@@ -12,9 +12,9 @@ import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantBodyV1Schema,
+    EnvironmentSecretLaunchAdmissionResultV1Schema, EnvironmentSecretClientBindingsInputV1Schema, MachineConnectorSecretGrantBodyV1Schema,
     MachineConnectorSecretGrantResultV1Schema, MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey, parseMachineSecretGrantSubjectKey,
-    type EnvironmentSecretLaunchAdmissionBodyV1, type MachineConnectorSecretGrantBodyV1,
+    type EnvironmentSecretLaunchAdmissionBodyV1, type EnvironmentSecretAdmissionRequestV1, type MachineConnectorSecretGrantBodyV1,
     type MachineConnectorSecretGrantSubjectV1, type MachineConnectorSecretGrantInputV1,
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -38,7 +38,12 @@ type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalAc
 type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'materialization'> & Readonly<{
     environmentUpdate?: true;
     materialization: OwnServerSecretLaunchAdmissionRequest['materialization']
-        | Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'bindings' | 'domain' }>;
+        | Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'bindings' | 'domain' | 'dataRole' }>;
+}>;
+type BindingPreparationAdmissionRequest = Omit<HostSecretAdmissionRequest, 'targetLinkId' | 'materialization'> & Readonly<{
+    targetLinkId?: string;
+    materialization: Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'bindings' }>;
+    createRequestHeaders?: (body: unknown) => Promise<Readonly<Record<string, string>>>;
 }>;
 
 /** Requester custody for author preparation and protected Machine setup effects. */
@@ -62,6 +67,17 @@ export async function readEnvironmentSecretLaunchAdmissionForHost(input: OwnServ
     return admitted;
 }
 
+/** Query opens only its private service binding; Home supplies exact admitted installation custody. */
+export async function readEnvironmentDataRoleLaunchAdmissionForHost(input: Omit<HostSecretAdmissionRequest, 'materialization'> & Readonly<{
+    expectedRevision: number; deploymentId: string; service: string;
+}>): Promise<OwnServerSecretLaunchAdmission> {
+    const admitted = await readEnvironmentSecretAdmissionForHost({ ...input, materialization: {
+        kind: 'dataRole', expectedRevision: input.expectedRevision, deploymentId: input.deploymentId, service: input.service,
+    } });
+    if (admitted.bindingPreparation || admitted.domainAdmission) { admitted.release(); return refuse('invalid_action_output'); }
+    return admitted;
+}
+
 /** Domain native work uses the same installation proof, grant reader and release lifetime. */
 export async function readEnvironmentDomainSecretLaunchAdmissionForHost(input: Omit<HostSecretAdmissionRequest, 'materialization'> & Readonly<{
     materialization: Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'domain' }>;
@@ -73,7 +89,7 @@ export async function readEnvironmentDomainSecretLaunchAdmissionForHost(input: O
 }
 
 /** The same private admission owner serves explicit manager preparation, never a public inventory. */
-export async function readEnvironmentSecretBindingPreparationForHost(input: Omit<HostSecretAdmissionRequest, 'materialization'> & Readonly<{
+export async function readEnvironmentSecretBindingPreparationForHost(input: Omit<BindingPreparationAdmissionRequest, 'materialization'> & Readonly<{
     expectedRevision: number; buildMachineId?: string; domainIds?: readonly string[];
 }>) {
     const admitted = await readEnvironmentSecretAdmissionForHost({ ...input,
@@ -105,7 +121,8 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
         if (released) return refuse('secret_missing');
         if (input.signal.aborted) return refuse('cancelled');
     };
-    const prepareRequest = async (path: string, body: EnvironmentSecretLaunchAdmissionBodyV1 | MachineConnectorSecretGrantBodyV1,
+    const prepareRequest = async (path: string, body: EnvironmentSecretLaunchAdmissionBodyV1 | MachineConnectorSecretGrantBodyV1
+        | Extract<EnvironmentSecretAdmissionRequestV1, { kind: 'clientBindings' }>,
         effectActionId?: string) => {
         await assertAuthority();
         let context = input.context;
@@ -131,11 +148,10 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
             context = { ...context, externalActionExecutionAuthorization: projected };
         }
         const projection = effectActionId ? context.externalActionExecutionAuthorization?.requesterHttpProjection : undefined;
-        const proof = signMachineInstallationProof({ payload: { version: 1, machineId: input.machineId,
+        const data = 'kind' in body ? body : { ...body, proof: signMachineInstallationProof({ payload: { version: 1, machineId: input.machineId,
             installationId: identity.installationId, accountId: projection?.accountId ?? accountId,
             deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
-            privateKey: identity.privateKey });
-        const data = { ...body, proof };
+            privateKey: identity.privateKey }) };
         const authorizationHeaders = createRequestHeaders ? await createRequestHeaders(data)
             : projection && effectActionId ? await resolveExternalActionRequesterServerRequestHeaders({
                 context, serverHttpBaseUrl: input.serverHttpBaseUrl, method: 'POST', path, body: data,
@@ -153,7 +169,8 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
             }
         };
     };
-    const request = async (path: string, body: EnvironmentSecretLaunchAdmissionBodyV1 | MachineConnectorSecretGrantBodyV1,
+    const request = async (path: string, body: EnvironmentSecretLaunchAdmissionBodyV1 | MachineConnectorSecretGrantBodyV1
+        | Extract<EnvironmentSecretAdmissionRequestV1, { kind: 'clientBindings' }>,
         effectActionId?: string) => {
         const send = await prepareRequest(path, body, effectActionId);
         const response = await send(input.signal);
@@ -163,11 +180,16 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
     return { identity, request, prepareRequest, assertCurrent: assertAuthority, release() { released = true; } };
 }
 
-async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionRequest) {
+async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionRequest | BindingPreparationAdmissionRequest) {
     const actionOperationId = input.actionOperationId ?? input.context.operationAcceptance?.operationId;
     if (input.materialization.kind === 'deployment' && !actionOperationId) return refuse('operation_unavailable');
-    const custody = createInstalledSecretTransportForHost(input);
-    const body = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId: input.serverId,
+    const custody = createInstalledSecretTransportForHost(input, 'createRequestHeaders' in input ? input.createRequestHeaders : undefined);
+    const body = !input.targetLinkId && input.materialization.kind === 'bindings'
+        ? EnvironmentSecretClientBindingsInputV1Schema.parse({ kind: 'clientBindings', serverId: input.serverId,
+            environmentId: input.environmentId, expectedRevision: input.materialization.expectedRevision,
+            ...(input.materialization.buildMachineId ? { buildMachineId: input.materialization.buildMachineId } : {}),
+            ...(input.materialization.domainIds?.length ? { domainIds: input.materialization.domainIds } : {}) })
+        : EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId: input.serverId,
         environmentId: input.environmentId, targetLinkId: input.targetLinkId,
         machineId: input.machineId, installationId: input.installationId,
         materialization: input.materialization.kind !== 'deployment' ? input.materialization : {
@@ -178,6 +200,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
             body, input.materialization.kind === 'bindings'
                 ? input.materialization.buildMachineId || input.environmentUpdate
                     ? 'deployments.environments.update' : 'deployments.bindings.set'
+                : input.materialization.kind === 'dataRole' ? 'deployments.data.query'
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
                     : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'

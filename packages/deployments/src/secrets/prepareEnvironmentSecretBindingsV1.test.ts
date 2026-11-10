@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { prepareEnvironmentSecretBindingsV1 } from './prepareEnvironmentSecretBindingsV1.js';
 import { sealMachineSecretGrantEnvelopeV1 } from './sealMachineSecretGrantEnvelopeV1.js';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+
+it('captures backup credential references before placement without acquiring material', async () => {
+    const binding: EnvironmentSecretBindingV1 = { purpose: 'backupDestination', configKey: 'destination',
+        role: 'repositoryPassword', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('backup-password'), resourceRevision: 3 } };
+    const prepared = await prepareEnvironmentSecretBindingsV1({ environmentId: 'environment', bindings: [binding],
+        previousBindings: [binding], runtimeInstallations: [], existingGrants: [], async assertCurrent() {},
+        async resolveSecret() { throw new Error('Unplaced references must not acquire secret material'); },
+        sealGrant() { throw new Error('Unplaced references have no installation recipient'); } });
+    expect(prepared).toMatchObject({ grants: [], referencedSavedSecretRevisions: [{ resourceId: 'backup-password', revision: 3 }] });
+});
 
 type ReferenceComponent = Extract<EnvironmentSecretBindingV1['source'], { kind: 'reference' }>['component'];
 const reference = (component: ReferenceComponent): EnvironmentSecretBindingV1 => ({
