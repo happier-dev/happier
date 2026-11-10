@@ -10,6 +10,17 @@ import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } fro
 const serverRoot = join(import.meta.dirname, "..");
 
 describe("schemaSync", () => {
+    it('keeps Collection grant and key-envelope foreign keys compatible with the MySQL row identity', () => {
+        const postgres = readFileSync(join(serverRoot, 'prisma/schema.prisma'), 'utf8');
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        const migration = readFileSync(join(serverRoot, 'prisma/mysql/migrations/20261102153000_plugin_collection_resource_grants/migration.sql'), 'utf8');
+        for (const name of ['PluginCollectionAccountGrant', 'PluginCollectionTeamGrant', 'PluginCollectionGroupGrant', 'PluginCollectionKeyEnvelope']) {
+            const model = mysql.match(new RegExp(`model ${name}\\s*\\{([\\s\\S]*?)^\\}`, 'mu'))?.[1] ?? '';
+            expect(model).toMatch(/^\s*rowDbId\s+String\s+@db\.VarChar\(25\)\s*$/mu);
+            const table = migration.match(new RegExp('CREATE TABLE `' + name + '` \\(([\\s\\S]*?)\\) DEFAULT', 'u'))?.[1] ?? '';
+            expect(table).toMatch(/`rowDbId` VARCHAR\(25\) CHARACTER SET ascii COLLATE ascii_bin NOT NULL/u);
+        }
+    });
     it('keeps derived Usage projection hashes indexable and its JSON payload unbounded across providers', () => {
         const postgres = readFileSync(join(serverRoot, 'prisma/schema.prisma'), 'utf8');
         const model = (schema: string) => schema.match(/model UsageAccountingProjection\s*\{([\s\S]*?)^\}/mu)?.[1] ?? '';

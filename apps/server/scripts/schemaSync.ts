@@ -437,6 +437,10 @@ function annotateMySqlPluginPermissionIndexes(schemaBody: string): string {
 function annotateMySqlPluginCollectionFields(schemaBody: string): string {
     return schemaBody
         .replace(
+            /^model\s+(?:PluginCollectionAccountGrant|PluginCollectionTeamGrant|PluginCollectionGroupGrant|PluginCollectionKeyEnvelope)\s+\{[\s\S]*?^\}\s*$/gm,
+            model => model.replace(/^(\s*rowDbId\s+String)(?![^\n]*@db\.)/m, '$1 @db.VarChar(25)'),
+        )
+        .replace(
             /^model\s+PluginCollectionUsage\s+\{[\s\S]*?^\}\s*$/gm,
             model => model.replace(/^(\s*(?:pluginId|collectionId)\s+String)(?![^\n]*@db\.)/gm, '$1 @db.VarChar(256)'),
         )

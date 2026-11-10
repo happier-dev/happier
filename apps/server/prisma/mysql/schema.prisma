@@ -4416,7 +4416,7 @@ model TaskKeyEnvelope {
 
 /// Collection grants attach to the canonical Collection row.
 model PluginCollectionAccountGrant {
-    rowDbId String
+    rowDbId String @db.VarChar(25)
     accountId String
     accessLevel ShareAccessLevel
     createdByAccountId String
@@ -4431,7 +4431,7 @@ model PluginCollectionAccountGrant {
 }
 
 model PluginCollectionTeamGrant {
-    rowDbId String
+    rowDbId String @db.VarChar(25)
     teamId String
     accessLevel ShareAccessLevel
     createdByAccountId String
@@ -4446,7 +4446,7 @@ model PluginCollectionTeamGrant {
 }
 
 model PluginCollectionGroupGrant {
-    rowDbId String
+    rowDbId String @db.VarChar(25)
     teamGroupId String
     accessLevel ShareAccessLevel
     createdByAccountId String
@@ -4462,7 +4462,7 @@ model PluginCollectionGroupGrant {
 
 /// Owner and recipient copies of the resource data key share one envelope owner.
 model PluginCollectionKeyEnvelope {
-    rowDbId String
+    rowDbId String @db.VarChar(25)
     recipientAccountId String
     encryptedDataKey Bytes
     recipientContentPublicKeyFingerprint String

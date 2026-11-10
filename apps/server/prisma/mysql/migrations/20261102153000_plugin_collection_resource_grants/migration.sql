@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE `PluginCollectionAccountGrant` (
-    `rowDbId` VARCHAR(191) NOT NULL,
+    `rowDbId` VARCHAR(25) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `accountId` VARCHAR(191) NOT NULL,
     `accessLevel` ENUM('view', 'edit', 'admin') NOT NULL,
     `createdByAccountId` VARCHAR(191) NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE `PluginCollectionAccountGrant` (
 
 -- CreateTable
 CREATE TABLE `PluginCollectionTeamGrant` (
-    `rowDbId` VARCHAR(191) NOT NULL,
+    `rowDbId` VARCHAR(25) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `teamId` VARCHAR(191) NOT NULL,
     `accessLevel` ENUM('view', 'edit', 'admin') NOT NULL,
     `createdByAccountId` VARCHAR(191) NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE `PluginCollectionTeamGrant` (
 
 -- CreateTable
 CREATE TABLE `PluginCollectionGroupGrant` (
-    `rowDbId` VARCHAR(191) NOT NULL,
+    `rowDbId` VARCHAR(25) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `teamGroupId` VARCHAR(191) NOT NULL,
     `accessLevel` ENUM('view', 'edit', 'admin') NOT NULL,
     `createdByAccountId` VARCHAR(191) NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE `PluginCollectionGroupGrant` (
 
 -- CreateTable
 CREATE TABLE `PluginCollectionKeyEnvelope` (
-    `rowDbId` VARCHAR(191) NOT NULL,
+    `rowDbId` VARCHAR(25) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `recipientAccountId` VARCHAR(191) NOT NULL,
     `encryptedDataKey` LONGBLOB NOT NULL,
     `recipientContentPublicKeyFingerprint` VARCHAR(191) NOT NULL,
