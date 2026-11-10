@@ -64,6 +64,7 @@ function createMachineAccessActionSpecs() {
   return [
   {
     id: 'machines.work.summary.get', approval: {result: 'required'}, title: 'Read machine work summary',
+    originalExecution: { requesterCredentials: 'none' },
     description: 'Read current requester identities and numeric work counts as the custodian or someone with current Manage access. No work titles, identifiers, paths or content are returned.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_work_summary_get', voiceClientToolName: 'getMachineWorkSummary', rpcMethod: RPC_METHODS.MACHINES_WORK_SUMMARY_GET },

@@ -327,7 +327,7 @@ function createAgentCatalogActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.install.status', executionPlacement: 'machine', approval: {result: 'required'},
-    originalExecution: { daemonIngressSurfaces: ['ui'] },
+    originalExecution: { requesterCredentials: 'none', daemonIngressSurfaces: ['ui'] },
     title: 'Read an agent install job',
     description: 'Read the daemon-owned current steps, byte progress, and outcome alongside events after the cursor. Omitting the cursor reads events from the start.',
     sideEffectClass: 'read',
@@ -351,7 +351,7 @@ function createAgentCatalogActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.install.cancel', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
-    originalExecution: { daemonIngressSurfaces: ['ui'] },
+    originalExecution: { requesterCredentials: 'none', daemonIngressSurfaces: ['ui'] },
     title: 'Cancel agent install',
     sideEffectClass: 'danger',
     safety: 'danger',
