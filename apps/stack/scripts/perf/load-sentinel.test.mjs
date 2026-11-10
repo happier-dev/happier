@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
+import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../packages/cli-common/fileChangeObserver.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { createLoadSentinel, sentinelGraphs, isSentinelSource, watchLoadSentinel } from './load-sentinel.mjs';
 import { ENTRY_GRAPHS } from './entry-load.mjs';
@@ -38,6 +40,24 @@ test('real graph load transitions post one failure and one clear; unchanged fail
   await sentinel.request();
   assert.equal(posts.length, 2);
   assert.match(posts[1], /cleared/);
+  assert.match(posts[1], /— RESULT —/);
+  assert.doesNotMatch(posts[1], /URGENT/);
+});
+
+test('a transient real graph failure that passes confirmation publishes nothing', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  await writeFile(entry, 'throw new ReferenceError("transientBinding is not defined");');
+  const posts = [];
+  const results = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal,
+    onResult: async result => {
+      results.push(result.status);
+      if (results.length === 1) await writeFile(entry, 'export {};');
+    },
+    post: async entry => posts.push(entry) });
+  await sentinel.request();
+  assert.deepEqual(results, ['failed', 'passed']);
+  assert.equal(posts.length, 0);
 });
 
 test('changes during an active run coalesce into at most one follow-up', async t => {
@@ -53,7 +73,38 @@ test('changes during an active run coalesce into at most one follow-up', async t
   for (let n = 0; n < 20; n++) sentinel.request();
   release.resolve();
   await active;
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 3, 'initial failure, confirmation, and one coalesced follow-up');
+});
+
+test('source changes renew the confirmation quiet window and a transient watcher break stays silent', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  await writeFile(entry, 'throw new ReferenceError("transientWatcherBinding is not defined");');
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const posts = [];
+  let edit;
+  let quietAfterEdit = false;
+  let quietMarker;
+  let passedAfterQuiet;
+  let probes = 0;
+  await watchLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: controller.signal,
+    onResult: result => {
+      probes++;
+      if (probes === 1) edit = (async () => {
+        await delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS / 2);
+        // This marker settles before the observer's renewed quiet window.
+        quietMarker = delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS).then(() => { quietAfterEdit = true; });
+        await writeFile(entry, 'export {};');
+      })();
+      if (result.status === 'passed') { passedAfterQuiet = quietAfterEdit; controller.abort(); }
+    },
+    post: async entry => posts.push(entry),
+  });
+  await edit;
+  await quietMarker;
+  assert.equal(passedAfterQuiet, true, 'confirmation ran before a full source-change-quiet window');
+  assert.equal(posts.length, 0);
+  assert.equal(probes, 2, 'only the failed graph is confirmed before shutdown');
 });
 
 test('sentinel subset consumes the canonical graph declarations', () => {

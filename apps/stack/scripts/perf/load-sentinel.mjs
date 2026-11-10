@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ENTRY_GRAPHS, loadEntryGraph } from './entry-load.mjs';
 import { isPublicRuntimeImportDiagnostic } from '../utils/proc/runtimeImportProbe.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../packages/cli-common/fileChangeObserver.mjs';
@@ -67,7 +68,8 @@ async function recentImportFiles(repoDir, graph, result) {
     complete: Boolean(result.failureImportPath) || parents.has(target) };
 }
 
-export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, post, onResult = () => {} }) {
+export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, post, onResult = () => {},
+  waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
   let pending = false;
   let running;
@@ -78,9 +80,21 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
       pending = false;
       for (const graph of graphs) {
         signal?.throwIfAborted();
-        const result = await loadEntryGraph(graph, { repoDir, signal, traceImports: true });
-        onResult(result);
+        let result = await loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+        await onResult(result);
         const previous = failures.get(graph.id);
+        if (result.status !== 'passed') {
+          const { code, symbol } = failureIdentity(result);
+          const module = sourcePath(repoDir, result.firstFailingModule) ?? graph.entry;
+          if (!previous?.has(JSON.stringify([module, code, symbol]))) {
+            // Multi-file writes can briefly break imports. Confirm only this graph
+            // after a fresh quiet window before waking every lead.
+            await waitForQuiet();
+            signal?.throwIfAborted();
+            result = await loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+            await onResult(result);
+          }
+        }
         if (result.status === 'passed') {
           if (previous) {
             for (const [key, details] of previous) {
@@ -119,31 +133,47 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
 function formatPost(graph, state, details, notice) {
   const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
   // Board readers remember whole headings; distinguish same-minute transitions.
-  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ALL leads — URGENT — ${graph} ${state} [${process.pid}:${notice}]\n`
+  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ALL leads — ${state === 'broken' ? 'URGENT' : 'RESULT'} — ${graph} ${state} [${process.pid}:${notice}]\n`
     + `- ${state === 'broken' ? 'Inspect the named import path and repair the shared-source load break.' : 'No action; the previously reported break cleared.'}\n`
     + `${details}\n`;
 }
 
 export async function watchLoadSentinel({ repoDir, signal, post, onResult, graphs }) {
-  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs });
   let debounce;
+  let quiet;
+  let requestAfterQuiet = false;
   let failure;
   const stopped = Promise.withResolvers();
   const observer = createFileChangeObserver(['apps', 'packages'].map(dir => join(repoDir, dir)), {
     recursive: true, persistent: true, isRelevant: (_directory, filename) => isSentinelSource(filename),
     onError: error => { failure = error; stopped.resolve(); },
   });
-  const abort = () => stopped.resolve();
+  const abort = () => { quiet?.resolve(); stopped.resolve(); };
   const request = () => sentinel.request().catch(error => { failure = error; stopped.resolve(); });
+  // Source-triggered runs and confirmation share the existing debounce. Every
+  // relevant event renews the window, including events while a graph is loading.
+  const waitForQuiet = () => {
+    clearTimeout(debounce);
+    quiet ??= Promise.withResolvers();
+    debounce = setTimeout(() => {
+      const settled = quiet;
+      quiet = undefined;
+      settled.resolve();
+      if (requestAfterQuiet) { requestAfterQuiet = false; request(); }
+    }, DEFAULT_FILE_CHANGE_CATCH_UP_MS);
+    return quiet.promise;
+  };
+  const sentinel = createLoadSentinel({ repoDir, signal, post, onResult, graphs, waitForQuiet });
   signal.addEventListener('abort', abort, { once: true });
   observer.subscribe(() => {
-    clearTimeout(debounce);
-    debounce = setTimeout(request, DEFAULT_FILE_CHANGE_CATCH_UP_MS);
+    requestAfterQuiet = true;
+    waitForQuiet();
   });
   try {
     if (!signal.aborted) { await request(); await stopped.promise; }
   } finally {
     clearTimeout(debounce);
+    quiet?.resolve();
     observer.close();
     signal.removeEventListener('abort', abort);
     await sentinel.idle();
