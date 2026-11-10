@@ -4,6 +4,9 @@ import { mkdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createCompactSessionListRowFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
+import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
+import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import nacl from 'tweetnacl';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
@@ -850,7 +853,7 @@ describe('memoryWorker', () => {
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v2/sessions' || path === '/v2/sessions/archived') return { status: 200,
-        data: { sessions: path.endsWith('/archived') || projectOnly ? [] : [session()], nextCursor: null, hasNext: false } };
+        data: { sessions: path.endsWith('/archived') || projectOnly ? [] : [createCompactSessionListRowFixture(session())], nextCursor: null, hasNext: false } };
       if (path === '/v2/sessions/s1') {
         await heldDocumentSessionRead?.();
         if (replaceAccountDuringSessionRead) {
@@ -873,13 +876,17 @@ describe('memoryWorker', () => {
       if (path.startsWith('/v1/artifacts/')) return readable ? { status: 200, data: artifact(path.split('/').at(-1)!) } : { status: 404, data: { error: 'not_found' } };
       throw new Error(`Unexpected document indexing HTTP path: ${path}`);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async url => {
+    const projectRows = (): ProjectAccountRowV1[] => projectOnly ? [{
+      key: { kind: 'project-organization', ...projectRef }, revision: 1,
+      content: { t: 'plain', v: { key: { kind: 'project-organization', ...projectRef }, value: { promptStack: [entry('memory')] } } },
+    }] : [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/v2/sessions/read-batch') return { status: 200,
+        data: createSessionReadBatchResponseFixture({ request: body, sessions: projectOnly ? [] : [session()] }) };
+      if (path === '/v1/account/project-rows/read') return projectAccountRowReadResponse(projectRows(), body);
       if (path === '/v1/account/project-rows/list') return { status: 200,
-        data: { status: 'listed', coverage: 'complete', rows: projectOnly ? [{
-          key: { kind: 'project-organization', ...projectRef }, revision: 1,
-          content: { t: 'plain', v: { key: { kind: 'project-organization', ...projectRef }, value: { promptStack: [entry('memory')] } } },
-        }] : [] } };
+        data: { status: 'listed', coverage: 'complete', rows: [] } };
       throw new Error(`Unexpected document indexing HTTP path: ${path}`);
     });
     // Real Session HTTP/schema parsing consumes the canonical producer's tuple.
