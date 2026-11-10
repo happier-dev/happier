@@ -1,3 +1,4 @@
+import { PROJECT_STARTER_ACTION_SPECS_V1 } from './specs/projectStarters.js';
 import { lazyActionSpecArray, lazyActionSpecRecord, memoizeActionSpecValue , type ActionSpecArrayConcat } from './lazyActionSpecValue.js';
 import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
@@ -650,6 +651,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE: ReturnType<typeof define
   typeof WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1,
   typeof WIDGET_SNAPSHOT_ACTION_SPECS_V1,
   typeof HOME_HUB_LAYOUT_ACTION_SPECS,
+  typeof PROJECT_STARTER_ACTION_SPECS_V1,
   typeof PROJECT_SOURCE_ACTION_SPECS_V1,
   typeof ARTIFACT_ACCESS_ACTION_SPECS,
   typeof ARTIFACT_ACTION_SPECS,
@@ -662,6 +664,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE: ReturnType<typeof define
   ...(WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(WIDGET_SNAPSHOT_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(HOME_HUB_LAYOUT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(PROJECT_STARTER_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(PROJECT_SOURCE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(ARTIFACT_ACCESS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(ARTIFACT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -1173,6 +1176,7 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof INTERNAL_TASK_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof APP_SHELL_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof HOME_HUB_LAYOUT_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof PROJECT_STARTER_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_SOURCE_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof DEPLOYMENT_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_READINESS_ACTION_SPECS_V1>

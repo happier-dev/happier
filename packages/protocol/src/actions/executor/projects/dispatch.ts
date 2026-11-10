@@ -1,3 +1,5 @@
+import { createProjectFromStarter } from './starters.js';
+import { PROJECT_STARTER_CREATE_ACTION_ID_V1 } from '../../specs/projectStartersActionIdsV1.js';
 import { isWorkspaceActionId } from '../../workspaceActionFamily.js';
 import { completeActionResult } from '../resultProjection.js';
 import { isProjectActionIdV1 } from '../../projectActionIdsV1.js';
@@ -14,7 +16,7 @@ import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../co
 import type { ActionExecutorDeps } from '../types.js';
 import { clientActionUnavailable } from '../../clientDispatchV1.js';
 import type { z } from 'zod/mini';
-import type { AdmittedActionInputById } from '../../actionSpecs.js';
+import { getActionSpec, resolveActionExecutionPlacementForInput, type AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceForgetInputV1Schema } from '../../../projects/projectWorkspaceActionsV1.js';
 
 
@@ -24,6 +26,13 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, parsed, ctx, executeHostChild } = inv;
+  if (actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1) {
+    const input = parsed.data as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1];
+    return createProjectFromStarter(input, (childId, childInput) => executeHostChild(childId, childInput,
+      resolveActionExecutionPlacementForInput(getActionSpec(childId), childInput) === 'machine'
+        ? { ...ctx, serverId: input.serverId, externalActionTarget: { kind: 'machine', machineId: input.machineId } }
+        : ctx));
+  }
 
         if (isWorkspaceActionId(actionId)) {
           if (!deps.workspaceAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

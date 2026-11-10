@@ -1,3 +1,4 @@
+import { PROJECT_STARTER_ACTION_IDS_V1 } from './specs/projectStartersActionIdsV1.js';
 import { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 export { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1, isComputerRecordingActionIdV1, type ComputerRecordingActionIdV1 } from './recordingActionIds.js';
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
@@ -229,7 +230,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   npm_registry_profiles: NPM_REGISTRY_PROFILE_ACTION_IDS_V1,
   plugin_account_administration: PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS,
   usage: [...USAGE_ACTION_IDS, ...USAGE_COACH_ACTION_IDS],
-  project_sources: PROJECT_SOURCE_ACTION_IDS_V1,
+  project_sources: [...PROJECT_SOURCE_ACTION_IDS_V1, ...PROJECT_STARTER_ACTION_IDS_V1],
   project_execution: PROJECT_ACTION_IDS_V1,
   project_readiness: PROJECT_READINESS_ACTION_IDS_V1,
   project_definitions: PROJECT_DEFINITION_ACTION_IDS,

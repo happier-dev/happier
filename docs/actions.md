@@ -10370,10 +10370,12 @@ owner/name and visibility (private by default). Agent invocation requires Ask;
 a person's designed review directly confirms the operation. Children execute
 through the existing host-child executor under that admission.
 
-Project open clones the whole starter with `main` at its pin. SCM publishes that
+SCM clones the whole starter with `main` at its pin, publishes that
 branch to the person's hosted repository and rebinds `origin`. The Source owner
-projects hosted discovery into its credential-free selector, saves the normal
-Source, and Project open associates it with the accepted checkout. Success
+projects hosted discovery into its credential-free selector and saves the normal
+Source. Project open registers the published checkout and associates its Source,
+so the Project takes the new repository's identity rather than the upstream
+starter's. Success
 returns the Project key, Source id, repository URL, workspace and a Session
 handoff. The handoff preserves the description as the first message; the caller
 uses existing Session creation as a separately represented effect.
@@ -10383,3 +10385,6 @@ remediation before checkout or publication. A later failure retains completed
 repository/Source/workspace facts in a typed partial result. Recover through
 those existing owners; never automatically create another repository. This is
 development source behavior, not a statement of released UI availability.
+Matching Protocol and SDK readers refresh together; older hosts do not expose
+this new Action. Existing clone, publication, Source and Session contracts remain
+with their current owners; no compatibility adapter or persisted format is added.

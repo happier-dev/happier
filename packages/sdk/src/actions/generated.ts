@@ -474,6 +474,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "projects.sources.delete",
   "projects.sources.moveToTeam",
   "projects.sources.update",
+  "projects.starters.create",
   "projects.trust.revoke",
   "projects.visibility.set",
   "projects.worker.copy.retire",
@@ -507,6 +508,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "providers.models.load",
   "providers.models.manual.add",
   "providers.models.manual.remove",
+  "providers.models.refresh",
   "providers.models.source_visibility.set",
   "providers.models.visibility.bulk",
   "providers.models.visibility.reset",
@@ -1434,6 +1436,7 @@ export type GeneratedActions = Readonly<{
         readonly set: (input: PublicActionInputById["connectedServices.pools.default.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.default.set">>;
       }> ;
       readonly delete: (input: PublicActionInputById["connectedServices.pools.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.delete">>;
+      readonly get: (input: PublicActionInputById["connectedServices.pools.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.get">>;
       readonly members: Readonly<{
         readonly add: (input: PublicActionInputById["connectedServices.pools.members.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.members.add">>;
         readonly patch: (input: PublicActionInputById["connectedServices.pools.members.patch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.members.patch">>;
@@ -2396,6 +2399,9 @@ export type GeneratedActions = Readonly<{
       readonly moveToTeam: (input: PublicActionInputById["projects.sources.moveToTeam"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.moveToTeam">>;
       readonly read: (input: PublicActionInputById["projects.sources.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.read">>;
       readonly update: (input: PublicActionInputById["projects.sources.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.update">>;
+    }> ;
+    readonly starters: Readonly<{
+      readonly create: (input: PublicActionInputById["projects.starters.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.starters.create">>;
     }> ;
     readonly trust: Readonly<{
       readonly list: (input: PublicActionInputById["projects.trust.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.trust.list">>;
@@ -4280,6 +4286,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           set: (input: PublicActionInputById["connectedServices.pools.default.set"], options?: ActionExecutionOptions) => execute("connectedServices.pools.default.set", input, options),
         },
         delete: (input: PublicActionInputById["connectedServices.pools.delete"], options?: ActionExecutionOptions) => execute("connectedServices.pools.delete", input, options),
+        get: (input: PublicActionInputById["connectedServices.pools.get"], options?: ActionExecutionOptions) => execute("connectedServices.pools.get", input, options),
         members: {
           add: (input: PublicActionInputById["connectedServices.pools.members.add"], options?: ActionExecutionOptions) => execute("connectedServices.pools.members.add", input, options),
           patch: (input: PublicActionInputById["connectedServices.pools.members.patch"], options?: ActionExecutionOptions) => execute("connectedServices.pools.members.patch", input, options),
@@ -5242,6 +5249,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         moveToTeam: (input: PublicActionInputById["projects.sources.moveToTeam"], options?: ActionExecutionOptions) => execute("projects.sources.moveToTeam", input, options),
         read: (input: PublicActionInputById["projects.sources.read"], options?: ActionExecutionOptions) => execute("projects.sources.read", input, options),
         update: (input: PublicActionInputById["projects.sources.update"], options?: ActionExecutionOptions) => execute("projects.sources.update", input, options),
+      },
+      starters: {
+        create: (input: PublicActionInputById["projects.starters.create"], options?: ActionExecutionOptions) => execute("projects.starters.create", input, options),
       },
       trust: {
         list: (input: PublicActionInputById["projects.trust.list"], options?: ActionExecutionOptions) => execute("projects.trust.list", input, options),

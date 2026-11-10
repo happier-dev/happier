@@ -1,3 +1,4 @@
+import type { ScmHostingRepositorySummary } from '../../scm/repositoryProvisioning.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -16,6 +17,16 @@ export const PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'projects:sources' as
 
 export const ProjectSourceRepositorySelectorV1Schema = ScmCredentialFreeRepositorySelectorV1Schema;
 export type ProjectSourceRepositorySelectorV1 = z.infer<typeof ProjectSourceRepositorySelectorV1Schema>;
+
+/** Project hosted discovery into the credential-free saved selector's owned fields. */
+export function projectSourceRepositorySelectorFromHostingSummaryV1(repository: ScmHostingRepositorySummary,
+  protocol: ProjectSourceRepositorySelectorV1['protocol']): ProjectSourceRepositorySelectorV1 {
+  return ProjectSourceRepositorySelectorV1Schema.parse({
+    provider: z.object(ProjectSourceRepositorySelectorV1Schema.shape.provider.shape).parse(repository.provider),
+    repository: z.object(ProjectSourceRepositorySelectorV1Schema.shape.repository.shape).parse(repository), protocol,
+  });
+}
+
 export const ProjectSourceOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
 ]));
