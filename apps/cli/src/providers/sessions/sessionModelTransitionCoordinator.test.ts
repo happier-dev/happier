@@ -369,6 +369,45 @@ function createHarness(params?: Readonly<{
 }
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it.each(['native refusal', 'spawn policy', 'provider spawn policy'] as const)('reprepares a %s model inside prompt custody before dispatch', async source => {
+    const selection = source === 'provider spawn policy' ? provider('pc_next', 'next') : native('next');
+    let runtimeModelId = 'old';
+    const harness = createHarness({ initial: source === 'provider spawn policy' ? provider('pc_old', 'old') : native('old'), authorize: async requested => ({
+      ...authorized(requested), policy: source === 'native refusal' ? 'live' : 'restart_session',
+    }) });
+    // Native configuration/reopen are external effects. The scheduler,
+    // authorization, publication and custody transfer below remain real.
+    harness.applyRuntime.mockImplementation(async () => runtimeModelId === selection.modelId
+      ? { status: 'applied' } : { status: 'requires_restart' });
+    let restartCount = 0;
+    let dispatched = false;
+    const context = {
+      source: 'prompt' as const,
+      restartRuntime: { required: false, run: async () => {
+          restartCount++;
+          expect(harness.publishIntent).toHaveBeenCalledWith(selection);
+          expect(harness.publishActive).not.toHaveBeenCalled();
+          if (source === 'provider spawn policy') {
+            const openedTarget = harness.coordinator.readReplacementTarget();
+            expect(openedTarget.selection).toEqual(selection);
+            await harness.coordinator.admitReplacementTarget(openedTarget);
+          }
+          runtimeModelId = selection.modelId;
+        } },
+      runWithActiveSelection: async (transfer: Parameters<NonNullable<Parameters<typeof harness.coordinator.submit>[1]['runWithActiveSelection']>>[0]) => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+          expect(runtimeModelId).toBe(selection.modelId);
+          expect(harness.coordinator.readActiveTarget().selection).toEqual(selection);
+          dispatched = true;
+        } });
+      },
+    };
+    await expect(harness.coordinator.submit(selection, context)).resolves.toMatchObject({ ok: true, activeSelection: selection });
+    expect(restartCount).toBe(1);
+    expect(dispatched).toBe(true);
+    await harness.coordinator.dispose();
+  });
+
   it.each(['brokered', 'vendor-native'] as const)('retains a %s Team model intent through repeated carried prompts and a failed turn, while explicit native selection replaces it', async deliveryMode => {
     const selection = native('same-model');
     const nativeDelivery = deliveryMode === 'vendor-native' ? { managedId: 'managed', controllerInstallationId: 'controller-installation',

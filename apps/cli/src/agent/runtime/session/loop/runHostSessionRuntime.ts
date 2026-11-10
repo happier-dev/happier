@@ -3730,7 +3730,7 @@ export async function runHostSessionRuntime(
     if (!coordinator) {
       throw new Error('Runtime replacement requires an active model transition coordinator');
     }
-    const activeTarget = coordinator.readActiveTarget();
+    const activeTarget = coordinator.readReplacementTarget();
     assertProviderBindingHandoffMatchesSelection({
       selection: activeTarget.selection,
       handoff,
@@ -4148,12 +4148,14 @@ export async function runHostSessionRuntime(
         selection,
         source,
         runWithActiveSelection,
+        restartRuntime,
       ) =>
         await modelTransitionCoordinator!.submit(selection, {
           source,
           ...(source === 'prompt' && runWithActiveSelection
             ? { runWithActiveSelection }
             : {}),
+          ...(source === 'prompt' && restartRuntime ? { restartRuntime } : {}),
         }),
       readActiveModelSelection: () => modelTransitionCoordinator!.readActiveTarget().selection,
       readArmedModelSelection: () => modelTransitionCoordinator!.readArmedSelection(),

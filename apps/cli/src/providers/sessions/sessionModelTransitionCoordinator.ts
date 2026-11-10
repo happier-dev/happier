@@ -51,6 +51,12 @@ export type SessionModelTransitionApplyResult =
       readbackAfterCompletion?: boolean;
     }>;
 
+/** The prompt loop owns reset bookkeeping; the coordinator owns its custody. */
+export type SessionModelTransitionRestart = Readonly<{
+  required: boolean;
+  run: () => Promise<void>;
+}>;
+
 /**
  * Plugin- and runtime-authored transition prose crosses the daemon boundary
  * into the Session transition result, Action details, and `--json` stdout, so
@@ -91,6 +97,7 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
 }
 
 type Proposal = {
+  restartRuntime?: SessionModelTransitionRestart;
   callerInputConstraints?: CallerInputConstraintsV1;
   captureBefore?: boolean;
   expected?: SessionModelMutationExpectedV1;
@@ -307,6 +314,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       applyTiming?: 'immediate' | 'next_prompt';
       callerInputConstraints?: CallerInputConstraintsV1;
       runWithActiveSelection?: NonNullable<Proposal['runWithActiveSelection']>;
+      restartRuntime?: SessionModelTransitionRestart;
       captureBefore?: boolean;
       expected?: SessionModelMutationExpectedV1;
     }>,
@@ -319,6 +327,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     target: AuthorizedSessionModelTransitionTarget,
   ) => Promise<void>;
   readActiveTarget: () => AuthorizedSessionModelTransitionTarget;
+  readReplacementTarget: () => AuthorizedSessionModelTransitionTarget;
   /** A command-armed selection that still needs the next prompt's transition custody. */
   readArmedSelection: () => ProviderBoundModelRef | null;
   /** Restore applied intent through this same command queue; callers never guess the active route. */
@@ -341,6 +350,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   dispose: () => Promise<void>;
 }> {
   let activeTarget = params.initialActiveTarget;
+  let runtimeReplacementTarget: AuthorizedSessionModelTransitionTarget | null = null;
   let observedAppliedTarget = params.initialActiveTargetConfirmed === false
     ? null : params.initialActiveTarget;
   let current: Proposal | null = null;
@@ -1070,7 +1080,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // current target even when it is already active so choosing it cancels any
     // previously persisted restart-required proposal.
     if (
-      sameAuthorizedTarget(activeTarget, target)
+      proposal.restartRuntime?.required !== true
+      && sameAuthorizedTarget(activeTarget, target)
       && samePublishedActiveFacts(activeTarget, target)
     ) {
       armedSelection = null;
@@ -1085,8 +1096,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
 
-    if (target.policy === 'restart_session') {
-      armedSelection = null;
+    if (target.policy === 'restart_session' && !proposal.restartRuntime) {
+      armedSelection = proposal.selection;
       // The admitted selection itself needs a restart only when its Provider
       // binding changed after admission (endpoint/credential/re-consent). Name
       // that closed Provider refusal so callers present its restart recovery.
@@ -1184,7 +1195,24 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       proposal.effectStarted = true;
       forwardEffectObservationRevision = runtimeObservationRevision;
       expectedRuntimeEffectModelId = target.selection.modelId;
-      return await safelyApply(target);
+      const restart = proposal.restartRuntime;
+      let applied = target.policy === 'restart_session' || restart?.required === true
+        ? { status: 'requires_restart' as const }
+        : await safelyApply(target);
+      if (applied.status === 'requires_restart' && restart) {
+        runtimeReplacementTarget = target;
+        try {
+          await restart.run();
+          target = runtimeReplacementTarget;
+          applied = await safelyApply(target);
+        } catch (error) {
+          applied = { status: 'unproven', readbackAfterCompletion: true,
+            reason: projectSessionModelTransitionReason(error instanceof Error ? error.message : null, 'runtime_apply_failed') };
+        } finally {
+          runtimeReplacementTarget = null;
+        }
+      }
+      return applied;
     });
     if (permittedApply.status === 'blocked') {
       proposal.resolve(failure(
@@ -1247,6 +1275,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     if (applied.status !== 'applied' && applied.status !== 'deferred') {
+      if (applied.status === 'requires_restart') armedSelection = proposal.selection;
       try {
         await clearActiveFenceUnlessPendingSuccessor();
       } catch {
@@ -1683,6 +1712,15 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   const admitReplacementTarget = async (
     target: AuthorizedSessionModelTransitionTarget,
   ): Promise<void> => {
+    if (runtimeReplacementTarget && accepting && isCurrent() && !reconciliationRequired && runtimeObservedDriftModelId === null) {
+      if (!sameSelection(runtimeReplacementTarget.selection, target.selection)) {
+        throw new Error('replacement_target_selection_mismatch');
+      }
+      // The current proposal already admitted this exact selection. Refresh
+      // its opened binding facts here; publish once the runtime apply proves it.
+      runtimeReplacementTarget = target;
+      return;
+    }
     if (
       !accepting
       || !isCurrent()
@@ -1753,6 +1791,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       captureBefore?: boolean;
       expected?: SessionModelMutationExpectedV1;
       runWithActiveSelection?: NonNullable<Proposal['runWithActiveSelection']>;
+      restartRuntime?: SessionModelTransitionRestart;
     }>,
   ): Promise<SessionModelTransitionResultV1> => {
     const selection = ProviderBoundModelRefSchema.parse(rawSelection);
@@ -1848,6 +1887,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ...(context.reuseInitialAdmission ? { reuseInitialAdmission: true } : {}),
       ...(context.applyTiming ? { applyTiming: context.applyTiming } : {}),
       runWithActiveSelection,
+      ...(context.source === 'prompt' && context.restartRuntime ? { restartRuntime: context.restartRuntime } : {}),
       effectStarted: false,
       superseded: false,
       resolve: (result) => {
@@ -1915,6 +1955,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }),
     admitReplacementTarget,
     readActiveTarget: () => activeTarget,
+    readReplacementTarget: () => runtimeReplacementTarget ?? activeTarget,
     readArmedSelection: () => armedSelection,
     readAppliedTarget,
     runWithStableActiveTarget,

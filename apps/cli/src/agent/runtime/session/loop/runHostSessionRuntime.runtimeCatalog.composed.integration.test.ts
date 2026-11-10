@@ -204,7 +204,7 @@ import { AgentPermissionIntentV1Schema } from '@happier-dev/protocol/runtime/per
 import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import type { HostProviderInputOutcomeEvidence } from '@/agent/runtime/session/input/providerInputOutcome';
-import type { RuntimeConfigUpdateOutcomeV1, RuntimeTurnConfigUpdate } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { RuntimeConfigUpdateOutcomeV1, RuntimeTurnConfigUpdate, RuntimeTurnSessionOpenIntent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
   CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH,
   ConnectedServiceAppliedParentSelectionRequestSchema,
@@ -9324,6 +9324,67 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
+  it.each(['model only', 'permission mode', 'restart settings'] as const)('reprepares a native restart-required model before dispatching the next ordinary prompt (%s)', async change => {
+    const harness = createHarness();
+    const initial = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' } as const;
+    const selection = { ...initial, modelId: 'next-model' };
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: initial };
+    harness.runtime.getSessionId.mockReturnValue('native-old-session');
+    harness.queue.push({ text: 'Use the current model', localId: 'ordinary-send-before-restart' }, { permissionMode: 'default' });
+    let currentModelId: string = initial.modelId;
+    let currentPermissionMode = 'default';
+    let requestedPermissionMode = 'default';
+    // The native runtime is the boundary. Model intent, transition admission,
+    // reset bookkeeping and pending prompt dispatch use their real owners.
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(async (update: RuntimeTurnConfigUpdate) => {
+      if (update.modelId && update.modelId !== currentModelId) return { status: 'requires_restart' };
+      if (update.permissionMode) {
+        requestedPermissionMode = update.permissionMode;
+        if (requestedPermissionMode !== currentPermissionMode) return { status: 'requires_restart' };
+      }
+      return { status: 'applied', timing: 'current_window' };
+    });
+    harness.runtime.models = { subscribe: () => ({ dispose() {} }), read: () => ({ currentModelId, models: [
+      { id: initial.modelId, name: 'Old' }, { id: selection.modelId, name: 'Next' },
+    ] }) };
+    const reopened: RuntimeTurnSessionOpenIntent[] = [];
+    harness.runtime.resetOrDisposeRuntime.mockImplementation(async (_reason, intent) => {
+      if (!intent) return;
+      reopened.push(intent);
+      const { resolveModelSelectionIntentFromSessionMetadata } = await import('@happier-dev/agents');
+      const requested = resolveModelSelectionIntentFromSessionMetadata(harness.session.getMetadataSnapshot(), initial.agentTargetKey);
+      if (!requested?.selection) throw new Error('Replacement requires durable model intent');
+      currentModelId = requested.selection.modelId;
+      currentPermissionMode = requestedPermissionMode;
+    });
+    const dispatchedModels: string[] = [];
+    harness.runtime.sendTurnPrompt.mockImplementation(async () => {
+      dispatchedModels.push(currentModelId);
+    });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
+      let shouldExit = false;
+      let completed = 0;
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => shouldExit,
+        sendReady: async () => {
+          if (++completed > 2) { shouldExit = true; return; }
+          if (completed === 1) await expect(transition?.({ v: 1, selection })).resolves.toMatchObject({ ok: false, status: 'restart_required' });
+          params.messageQueue.push({ text: 'Use the newly selected model', localId: `ordinary-send-after-restart-${completed}` }, {
+            permissionMode: change === 'permission mode' ? 'bypassPermissions' : 'default',
+            ...(change === 'restart settings' ? { appendSystemPrompt: 'Use the updated instructions.' } : {}),
+          });
+        } });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(reopened).toEqual([expect.objectContaining({ kind: 'resume', importHistory: false })]);
+    expect(dispatchedModels).toEqual([initial.modelId, selection.modelId, selection.modelId]);
+    expect(harness.session.enqueueSessionEventCommitted).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'prompt-composition', composition: expect.objectContaining({
+        inputId: 'ordinary-send-after-restart-1', requestIdentity: expect.objectContaining({ selection }),
+      }),
+    }));
+  });
+
   it.each(['idle', 'in-flight'] as const)('consumes an armed model on an ordinary send before recording prompt composition (%s)', async state => {
     const harness = createHarness();
     const initial = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' } as const;
@@ -9334,7 +9395,7 @@ describe('runHostSessionRuntime', () => {
       if (update.modelId) currentModelId = update.modelId;
       return { status: 'applied', timing: 'current_window' };
     });
-    harness.runtime.models = { read: () => ({ currentModelId, models: [
+    harness.runtime.models = { subscribe: () => ({ dispose() {} }), read: () => ({ currentModelId, models: [
       { id: initial.modelId, name: 'Old' }, { id: selection.modelId, name: 'Next' },
     ] }) };
     let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;

@@ -1146,9 +1146,12 @@ model and retry the launch. Copilot, CodeBuddy, Droid and Kilo retain `model_sel
 as the typed startup failure reason through Session status and launch recovery.
 Resolved saved helper pins and inherited Session models retain their concrete
 model selection; their provenance does not make them a native default.
-Changing the process-selected model in a selected-account CodeBuddy, Droid or
-Copilot Session reports `restart_required`. Their native resume contracts do not
-currently admit the successor Session; the active Session retains its prior model.
+Changing a process-selected model can report `restart_required`. The shared
+Session model coordinator retains that selection for the next ordinary prompt,
+reopens through the existing native factory and applies the selected model before
+dispatch. It combines a simultaneous permission or restart-setting change into
+the same replacement. Unsupported native resume or preparation remains a visible
+failure; the prompt is not dispatched through the previous model.
 Kilo uses its existing OpenAI model namespace policy for both initial and later
 model choices.
 
@@ -1171,8 +1174,8 @@ configuration can be written. Qwen's first Connected Account route requires an
 explicit model; its exact native history-path proof remains unavailable, so
 connected-account resume verification returns an explicit unsupported result.
 Native inventories and generated single-model overlays do not establish account
-entitlement. Frozen native model overlays retain the existing shared transition
-limitation: a restart-required model change is refused before the next prompt.
+entitlement. Frozen native model overlays use the same shared next-prompt
+replacement path; their plugins do not own a separate restart controller.
 
 Pi and OpenCode's qualified-purpose rows own native Connected Account delivery in
 0.3 development source. They consume producer-exported service identities and

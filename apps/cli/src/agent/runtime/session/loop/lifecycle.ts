@@ -126,6 +126,7 @@ import type {
   HostSessionTerminalRemoteModeLoop,
 } from './terminalRemoteModeRuntime';
 import { stampTurnFacts } from '@/agent/runtime/session/turn/stampTurnFacts';
+import type { SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 
 export const HOST_SESSION_RUNTIME_PLAN_KIND = 'hostSessionRuntimePlan' as const;
@@ -283,6 +284,7 @@ export type SessionLoopLifecycleParams = Readonly<{
         | Readonly<{ status: 'cancelled' }>
       >,
     ) => Promise<void>,
+    restartRuntime?: SessionModelTransitionRestart,
   ) => Promise<SessionModelTransitionResultV1>;
   readActiveModelSelection?: () => ProviderBoundModelRef;
   readArmedModelSelection?: () => ProviderBoundModelRef | null;
@@ -1749,11 +1751,13 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       transitionModelSelectionBeforePrompt: async (
         selection,
         runWithActiveSelection,
+        restartRuntime,
       ) =>
         await params.transitionModelSelection(
           selection,
           'prompt',
           runWithActiveSelection,
+          restartRuntime,
         ),
       ...(params.readActiveModelSelection
         ? { readActiveModelSelection: params.readActiveModelSelection }

@@ -83,6 +83,7 @@ import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/ho
 import { createPromptCompositionScope, type PromptPlanComposition } from '@/agent/prompting/promptComposition';
 import type { SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
 import type { ReadyNotificationTurnContext } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
+import type { SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
 
 export { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 export type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -633,6 +634,7 @@ export async function runPermissionModePromptLoop(opts: {
         | Readonly<{ status: 'cancelled' }>
       >,
     ) => Promise<void>,
+    restartRuntime?: SessionModelTransitionRestart,
   ) => Promise<SessionModelTransitionResultV1>;
   readActiveModelSelection?: () => ProviderBoundModelRef;
   readArmedModelSelection?: () => ProviderBoundModelRef | null;
@@ -874,6 +876,14 @@ export async function runPermissionModePromptLoop(opts: {
     return { startedFreshSessionForTurn, exitRequested: false };
   };
 
+  const replaceRuntimeForPrompt = async (
+    intent: RuntimeTurnSessionOpenIntent,
+    reason?: Parameters<RuntimeTurnOperations['resetOrDisposeRuntime']>[0],
+  ): Promise<void> => {
+    await opts.runtime.resetOrDisposeRuntime(reason, intent);
+    modelRequestScope = createPromptCompositionScope();
+  };
+
   try {
     if ((opts.startRuntimeBeforeFirstPrompt === true || normalizedResumeId.length > 0) && !wasStarted) {
       if (!snapshotFreshForNextPromptBoundary) {
@@ -1067,10 +1077,10 @@ export async function runPermissionModePromptLoop(opts: {
         permissionModeRequiresRestart = true;
       }
     }
-    if (
-      wasStarted
-      && (restartSettingsChanged || permissionModeRequiresRestart)
-    ) {
+    const runtimeRestartRequired = wasStarted && (restartSettingsChanged || permissionModeRequiresRestart);
+    // A selected model and permission/settings change share one admitted
+    // replacement, after the model owner has admitted the requested target.
+    if (runtimeRestartRequired && !readRequestedModelSelection()) {
       const resumeId = opts.runtime.readSessionIdentity().sessionId;
       currentRuntimeRestartModeHash = runtimeRestartModeHash;
       const shouldResumeAfterPermissionModeChange =
@@ -1090,8 +1100,7 @@ export async function runPermissionModePromptLoop(opts: {
       await opts.onBeforeReset?.({ reason: 'mode_change' });
       resetAssistantTextSnapshotTurnScope(opts.session, 'mode_change');
       await opts.permissionHandler.reset();
-      await opts.runtime.resetOrDisposeRuntime(undefined, nextSessionOpenIntent);
-      modelRequestScope = createPromptCompositionScope();
+      await replaceRuntimeForPrompt(nextSessionOpenIntent);
       wasStarted = false;
       nextSessionIsFresh = nextSessionOpenIntent.kind === 'create';
       if (nextSessionIsFresh) lastDeliveredSessionSystemPrompt = null;
@@ -1272,6 +1281,30 @@ export async function runPermissionModePromptLoop(opts: {
               })
             ).status;
           },
+          { required: runtimeRestartRequired, run: async () => {
+            const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
+            const shouldResume = !runtimeRestartRequired
+              || opts.runtime.shouldResumeAfterPermissionModeChange?.() !== false;
+            const intent: RuntimeTurnSessionOpenIntent = providerSessionId && shouldResume
+              ? { kind: 'resume', providerSessionId, importHistory: false }
+              : { kind: 'create' };
+            opts.messageBuffer.addMessage(`Restarting ${opts.providerName} session (model settings changed)…`, 'status');
+            await opts.onBeforeReset?.({ reason: 'mode_change' });
+            resetAssistantTextSnapshotTurnScope(opts.session, 'mode_change');
+            await opts.permissionHandler.reset();
+            await replaceRuntimeForPrompt(intent);
+            currentRuntimeRestartModeHash = runtimeRestartModeHash;
+            runtimePermissionModeApplied = null;
+            pendingSessionSystemPromptDelivery = null;
+            if (intent.kind === 'create') {
+              lastDeliveredSessionSystemPrompt = null;
+              pendingFreshSessionSystemPrompt = true;
+            }
+            // The native factory has reopened inside this prompt's custody.
+            // Re-entering startup synchronizers here would await this proposal.
+            await opts.onAfterReset?.({ reason: 'mode_change' });
+            await opts.onAfterLoopBoundary?.({ reason: 'mode_change_reset' });
+          } },
         );
         if (!transition.ok) {
           throw createModelTransitionPreTurnFailure(transition);
@@ -1476,8 +1509,7 @@ export async function runPermissionModePromptLoop(opts: {
           // A preserved terminal host retains old startup text. Close only the native runtime
           // incarnation and reopen the same conversation through its canonical factory.
           opts.resolveFreshSessionSystemPrompt?.assertPreparedPlanCurrent?.();
-          await opts.runtime.resetOrDisposeRuntime('session_closed', { ...nextIntent, startupInstructions });
-          modelRequestScope = createPromptCompositionScope();
+          await replaceRuntimeForPrompt({ ...nextIntent, startupInstructions }, 'session_closed');
           if (startupInstructions) {
             nativeSessionPlanRevision = startupInstructions.revision;
             hasNativeStartupPlan = true;
