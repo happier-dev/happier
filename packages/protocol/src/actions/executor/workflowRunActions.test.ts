@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
 import { randomBytes } from 'node:crypto';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
+import { bytesToHex } from '@noble/hashes/utils';
+import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBindingV1.js';
+import { computeContentPublicKeyFingerprint } from '../../machines/identity/contentPublicKeyFingerprint.js';
 import * as base64 from '../../crypto/base64.js';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '../../account/encryptionKeyFingerprintV1.js';
@@ -117,6 +121,56 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each([false, true])('defers existing Run recipient-key writes until admitted continuation (cancel=%s)', async cancel => {
+    const snapshot = runSnapshot();
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: randomBytes(32) } });
+    const encryption: AvailableAutomationAccountEncryptionV1 = { kind: 'available', material,
+      witness: { mode: 'e2ee', version: 1, contentKeyFingerprint:
+        convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) } };
+    const key = prepareWorkflowRunDataKeyV1({ accountId: 'account-1', encryption, randomBytes });
+    const signingSecret = randomBytes(32), signingPublic = ed25519.getPublicKey(signingSecret);
+    const contentPublic = x25519.getPublicKey(randomBytes(32));
+    snapshot.keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ ...snapshot.keyCensus,
+      encryptionMode: 'e2ee', ownerAccountCurrentness: encryption.witness,
+      dataEncryptionKey: key.recipientKeyEnvelopes[0]!.encryptedDataKey,
+      callerDataEncryptionKey: key.recipientKeyEnvelopes[0]!.encryptedDataKey,
+      recipients: [{ recipientAccountId: 'peer', contentKey: { status: 'available',
+        accountSigningPublicKey: bytesToHex(signingPublic), contentPublicKey: base64.encodeBase64(contentPublic),
+        contentPublicKeySignature: base64.encodeBase64(signAccountContentKeyBindingV1({
+          accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic })) },
+      contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(contentPublic),
+      encryptedDataKey: null, recipientContentPublicKeyFingerprint: null }],
+    });
+    if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    snapshot.acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      ...key.runCrypto, randomBytes, binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      acceptedSnapshot: acceptedSnapshotResult.snapshot,
+    }));
+    const writes: string[] = [];
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') return snapshot;
+      if (operation.operation === 'run-key.census') return snapshot.keyCensus;
+      if (operation.operation === 'run-key.commit') { writes.push(operation.operation);
+        return { appliedRecipientAccountIds: ['peer'], skippedRecipientAccountIds: [] }; }
+      throw new Error(`unexpected_storage_operation:${operation.operation}`);
+    } }), resolveEncryption: async () => encryption, randomBytes });
+    const controller = new AbortController();
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', defaultSessionId: 'origin-1',
+      signal: controller.signal, externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+        project: { machineId: 'machine-a', directory: '/repo' } } };
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'saved', definitionId: 'def-1',
+      revision: { headerVersion: 1, bodyVersion: 1 } } });
+    const prepared = await owner.prepareStartApproval({ actionId: 'workflow.run.start', input, context }, {});
+    expect(writes).toEqual([]);
+    if (cancel) controller.abort();
+    const execution = prepared.executeAdmittedAction!({ actionId: 'workflow.run.start', input, context,
+      execute: async () => { throw new Error('prepared_rejoin_must_not_restart'); } });
+    if (cancel) { await expect(execution).rejects.toMatchObject({ name: 'AbortError' }); expect(writes).toEqual([]); }
+    else { await expect(execution).resolves.toMatchObject({ ok: true, result: { admission: 'existing' } });
+      expect(writes).toEqual(['run-key.commit']); }
+  });
+
   it('reads and cancels a retained combined Publish Run without executing its retired parent', async () => {
     const snapshot = runSnapshot();
     if (!acceptedSnapshotResult.ok) throw new Error('accepted_snapshot_fixture_required');

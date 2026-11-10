@@ -26,6 +26,15 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
+import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { DelegateStartInputSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
+import { WorkflowPluginSourceV1Schema } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 
 const definition = {
   version: 1 as const,
@@ -104,6 +113,115 @@ function withStoredRoot(runId: string, execute: Parameters<typeof createRunOwner
 }
 
 describe('workflow Run Actions', () => {
+
+  it.each(['same-invocation', 'unchanged-replay', 'changed-replay'] as const)(
+    'discloses effective child Team sources in parent review before storing exact child consent: %s', async mode => {
+    const runId = '72111111-1111-4111-8111-111111111111';
+    const child = { actionId: 'subagents.delegate.start' as const, input: DelegateStartInputSchema.parse({
+      backendTargetKeys: ['agent:happier.agent.test/test'], instructions: 'Review the code',
+      teamCredentialModel: { kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'credential',
+        expectedResourceRevision: 3, agentTargetKey: 'agent:happier.agent.test/test', modelId: 'model', deliveryMode: 'brokered' },
+    }) };
+    const workflowDefinition = {
+      version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'spawn', actionId: child.actionId,
+        input: Object.fromEntries(Object.entries(child.input).map(([key, value]) => [key, { kind: 'literal', value }])) }],
+    };
+    const workflow = formatWorkflowDefinitionRefV1({ kind: 'plugin', contribution: { pluginId: 'happier.fixture', localId: 'review' } });
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: mode === 'same-invocation'
+      ? { kind: 'inline', definition: workflowDefinition } : { kind: 'catalog', workflow } });
+    let changed = false;
+    const sources = [{ teamId: 'team', resourceId: 'credential', teamName: 'Engineering', accountName: 'Coding account' }];
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'home-identity',
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'workflow.run.start': { approvalRequiredSurfaces: ['cli'] },
+      } }),
+      actionRequestId: 'parent-request', callerPermissionMode: 'default' as const,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1',
+        project: { machineId: 'machine-1', directory: '/repo' } },
+      teamCredentialPresentation: { serverId: 'home', sources },
+    };
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-1', origin: { kind: 'direct' } });
+    let materializations = 0;
+    const owner = createWorkflowRunActionOwner({ storage, resolveAccountId: async () => 'account-1',
+      definitions: { get: async () => { throw new Error('fixture_has_no_saved_artifact_source'); } },
+      readPluginWorkflows: () => [WorkflowPluginSourceV1Schema.parse({ workflow, pluginId: 'happier.fixture',
+        version: changed ? '2' : '1', title: 'Review',
+        definition: changed ? { ...workflowDefinition, blocks: [{ ...workflowDefinition.blocks[0], input: {
+          ...workflowDefinition.blocks[0]!.input, teamCredentialModel: { kind: 'literal', value: {
+            ...child.input.teamCredentialModel!, resourceId: 'changed-credential' } },
+        } }] } : workflowDefinition })],
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+        machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => { materializations++; return { effects: {
+        resolveTargetAvailability: async () => true,
+        readActionContract: async () => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(child.actionId))),
+      } }; },
+    });
+    const preparation: { value?: Awaited<ReturnType<typeof owner.prepareStartApproval>> } = {};
+    let capturedPreview: unknown;
+    let storedApproval: ApprovalRequest | null = null;
+    const actions = createActionExecutor({
+      prepareHostReviewedChildren: async request => {
+        if (request.actionId !== 'workflow.run.start') return null;
+        preparation.value = await owner.prepareStartApproval({ actionId: request.actionId,
+          input: WorkflowRunStartRequestV1Schema.parse(request.input), context: request.context }, {});
+        return preparation.value;
+      },
+      approvalsCreate: async ({ request }) => { capturedPreview = request.preview;
+        storedApproval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'parent-approval' }; },
+      approvalsGet: async () => storedApproval,
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!storedApproval) throw new Error('missing_approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(storedApproval, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        storedApproval = next;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const initial = await actions.execute('workflow.run.start', input, context);
+    if (!initial.ok) throw new Error(JSON.stringify(initial));
+    expect(initial).toMatchObject({ ok: true });
+    expect(capturedPreview).toMatchObject({ teamCredentialSources: sources });
+    const prepared = preparation.value;
+    if (!prepared) throw new Error('workflow_not_prepared');
+    expect(storage.acceptedEnvelope()).toBeNull();
+    const review = await prepareApprovalRequest({ deps: {}, actionId: 'workflow.run.start', input, actionArgs: input,
+      context, hostReviewedContent: prepared.approvalPreview });
+    expect(review).toMatchObject({ preview: { teamCredentialSources: sources } });
+    const approved = { ...context, bypassApprovals: true,
+      approvedActionReplay: { artifactId: 'parent-approval', hostReviewedChildren: { children: prepared.children } }, presentUserApproval: {
+      artifactId: 'parent-approval', actionId: 'workflow.run.start' as const, requestId: 'parent-request',
+      inputDigest: computeActionInputApprovalDigestV1('workflow.run.start', input), decidingAccountId: 'account-1',
+    } };
+    changed = mode === 'changed-replay';
+    const result = mode === 'same-invocation'
+      ? await prepared.executeAdmittedAction!({ actionId: 'workflow.run.start', input, context: approved,
+        execute: async () => { throw new Error('prepared_run_must_not_materialize_twice'); } })
+      : await actions.execute('approval.request.decide', { artifactId: 'parent-approval', decision: 'approve' }, context);
+    if (mode === 'changed-replay') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+      expect(storage.acceptedEnvelope()).toBeNull();
+      expect(materializations).toBe(2);
+      return;
+    }
+    expect(result, JSON.stringify(result)).toMatchObject(mode === 'same-invocation' ? { ok: true, result: { admission: 'created' } }
+      : { ok: true, result: { status: 'executed', execution: { ok: true, result: { admission: 'created' } } } });
+    expect(materializations).toBe(mode === 'same-invocation' ? 1 : 2);
+    const envelope = storage.acceptedEnvelope();
+    if (!envelope) throw new Error('accepted_snapshot_not_stored');
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(envelope) });
+    if (opened.kind !== 'available') throw new Error('accepted_snapshot_not_readable');
+    expect(opened.content.approvedOperation?.steps).toEqual([child]);
+    expect(resolveActionApprovalRouting({ actionId: child.actionId, spec: getActionSpec(child.actionId), input: child.input,
+      context: { surface: 'agent', authority: 'account_automation' },
+      approvedOperation: opened.content.approvedOperation }).required).toBe(false);
+  });
 
   it.each([true, false])('stores exact child consent only with witnessed parent approval: %s', async approved => {
     const runId = '71111111-1111-4111-8111-111111111111';

@@ -4,6 +4,7 @@ import type { logger } from '@/ui/logger';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
 import type { ResolvedSessionPullRequestBindingInputV1 } from './createCliActionDeps';
@@ -110,6 +111,8 @@ export type CliWorkflowFamily = Readonly<{
   readWorkflowActionStartContext: (context: ActionExecutorContext) => Promise<ActionExecutorContext['agentStartContext'] | null>;
   workflowAction: ActionExecutorDeps['workflowAction'] | null;
   workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']>;
+  prepareWorkflowRunStartApproval: (request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
+    presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>;
   startCombinedWorkflow: (request: WorkflowCombinedRunStartV1) => Promise<unknown>;
   waitForCombinedWorkflow: (request: WorkflowCombinedRunStartV1, runId: string) => Promise<unknown>;
   readCombinedWorkflowInvocations: (request: WorkflowCombinedRunStartV1, input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']) => Promise<unknown>;
@@ -349,7 +352,7 @@ export function createCliWorkflowFamily(
     return resolved;
   };
 
-  const ownedWorkflowAction = workflowDefinitions && params.credentials
+  const createOwnedWorkflowExecutor = workflowDefinitions && params.credentials
     ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: WorkflowCombinedRunStartV1) => {
       // Each invocation retains its original proof; concurrent Session calls
       // must never spend another caller's authority through a shared closure.
@@ -622,8 +625,12 @@ export function createCliWorkflowFamily(
             : owner.execute(request, ingress) } satisfies Parameters<typeof createWorkflowActionExecutor>[0]['runs'] : owner;
         })(),
       });
-      return await execute(args);
+      return execute;
     }
+    : null;
+  const ownedWorkflowAction = createOwnedWorkflowExecutor
+    ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: WorkflowCombinedRunStartV1) =>
+      await (await createOwnedWorkflowExecutor(args, combined))(args)
     : null;
   const workflowAction: ActionExecutorDeps['workflowAction'] | null = params.workflowAction ?? ownedWorkflowAction;
   const startCombinedWorkflow: CliWorkflowFamily['startCombinedWorkflow'] = async request => {
@@ -640,12 +647,7 @@ export function createCliWorkflowFamily(
     return ownedWorkflowAction({ actionId: 'workflow.run.invocations.list', input,
       context: accountCallerContext(request.context) }, request);
   };
-  const workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']> = async (args) => {
-      if (!workflowAction) {
-        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-      }
-      const startedAtMs = Date.now();
-      try {
+  const resolveWorkflowActionArgs = async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0]) => {
         // A Machine/Account host's bound id is not a Workflow origin Session.
         // Keep Session identity explicit at ingress; only enrich Account identity.
         let context = accountCallerContext(args.context);
@@ -669,8 +671,17 @@ export function createCliWorkflowFamily(
             externalActionTarget: target,
           };
         }
-        return await measureActionStartPhaseV1(context, 'workflow_owner',
-          () => workflowAction({ ...args, context } as Parameters<typeof workflowAction>[0]));
+    return { ...args, context };
+  };
+  const workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']> = async (args) => {
+      if (!workflowAction) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      }
+      const startedAtMs = Date.now();
+      try {
+        const resolved = await resolveWorkflowActionArgs(args);
+        if ('ok' in resolved) return resolved;
+        return await measureActionStartPhaseV1(resolved.context, 'workflow_owner', () => workflowAction(resolved));
       } catch (error) {
         const [{ normalizeWorkflowActionThrownError }, { logger }] = await Promise.all([import("./workflowActionExecutor"), import("@/ui/logger")]);
         return normalizeWorkflowActionThrownError(error, {
@@ -680,6 +691,23 @@ export function createCliWorkflowFamily(
       }
     };
 
-  return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort,
+  const prepareWorkflowRunStartApproval: CliWorkflowFamily['prepareWorkflowRunStartApproval'] = async (request, presentationDeps) => {
+    if (request.actionId !== 'workflow.run.start' || !createOwnedWorkflowExecutor || params.workflowAction) return null;
+    const startedAtMs = Date.now();
+    try {
+      const args = { actionId: request.actionId, input: WorkflowRunStartRequestV1Schema.parse(request.input),
+        context: request.context } satisfies WorkflowActionExecuteArgs<'workflow.run.start'>;
+      const resolved = await resolveWorkflowActionArgs(args);
+      if ('ok' in resolved) return resolved;
+      const execute = await createOwnedWorkflowExecutor(resolved);
+      return await execute.prepareStartApproval({ ...args, context: resolved.context }, presentationDeps);
+    } catch (error) {
+      const [{ normalizeWorkflowActionThrownError }, { logger }] = await Promise.all([import('./workflowActionExecutor'), import('@/ui/logger')]);
+      return normalizeWorkflowActionThrownError(error, { operation: request.actionId,
+        durationMs: Date.now() - startedAtMs, emit: diagnostic => logger.infoFile(JSON.stringify(diagnostic)) }, true);
+    }
+  };
+
+  return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations };
 }

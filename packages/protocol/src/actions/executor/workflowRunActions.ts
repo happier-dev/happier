@@ -52,7 +52,8 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import type {
   AvailableAutomationAccountEncryptionV1,
 } from '../../automations/automationAccountCurrentnessV1.js';
-import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
+import type { ActionExecutorContext, ActionExecutorDeps, HostReviewedChildrenPreparationV1, WorkflowActionExecuteArgs } from './types.js';
+import { prepareWorkflowRunApprovalPreview } from './workflowRunApproval.js';
 import type { WorkflowRunActionOwner } from './workflowAccountActions.js';
 import { admitActionAgentStartV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { readWorkflowDiscussionRoundBindingV1 } from '../../workflows/builtins/catalog.js';
@@ -725,6 +726,13 @@ export async function prepareWorkflowApprovedOperationSnapshot(params: Readonly<
 
 /** Preserve the materializer's fixed operands and the authored references it cannot resolve yet. */
 function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1): WorkflowApprovedOperationV1['steps'] {
+  return readWorkflowApprovedOperationLeaves(snapshot).map(({ step }) => step);
+}
+
+function readWorkflowApprovedOperationLeaves(snapshot: WorkflowAcceptedSnapshotV1): {
+  leaf: WorkflowAcceptedSnapshotV1['materializedLeaves'][number];
+  step: WorkflowApprovedOperationV1['steps'][number];
+}[] {
   const sources = new Map<string, WorkflowDefinitionV1>([['$root', snapshot.definition], ...Object.entries(snapshot.frozenChildren)]);
   const blocksBySource = new Map([...sources].map(([sourceKey, definition]) =>
     [sourceKey, new Map(walkWorkflowBlocks(definition.blocks).map(block => [block.id, block]))]));
@@ -732,17 +740,17 @@ function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1
     if (leaf.kind !== 'action' || !leaf.actionId || leaf.actionInput === undefined) return [];
     const concrete = { actionId: leaf.actionId, input: leaf.actionInput };
     const authored = blocksBySource.get(leaf.sourceKey)?.get(leaf.blockId);
-    if (authored?.kind !== 'action' || authored.actionId !== leaf.actionId) return [concrete];
+    if (authored?.kind !== 'action' || authored.actionId !== leaf.actionId) return [{ leaf, step: concrete }];
     const operands: [string, WorkflowAuthoredResultReference][] = [];
     for (const [field, reference] of Object.entries(authored.input)) {
       if (reference.kind === 'result') operands.push([field, reference]);
     }
-    if (operands.length === 0) return [concrete];
+    if (operands.length === 0) return [{ leaf, step: concrete }];
     const references = Object.fromEntries(operands);
     const input = Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field)));
     // Other deferred kinds do not acquire producer-result meaning by proximity.
-    if (hasUnresolvedWorkflowValueV1(input)) return [concrete];
-    return [{ actionId: leaf.actionId, input, binding: { kind: 'producer_result' as const, references } }];
+    if (hasUnresolvedWorkflowValueV1(input)) return [{ leaf, step: concrete }];
+    return [{ leaf, step: { actionId: leaf.actionId, input, binding: { kind: 'producer_result' as const, references } } }];
   });
 }
 
@@ -756,6 +764,8 @@ export type WorkflowCombinedRunStartV1 = Readonly<{
 }>;
 
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
+  prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>,
+    ingressContext?: WorkflowIngressContextV1) => Promise<HostReviewedChildrenPreparationV1>;
   startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
   waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
 }> {
@@ -820,13 +830,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       commit: async input => WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.commit', ...input }, signal ? { signal } : {})),
       ...(signal ? { signal } : {}),
     });
-  const openAccepted = async (runId: string, signal?: AbortSignal, publisherMachineId?: string, suppliedSnapshot?: ReturnType<typeof parseSnapshot>) => {
+  const readAccepted = async (runId: string, signal?: AbortSignal, publisherMachineId?: string, suppliedSnapshot?: ReturnType<typeof parseSnapshot>) => {
     const snapshot = suppliedSnapshot ?? await getSnapshot(runId, signal, publisherMachineId);
     const accountId = snapshot.keyCensus.ownerAccountId;
     const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(signal), census: snapshot.keyCensus });
     if (resolved.kind !== 'available') throw workflowError(resolved.reason);
     const enc = resolved.encryption;
-    await prepareRunRecipients(runId, enc, snapshot.keyCensus, signal);
     const envelope = parseWorkflowStoredContentEnvelopeV1(snapshot.acceptedEnvelope);
     if (!envelope) throw workflowError('content_unavailable');
     const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({
@@ -834,6 +843,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     });
     if (opened.kind !== 'available') throw workflowError('content_unavailable');
     return { accountId, enc, snapshot, accepted: opened.content };
+  };
+  const openAccepted: typeof readAccepted = async (...args) => {
+    const opened = await readAccepted(...args);
+    await prepareRunRecipients(args[0], opened.enc, opened.snapshot.keyCensus, args[1]);
+    return opened;
   };
 
   // Reads the worker's authored-count fact; neither list nor detail recounts invocations.
@@ -930,8 +944,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return undefined;
   };
 
-  const start = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
-    combined?: WorkflowCombinedRunStartV1) => {
+  const prepareStart = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
+    combined?: WorkflowCombinedRunStartV1): Promise<Readonly<{ snapshot: WorkflowAcceptedSnapshotV1;
+      execute: (context: ActionExecutorContext) => ReturnType<WorkflowRunActionOwner['execute']> }>> => {
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     if (combined) {
       const reviewedHost = combined.parent.input.machineId;
@@ -941,7 +956,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const input = args.input;
     const replayRequest = input.source.kind === 'inline' ? input.source.replay : undefined;
     if (replayRequest?.runId === input.runId) throw workflowError('invalid_input');
-    const replaySource = replayRequest ? await openAccepted(replayRequest.runId, args.context.signal) : undefined;
+    const replaySource = replayRequest ? await readAccepted(replayRequest.runId, args.context.signal) : undefined;
     let startInputs = input.inputs ?? replaySource?.accepted.inputs;
     if (replayRequest?.intent === 'another_round' && replaySource) {
       if (!['succeeded', 'failed', 'cancelled'].includes(replaySource.snapshot.run.state)
@@ -1012,7 +1027,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     let replayAccepted: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse> | undefined;
     const projectExisting = async (snapshot?: ReturnType<typeof parseSnapshot>) => {
-      const existing = await openAccepted(
+      const existing = await readAccepted(
         input.runId,
         args.context.signal,
         admittedTarget?.machineId,
@@ -1089,8 +1104,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         if (!sameStrictJsonValue(witnessed.approvedOperation, existing.accepted.approvedOperation)) throw workflowError('run_access_denied');
       }
       await assertAcceptedAuthorizationCurrent(existing.accepted.authorization, args.context.signal, deps.isAcceptedAuthorizationCurrent);
-      return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...existing.snapshot.run,
+      const result = WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...existing.snapshot.run,
         origin: projectAcceptedOrigin(existing.accepted.origin, existing.snapshot.run.origin) }, admission: 'existing' });
+      return { snapshot: existing.accepted, execute: async (context: ActionExecutorContext) => {
+        context.signal?.throwIfAborted();
+        await prepareRunRecipients(input.runId, existing.enc, existing.snapshot.keyCensus, context.signal);
+        return result;
+      } };
     };
     // Resolve the independent Account reads together and reuse this invocation's
     // mode witness for preparation, sealing and admission.
@@ -1376,90 +1396,98 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         args.context.recordActionStartDiagnostic?.({ phase: 'workflow_materialization', refusalReason: materialized.error.reason });
       throw workflowError(materialized.error.code, materialized.error);
     }
-    let accepted = materialized.snapshot;
-    // Only the exact witnessed parent review covers its materialized children.
-    // Ordinary starts and unsupported deferred/live-only inputs keep per-child approval.
-    if (combined || args.context.presentUserApproval) {
-      const steps = readWorkflowApprovedOperationSteps(accepted);
-      if (combined && steps.length === 0) throw workflowError('approval_required');
-      if (steps.length > 0) {
-        try {
-          accepted = await prepareWorkflowApprovedOperationSnapshot({ snapshot: accepted,
-            parent: combined ? { actionId: combined.parent.actionId,
-              input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(combined.parent.input) }
-              : { actionId: args.actionId, input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(args.input) },
-            steps, context: args.context });
-        } catch (error) {
-          if (combined || !(error instanceof Error && 'code' in error && error.code === 'approval_required')) throw error;
+    return { snapshot: materialized.snapshot, execute: async context => {
+      args = { ...args, context };
+      context.signal?.throwIfAborted();
+      if (replaySource) await prepareRunRecipients(replayRequest!.runId, replaySource.enc,
+        replaySource.snapshot.keyCensus, context.signal);
+      let accepted = materialized.snapshot;
+      // Only the exact witnessed parent review covers its materialized children.
+      // Ordinary starts and unsupported deferred/live-only inputs keep per-child approval.
+      if (combined || args.context.presentUserApproval) {
+        const steps = readWorkflowApprovedOperationSteps(accepted);
+        if (combined && steps.length === 0) throw workflowError('approval_required');
+        if (steps.length > 0) {
+          try {
+            accepted = await prepareWorkflowApprovedOperationSnapshot({ snapshot: accepted,
+              parent: combined ? { actionId: combined.parent.actionId,
+                input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(combined.parent.input) }
+                : { actionId: args.actionId, input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(args.input) },
+              steps, context: args.context });
+          } catch (error) {
+            if (combined || !(error instanceof Error && 'code' in error && error.code === 'approval_required')) throw error;
+          }
         }
       }
-    }
-    const discussionRound = readWorkflowDiscussionRoundBindingV1(accepted);
-    if (!('origin' in accepted)) throw workflowError('invalid_input');
-    if (!assertNonEscalatingPermissionMode({ requestedMode: accepted.authorization.admittedPermissionCeiling,
-      callerMode: controller.effectivePermissionMode }).ok) throw workflowError('run_access_denied');
-    if (replaySource) {
-      replayAccepted = accepted;
-      try { return await projectExisting(); }
-      catch (error) { if (!isNotFound(error)) throw error; }
-    }
-    const sourceArtifactId = accepted.source.kind === 'saved' || accepted.source.kind === 'automation'
-      ? accepted.source.definitionId ?? null
-      : accepted.source.kind === 'inline' ? accepted.source.sourceArtifactId ?? replaySource?.snapshot.run.sourceArtifactId ?? null : null;
-    const visibleTeamId = replaySource ? replaySource.snapshot.keyCensus.visibleTeamId ?? undefined
-      : input.source.kind === 'saved' || input.source.kind === 'inline' ? input.source.visibleTeamId : undefined;
-    const census = enc.witness.mode === 'e2ee'
-      ? admissionCensus ?? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
-      : undefined;
-    const prepared = prepareWorkflowRunDataKeyV1({ accountId, encryption: enc, ...(census ? { census } : {}), randomBytes: deps.randomBytes });
-    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-      ...sealMode({ witness: enc.witness, runCrypto: prepared.runCrypto }, deps.randomBytes),
-      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: input.runId }, acceptedSnapshot: accepted,
-    }));
-    const requesterScope = { scopeId: input.runId, machineId: projectTarget.machineId };
-    await deps.workflowRequesterCustody?.retain(requesterScope);
-    let result: Readonly<Record<string, unknown>>;
-    try {
-      result = record(await deps.storage.execute({
-        operation: 'admit', runId: input.runId, origin: projectAcceptedOrigin(accepted.origin), machineId: projectTarget.machineId,
-        ...(input.managedCreation ? { managedCreation: input.managedCreation } : {}),
-        accountCurrentness: enc.witness, acceptedEnvelope,
-        sourceArtifactId,
-        recipientKeyEnvelopes: prepared.recipientKeyEnvelopes,
-        ...(census ? { visibleTeamId: census.visibleTeamId } : visibleTeamId ? { visibleTeamId } : {}),
-        ...(resultDelivery ? { resultDelivery } : {}),
-        ...(discussionRound ? { discussionRoundPattern: discussionRound.pattern } : {}),
-        ...(discussionOrigin ? { discussionTargetSessionIds: [...new Set(accepted.materializedLeaves
-          .flatMap(listWorkflowAcceptedLeafSelectionsV1).flatMap(leaf => leaf.kind === 'step'
-            && leaf.selection.conversation?.kind === 'existing_session' ? [leaf.selection.conversation.sessionId] : []))] } : {}),
-      }, {
-        ...(args.context.signal ? { signal: args.context.signal } : {}),
-        publisherMachineId: projectTarget.machineId,
+      const discussionRound = readWorkflowDiscussionRoundBindingV1(accepted);
+      if (!('origin' in accepted)) throw workflowError('invalid_input');
+      if (!assertNonEscalatingPermissionMode({ requestedMode: accepted.authorization.admittedPermissionCeiling,
+        callerMode: controller.effectivePermissionMode }).ok) throw workflowError('run_access_denied');
+      if (replaySource) {
+        replayAccepted = accepted;
+        try { return await (await projectExisting()).execute(args.context); }
+        catch (error) { if (!isNotFound(error)) throw error; }
+      }
+      const sourceArtifactId = accepted.source.kind === 'saved' || accepted.source.kind === 'automation'
+        ? accepted.source.definitionId ?? null
+        : accepted.source.kind === 'inline' ? accepted.source.sourceArtifactId ?? replaySource?.snapshot.run.sourceArtifactId ?? null : null;
+      const visibleTeamId = replaySource ? replaySource.snapshot.keyCensus.visibleTeamId ?? undefined
+        : input.source.kind === 'saved' || input.source.kind === 'inline' ? input.source.visibleTeamId : undefined;
+      const census = enc.witness.mode === 'e2ee'
+        ? admissionCensus ?? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
+        : undefined;
+      const prepared = prepareWorkflowRunDataKeyV1({ accountId, encryption: enc, ...(census ? { census } : {}), randomBytes: deps.randomBytes });
+      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        ...sealMode({ witness: enc.witness, runCrypto: prepared.runCrypto }, deps.randomBytes),
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: input.runId }, acceptedSnapshot: accepted,
       }));
-    } catch (error) {
-      const responseCode = (error as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
-      const errorCode = (error as { code?: unknown })?.code;
-      if (responseCode === 'currentness_conflict' || errorCode === 'currentness_conflict') {
-        // Another admission may have won the caller-allocated Run id race. The
-        // accepted E2EE envelope is randomized, so only the Action host can
-        // reopen the committed snapshot and compare semantic correspondence.
-        const existing = await projectExisting();
-        if (isTerminalAutomationRunStateV3(existing.run.state) && existing.run.workflowCustodyState !== 'pending') {
+      const requesterScope = { scopeId: input.runId, machineId: projectTarget.machineId };
+      await deps.workflowRequesterCustody?.retain(requesterScope);
+      let result: Readonly<Record<string, unknown>>;
+      try {
+        result = record(await deps.storage.execute({
+          operation: 'admit', runId: input.runId, origin: projectAcceptedOrigin(accepted.origin), machineId: projectTarget.machineId,
+          ...(input.managedCreation ? { managedCreation: input.managedCreation } : {}),
+          accountCurrentness: enc.witness, acceptedEnvelope,
+          sourceArtifactId,
+          recipientKeyEnvelopes: prepared.recipientKeyEnvelopes,
+          ...(census ? { visibleTeamId: census.visibleTeamId } : visibleTeamId ? { visibleTeamId } : {}),
+          ...(resultDelivery ? { resultDelivery } : {}),
+          ...(discussionRound ? { discussionRoundPattern: discussionRound.pattern } : {}),
+          ...(discussionOrigin ? { discussionTargetSessionIds: [...new Set(accepted.materializedLeaves
+            .flatMap(listWorkflowAcceptedLeafSelectionsV1).flatMap(leaf => leaf.kind === 'step'
+              && leaf.selection.conversation?.kind === 'existing_session' ? [leaf.selection.conversation.sessionId] : []))] } : {}),
+        }, {
+          ...(args.context.signal ? { signal: args.context.signal } : {}),
+          publisherMachineId: projectTarget.machineId,
+        }));
+      } catch (error) {
+        const responseCode = (error as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
+        const errorCode = (error as { code?: unknown })?.code;
+        if (responseCode === 'currentness_conflict' || errorCode === 'currentness_conflict') {
+          // Another admission may have won the caller-allocated Run id race. The
+          // accepted E2EE envelope is randomized, so only the Action host can
+          // reopen the committed snapshot and compare semantic correspondence.
+          const existing = WorkflowActionOutputSchemasV1['workflow.run.start'].parse(await (await projectExisting()).execute(args.context));
+          if (isTerminalAutomationRunStateV3(existing.run.state) && existing.run.workflowCustodyState !== 'pending') {
+            await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
+          }
+          return existing;
+        }
+        // A lost reply may already have queued the Run. Only a received client
+        // refusal proves there is no new admitted work needing this custody.
+        if (isConfirmedActionWriteRefusal(error)) {
           await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
         }
-        return existing;
+        translateStorageError(error);
       }
-      // A lost reply may already have queued the Run. Only a received client
-      // refusal proves there is no new admitted work needing this custody.
-      if (isConfirmedActionWriteRefusal(error)) {
-        await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
-      }
-      translateStorageError(error);
-    }
-    const run = WorkflowRunSummaryV1Schema.parse(result.run);
-    return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...run,
-      origin: projectAcceptedOrigin(accepted.origin, run.origin) }, admission: result.kind });
+      const run = WorkflowRunSummaryV1Schema.parse(result.run);
+      return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...run,
+        origin: projectAcceptedOrigin(accepted.origin, run.origin) }, admission: result.kind });
+    } };
   };
+  const start = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
+    combined?: WorkflowCombinedRunStartV1) => await (await prepareStart(args, ingressContext, combined)).execute(args.context);
 
   /** Opens one row's private progress under its exact row binding. */
   const openProgress = (
@@ -3082,6 +3110,25 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } finally {
       deps.assertCurrent?.();
     }
+  }, prepareStartApproval: async (args, presentationDeps, ingressContext) => {
+    deps.assertCurrent?.();
+    const prepared = await prepareStart(args, ingressContext);
+    const approvalPreview = await prepareWorkflowRunApprovalPreview(prepared.snapshot, presentationDeps, args.context);
+    const children = readWorkflowApprovedOperationLeaves(prepared.snapshot).flatMap(({ leaf, step }) => {
+      const action = ActionIdSchema.safeParse(step.actionId);
+      return action.success && !step.binding && hasDurableWorkflowApprovalInput(step)
+        ? [{ action: action.data, role: leaf.blockId, input: step.input }] : [];
+    });
+    return { children, approvalPreview, executeAdmittedAction: async request => {
+      deps.assertCurrent?.();
+      try {
+        const result = await prepared.execute(request.context);
+        const failure = ActionExecuteFailureSchema.safeParse(result);
+        return failure.success ? failure.data : { ok: true, result };
+      } finally {
+        deps.assertCurrent?.();
+      }
+    } };
   }, execute: async (args, ingressContext) => {
     deps.assertCurrent?.();
     try {

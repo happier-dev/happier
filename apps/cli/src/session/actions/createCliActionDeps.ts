@@ -795,7 +795,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         && roleAccountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()) }
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
-  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort,
+  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
     ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
@@ -961,6 +961,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
         },
       });
       if (wake) return wake;
+      const workflow = await prepareWorkflowRunStartApproval(request, readEffectiveDeps?.() ?? actionDeps);
+      if (workflow) return workflow;
       const prepared = request.actionId === 'projects.service.relocate'
         ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
             context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl,
