@@ -7,62 +7,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-type CountedFiber = {
-    tag: number; flags: number; type: unknown; alternate: CountedFiber | null;
-    child: CountedFiber | null; sibling: CountedFiber | null; memoizedProps: Record<string, unknown> | null;
-};
-const counts = vi.hoisted(() => {
-    // Walks the committed fiber tree after every commit: fibers with PerformedWork re-rendered in it.
-    const state = { enabled: false, commits: 0, renders: new Map<string, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>() };
-    const COMPONENT_TAGS = new Set([0, 1, 11, 14, 15]);
-    const PERFORMED_WORK = 1;
-    const nameOf = (type: any): string => !type || typeof type === 'string' ? 'host'
-        : type.displayName || type.name || type.render?.displayName || type.render?.name
-            || type.type?.displayName || type.type?.name || 'Anonymous';
-    const walk = (root: CountedFiber) => {
-        const stack: CountedFiber[] = [root];
-        while (stack.length) {
-            const fiber = stack.pop()!;
-            for (let child = fiber.child; child; child = child.sibling) {
-                if (child.alternate && fiber.alternate && isUntouched(fiber.alternate, child)) continue;
-                if (COMPONENT_TAGS.has(child.tag) && child.alternate && (child.flags & PERFORMED_WORK)) {
-                    const name = nameOf(child.type);
-                    state.renders.set(name, (state.renders.get(name) ?? 0) + 1);
-                    const message = child.memoizedProps?.message as { id?: unknown } | undefined;
-                    if (name.startsWith('MessageView') && typeof message?.id === 'string') {
-                        state.renderedMessageIds.set(message.id, (state.renderedMessageIds.get(message.id) ?? 0) + 1);
-                    }
-                    if (/^(ChatListMessageRow|MessageView|TranscriptRowShell|ChatListContent)/.test(name)) {
-                        const before = child.alternate.memoizedProps ?? {};
-                        const after = child.memoizedProps ?? {};
-                        const changed = Object.keys(after).filter((key) => before[key] !== after[key]);
-                        const key = `${name}:${changed.length ? changed.join('|') : 'state/context'}`;
-                        state.changedProps.set(key, (state.changedProps.get(key) ?? 0) + 1);
-                    }
-                }
-                stack.push(child);
-            }
-        }
-    };
-    const isUntouched = (previousParent: CountedFiber, child: CountedFiber) => {
-        for (let previous = previousParent.child; previous; previous = previous.sibling) if (previous === child) return true;
-        return false;
-    };
-    return {
-        /** Called from a Profiler's onRender: the container's committed tree is the new one. */
-        onCommit(container: Element) {
-            if (!state.enabled) return;
-            const key = Object.keys(container).find((name) => name.startsWith('__reactContainer$'));
-            const hostRoot = key ? (container as any)[key] as { stateNode: { current: CountedFiber } } : null;
-            if (!hostRoot) return;
-            state.commits += 1;
-            walk(hostRoot.stateNode.current);
-        },
-        start() { state.enabled = true; state.commits = 0; state.renders.clear(); state.renderedMessageIds.clear(); state.changedProps.clear(); },
-        stop() { state.enabled = false; },
-        read() { return { commits: state.commits, renders: new Map(state.renders), renderedMessageIds: new Map(state.renderedMessageIds), changedProps: new Map(state.changedProps) }; },
-    };
-});
+import { createCommittedFiberRenderCounter } from '@/dev/testkit/performance/committedFiberCounts';
+const counts = createCommittedFiberRenderCounter();
 
 import * as React from 'react';
 import { act } from 'react';
@@ -75,6 +21,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installWebLockManagerMock, type WebLockManagerMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { STREAMING_TEXT_PACER_CONFIG } from './streaming/streamingTextPacer';
 
 vi.mock('react-native', async () => ({
     ...await vi.importActual('react-native-web'),
@@ -95,13 +42,26 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { createSessionFixture, createSessionMessagesFixture, standardCleanup } = await import('@/dev/testkit');
 const { ChatList } = await import('./ChatList');
+const { ChatListInternal } = await import('./ChatListInternal');
 const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
+const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 let webLocks: WebLockManagerMockHandle | null = null;
-beforeEach(() => { webLocks = installWebLockManagerMock(); });
+let scrollToDescriptor: PropertyDescriptor | undefined;
+let stopAccountRequestTrace: (() => void) | null = null;
+let previousStackTraceLimit = Error.stackTraceLimit;
+beforeEach(() => {
+    webLocks = installWebLockManagerMock();
+    scrollToDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
+    previousStackTraceLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 80;
+});
 afterEach(async () => {
+    stopAccountRequestTrace?.();
+    stopAccountRequestTrace = null;
+    Error.stackTraceLimit = previousStackTraceLimit;
     await act(async () => root?.unmount());
     root = null;
     container?.remove();
@@ -116,10 +76,12 @@ afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    if (scrollToDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollTo', scrollToDescriptor);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo');
 });
 
 const streamChunk = (text: string, updatedAtMs: number, state: 'streaming' | 'completed' = 'streaming'): NormalizedMessage => ({
-    id: 'stream-segment', localId: 'stream-segment', createdAt: 1_000, seq: 100,
+    id: 'stream-segment', localId: null, createdAt: 1_000, seq: 1_001,
     role: 'agent', isSidechain: false, content: [{ type: 'text', text, uuid: 'stream-segment', parentUUID: null }],
     meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant',
         segmentLocalId: 'stream-segment', segmentState: state, startedAtMs: 1, updatedAtMs } },
@@ -130,12 +92,32 @@ async function settle() {
 }
 
 describe('streaming transcript render cost', () => {
-    it('re-renders no finished message while one message streams', async () => {
+    it('muse.experience.pc8 keeps 1,000 finished rows and the permission card quiet through 100 deltas', async () => {
         await homes.reset();
+        let requestPhase = 'bootstrap';
+        const accountRequestTraces = new Map<(typeof homes.requests)[number], { phase: string; caller: string }>();
+        const accountRequests = () => homes.requests.filter(request => request.method === 'GET'
+            && /^\/v\d+\/(?:account(?:\/|$)|connect\/)/.test(request.path));
+        const accountReads = () => accountRequests()
+            .map(({ serverId, serverUrl, method, path }) => ({ serverId,
+                accountId: homes.findByServerUrl(serverUrl)?.accountId ?? null, method, path }));
+        stopAccountRequestTrace = homes.subscribe(() => {
+            const request = accountRequests().at(-1);
+            if (request && !accountRequestTraces.has(request)) accountRequestTraces.set(request, {
+                phase: requestPhase, caller: new Error('Home Account request admission').stack ?? '',
+            });
+        });
+        const accountReadDiagnostic = () => JSON.stringify(accountRequests().map(request => ({
+            serverId: request.serverId, accountId: homes.findByServerUrl(request.serverUrl)?.accountId ?? null,
+            method: request.method, path: request.path, ...accountRequestTraces.get(request),
+        })));
         const serverId = await homes.addHome({ name: 'STREAMUI', serverUrl: 'https://streamui.test', accountId: 'streamui-account' });
-        homes.answer(serverId, '/v2/cursor', { body: { cursor: '0' } });
-        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
-        await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://streamui.test')!.token! });
+        // This scene owns an already-loaded transcript, not Account bootstrap. Keep
+        // the real persisted Home binding that the mounted card resolves locally.
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        expect(await resolveServerCredentialAccountScope(serverId)).toMatchObject({
+            kind: 'bound', scope: { serverId, accountId: 'streamui-account' },
+        });
         vi.useFakeTimers();
         vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
         vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => Number(setTimeout(() => callback(Date.now()), 16)));
@@ -156,7 +138,7 @@ describe('streaming transcript render cost', () => {
         Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: () => undefined });
 
         const finished: Message[] = [];
-        for (let turn = 0; turn < 6; turn++) {
+        for (let turn = 0; turn < 500; turn++) {
             finished.push({ kind: 'user-text', id: `user-${turn}`, seq: turn * 2 + 1, localId: null, createdAt: 10 + turn * 2,
                 text: `Question ${turn}` });
             finished.push({ kind: 'agent-text', id: `agent-${turn}`, seq: turn * 2 + 2, localId: null, createdAt: 11 + turn * 2,
@@ -167,28 +149,60 @@ describe('streaming transcript render cost', () => {
             messageIdsOldestFirst: finished.map((message) => message.id),
             messagesById: Object.fromEntries(finished.map((message) => [message.id, message])), isLoaded: true,
         }) }, profileScope: { serverId, accountId: 'streamui-account' } });
+        expect(storage.getState().sessionMessages[session.id]).toMatchObject({ isLoaded: true });
+        expect(storage.getState().sessionMessages[session.id]!.messageIdsOldestFirst).toHaveLength(1_000);
+        const finishedIds = new Set(finished.map((message) => message.id));
         storage.getState().applyMessages(session.id, [streamChunk('Starting', 2)]);
+        const streamingIds = Object.keys(storage.getState().sessionMessages[session.id]!.messagesById)
+            .filter(id => !finishedIds.has(id));
+        expect(streamingIds).toHaveLength(1);
+        const streamingMessageId = streamingIds[0]!;
+        expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
+            .toMatchObject({ kind: 'agent-text', localId: 'stream-segment', text: 'Starting' });
 
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
-        await act(async () => {
-            root?.render(<React.Profiler id="streamui" onRender={() => counts.onCommit(container!)}>
+        const request = { id: 'waiting-permission', tool: 'Bash', arguments: { command: 'git status' }, createdAt: Date.now() };
+        const transcript = <ChatList session={session} sessionSurfaceKey="streamui-surface" externalControlFooter={null}
+            onEditPendingMessage={() => {}} />;
+        const scene = (permissionArrived: boolean, cardRequest = request) => (
+            <React.Profiler id="streamui" onRender={() => counts.onCommit(container!)}>
                 <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={session.serverId}>
-                    <ChatList session={session} sessionSurfaceKey="streamui-surface" externalControlFooter={null}
-                        onEditPendingMessage={() => {}} />
+                    {transcript}
+                    {permissionArrived ? <PermissionPromptCard request={cardRequest} location={null} sessionId={session.id} serverId={serverId}
+                        metadata={null} canApprovePermissions /> : null}
                 </AppSessionTranscriptSourceProvider>
-            </React.Profiler>);
+            </React.Profiler>
+        );
+        requestPhase = 'transcript-settle';
+        await act(async () => {
+            root?.render(scene(false));
         });
         await settle();
-        expect(container.querySelector('[data-testid="transcript-message-agent-0"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid^="transcript-message-agent-"]')).not.toBeNull();
+        const accountReadsBeforePermissionArrival = accountReads();
+        requestPhase = 'permission-arrival';
+        await act(async () => { root?.render(scene(true)); });
+        await settle();
+        expect(container.querySelector('[data-testid="permission-prompt-card"]')).not.toBeNull();
+        if (process.env.HAPPIER_STREAM_RENDER_COST_REPORT === '1') console.log('STREAMUI_ACCOUNT_ARRIVAL', accountReadDiagnostic());
+        expect(accountReads(), accountReadDiagnostic()).toEqual(accountReadsBeforePermissionArrival);
 
-        const finishedIds = new Set(finished.map((message) => message.id));
+        counts.start();
+        await act(async () => { root?.render(scene(true, { ...request, id: 'counter-control-permission' })); });
+        await settle();
+        counts.stop();
+        expect(counts.read().commitsFor(PermissionPromptCard)).toBeGreaterThan(0);
+        await act(async () => { root?.render(scene(true)); });
+        await settle();
+
         const phases: Record<string, unknown> = {};
-        const measure = async (name: string, steps: readonly (() => void)[]) => {
+        const measure = async (name: string, steps: readonly (() => void | Promise<void>)[]) => {
+            requestPhase = name;
             counts.start();
             for (const apply of steps) {
-                await act(async () => { apply(); });
+                await act(async () => { await apply(); });
                 await act(async () => { await vi.advanceTimersByTimeAsync(40); });
             }
             await settle();
@@ -199,36 +213,65 @@ describe('streaming transcript render cost', () => {
             phases[name] = { steps: steps.length, commits: measured.commits, finishedRenders,
                 totalRenders: [...measured.renders.values()].reduce((x, y) => x + y, 0),
                 top: [...measured.renders].sort((x, y) => y[1] - x[1]).slice(0, 12), changedProps: [...measured.changedProps] };
-            return { finished: finishedRenders, root: measured.renders.get('ChatListContent') ?? 0 };
+            return { finished: finishedRenders, root: measured.commitsFor(ChatList) + measured.commitsFor(ChatListInternal),
+                permission: measured.commitsFor(PermissionPromptCard) };
         };
         const apply = (message: NormalizedMessage) => storage.getState().applyMessages(session.id, [message]);
         let text = 'Starting';
-        const textFinished = await measure('text', Array.from({ length: 8 }, (_, delta) => () => {
+        const accountReadsBeforeDeltas = accountReads();
+        const textFinished = await measure('text', Array.from({ length: 100 }, (_, delta) => () => {
             text += ` token${delta}`; apply(streamChunk(text, 3 + delta));
         }));
+        expect([...counts.read().renderedMessageIds]).toEqual([[streamingMessageId, 100]]);
+        expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
+            .toMatchObject({ kind: 'agent-text', localId: 'stream-segment', text });
+        // Delta commits and the paced reveal are separate work. Drain using the
+        // text owner's published timing, and also count the static rows/card
+        // during that drain; the final visible tail intentionally trails input.
+        const revealFinished = await measure('text-reveal', [() => vi.advanceTimersByTimeAsync(
+            STREAMING_TEXT_PACER_CONFIG.settleAfterMs + STREAMING_TEXT_PACER_CONFIG.settleDrainMaxMs,
+        )]);
+        expect(container.textContent).toContain('token99');
+        // PC9's permission arrival stays mounted above; transcript arrivals do not read Account state.
+        expect(accountReads(), accountReadDiagnostic()).toEqual(accountReadsBeforeDeltas);
         let thinking = 'Considering';
-        const thinkingDelta = () => apply({ id: 'think-live', seq: 101, localId: null, createdAt: 1_001, isSidechain: false,
+        const thinkingDelta = () => apply({ id: 'think-live', seq: 1_002, localId: null, createdAt: 1_001, isSidechain: false,
             role: 'agent', content: [{ type: 'thinking', thinking, uuid: 'think-live', parentUUID: null }] } as unknown as NormalizedMessage);
         // The thinking row's arrival is structural; measure only the deltas that follow it.
         await act(async () => { thinkingDelta(); });
         await settle();
+        const thinkingMessage = Object.values(storage.getState().sessionMessages[session.id]!.messagesById)
+            .find(message => message.kind === 'agent-text' && message.isThinking);
+        expect(thinkingMessage).toMatchObject({ kind: 'agent-text', isThinking: true, text: 'Considering' });
         const thinkingFinished = await measure('thinking', Array.from({ length: 8 }, (_, delta) => () => {
             thinking += ` step${delta}`;
             thinkingDelta();
         }));
+        expect(storage.getState().sessionMessages[session.id]!.messagesById[thinkingMessage!.id])
+            .toMatchObject({ kind: 'agent-text', isThinking: true, text: thinking });
         const toolFinished = await measure('tool', [
-            () => apply({ id: 'tool-live', seq: 102, localId: null, createdAt: 1_002, isSidechain: false, role: 'agent',
+            () => apply({ id: 'tool-live', seq: 1_003, localId: null, createdAt: 1_002, isSidechain: false, role: 'agent',
                 content: [{ type: 'tool-call', id: 'call-live', name: 'Bash', input: { command: 'ls' }, description: null,
                     uuid: 'tool-live', parentUUID: null }] } as unknown as NormalizedMessage),
-            () => apply({ id: 'tool-live-result', seq: 103, localId: null, createdAt: 1_003, isSidechain: false, role: 'agent',
+            () => apply({ id: 'tool-live-result', seq: 1_004, localId: null, createdAt: 1_003, isSidechain: false, role: 'agent',
                 content: [{ type: 'tool-result', tool_use_id: 'call-live', content: 'a\nb', is_error: false,
                     uuid: 'tool-live-result', parentUUID: null }] } as unknown as NormalizedMessage),
         ]);
-        const endFinished = await measure('turn-end', [() => apply(streamChunk(text, 50, 'completed'))]);
+        const toolMessage = Object.values(storage.getState().sessionMessages[session.id]!.messagesById)
+            .find(message => message.kind === 'tool-call' && message.tool.id === 'call-live');
+        expect(toolMessage).toMatchObject({ kind: 'tool-call', tool: {
+            id: 'call-live', state: 'completed', result: 'a\nb',
+        } });
+        expect(toolFinished.root).toBeGreaterThan(0);
+        const endFinished = await measure('turn-end', [() => apply(streamChunk(text, 150, 'completed'))]);
+        expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
+            .toMatchObject({ kind: 'agent-text', localId: 'stream-segment', text,
+                meta: { happierStreamSegmentV1: { segmentState: 'completed' } } });
         if (process.env.HAPPIER_STREAM_RENDER_COST_REPORT === '1') console.log('STREAMUI', JSON.stringify(phases));
         // Finished rows never re-render for another message's delta or tool event, and text/thinking
         // deltas (no structural change) never re-render the transcript root.
-        expect({ text: textFinished, thinking: thinkingFinished, tool: toolFinished.finished, turnEnd: endFinished.finished })
-            .toEqual({ text: { finished: 0, root: 0 }, thinking: { finished: 0, root: 0 }, tool: 0, turnEnd: 0 });
+        expect({ text: textFinished, reveal: revealFinished, thinking: thinkingFinished, tool: toolFinished.finished, turnEnd: endFinished.finished })
+            .toEqual({ text: { finished: 0, root: 0, permission: 0 }, reveal: { finished: 0, root: 0, permission: 0 },
+                thinking: { finished: 0, root: 0, permission: 0 }, tool: 0, turnEnd: 0 });
     });
 });
