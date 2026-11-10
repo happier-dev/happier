@@ -15,7 +15,7 @@ import { DeploymentBackupConfigureInputV1Schema } from '@happier-dev/protocol/de
 import { createProjectReadinessActionForHost, projectReadinessEnvironmentFactForHost } from './actions/projectReadiness';
 import { readScmHostingProjectReadinessForHost } from '@/scm/hostingProviders/projectReadinessForHost';
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
-import { readSavedHealthCheckSourceForHost } from './healthChecks/readSavedHealthCheckSource';
+import { readSavedHealthCheckSourcesForHost } from './healthChecks/readSavedHealthCheckSource';
 import { readHealthCheckReadiness, readHealthAlertReadiness } from './healthChecks/readiness';
 import type { CurrentDomainEdgeObservation } from './healthChecks/currentDomainEdgeObservation';
 import { createCliNotificationCatalogForHost } from '@/session/actions/cliActionDeps/notifications';
@@ -47,6 +47,7 @@ import {
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
+import { readPreviewDomainForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
     isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
@@ -93,7 +94,7 @@ import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptConten
 import { preparePromotionForHost } from './preparePromotionForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -147,7 +148,7 @@ import { createContributedDomainActionsForHost } from './targets/contributedDoma
 import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition } from './deploymentDefinitionAdmission';
 import { createDeploymentRestartActionForHost } from './actions/restart';
 import { createDeploymentDataQueryActionForHost } from './actions/dataQuery';
-import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
+import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
 
 type AdmittedTemplateSource = Readonly<{ id: string; revision: number }>;
 export type DaemonDeploymentPreparationRequest = Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentAction']>>[0] & Readonly<{
@@ -459,6 +460,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content?: DeploymentContentV1 }>):
             ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
     }> = { ...host, ...targetHostReaders,
+        readPreviewDomain(request) {
+            return readPreviewDomainForHost(request, {
+                readMetadata: operand => storage('deployments.domains.get', operand, request.context),
+                open: id => open(id, request.context),
+            });
+        },
         settlePrivateWorkloadFirewall: createPrivateServicePublicationSettlementForHost(host),
         async enrollMemberRoutes(request, input) {
             const result = await domainActions.reconcileMembership({ environmentId: request.input.environmentId,
@@ -729,10 +736,32 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     }>;
     function previewTemplateCreateContinuation(plan: PreviewTemplateCreationPlanForHost,
         prepared: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1): HostReviewedChildrenPreparationV1 {
-        return { children: [...(plan.preparations.length ? [{ action: 'deployments.bindings.set', role: 'preview.bindings' }] : []),
-            ...(plan.selections.some(selection => selection.destinationBackup)
+        return { children: [...(plan.preparations.length || plan.explicitBindings?.length ? [{ action: 'deployments.bindings.set', role: 'preview.bindings' }] : []),
+            ...(plan.backup
                 ? [{ action: DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, role: 'preview.backup' }] : [])],
             executeAdmittedAction: ({ context }) => executePreviewTemplateCreationForHost({ plan, prepared, context }, { ...host, storage }) };
+    }
+    async function preparePreviewCreateContinuation(preview: import('./prepareEnvironmentCreateForHost').EnvironmentCreatePreviewResolution,
+        prepared: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1,
+        content: import('@happier-dev/deployment-protocol').DeploymentEnvironmentContentV1,
+        context: ActionExecutorContext): Promise<HostReviewedChildrenPreparationV1 | undefined> {
+        if (preview.fork) {
+            const plan = preview.nativeTemplate ?? { name: content.name, definition: content.definition,
+                data: [], preparations: [], selections: [] };
+            const domain = preview.domain && preview.provenance ? await readPreviewDomainForHost({ serverId: prepared.serverId,
+                templateEnvironmentId: preview.provenance.templateEnvironmentId, selection: preview.domain,
+                pullRequestNumber: preview.provenance.pullRequestNumber }, {
+                    readMetadata: input => storage('deployments.domains.get', input, context),
+                    open: artifactId => open(artifactId, context),
+                }) : undefined;
+            return prepareForkPreviewCreateForHost({ prepared, content, context, bindings: plan.explicitBindings,
+                ...(domain ? { domain } : {}) }, { storage,
+                readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
+                create: request => executePreviewTemplateCreationForHost({ ...request, plan }, { ...host, storage }),
+                deploy: ({ input, context }) => deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input, context }),
+            });
+        }
+        return preview.nativeTemplate ? previewTemplateCreateContinuation(preview.nativeTemplate, prepared) : undefined;
     }
     function previewCreateHost(context: ActionExecutorContext) {
         const defaultsHost = atHome(() => creationDefaultsHost(context));
@@ -785,10 +814,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     issues: [{ code: 'custom', path: ['controllerMachineId'] }] },
             };
             const materializeCreate = createPrepareEnvironmentCreateForHost(createHost);
+            let hostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
             const prepared = await materializeCreate({ input: { ...authored, ...defaults.values },
-                projectOwner: defaults.projectOwner, context, copy, nativeOrigin, admittedPreview: preview });
+                projectOwner: defaults.projectOwner, context, copy, nativeOrigin, admittedPreview: preview }, async (input, content) => {
+                    hostReviewedChildren = await preparePreviewCreateContinuation(preview, input, content, context);
+                });
             if ('errorCode' in prepared) return prepared;
-            return { input: prepared,
+            return { input: hostReviewedChildren?.input === undefined ? prepared
+                    : DeploymentEnvironmentCreateInputV1Schema.parse(hostReviewedChildren.input),
+                ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
                 preview: normalizeStrictJsonValue({ creationDefaults: {
                 values: defaults.values, sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                 ...(copy.review ? { copy: copy.review } : {}) }) };
@@ -840,8 +874,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             await assertHttpAuthority(context); return null;
         },
         resolveRequestHeaders: headers,
-        prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, accountArtifacts: artifacts, resolveRequestHeaders: headers }),
-        prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers }),
+        prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, accountArtifacts: artifacts, resolveRequestHeaders: headers,
+            listEnvironments: (input, context) => storage('deployments.environments.list', input, context) }),
+        prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers, preparePlatformBindings: platformVariables.sync }),
         async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
             const dataAdmission = await dataTeardown.admit(input, context);
             if (dataAdmission) return 'errorCode' in dataAdmission ? dataAdmission : null;
@@ -1100,6 +1135,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const staging: { artifact?: Awaited<ReturnType<typeof artifacts.create>> } = {};
             const content = await prepareOwnServerDeploymentCandidate({ ...request, sourceIntent, environment, runtime: host.runtime,
                 machineId: host.machineId, machineResults, readReferenceEnvironment: targetHostReaders.readEnvironment,
+                readPreviewDomain: targetHost.readPreviewDomain,
                 async stageContent(sourceIntent) {
                     const initial = DeploymentContentV1Schema.parse({ sourceIntent, machines: link.machines,
                         ...(request.services ? { services: request.services } : {}),
@@ -1228,10 +1264,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const deploymentBackupConfigure = createDeploymentBackupConfigureForHost({ ...host, artifacts, assertCurrent,
         resolveRequestHeaders: headers,
         readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
-        resolveCreationDefaults: (environment, explicit, context) => atHome(() => prepareDeploymentCreationDefaultsForHost({
-            projectSourceId: environment.environment.projectSourceId, actionId: DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
-            context, explicit, target: { kind: 'ownServer', machines: environment.targetLinks.flatMap(link => link.members.map(member => member.machineId)) },
-        }, creationDefaultsHost(context))),
+        async resolveCreationDefaults(environment, explicit, context) {
+            const defaults = await atHome(() => prepareDeploymentCreationDefaultsForHost({
+                projectSourceId: environment.environment.projectSourceId, actionId: DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+                context, explicit, target: { kind: 'ownServer', machines: environment.targetLinks.flatMap(link => link.members.map(member => member.machineId)) },
+            }, creationDefaultsHost(context)));
+            return { values: defaults.values, sources: defaults.sources };
+        },
     });
     const deps = {
         deploymentChild,
@@ -1258,97 +1297,103 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             context: currentContext });
                         return projectReadinessEnvironmentFactForHost(scope, input.machineId, detail);
                     },
-                    async readHealthAndAlerts(scope, admitted, currentContext) {
+                    async readHealthAndAlerts(environments, currentContext) {
                         const signal = currentContext.signal ?? new AbortController().signal;
-                        const subject = { kind: 'environment' as const, environmentId: scope.environment.environmentId };
-                        const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
                         const execute = async (actionId: Parameters<typeof executeCanonicalAction>[0], selected: unknown) => {
                             const result = await executeCanonicalAction(actionId, selected);
                             if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
                             return result.result;
                         };
-                        const source = await readSavedHealthCheckSourceForHost({ sourceInstanceId, signal }, {
+                        const sources = await readSavedHealthCheckSourcesForHost({ sourceInstanceIds: environments.map(({ scope }) =>
+                            createHealthCheckSourceInstanceIdV1({ kind: 'environment', environmentId: scope.environment.environmentId })), signal }, {
                             list: query => execute('workflow.trigger.list', query),
                         });
-                        const detail = admitted.detail;
-                        const observerMachineId = source.kind === 'available' ? source.observer?.machineId ?? null : null;
-                        const controllerOnline = detail.controller?.state === 'available' ? true
-                            : detail.controller?.state === 'paused' ? false : null;
-                        const observerOnline = observerMachineId === detail.controller?.machineId ? controllerOnline : null;
-                        const unavailable = (reason: string) => ({ status: 'unavailable' as const, reason });
-                        const bothUnavailable = (reason: string) => ({ health: unavailable(reason), alerts: unavailable(reason) });
-                        if (source.kind === 'available' && !isDeepStrictEqual(source.source.subject, subject)) {
-                            return bothUnavailable('health_check_source_mismatch');
-                        }
-                        let lease: PluginRuntimeRegistryLease | null = null;
-                        try {
-                            if (source.kind === 'available' && source.enabled && source.observer) {
-                                lease = host.acquirePluginRuntimeRegistryLease
-                                    ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
-                                const adopted = lease?.registry.readHealthCheckSource?.(sourceInstanceId, signal);
-                                if (!adopted || adopted.kind !== 'available') return bothUnavailable(adopted?.reason ?? 'source_unavailable');
-                                if (!isDeepStrictEqual(adopted.source, source.source)) return bothUnavailable('source_unavailable');
+                        // This borrowed promise ends with this finite read; destination inspection remains provider-owned.
+                        let channelsRead: ReturnType<typeof notificationCatalog.readChannels> | undefined;
+                        return await Promise.all(environments.map(async ({ scope, environment: admitted }) => {
+                            const subject = { kind: 'environment' as const, environmentId: scope.environment.environmentId };
+                            const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
+                            const source = sources.get(sourceInstanceId)!;
+                            const detail = admitted.detail;
+                            const observerMachineId = source.kind === 'available' ? source.observer?.machineId ?? null : null;
+                            const controllerOnline = detail.controller?.state === 'available' ? true
+                                : detail.controller?.state === 'paused' ? false : null;
+                            const observerOnline = observerMachineId === detail.controller?.machineId ? controllerOnline : null;
+                            const unavailable = (reason: string) => ({ status: 'unavailable' as const, reason });
+                            const bothUnavailable = (reason: string) => ({ health: unavailable(reason), alerts: unavailable(reason) });
+                            if (source.kind === 'available' && !isDeepStrictEqual(source.source.subject, subject)) {
+                                return bothUnavailable('health_check_source_mismatch');
                             }
-                            const readCoverage = async () => {
-                                if (source.kind !== 'available' || !source.enabled || !source.observer) {
-                                    return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains: [] });
+                            let lease: PluginRuntimeRegistryLease | null = null;
+                            try {
+                                if (source.kind === 'available' && source.enabled && source.observer) {
+                                    lease = host.acquirePluginRuntimeRegistryLease
+                                        ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                                    const adopted = lease?.registry.readHealthCheckSource?.(sourceInstanceId, signal);
+                                    if (!adopted || adopted.kind !== 'available') return bothUnavailable(adopted?.reason ?? 'source_unavailable');
+                                    if (!isDeepStrictEqual(adopted.source, source.source)) return bothUnavailable('source_unavailable');
                                 }
-                                try {
-                                    const domains: DeploymentDomainHeaderV1[] = [];
-                                    let cursor: string | undefined;
-                                    do {
-                                        const raw = await storage('deployments.domains.list', { serverId: scope.serverId,
-                                            environmentId: subject.environmentId, ...(cursor ? { cursor } : {}) }, currentContext);
-                                        if ('errorCode' in raw) return unavailable(raw.errorCode);
-                                        const page = DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(raw);
-                                        if (!page.ok) return unavailable(page.error);
-                                        domains.push(...page.domains.filter(domain => domain.deletedAtMs === undefined
-                                            && (domain.state === 'active' || domain.state === 'warning')));
-                                        cursor = page.nextCursor ?? undefined;
-                                    } while (cursor);
-                                    const link = detail.targetLinks.find(item => item.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink;
-                                    if (!domains.length) return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains });
-                                    if (!link) return unavailable('health_target_unavailable');
-                                    const current = await readCurrentHealth({ serverId: scope.serverId, machineId: host.machineId,
-                                        environmentId: subject.environmentId, targetLinkId: link.id, domainIds: domains.map(domain => domain.id) },
-                                    currentContext, { environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
-                                        current: lease?.registry.currentDomainEdgeObservation,
-                                        source: { sourceInstanceId, observerMachineId: source.observer.machineId, checks: source.source.checks } });
-                                    return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains,
-                                        ...('errorCode' in current ? {} : { current }) });
-                                } catch (error) {
-                                    if (currentContext.signal?.aborted) throw error;
-                                    return unavailable(errorCode(error));
-                                }
-                            };
-                            const readAlerts = async () => {
-                                try {
-                                    const alertInput = { source, controllerMachineId: detail.environment.controllerMachineId,
-                                        controllerOnline, observerMachineId, observerOnline };
-                                    const configured = readHealthAlertReadiness({ ...alertInput, destinations: [] });
-                                    // The alert owner settles paused, off and unassigned setups before provider reads.
-                                    if (configured.reason !== 'health_alert_destination_unavailable') return configured;
-                                    // The Account catalog is read once; each provider decides its own saved destination.
-                                    const channels = source.kind === 'available' && source.enabled && source.source.alerts?.channels.length
-                                        ? await notificationCatalog.readChannels(currentContext) : { items: [] };
-                                    if ('errorCode' in channels) return unavailable(channels.errorCode);
-                                    const destinations = await Promise.all((source.kind === 'available' ? source.source.alerts?.channels ?? [] : [])
-                                        .map(channel => readSavedHealthAlertDestinationAvailabilityForHost({ channel, signal: currentContext.signal }, {
-                                            notificationChannelsList: async () => channels.items,
-                                            executeSetup: (action, selected) => execute('action.invoke', { action, input: selected }),
-                                        })));
-                                    return readHealthAlertReadiness({ ...alertInput, destinations });
-                                } catch (error) {
-                                    if (currentContext.signal?.aborted) throw error;
-                                    return unavailable(errorCode(error));
-                                }
-                            };
-                            const [health, alerts] = await Promise.all([readCoverage(), readAlerts()]);
-                            return { health, alerts };
-                        } catch (error) {
-                            if (signal.aborted) throw error;
-                            return bothUnavailable(errorCode(error));
-                        } finally { await lease?.release(); }
+                                const readCoverage = async () => {
+                                    if (source.kind !== 'available' || !source.enabled || !source.observer) {
+                                        return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains: [] });
+                                    }
+                                    try {
+                                        const domains: DeploymentDomainHeaderV1[] = [];
+                                        let cursor: string | undefined;
+                                        do {
+                                            const raw = await storage('deployments.domains.list', { serverId: scope.serverId,
+                                                environmentId: subject.environmentId, ...(cursor ? { cursor } : {}) }, currentContext);
+                                            if ('errorCode' in raw) return unavailable(raw.errorCode);
+                                            const page = DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(raw);
+                                            if (!page.ok) return unavailable(page.error);
+                                            domains.push(...page.domains.filter(domain => domain.deletedAtMs === undefined
+                                                && (domain.state === 'active' || domain.state === 'warning')));
+                                            cursor = page.nextCursor ?? undefined;
+                                        } while (cursor);
+                                        const link = detail.targetLinks.find(item => item.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink;
+                                        if (!domains.length) return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains });
+                                        if (!link) return unavailable('health_target_unavailable');
+                                        const current = await readCurrentHealth({ serverId: scope.serverId, machineId: host.machineId,
+                                            environmentId: subject.environmentId, targetLinkId: link.id, domainIds: domains.map(domain => domain.id) },
+                                        currentContext, { environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+                                            current: lease?.registry.currentDomainEdgeObservation,
+                                            source: { sourceInstanceId, observerMachineId: source.observer.machineId, checks: source.source.checks } });
+                                        return readHealthCheckReadiness({ source, observerMachineId, observerOnline, domains,
+                                            ...('errorCode' in current ? {} : { current }) });
+                                    } catch (error) {
+                                        if (currentContext.signal?.aborted) throw error;
+                                        return unavailable(errorCode(error));
+                                    }
+                                };
+                                const readAlerts = async () => {
+                                    try {
+                                        const alertInput = { source, controllerMachineId: detail.environment.controllerMachineId,
+                                            controllerOnline, observerMachineId, observerOnline };
+                                        const configured = readHealthAlertReadiness({ ...alertInput, destinations: [] });
+                                        // The alert owner settles paused, off and unassigned setups before provider reads.
+                                        if (configured.reason !== 'health_alert_destination_unavailable') return configured;
+                                        // The Account catalog is read once; each provider decides its own saved destination.
+                                        const channels = source.kind === 'available' && source.enabled && source.source.alerts?.channels.length
+                                            ? await (channelsRead ??= notificationCatalog.readChannels(currentContext, { maintainSource: false })) : { items: [] };
+                                        if ('errorCode' in channels) return unavailable(channels.errorCode);
+                                        const destinations = await Promise.all((source.kind === 'available' ? source.source.alerts?.channels ?? [] : [])
+                                            .map(channel => readSavedHealthAlertDestinationAvailabilityForHost({ channel, signal: currentContext.signal }, {
+                                                notificationChannelsList: async () => channels.items,
+                                                executeSetup: (action, selected) => execute('action.invoke', { action, input: selected }),
+                                            })));
+                                        return readHealthAlertReadiness({ ...alertInput, destinations });
+                                    } catch (error) {
+                                        if (currentContext.signal?.aborted) throw error;
+                                        return unavailable(errorCode(error));
+                                    }
+                                };
+                                const [health, alerts] = await Promise.all([readCoverage(), readAlerts()]);
+                                return { health, alerts };
+                            } catch (error) {
+                                if (signal.aborted) throw error;
+                                return bothUnavailable(errorCode(error));
+                            } finally { await lease?.release(); }
+                        }));
                     },
                     readRecordedBackups: createDeploymentBackupRecordedHealthForHost(host),
                 })(input, context);
@@ -1388,8 +1433,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepareHostReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0]) {
-            if (request.actionId === 'deployments.observation.get') {
+            if (request.actionId === 'deployments.bindings.set' || request.actionId === 'deployments.observation.get') {
                 try {
+                    if (request.actionId === 'deployments.bindings.set') {
+                        const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
+                        return await platformVariables.prepareBindingsChildren({ input, context: request.context });
+                    }
                     const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
                     return await platformVariables.prepareRead({ input, context: request.context });
                 } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
@@ -1475,12 +1524,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const opened = readDeploymentEnvironmentArtifactV1(prepared, await open(prepared.contentArtifactId, request.context));
                         if (!opened.ok) return failure(opened.error);
                         // Approved replay reconstructs the same invocation-local template continuation.
+                        const previewHost = previewCreateHost(request.context);
                         let previewDefinition = opened.content.definition;
                         if (prepared.previewCompanionOfEnvironmentId) {
                             const main = await readDeploymentEnvironmentForHost({
                                 environmentId: prepared.previewCompanionOfEnvironmentId, context: request.context },
                             { readMetadata: readEnvironmentMetadata, open, assertCurrent });
                             previewDefinition = main.content.definition;
+                            const readTemplate = previewHost.readPreviewTemplate;
+                            previewHost.readPreviewTemplate = templateRequest => templateRequest.environmentId === main.environment.id
+                                ? Promise.resolve(main) : readTemplate(templateRequest);
                         }
                         if (opened.content.previewProvenance && previewDefinition.kind === 'repository') {
                             const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ serverId: prepared.serverId,
@@ -1490,15 +1543,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                                     previewCompanionOfEnvironmentId: prepared.previewCompanionOfEnvironmentId }),
                                 preview: { ...prepared.preview, provenance: opened.content.previewProvenance,
                                     headSha: previewDefinition.ref } });
-                            const preview = await resolveEnvironmentCreatePreviewForHost({ input, context: request.context }, previewCreateHost(request.context));
+                            const preview = await resolveEnvironmentCreatePreviewForHost({ input, context: request.context }, previewHost);
                             if ('errorCode' in preview) return preview;
-                            if (preview.fork) return prepareForkPreviewCreateForHost({ prepared, content: opened.content,
-                                context: request.context }, { storage,
-                                readEnvironment: reference => readDeploymentEnvironmentForHost(reference, {
-                                    readMetadata: readEnvironmentMetadata, open, assertCurrent }),
-                                deploy: ({ input, context }) => deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input, context }),
-                            });
-                            if (preview.nativeTemplate) return previewTemplateCreateContinuation(preview.nativeTemplate, prepared);
+                            return await preparePreviewCreateContinuation(preview, prepared, opened.content, request.context) ?? null;
                         }
                     } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
                 }
@@ -1531,6 +1578,17 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         deploymentAction: (async (actionId, input, context, creationReview = undefined) => {
+            if (actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && 'backupPolicy' in input && input.backupPolicy !== undefined) {
+                const selected = DeploymentActionInputSchemasV1[DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1].safeParse(input);
+                if (!selected.success) return failure('invalid_parameters');
+                if (selected.data.serverId !== host.serverId) return failure('server_scope_mismatch');
+                try {
+                    const { content: _content, ...detail } = await readDeploymentEnvironmentForHost({ ...selected.data, context }, {
+                        readMetadata: readEnvironmentMetadata, open, assertCurrent,
+                    });
+                    return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, ...detail });
+                } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
             if (actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
                 const selected = DeploymentBackupConfigureInputV1Schema.safeParse(input);
                 return selected.success ? deploymentBackupConfigure(selected.data, context) : failure('invalid_parameters');
@@ -1618,7 +1676,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return selected.success ? readCurrentHealth(selected.data, context) : failure('invalid_parameters');
             }
             if (isDeploymentDomainChildActionIdV1(actionId)) {
-                const result = await domainActions(actionId, input, context);
+                const provider = await prepareContributedDomain.execute(actionId, input, context);
+                const result = provider ? provider.ok ? DeploymentActionOutputSchemasV1[actionId].parse(provider.result) : provider
+                    : await domainActions(actionId, input, context);
                 if ('ok' in result && result.ok && 'environmentId' in result && 'domain' in result) {
                     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                     try { lease?.registry.currentDomainEdgeObservation?.withdrawDomain(result.environmentId, result.domain.id); }
@@ -1670,6 +1730,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const request = selected.data;
                 const detail = await readEnvironmentMetadata({ environmentId: request.environmentId, context });
                 if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
+                if (request.patch?.previewTemplate) {
+                    const runtime = detail.targetLinks.find(link => link.id === request.patch!.previewTemplate!.runtimeTargetLinkId);
+                    const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.serverId,
+                        protection: detail.environment.protection,
+                        buildMachineId: request.patch.buildMachineId ?? detail.environment.buildMachineId, runtime },
+                        input => storage('deployments.environments.list', input, context));
+                    return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, forkEligibility };
+                }
                 const runtime = detail.targetLinks.find(link => link.id === detail.environment.runtimeTargetLinkId);
                 const target = runtime?.source.kind === 'plugin'
                     ? { kind: 'platform' as const, creatingMachineId: detail.environment.controllerMachineId }
