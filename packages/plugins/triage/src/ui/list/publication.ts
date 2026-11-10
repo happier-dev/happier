@@ -19,13 +19,16 @@ export function createTriageListPublicationV1() {
     items = planner?.(snapshot?.window?.rows ?? [], items) ?? [];
     byKey = new Map((snapshot?.window?.rows ?? []).map(row => [triageEntryRowKey(row.entryRef), undefined]));
     for (const item of items) byKey.set(item.key, item);
-    revision += 1;
   }
 
   return {
     setPlanner(next: TriageListItemPlannerV1) {
       if (planner === next) return;
       planner = next;
+      // The shell installs its presentation planner during render. Rebuilding
+      // it is part of that render, not an external window publication: moving
+      // the subscribed revision here feeds React's snapshot check back into
+      // the render that replaced the planner.
       rebuild();
     },
     synchronize(next: TriageListWindowSnapshotV1, change?: TriageListWindowChangeV1) {
@@ -34,11 +37,12 @@ export function createTriageListPublicationV1() {
       snapshot = next;
       if (change === undefined) {
         if (previousWindow !== next.window) rebuild();
-        else revision += 1;
+        revision += 1;
         return;
       }
       if (change.structureChanged) {
         rebuild();
+        revision += 1;
         return;
       }
       let structureChanged = false;
@@ -51,12 +55,14 @@ export function createTriageListPublicationV1() {
         if ((previous === undefined) !== (item === undefined)) {
           // View membership changed; the planner owns pins and personal ordering.
           rebuild();
+          revision += 1;
           return;
         }
         if (previous === undefined || item === undefined) continue;
         if (previous.group !== item.group || previous.statusGroup !== item.statusGroup) {
           // Group changes can alter the canonical personal ordering within each group.
           rebuild();
+          revision += 1;
           return;
         }
         byKey.set(key, item);
