@@ -6,7 +6,7 @@ import { chooseProviderGatewayContributionV1, readProviderGatewayFamilyAvailabil
 
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
 
-describe('managed families awaiting the SDK registration seam', () => {
+describe('managed header-only families', () => {
   const contributionKey = 'happier.provider.cliproxyapi/cliproxyapi';
   const declarations = [{
     contributionKey,
@@ -19,9 +19,6 @@ describe('managed families awaiting the SDK registration seam', () => {
       key: expect.any(String), fallback: expect.any(String),
     });
     const unavailableFamilies = [
-      { purpose: 'antigravity-upstream', service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, title: localizedText, unavailableReason: localizedText },
-      { purpose: 'kimi-upstream', service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }, title: localizedText, unavailableReason: localizedText },
-      { purpose: 'xai-upstream', service: { pluginId: 'happier.agent.grok', localId: 'xai' }, title: localizedText, unavailableReason: localizedText },
       { purpose: 'devin-upstream', service: { pluginId: 'happier.agent.devin', localId: 'devin-account' }, title: localizedText, unavailableReason: localizedText },
     ];
     expect(declarations[0]!.definition).toHaveProperty('managedRuntime.unavailableConnectedAccounts', unavailableFamilies);
@@ -30,21 +27,18 @@ describe('managed families awaiting the SDK registration seam', () => {
       unavailableFamilies.map((family) => ({ ...family, status: 'unavailable' })),
     );
     expect(presentation.filter((family) => family.status === 'available').map((family) => family.purpose).sort())
-      .toEqual(['anthropic-upstream', 'gemini-upstream', 'meta-upstream', 'openai-upstream']);
+      .toEqual(['anthropic-upstream', 'antigravity-upstream', 'gemini-upstream', 'kimi-upstream', 'meta-upstream', 'openai-upstream', 'xai-upstream']);
     const xaiFamily = presentation.find(family => family.purpose === 'xai-upstream')!;
     expect(xaiFamily.service.pluginId).toBe(GROK_MANIFEST.id);
     expect(GROK_MANIFEST.contributes.connectedAccountDescriptors.some(service => service.id === xaiFamily.service.localId)).toBe(true);
     expect(GROK_MANIFEST.contributes.agents[0]!.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({ service: xaiFamily.service.localId }),
     ]));
-    expect(declarations[0]!.definition.managedRuntime!.connectedAccounts).toHaveLength(4);
-    expect(declarations[0]!.definition.managedRuntime!.requestAuthUses).toHaveLength(4);
+    expect(declarations[0]!.definition.managedRuntime!.connectedAccounts).toHaveLength(7);
+    expect(declarations[0]!.definition.managedRuntime!.requestAuthUses).toHaveLength(7);
   });
 
   it.each([
-    ['antigravity-upstream', { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }],
-    ['kimi-upstream', { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }],
-    ['xai-upstream', { pluginId: 'happier.agent.grok', localId: 'xai' }],
     ['devin-upstream', { pluginId: 'happier.agent.devin', localId: 'devin-account' }],
   ] as const)('returns typed unavailable for %s without selecting another family', (purpose, service) => {
     for (const input of [{ purpose }, { service }, { contributionKey, purpose, service }]) {
@@ -56,11 +50,15 @@ describe('managed families awaiting the SDK registration seam', () => {
     }
   });
 
-  it('keeps an executable account family selectable through the same chooser', () => {
+  it.each([
+    ['openai-upstream', { pluginId: 'happier.agent.codex', localId: 'openai-codex' }],
+    ['kimi-upstream', { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }],
+    ['xai-upstream', { pluginId: 'happier.agent.grok', localId: 'xai' }],
+    ['antigravity-upstream', { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }],
+  ])('selects executable %s through the same chooser', (purpose, service) => {
     expect(chooseProviderGatewayContributionV1(declarations, {
       contributionKey,
-      purpose: 'openai-upstream',
-      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      purpose, service,
     })).toMatchObject({ status: 'selected', contribution: { contributionKey } });
   });
 });

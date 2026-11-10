@@ -7,5 +7,5 @@
   "managedPurpose.kimi.title": "Kimi Code account or pool",
   "managedPurpose.xai.title": "xAI account or pool",
   "managedPurpose.devin.title": "Devin account or pool",
-  "managedPurpose.unavailable.sdkRegistration": "This account family is not supported by the current gateway runtime."
+  "managedPurpose.unavailable.sdkRegistration": "This account family needs upstream SDK support."
 }

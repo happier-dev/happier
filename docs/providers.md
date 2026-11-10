@@ -2102,18 +2102,26 @@ lookup, and treat upstream 401s as request-scoped failures so a later daemon lea
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
 The catalog is compatibility evidence, not Account entitlement.
 
-The managed-family owner is the plugin's dependency-free
+The managed-family owner is the plugin's
 `src/provider/managedContract.ts`. Its executable rows generate Go executor descriptors,
 registration seeds and static catalogs in the same pass; Provider contributions
 and launch snapshots consume the matching TypeScript projection. Run
 `pnpm --dir packages/plugins/cliproxyapi run catalog:generate` after changing a
 row or the SDK pin. The generated families are ChatGPT/Codex,
-Claude, Muse/Meta and Gemini API keys. Meta uses an existing inference key with
-its API-version header at the final HTTPS transport boundary; the child never mints a key.
-The same family owner declares Antigravity, Kimi, xAI and Devin as unavailable
-presentation rows with their service, title and localized SDK limitation. These
-rows supply no executable purpose or request-auth slot: the pinned SDK replaces
-their required credential adapters during startup.
+Claude, Muse/Meta, Gemini API keys, Antigravity, Kimi and xAI. Meta uses an existing
+inference key with its API-version header at the final HTTPS transport boundary;
+the child never mints a key. Kimi registers the bound account's device and domain,
+xAI its API mode and base URL, and Antigravity its project and a far-future sentinel
+expiry. Those non-secret scalar facts come from the service's materialization
+result and update through the existing registration path when the binding changes.
+Real credential headers are supplied only at the final transport hop; registration
+contains no refresh token. Antigravity uses the pinned generated static catalog;
+its sentinel-only live discovery probes remain enabled and can return no models.
+A pool mixing accounts with different facts can send mismatched facts and receive
+a visible vendor rejection; choose an account with matching facts to recover.
+Devin remains a typed unavailable presentation row because its embedded request
+credential needs upstream SDK support. It supplies no executable purpose or
+request-auth slot.
 The development Muse service owns device sign-in, explicit selected-Machine
 native import and manual key credentials in the existing qualified account
 lifecycle. Device sign-in mints once at connection; launch, status and quota

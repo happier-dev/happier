@@ -19,13 +19,14 @@ type AvailableManagedGatewayFamily = Readonly<{
     kind: 'httpHeaders'; origin: string; headerNames: readonly string[];
   }> }>;
   sdk: Readonly<{
-    catalog: Readonly<{ getter: string }>;
+    catalog: Readonly<{ getter: string; staticOnly?: true }>;
     stripHeaderNames: readonly string[];
     seed: Readonly<{
       attributes: Readonly<Record<string, string>>;
       metadata: Readonly<Record<string, string | boolean>>;
     }>;
-    adapter: 'late-headers' | 'request-local-auth';
+    factAttributes?: Readonly<Record<string, string>>;
+    factMetadata?: Readonly<Record<string, string>>;
   }>;
 }>;
 
@@ -77,7 +78,7 @@ export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
  */
 const SDK_REGISTRATION_UNAVAILABLE_REASON = Object.freeze({
   key: 'managedPurpose.unavailable.sdkRegistration',
-  fallback: 'This account family is not supported by the current gateway runtime.',
+  fallback: 'This account family needs upstream SDK support.',
 });
 
 export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
@@ -88,7 +89,6 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
       catalog: { getter: 'GetCodexProModels' },
       stripHeaderNames: ['authorization', 'chatgpt-account-id'],
       seed: { attributes: { plan_type: 'pro', websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel' } },
-      adapter: 'late-headers',
     },
     title: Object.freeze({
       key: 'managedPurpose.openai.title',
@@ -125,7 +125,6 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
       catalog: { getter: 'GetClaudeModels' },
       stripHeaderNames: ['authorization', 'x-api-key', 'x-claude-code-session-id'],
       seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'sk-ant-oat01-happier-registration-sentinel', skip_account_profile: true } },
-      adapter: 'late-headers',
     },
     title: Object.freeze({
       key: 'managedPurpose.anthropic.title',
@@ -172,7 +171,6 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
       catalog: { getter: 'GetMetaModels' },
       stripHeaderNames: ['authorization', 'x-api-version'],
       seed: { attributes: { api_key: 'happier-registration-sentinel', websockets: 'false' }, metadata: {} },
-      adapter: 'late-headers',
     },
   }),
   Object.freeze({
@@ -197,29 +195,81 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
       catalog: { getter: 'GetGeminiModels' },
       stripHeaderNames: ['authorization', 'x-goog-api-key'],
       seed: { attributes: { api_key: 'happier-registration-sentinel', websockets: 'false' }, metadata: {} },
-      adapter: 'late-headers',
     },
   }),
   Object.freeze({
-    availability: 'unavailable',
+    availability: 'available',
     purpose: 'antigravity-upstream',
     title: Object.freeze({ key: 'managedPurpose.antigravity.title', fallback: 'Antigravity account or pool' }),
-    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }) }),
-    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+    authEntry: Object.freeze({ id: 'antigravity', provider: 'antigravity' }),
+    origins: Object.freeze(['https://daily-cloudcode-pa.googleapis.com', 'https://cloudcode-pa.googleapis.com', 'https://daily-cloudcode-pa.sandbox.googleapis.com']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    connectedAccount: Object.freeze({
+      service: Object.freeze({ pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }),
+      required: false,
+      materializationKinds: Object.freeze(['httpHeaders'] as const),
+    }),
+    requestAuth: Object.freeze({ materialization: Object.freeze({
+      kind: 'httpHeaders' as const,
+      origin: 'https://daily-cloudcode-pa.googleapis.com',
+      headerNames: Object.freeze(['authorization']),
+    }) }),
+    sdk: {
+      catalog: { getter: 'GetAntigravityModels', staticOnly: true },
+      stripHeaderNames: ['authorization', 'x-api-key'],
+      seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel', expires_at: '9999-12-31T23:59:59Z' } },
+      factMetadata: { projectId: 'project_id' },
+    },
   }),
   Object.freeze({
-    availability: 'unavailable',
+    availability: 'available',
     purpose: 'kimi-upstream',
     title: Object.freeze({ key: 'managedPurpose.kimi.title', fallback: 'Kimi Code account or pool' }),
-    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.kimi', localId: 'kimi-code' }) }),
-    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+    authEntry: Object.freeze({ id: 'kimi', provider: 'kimi' }),
+    origins: Object.freeze(['https://api.kimi.com', 'https://api.kimi.ai']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    connectedAccount: Object.freeze({
+      service: Object.freeze({ pluginId: 'happier.agent.kimi', localId: 'kimi-code' }),
+      required: false,
+      materializationKinds: Object.freeze(['httpHeaders'] as const),
+    }),
+    requestAuth: Object.freeze({ materialization: Object.freeze({
+      kind: 'httpHeaders' as const,
+      origin: 'https://api.kimi.com',
+      headerNames: Object.freeze(['authorization', 'x-msh-device-id']),
+    }) }),
+    sdk: {
+      catalog: { getter: 'GetKimiModels' },
+      stripHeaderNames: ['authorization', 'x-msh-device-id', 'x-api-key'],
+      seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel' } },
+      factMetadata: { deviceId: 'device_id', domain: 'domain' },
+      factAttributes: { deviceId: 'header:X-Msh-Device-Id' },
+    },
   }),
   Object.freeze({
-    availability: 'unavailable',
+    availability: 'available',
     purpose: 'xai-upstream',
     title: Object.freeze({ key: 'managedPurpose.xai.title', fallback: 'xAI account or pool' }),
-    connectedAccount: Object.freeze({ service: GROK_CONNECTED_ACCOUNT_SERVICE }),
-    unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
+    authEntry: Object.freeze({ id: 'xai', provider: 'xai' }),
+    origins: Object.freeze(['https://api.x.ai', 'https://cli-chat-proxy.grok.com']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    connectedAccount: Object.freeze({
+      service: GROK_CONNECTED_ACCOUNT_SERVICE,
+      required: false,
+      materializationKinds: Object.freeze(['httpHeaders'] as const),
+    }),
+    requestAuth: Object.freeze({ materialization: Object.freeze({
+      kind: 'httpHeaders' as const,
+      origin: 'https://api.x.ai',
+      headerNames: Object.freeze(['authorization', 'x-xai-token-auth']),
+    }) }),
+    sdk: {
+      catalog: { getter: 'GetXAIModels' },
+      stripHeaderNames: ['authorization', 'x-xai-token-auth', 'x-api-key'],
+      seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel' } },
+      factMetadata: { usingApi: 'using_api' },
+      factAttributes: { base: 'base_url' },
+    },
   }),
   Object.freeze({
     availability: 'unavailable',
