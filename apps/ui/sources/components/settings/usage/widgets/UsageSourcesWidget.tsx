@@ -313,15 +313,15 @@ const MachineSources = React.memo(function MachineSources(
   const shellRef = React.useRef<View | null>(null);
   const { near, measure } = useMeasuredNearViewport(tracker, shellRef, true, props.machineId);
   const [bodyHeight, setBodyHeight] = React.useState(0);
-  const { controller, snapshot } = useUsageSourcesController({
+  const { controller, snapshot, ready } = useUsageSourcesController({
     machineId: props.machineId,
     lifetime: props.lifetime,
     ...(props.executor ? { executor: props.executor } : {}),
   });
   // Mounting is visible demand (the area only mounts bodies near the viewport): read metadata once.
   React.useEffect(() => {
-    if (controller && props.online) void controller.discover();
-  }, [controller, props.online]);
+    if (controller && props.online && ready) void controller.discover();
+  }, [controller, props.online, ready]);
   const scoped = selectUsageSourceDiscoveryInventory(snapshot.sources).filter(source => matchesUsageSourceAccountingScope(source, props.accountingSources)
     && (!props.agentIds.length || props.agentIds.some(agentId =>
     agentId === buildQualifiedPluginContributionKey(source.agent)

@@ -155,6 +155,7 @@ export function createUsageSourcesController(options: Readonly<{
 
     async function run<K extends UsageSourceActionId>(actionId: K, input: UsageSourceActionInputById[K], callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> {
         if (!current()) return failure('action_account_scope_changed');
+        subscribeWake();
         const sourceId = 'sourceId' in input ? input.sourceId : undefined;
         // A root/consent transition must not be overwritten by an older metadata read.
         for (const [controller, operation] of operations) {
@@ -230,11 +231,15 @@ export function createUsageSourcesController(options: Readonly<{
         refreshRequested = false;
         void run('usage.sources.get', target);
     }
-    unsubscribeWake = subscribeHomeAccountChange(() => {
-        if (!current() || !snapshot.loaded) return;
-        refreshRequested = true;
-        drainRefresh();
-    }, { serverIds: [target.serverId], usageSourcesMachineIds: [target.machineId], reconnect: 'refresh' });
+    // A retained list can be displayed before its mounted Action engine binds.
+    // Push reads start with the first explicit demand, never with presentation alone.
+    function subscribeWake() {
+        unsubscribeWake ??= subscribeHomeAccountChange(() => {
+            if (!current() || !snapshot.loaded) return;
+            refreshRequested = true;
+            drainRefresh();
+        }, { serverIds: [target.serverId], usageSourcesMachineIds: [target.machineId], reconnect: 'refresh' });
+    }
     retirement = options.lifetime.onRetire(dispose);
     if (!current()) retirement.dispose();
     return {

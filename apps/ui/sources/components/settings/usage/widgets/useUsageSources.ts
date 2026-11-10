@@ -24,6 +24,7 @@ type MountedController = Readonly<{
 export function useUsageSourcesController(options: UsageSourcesHookOptions): Readonly<{
     controller: UsageSourcesController | null;
     snapshot: UsageSourcesSnapshot;
+    ready: boolean;
 }> {
     const { machineId, lifetime } = options;
     const controllerRef = useRef<UsageSourcesController | null>(null);
@@ -37,6 +38,7 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
     const mountedExecution = useMountedActionExecution(lifetime?.scope, { executorOptions });
     const executor = options.executor ?? mountedExecution;
     const execute = executor.execute;
+    const ready = options.executor !== undefined || mountedExecution.ready;
     const [mounted, setMounted] = useState<MountedController | null>(null);
     useEffect(() => {
         if (!lifetime) { setMounted(null); return; }
@@ -55,5 +57,5 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
         ? mounted.controller : null;
     const snapshot = useSyncExternalStore(controller?.subscribe ?? subscribeUnavailable,
         controller?.getSnapshot ?? readUnavailable, controller?.getSnapshot ?? readUnavailable);
-    return { controller, snapshot };
+    return { controller, snapshot, ready };
 }
