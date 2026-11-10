@@ -624,10 +624,17 @@ backup engine or scheduler.
 
 An authored test Action owns its probe and reports any cleanup failure within
 that invocation. In 0.3 development source, declare open as a
-read-only Action on the `plugin` surface. Its input is `{ config, credentialRoles }`;
-its result uses the SDK root's `BackupDestinationOpenV1ProtocolSchema`:
+read-only Action on the `plugin` surface. Its SDK `BackupDestinationOpenInputV1`
+input is `{ config, credentialRoles?, ownershipPrefix? }`. The host supplies the
+captured ownership prefix, including an empty string. The provider joins that
+relative prefix inside its authored repository namespace once; it does not alter
+the authored configuration. Omitted or empty ownership preserves the location.
+The bundled destinations accept exact relative ownership segments with forward
+slashes and reject empty/dot segments, absolute paths and control characters.
+Their authored configuration keeps its existing transport grammar.
+The result uses the SDK root's `BackupDestinationOpenV1ProtocolSchema`:
 `{ repository, credentialBindings, s3?: { region?, addressing? },
-sftp?: { host, port?, username, hostKey }, local?: { path } }`.
+sftp?: { host, port?, username, hostKey }, local?: { path, mountPath? } }`.
 Binding identities have `purpose: 'backupDestination'`, `configKey: 'destination'`
 and a declared role; they contain no credential bytes or executable commands.
 The host opens the configured destination through this Action and retains the
@@ -636,8 +643,13 @@ known-host line for the endpoint, including `[host]:port` for a custom port;
 the private identity remains a saved `sshPrivateKey` credential. It must work
 without a passphrase or interactive authentication. Local `path` belongs to the
 executing Machine and may use its home-directory prefix. For local output, the
-native runner derives its repository locator from the directory mount; authors
-do not choose a container mount target. The first-party descriptors select the
+native runner uses the fixed directory mount; authors do not choose a container
+mount target. For a scoped local repository, `path` is the joined final host
+directory, `mountPath` is the existing selected base directory, and `repository`
+is the joined locator inside `/run/happier/backup/repository`. The host mounts the
+base while explicit restic initialization creates the repository beneath it.
+An unscoped local result omits `mountPath` and uses the mount root.
+The first-party descriptors select the
 native `deployments.backups.test` Action. Invoke it through the ordinary Action
 executor with the exact saved Environment, target, deployment and configuration
 revision operands. It reads the repository configuration, writes a nonsecret probe,

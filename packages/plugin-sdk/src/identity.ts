@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createCanonicalJsonSigningInput as canonicalCreateCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { ProtocolJsonValue } from './protocol/protocolFacade.js';
+export { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 /**
  * The protocol facade owns the canonical public JSON vocabulary. Identity

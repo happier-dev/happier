@@ -16,6 +16,12 @@ A `PluginPath` names a supported root plus a relative path:
 
 The service exposes `readFile`, `writeFile`, `stat`, `list`, and `remove`. Methods are abortable, reads can be byte-bounded, and listings are cursor-bounded.
 
+In 0.3 development source, the native runtime entrypoint
+`@happier-dev/plugin-sdk/fs` also exports `joinNativePath`, `joinPosixPath` and
+`isWindowsAbsolutePath`. Native joins use the executing Machine's path rules;
+POSIX joins retain remote and container namespaces on every platform. These
+string operations do not expand home directories, access files or grant access.
+
 In 0.3 development source, pass `maxBytes` or a page `limit` when the owning
 operation needs a budget. The in-process service has no additional read-byte or
 page-size ceiling; omitting those options reads or lists the complete result.
