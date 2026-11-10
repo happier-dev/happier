@@ -36,7 +36,8 @@
     }
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugins-grok": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/protocol": "0.0.0",

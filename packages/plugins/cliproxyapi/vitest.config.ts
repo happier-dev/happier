@@ -7,6 +7,7 @@ import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vi
 export default mergeConfig(rootConfig, defineConfig({
   root: fileURLToPath(new URL('../../..', import.meta.url)),
   plugins: [createWorkspacePackageSourcesPlugin([
+    { packageName: '@happier-dev/plugins-grok', packageSourceRoot: fileURLToPath(new URL('../grok/src', import.meta.url)) },
     { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: fileURLToPath(new URL('../../plugin-sdk/src', import.meta.url)) },
     { packageName: '@happier-dev/protocol', packageSourceRoot: fileURLToPath(new URL('../../protocol/src', import.meta.url)) },
   ], 'cliproxyapi-provider-source-packages')],

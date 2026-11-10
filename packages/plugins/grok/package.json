@@ -20,6 +20,11 @@
       "happier-source": "./src/agent/acp/definition.ts",
       "types": "./dist/agent/acp/definition.d.ts",
       "default": "./dist/agent/acp/definition.js"
+    },
+    "./connected-account-service": {
+      "happier-source": "./src/connectedAccounts/service.ts",
+      "types": "./dist/connectedAccounts/service.d.ts",
+      "default": "./dist/connectedAccounts/service.js"
     }
   },
   "files": [

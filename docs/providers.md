@@ -17,6 +17,17 @@ precedence for its declared id; the host retains generic OpenAI and Anthropic
 wire codecs for custom connections. Model-name interpretation and explicit
 `reportsModelLoadState` facts belong to the Provider declaration and its parser.
 
+### Passive managed gateway families (0.3 development)
+
+The gateway chooser Action preserves matching passive declarations in
+`unavailableFamilies`, including their contribution, purpose, qualified service
+identity and declared `unavailableReason`. These rows explain unavailability;
+they never become selectable or executable purposes. An unknown family without
+a matching passive declaration retains the ordinary unavailable result.
+The xAI row shares Grok's exported `xai` service identity. Workspace plugin
+manifests and CLI declaration assets are published by the canonical bundled
+plugin publisher from those same declarations.
+
 ### Cursor and Copilot native account sources (0.3 development)
 
 The Cursor plugin owns its manual user/service key and declares native

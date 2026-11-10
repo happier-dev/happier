@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { resolveProviderManagedRuntimeDeclarationV1 } from './contributions/v1.js';
+import { ProviderManagedUnavailableConnectedAccountPurposeV1Schema, resolveProviderManagedRuntimeDeclarationV1 } from './contributions/v1.js';
 import { projectProviderManagedConnectedAccountPurposeV1 } from './connections/sourceFactsV1.js';
 import { areProviderContributionKeysEqualV1 } from './contributionIdentityV1.js';
 import { ProviderContributionKeySchema, ProviderMachineIdSchema } from './ids.js';
@@ -63,7 +63,13 @@ export const ProviderGatewayChoiceInputV1Schema = lazyZodSchema(() => z.strictOb
 export const ProviderGatewayChoiceResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('selected'), contribution: ProviderGatewayContributionV1Schema }),
     z.strictObject({ status: z.literal('choice_required'), choices: z.array(ProviderGatewayContributionV1Schema) }),
-    z.strictObject({ status: z.literal('unavailable'), choices: z.array(ProviderGatewayContributionV1Schema) }),
+    z.strictObject({ status: z.literal('unavailable'), choices: z.array(ProviderGatewayContributionV1Schema),
+        unavailableFamilies: z.optional(z.array(z.strictObject({
+            ...ProviderManagedUnavailableConnectedAccountPurposeV1Schema.shape,
+            contributionKey: ProviderGatewayContributionV1Schema.shape.contributionKey,
+            service: asProtocolZod(PluginContributionIdentityV1Schema),
+        }))),
+    }),
 ]));
 export type ProviderGatewayChoiceResultV1 = z.infer<typeof ProviderGatewayChoiceResultV1Schema>;
 
@@ -74,10 +80,21 @@ export function chooseProviderGatewayContributionV1(
         (!input.service || slot.service.pluginId === input.service.pluginId && slot.service.localId === input.service.localId)
         && (!input.purpose || slot.purpose === input.purpose)
     )));
+    const unavailable = (): ProviderGatewayChoiceResultV1 => {
+        const unavailableFamilies = declarations.flatMap(declaration => {
+            if (input.contributionKey && !areProviderContributionKeysEqualV1(declaration.contributionKey, input.contributionKey)) return [];
+            return (readProviderGatewayFamilyAvailabilityV1(declaration.contributionKey, [declaration]) ?? [])
+                .filter((family): family is Extract<ProviderGatewayFamilyAvailabilityV1, { status: 'unavailable' }> => family.status === 'unavailable'
+                    && (!input.service || family.service.pluginId === input.service.pluginId && family.service.localId === input.service.localId)
+                    && (!input.purpose || family.purpose === input.purpose))
+                .map(({ status: _status, ...family }) => ({ contributionKey: declaration.contributionKey, ...family }));
+        });
+        return { status: 'unavailable', choices, ...(unavailableFamilies.length ? { unavailableFamilies } : {}) };
+    };
     if (input.contributionKey) {
         const contribution = choices.find(candidate => areProviderContributionKeysEqualV1(candidate.contributionKey, input.contributionKey!));
-        return contribution ? { status: 'selected', contribution } : { status: 'unavailable', choices };
+        return contribution ? { status: 'selected', contribution } : unavailable();
     }
     if (choices.length === 1) return { status: 'selected', contribution: choices[0]! };
-    return choices.length ? { status: 'choice_required', choices } : { status: 'unavailable', choices };
+    return choices.length ? { status: 'choice_required', choices } : unavailable();
 }

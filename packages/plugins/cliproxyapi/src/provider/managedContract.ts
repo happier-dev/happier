@@ -1,3 +1,4 @@
+import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
 import type { ProviderContribution } from '@happier-dev/plugin-sdk/providers';
 
 type AvailableManagedGatewayFamily = Readonly<{
@@ -217,7 +218,7 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
     availability: 'unavailable',
     purpose: 'xai-upstream',
     title: Object.freeze({ key: 'managedPurpose.xai.title', fallback: 'xAI account or pool' }),
-    connectedAccount: Object.freeze({ service: Object.freeze({ pluginId: 'happier.agent.grok', localId: 'xai-account' }) }),
+    connectedAccount: Object.freeze({ service: GROK_CONNECTED_ACCOUNT_SERVICE }),
     unavailableReason: SDK_REGISTRATION_UNAVAILABLE_REASON,
   }),
   Object.freeze({

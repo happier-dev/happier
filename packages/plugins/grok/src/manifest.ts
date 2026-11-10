@@ -1,3 +1,4 @@
+import { GROK_CONNECTED_ACCOUNT_SERVICE } from './connectedAccounts/service.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
@@ -13,7 +14,7 @@ import { grokExternalSessionsContribution } from './agent/externalSessions/contr
 const installScript = 'curl -fsSL https://x.ai/cli/install.sh | bash';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
-  id: 'happier.agent.grok',
+  id: GROK_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Grok',
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
@@ -43,7 +44,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     optional: [],
   },
   connectedAccountDescriptors: {
-    xai: {
+    [GROK_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'xAI',
         authentication: {
@@ -75,7 +76,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           key: 'profiles.aiBackend.grokSubtitleExperimental',
           fallback: 'Grok Build CLI (experimental)',
         },
-        connectedAccounts: [{ purpose: 'primary', service: 'xai', required: false,
+        connectedAccounts: [{ purpose: 'primary', service: GROK_CONNECTED_ACCOUNT_SERVICE.localId, required: false,
           materializationKinds: ['files', 'environment'], credentialKinds: ['oauth', 'token'] }],
         runtime: { kind: 'custom' },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
