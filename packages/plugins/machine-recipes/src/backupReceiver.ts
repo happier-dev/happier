@@ -49,7 +49,7 @@ const configFile = { kind: 'file' as const, path: configPath, owner: 'root', gro
   validate: probe, probe, onChange: { serviceStepId: service.id, action: 'reload' as const } };
 
 /** Opt-in data only. Unsupported native SSH probes never imply receiver readiness. */
-export const BACKUP_RECEIVER_RECIPE = {
+export const BACKUP_RECEIVER_RECIPE: Omit<MachineRecipeV1, 'id'> & Required<Pick<MachineRecipeV1, 'removeSteps'>> = {
   revision: '1', title: 'Backup receiver',
   description: 'A private login that another Machine sends its backups to. Removing it keeps every backup.',
   inputSchema: { type: 'object', properties: {
@@ -87,4 +87,4 @@ export const BACKUP_RECEIVER_RECIPE = {
     { ...configFile, id: 'receiver-ssh-policy', state: 'absent', validate: removalProbe, probe: removalProbe,
       expectedContentDigest: { kind: 'renderedContent', content: policy } }, service,
   ],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

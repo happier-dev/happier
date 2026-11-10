@@ -27,7 +27,7 @@ const sources = distributions.flatMap(({ id, os, release }) => {
       keyFingerprint: '2596A99EAAB33821893C0A79458CA832957F5868' }];
 });
 
-export const tailscaleServer = {
+export const tailscaleServer: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Tailscale server',
   description: 'Install the signed vendor package, disconnect the current profile and authenticate with the selected saved key. No exit node or advertised routes.',
   inputSchema: { type: 'object', properties: {
@@ -50,4 +50,4 @@ export const tailscaleServer = {
     ...createTailscaleJoinSteps({ credentialFile, credentialInputPath: 'joinCredential', switchNetworkInputPath: 'joinCredential' })
       .map(step => ({ ...step, requiredFacts })),
   ],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

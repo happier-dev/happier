@@ -9,7 +9,7 @@ const content = { kind: 'literal' as const, value: `${rules.join('\n')}\n` };
 const file = { id: 'audit-policy', kind: 'file' as const, path: '/etc/audit/rules.d/happier-host-security.rules',
   owner: 'root', group: 'root', mode: 0o600, requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }] };
 
-export const auditLogging = {
+export const auditLogging: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Audit logging',
   description: 'Audit changes to host accounts, SSH and sudo policy. Existing audit rules remain in place.',
   inputSchema: { type: 'object', properties: {
@@ -28,4 +28,4 @@ export const auditLogging = {
     ...paths.map((path, index) => ({ id: `audit-remove-${index}`, kind: 'command' as const, executable: 'auditctl',
       args: ['-W', path, '-p', 'wa', '-k', key], check: { kind: 'audit' as const, rules: [rules[index]!], state: 'absent' as const }, requiredFacts: file.requiredFacts })),
   ],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

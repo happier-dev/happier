@@ -9,7 +9,7 @@ const service = { id: 'journal-service', kind: 'serviceUnit' as const, unit: 'sy
   requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }] };
 
 /** Capacity comes from the reviewed selection, never a bundled default. */
-export const boundedJournal = {
+export const boundedJournal: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Bounded journal',
   description: 'Keep persistent system logs within the capacity you choose.',
   inputSchema: { type: 'object', properties: {
@@ -18,4 +18,4 @@ export const boundedJournal = {
   steps: [{ id: 'journal-directory', kind: 'directory', path: '/etc/systemd/journald.conf.d', owner: 'root', group: 'root', mode: 0o755,
     preserveExistingOwnership: true, requiredFacts: file.requiredFacts }, { ...file, content }, service],
   removeSteps: [{ ...file, state: 'absent', expectedContentDigest: { kind: 'renderedContent', content } }, service],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

@@ -4,7 +4,7 @@ const group = { kind: 'input' as const, path: 'journalGroup' };
 const membership = { id: 'journal-access', kind: 'group' as const, name: group, members: ['happier'], existingOnly: true as const };
 
 /** The native prerequisite verifies the reviewed group; a familiar name proves nothing. */
-export const JOURNAL_READER_RECIPE = {
+export const JOURNAL_READER_RECIPE: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Read system logs',
   description: 'Let Happier read this Machine’s system logs. Agents get no direct access. Restart Happier to turn it on.',
   inputSchema: { type: 'object', properties: {
@@ -18,4 +18,4 @@ export const JOURNAL_READER_RECIPE = {
   removeSteps: [{ ...membership, state: 'absent', review: {
     title: 'Stop reading system logs', description: 'Remove the daemon membership added by this setup. Existing membership is preserved. Restart the daemon to drop the removed access.',
   } }],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

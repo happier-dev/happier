@@ -36,7 +36,7 @@ const service = { id: 'fail2ban-service', kind: 'serviceUnit' as const, unit: 'f
   requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }] };
 const positiveInteger = { type: 'integer' as const, minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 
-export const sshFail2ban = {
+export const sshFail2ban: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'SSH bans',
   description: 'Watch failed SSH logins and repeated bans while public SSH remains open. Review every retry and time window.',
   appliesWhen: { posture: 'publicSshOpen' },
@@ -47,4 +47,4 @@ export const sshFail2ban = {
   checks: packages.checks,
   steps: [...packages.steps!, { ...file, content, validate: probe, probe }, service],
   removeSteps: [{ ...file, state: 'absent', expectedContentDigest: { kind: 'renderedContent', content }, validate: probe }, service],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};

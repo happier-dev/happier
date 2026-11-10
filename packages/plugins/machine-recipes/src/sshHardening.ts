@@ -29,7 +29,7 @@ const service = { id: 'ssh-service', kind: 'serviceUnit' as const, unit: input('
   requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }] };
 
 /** The native owner proves Include ordering, candidate validity and effective policy. */
-export const sshHardening = {
+export const sshHardening: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'SSH hardening',
   description: 'Key-only administrator access, no root login or forwarding. Keep the current SSH port and the platform PAM policy.',
   inputSchema: { type: 'object', properties: {
@@ -44,4 +44,4 @@ export const sshHardening = {
   steps: [{ ...file, content, validate: probe, probe }, service],
   removeSteps: [{ ...file, state: 'absent', expectedContentDigest: { kind: 'renderedContent', content },
     validate: removalProbe }, service],
-} satisfies Omit<MachineRecipeV1, 'id'>;
+};
