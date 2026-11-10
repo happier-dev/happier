@@ -15,6 +15,21 @@ const globalDefaults = {
 } as const;
 
 describe('resolveSessionListViewEmptyState', () => {
+    it.each(['sessions', 'runs'] as const)('names a zero-result %s search even when a Home cannot answer the query', (show) => {
+        expect(resolveSessionListViewEmptyState({
+            presentation: { kind: 'partial', unavailableHomes: [{ serverId: 'home-a', reason: 'unsupported' }] },
+            visibleSessionCount: 0,
+            filters: { ...globalDefaults, show, searchQuery: 'missing work' },
+            defaults: { ...globalDefaults, show },
+            viewContext: { kind: 'global' },
+            includeInactive: true,
+            hasHiddenInactiveSessions: false,
+        })).toMatchObject({
+            mode: 'empty',
+            titleKey: show === 'runs' ? 'sessionsList.runsQuery.noMatchesLoaded' : 'sessionsList.queryNoMatchesLoadedTitle',
+            action: 'clear_filters',
+        });
+    });
     it.each([
         { coordinator: 'coordinator' as const },
         { statuses: ['failed' as const] },
@@ -222,10 +237,9 @@ describe('resolveSessionListViewEmptyState', () => {
             hasHiddenInactiveSessions: false,
         })).toMatchObject({
             mode: 'empty',
-            titleKey: 'sessionsList.querySomeHomesUnavailableTitle',
-            descriptionKey: 'sessionsList.querySomeHomesUnavailableDescription',
-            // Not retryable, so the only honest way out of an unservable query is to clear it.
-            action: 'clear_filters',
+            titleKey: 'sessionsList.queryIncompleteTitle',
+            descriptionKey: 'sessionsList.queryHomesNeedUpdateDescription',
+            action: null,
         });
 
         expect(resolveSessionListViewEmptyState({
@@ -241,7 +255,7 @@ describe('resolveSessionListViewEmptyState', () => {
             hasHiddenInactiveSessions: false,
         })).toMatchObject({
             mode: 'status',
-            titleKey: 'sessionsList.querySomeHomesUnavailableTitle',
+            titleKey: 'sessionsList.queryIncompleteTitle',
             action: null,
         });
     });
@@ -270,6 +284,23 @@ describe('resolveSessionListViewEmptyState', () => {
         })).toMatchObject({
             titleKey: 'sessionsList.queryNoMatchesTitle',
             action: 'show_inactive',
+        });
+    });
+
+    it('explains how to include a missing Home without clearing default filters', () => {
+        expect(resolveSessionListViewEmptyState({
+            presentation: { kind: 'partial', unavailableHomes: [{ serverId: 'home-b', reason: 'not_selected' }] },
+            visibleSessionCount: 0,
+            filters: globalDefaults,
+            defaults: globalDefaults,
+            viewContext: { kind: 'global' },
+            includeInactive: true,
+            hasHiddenInactiveSessions: false,
+        })).toMatchObject({
+            mode: 'empty',
+            titleKey: 'sessionsList.queryIncompleteTitle',
+            descriptionKey: 'sessionsList.queryHomesNotSelectedDescription',
+            action: null,
         });
     });
 });

@@ -5,6 +5,10 @@ export function translated(value: typeof en): typeof en { return value; }
 
 
 export const en = {
+    queryHomesNotSelectedDescription: "Add the missing Homes to this view.",
+    transcriptSearchHomeIndexing: "This Home is indexing transcripts. Try again when indexing finishes.",
+    transcriptSearchHomeUnavailable: "Transcript search is unavailable on this Home. Ask its administrator to check search.",
+    transcriptSearchHomeUnknown: "This Home has not confirmed transcript search is available. Ask its administrator to check search.",
     openNeedsYouInInbox: 'Open Needs you in Inbox',
     runsQuery: {
         loading: "Loading runs…",
@@ -104,6 +108,8 @@ export const en = {
     filtersProjectNot: ({ names }: { names: string }) => `Project isn't ${names}`,
     filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 item` : `${count} items`,
     queryInitialLoadingTitle: 'Loading sessions…', queryUpdatingTitle: 'Updating sessions…',
+    queryIncompleteTitle: "This view is incomplete",
+    queryHomesNeedUpdateDescription: "Some Homes cannot show this view yet. Update or reconfigure those Homes, then try again.",
     querySomeHomesUnavailableTitle: 'Some Homes are unavailable', querySomeHomesUnavailableDescription: 'Showing what Happier can reach. Retry when those Homes are back online.',
     queryRefreshFailedTitle: "Couldn't refresh", queryRefreshFailedRetainedDescription: 'Your loaded sessions are still here. Retry to check for updates.', queryRefreshFailedEmptyDescription: "Happier couldn't load sessions from the selected Homes. Retry when they are reachable.",
     queryNoMatchesLoadedTitle: 'No matches in loaded sessions', queryNoMatchesLoadedDescription: 'More matching sessions may be available on an older page.', querySearchOlder: 'Search older sessions',

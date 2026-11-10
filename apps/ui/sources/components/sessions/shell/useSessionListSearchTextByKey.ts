@@ -16,6 +16,7 @@ import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/works
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import { sessionTagKey } from './sessionTagUtils';
 
@@ -65,7 +66,6 @@ function appendText(parts: string[], value: string | null | undefined): void {
 }
 
 function appendSessionMetadataText(parts: string[], metadata: SearchableSessionMetadata | null | undefined): void {
-    appendText(parts, metadata?.name);
     // A no-folder session is found as a chat; its private folder is never indexed.
     if (readSessionDirectoryKind(metadata) === 'managed') appendText(parts, t('session.folderless.chats'));
     else appendText(parts, metadata?.path);
@@ -74,6 +74,7 @@ function appendSessionMetadataText(parts: string[], metadata: SearchableSessionM
 }
 
 function appendRenderableText(parts: string[], renderable: SessionListRenderableSession | null | undefined): void {
+    if (renderable) appendText(parts, getSessionName(renderable, null, { snapshotOnly: true }));
     appendSessionMetadataText(parts, renderable?.metadata ?? null);
 }
 
@@ -87,6 +88,7 @@ export function buildCanonicalSessionListSearchText(input: Readonly<{
     const parts: string[] = [];
     appendText(parts, input.sessionId);
     appendRenderableText(parts, input.renderable);
+    if (input.session) appendText(parts, getSessionName(input.session, null, { snapshotOnly: true }));
     appendSessionMetadataText(parts, input.session ? readSessionOwnerMetadataView(input.session) : null);
     for (const tag of input.tags ?? []) appendText(parts, tag);
     appendText(parts, input.workspaceDisplayLabel);
@@ -101,10 +103,8 @@ export function buildCanonicalSessionListPrimarySearchText(input: Readonly<{
 }>): string {
     const parts: string[] = [];
     appendText(parts, input.sessionId);
-    const renderableMetadata = input.renderable?.metadata ?? null;
-    appendText(parts, renderableMetadata?.name);
-    const ownerMetadata = input.session ? readSessionOwnerMetadataView(input.session) : null;
-    appendText(parts, ownerMetadata?.name);
+    if (input.renderable) appendText(parts, getSessionName(input.renderable, null, { snapshotOnly: true }));
+    if (input.session) appendText(parts, getSessionName(input.session, null, { snapshotOnly: true }));
     appendText(parts, input.workspaceDisplayLabel);
     return parts.join('\n');
 }

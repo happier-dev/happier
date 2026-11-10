@@ -66,6 +66,7 @@ export type SessionListViewEmptyStateModel =
             | 'sessionsList.queryInitialLoadingTitle'
             | 'sessionsList.queryUpdatingTitle'
             | 'sessionsList.querySomeHomesUnavailableTitle'
+            | 'sessionsList.queryIncompleteTitle'
             | 'sessionsList.queryRefreshFailedTitle'
             | 'sessionsList.queryMoreAvailableTitle'
             | 'sessionsList.queryNoMatchesLoadedTitle'
@@ -81,6 +82,8 @@ export type SessionListViewEmptyStateModel =
             | RunSubjectCopyKey;
         descriptionKey:
             | 'sessionsList.querySomeHomesUnavailableDescription'
+            | 'sessionsList.queryHomesNeedUpdateDescription'
+            | 'sessionsList.queryHomesNotSelectedDescription'
             | 'sessionsList.queryRefreshFailedRetainedDescription'
             | 'sessionsList.queryRefreshFailedEmptyDescription'
             | 'sessionsList.queryMoreAvailableDescription'
@@ -150,14 +153,15 @@ function resolveSessionListViewEmptyStateForSessions(input: Readonly<{
         const recoverable = input.presentation.unavailableHomes.some((home) => (
             home.reason === 'offline' || home.reason === 'error'
         ));
-        // An unavailable Home that retrying cannot fix (disabled, unsupported) leaves
-        // the current facets unanswerable. With no rows behind them that is a dead end,
-        // so the incumbent clear action is the way back to a corpus this Home can serve.
+        const filtered = hasSearch || hasChangedStructuralFacet(input.filters, input.defaults);
+        const unsupported = input.presentation.unavailableHomes.some(home => home.reason === 'unsupported');
         return {
             mode: hasRows ? 'status' : 'empty',
-            titleKey: 'sessionsList.querySomeHomesUnavailableTitle',
-            descriptionKey: 'sessionsList.querySomeHomesUnavailableDescription',
-            action: recoverable ? 'retry' : (hasRows ? null : 'clear_filters'),
+            titleKey: !hasRows && filtered ? 'sessionsList.queryNoMatchesLoadedTitle'
+                : recoverable ? 'sessionsList.querySomeHomesUnavailableTitle' : 'sessionsList.queryIncompleteTitle',
+            descriptionKey: recoverable ? 'sessionsList.querySomeHomesUnavailableDescription'
+                : unsupported ? 'sessionsList.queryHomesNeedUpdateDescription' : 'sessionsList.queryHomesNotSelectedDescription',
+            action: recoverable ? 'retry' : !hasRows && filtered ? 'clear_filters' : null,
         };
     }
     if (input.presentation.kind === 'error') {

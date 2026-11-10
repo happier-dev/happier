@@ -15,6 +15,10 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { sessionTagKey } from './sessionTagUtils';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { filterSessionListItemsForHeaderControls } from './sessionListFilters';
 
 import {
     buildCanonicalSessionListSearchText,
@@ -57,7 +61,7 @@ function createState(overrides: Partial<StorageState>): StorageState {
 }
 
 describe('createSessionListSearchTextSelector', () => {
-    it('keeps transcript-derived summary text out while indexing canonical local metadata', () => {
+    it('indexes the canonical displayed title from the bounded list projection', () => {
         const session = createRenderable({
             id: 'session1',
             metadata: {
@@ -70,7 +74,7 @@ describe('createSessionListSearchTextSelector', () => {
         });
 
         expect(buildCanonicalSessionListSearchText({ sessionId: session.id, renderable: session }))
-            .toBe('session1\nBuild lane\n/workspace/project\nbuilder\nmachine-a');
+            .toBe('session1\nParser follow-up\n/workspace/project\nbuilder\nmachine-a');
     });
 
     it('indexes a no-folder session as a chat, never by its private folder', () => {
@@ -108,7 +112,7 @@ describe('createSessionListSearchTextSelector', () => {
             workspaceDisplayLabel: 'Payments workspace',
         })).toBe([
             'session1',
-            'Build lane',
+            'Bounded first-message title',
             '/workspace/project',
             'release',
             'customer-visible',
@@ -174,21 +178,25 @@ describe('createSessionListSearchTextSelector', () => {
         expect(result[sessionTagKey('home-a', 'same-session')]).not.toContain('Home B private title');
     });
 
-    it('reuses cached text without reading rows on an empty session-list delta tick', () => {
+    it('reuses cached text without reading 1260 rows on an empty session-list delta tick', () => {
         let metadataReads = 0;
-        const renderable = createRenderable({ id: 'session1' });
-        Object.defineProperty(renderable, 'metadata', {
-            configurable: true,
-            enumerable: true,
-            get: () => {
-                metadataReads += 1;
-                return { name: 'Build lane', path: '/repo' };
-            },
+        // Matches the Account A row census observed during SESSION-SEARCH-1110.
+        const rows = Array.from({ length: 1260 }, (_, index) => {
+            const row = createRenderable({ id: `session${index + 1}` });
+            Object.defineProperty(row, 'metadata', {
+                configurable: true,
+                enumerable: true,
+                get: () => {
+                    metadataReads += 1;
+                    return { name: 'Build lane', path: '/repo' };
+                },
+            });
+            return row;
         });
-        const sessionListRowsByServerId = { server1: { session1: renderable } };
-        const selector = createSessionListSearchTextSelector([
-            { type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined },
-        ], true);
+        const sessionListRowsByServerId = { server1: Object.fromEntries(rows.map((row) => [row.id, row])) };
+        const selector = createSessionListSearchTextSelector(rows.map((row) => ({
+            type: 'session', sessionId: row.id, serverId: 'server1',
+        })), true);
 
         const first = selector(createState({
             sessionListRenderableDelta: {
@@ -373,6 +381,32 @@ describe('mixed Session and Run search projection', () => {
     afterEach(() => {
         standardCleanup();
         storage.setState(previousState);
+    });
+
+    it('finds the visible title after transcript and saved-title arrivals without remounting search', async () => {
+        const serverId = getActiveServerId();
+        const session = createSessionFixture({ id: 'late-title-search', serverId,
+            metadata: { path: '/tmp', host: 'builder' } });
+        act(() => storage.getState().applySessions([session]));
+        const items = [{ type: 'session', serverId, sessionId: session.id }] as const;
+        const hook = await renderHook(() => useSessionListSearchTextByKey(items, true));
+        const matches = (query: string) => filterSessionListItemsForHeaderControls(items, {
+            searchQuery: query, selectedTagIds: [], ...hook.getCurrent(),
+        });
+        expect(matches('qa-agents-1110-kilo')).toHaveLength(0);
+        act(() => storage.getState().applyMessages(session.id, [{
+            id: 'first-prompt', role: 'user', localId: null, createdAt: 1, seq: 2, isSidechain: false,
+            content: { type: 'text', text: 'qa-agents-1110-kilo' },
+        }]));
+        const row = storage.getState().sessionListRowsByServerId[serverId]![session.id]!;
+        expect(getSessionName(row, serverId)).toBe('qa-agents-1110-kilo');
+        expect(hook.getCurrent().primarySearchableTextBySessionKey[sessionTagKey(serverId, session.id)]?.split('\n'))
+            .toContain(getSessionName(row, serverId));
+        expect(matches('qa-agents-1110-kilo')).toEqual(items);
+        act(() => storage.getState().applySessions([{ ...session, metadataVersion: 2,
+            metadata: { ...session.metadata!, summary: { text: 'Saved kilo title', updatedAt: 2 } } }]));
+        expect(matches('Saved kilo title')).toEqual(items);
+        expect(matches('qa-agents-1110-kilo')).toHaveLength(0);
     });
 
     it('indexes visible Run private title and Where under its qualified node id without reading detail', async () => {

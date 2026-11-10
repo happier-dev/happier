@@ -56,8 +56,8 @@ function resolveAction(
  * The session list's query state, said in the list's own voice: skeleton rows while the first page
  * loads, otherwise one quiet line on the rows' edge ("Nothing in My work · Show all sessions",
  * "Couldn't refresh · Retry") through the one empty-state owner. A rail never gets a page-size state
- * with a glyph and a full-width button; the model's longer description stays the line's accessible
- * hint so a screen reader still hears why.
+ * with a glyph and a full-width button. Partial coverage keeps its repair guidance visible;
+ * other longer descriptions stay the line's accessible hint.
  */
 export const SessionListViewEmptyState = React.memo((props: SessionListViewEmptyStateProps) => {
     const styles = stylesheet;
@@ -70,11 +70,13 @@ export const SessionListViewEmptyState = React.memo((props: SessionListViewEmpty
 
     const action = resolveAction(model.action, props);
     const label = action ? t(action.titleKey) : null;
+    const description = model.descriptionKey ? t(model.descriptionKey) : undefined;
+    const showDescription = props.presentation.kind === 'partial';
 
     return (
         <View
             accessibilityLiveRegion="polite"
-            accessibilityHint={model.descriptionKey ? t(model.descriptionKey) : undefined}
+            accessibilityHint={showDescription ? undefined : description}
             style={styles.line}
             testID={model.mode === 'status' ? 'session-list-query-status' : 'session-list-query-empty-state'}
         >
@@ -82,6 +84,7 @@ export const SessionListViewEmptyState = React.memo((props: SessionListViewEmpty
                 layout="line"
                 titleTestID="session-list-query-empty-title"
                 title={'titleParams' in model ? t(model.titleKey, model.titleParams) : t(model.titleKey)}
+                subtitle={showDescription ? description : undefined}
                 primaryAction={action && label ? {
                     label,
                     onPress: action.onPress,

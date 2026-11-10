@@ -4,11 +4,11 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 
 describe('transcriptSearchUnavailableHint', () => {
     it.each([
-        ['home_indexing', 'memorySearchSettings.status.indexing'],
+        ['home_indexing', 'sessionsList.transcriptSearchHomeIndexing'],
         ['daemon_no_target', 'errors.daemonUnavailableBody'],
         ['daemon_unavailable', 'errors.daemonUnavailableBody'],
-        ['home_unavailable', 'memorySearchSettings.status.unavailableLight'],
-        ['home_unknown', 'memorySearchSettings.status.unavailableLight'],
+        ['home_unavailable', 'sessionsList.transcriptSearchHomeUnavailable'],
+        ['home_unknown', 'sessionsList.transcriptSearchHomeUnknown'],
         ['memory_disabled', 'memorySearchSettings.disabled.footer'],
     ])('maps %s to stable contextual status copy', async (reason, expectedKey) => {
         const { transcriptSearchUnavailableHint } = await import('./transcriptSearchUnavailableHint');
