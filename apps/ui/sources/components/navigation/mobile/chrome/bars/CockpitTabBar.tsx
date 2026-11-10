@@ -38,14 +38,14 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // Selection highlight behind the whole active tab (icon + label). Subtle
-    // overlay of the foreground color so it reads softly over the glass material.
+    // Selection highlight filling the whole active tab (icon + label); the capsule's own padding is the gap
+    // to its rim. A subtle overlay of the foreground colour so it reads softly over the glass material.
     activePill: {
         position: 'absolute',
-        top: 3,
-        bottom: 3,
-        left: 4,
-        right: 4,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
         borderRadius: 16,
         backgroundColor: theme.colors.text.primary,
         opacity: 0.05,
@@ -104,6 +104,11 @@ export type CockpitTabBarTabDefinition<TSurface extends string> = Readonly<{
         }>) => React.ReactNode;
     }>;
     badge?: CockpitTabBadge;
+    /**
+     * A detail bar's tab names itself while selected even with labels off (owner 11-06, phone detail bars): its
+     * tabs are a page's own sections, not the app's fixed destinations. The main and Session bars stay icon-only (R1).
+     */
+    namesItselfWhenSelected?: boolean;
     /** The announced name when it says more than the visible label ("Companion, 1 waiting for you"). */
     accessibilityLabel?: string;
     disabled?: boolean;
@@ -210,8 +215,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     )}
                     {renderTabBadge(tab.badge, `${props.tabTestIdPrefix}${tab.id}-badge`)}
                 </View>
-                {/* Owner 11-06: the selected tab always names itself, even with labels off. */}
-                {metrics.showLabels || active ? (
+                {metrics.showLabels || (active && tab.namesItselfWhenSelected === true) ? (
                     <Text style={[styles.label, active ? styles.labelActive : styles.labelInactive]}>
                         {tab.label}
                     </Text>

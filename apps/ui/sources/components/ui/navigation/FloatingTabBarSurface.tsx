@@ -26,15 +26,19 @@ import { resolveFloatingTabBarBottomPadding } from './floatingTabBarBottomInset'
 const TAB_BAR_RADIUS = 999;
 const FLOATING_SIDE_GUTTER = 16;
 const FLOATING_TOP_GAP = 4;
-// Capsule inner padding. Combined with the active-highlight inset (CockpitTabBar/
-// TabBar `activePill`: left/right 4, top/bottom 3) this sets the gap from the
-// capsule rim to a selected tab at the edge: H = 2 + 4 = 6, V = 0 + 3 = 3.
-const PILL_PADDING_VERTICAL = 0;
-const PILL_PADDING_HORIZONTAL = 2;
+// Capsule inner padding: the selected tab's highlight fills its tab, so this is the one gap from the
+// capsule rim to a selected tab on every side (phone lab R1: tabs 50 × 42 in a 50-tall bar).
+const PILL_PADDING_VERTICAL = 4;
+const PILL_PADDING_HORIZONTAL = 4;
 // Breathing room between the bar and a sibling capsule. iOS 26 sets its search button off the tab
 // bar by roughly this much, and it matches the widest tab gap so the two capsules read as one
 // system rather than as one control cut in half.
 const ACCESSORY_GAP = 8;
+
+/** The accessory is a square as tall as the bar: a tab's height plus the capsule's padding above and below. */
+function accessorySquareFor(tabHeight: number): number {
+    return tabHeight + PILL_PADDING_VERTICAL * 2;
+}
 
 /**
  * How many tab slots of `tabMinWidth` the floating capsule holds on this window: the window less
@@ -46,18 +50,17 @@ export function resolveFloatingTabBarSlotCount(input: Readonly<{
     windowWidth: number;
     maxWidth: number;
     tabMinWidth: number;
-    /** A trailing accessory keeps its square; its centring mirror gives way when the bar needs the room. */
+    /** A tab's height: the trailing accessory is a square as tall as the bar (that height plus the capsule's padding). */
     accessorySize?: number;
 }>): number {
-    const accessory = input.accessorySize === undefined ? 0 : input.accessorySize + ACCESSORY_GAP;
+    const accessory = input.accessorySize === undefined ? 0 : accessorySquareFor(input.accessorySize) + ACCESSORY_GAP;
     const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth) - accessory - PILL_PADDING_HORIZONTAL * 2;
     return input.tabMinWidth > 0 ? Math.max(0, Math.floor(room / input.tabMinWidth)) : 0;
 }
 
 /**
- * How wide each of `slots` tabs may be in the accessory row, so the bar stays centred on the screen
- * between the accessory and its mirror. Never wider than the tab's own width: a wide phone keeps a
- * content-sized bar with room around it.
+ * How wide each of `slots` tabs may be in the accessory row (the bar and its accessory, centred together as
+ * one group). Never wider than the tab's own width: a wide phone keeps a content-sized bar with room around it.
  */
 export function resolveFloatingTabBarAccessorySlotWidth(input: Readonly<{
     windowWidth: number;
@@ -67,7 +70,7 @@ export function resolveFloatingTabBarAccessorySlotWidth(input: Readonly<{
     tabMinWidth: number;
 }>): number {
     const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth)
-        - (input.accessorySize + ACCESSORY_GAP) * 2 - PILL_PADDING_HORIZONTAL * 2;
+        - (accessorySquareFor(input.accessorySize) + ACCESSORY_GAP) - PILL_PADDING_HORIZONTAL * 2;
     return Math.min(input.tabMinWidth, Math.floor(room / input.slots));
 }
 
@@ -105,18 +108,10 @@ const styles = StyleSheet.create({
         alignSelf: 'stretch',
         justifyContent: 'center',
     },
-    // Only the mirror gives way when a labelled bar needs the room; the accessory keeps its square.
-    // Its shrink weight far outweighs the bar cell's, so the mirror gives all its room before the bar
-    // narrows (and, with more items than fit, scrolls).
-    accessoryMirror: {
-        flexShrink: 1000,
-    },
-    // The accessory's square footprint, mirrored on the leading edge so the bar stays centred on
-    // the SCREEN instead of in the space the accessory leaves over. Both are as wide as the bar is
-    // tall (a flex weight would clip the accessory on a narrow phone). Until the bar has been laid
-    // out once, `aspectRatio` stands in: Yoga resolves it from the stretched row height, but web
-    // does not (the row's height is not definite there, so it drew the mirror 0px wide and the
-    // accessory at its content width). The measured width then makes it exact on every platform.
+    // The accessory's square footprint: as wide as the bar is tall (a flex weight would clip it on a
+    // narrow phone). Until the bar has been laid out once, `aspectRatio` stands in: Yoga resolves it from
+    // the stretched row height, but web does not (the row's height is not definite there). The measured
+    // width then makes it exact on every platform.
     accessoryFootprintUnmeasured: {
         aspectRatio: 1,
     },
@@ -127,7 +122,7 @@ const styles = StyleSheet.create({
         minWidth: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        marginHorizontal: ACCESSORY_GAP,
+        marginRight: ACCESSORY_GAP,
     },
 });
 
@@ -193,12 +188,8 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
             style={[styles.positioner, { paddingBottom: bottomPadding }]}
         >
             {props.trailingAccessory == null ? <View style={props.stretch ? [styles.pillBounds, styles.pillBoundsStretch] : styles.pillBounds}>{bar}</View> : (
-                // Three cells: a content-sized leading spacer, the bar, then the accessory — so the
-                // bar stays centred on the SCREEN while the accessory rides the trailing edge.
-                // Centring the row as a whole pushes the bar left by half the accessory; the bar is
-                // the thing the eye centres on, not the row.
+                // The bar and its accessory are one group, centred together, 8 apart (phone lab R1).
                 <View style={styles.accessoryRow}>
-                    <View pointerEvents="none" style={[accessoryFootprint, styles.accessoryMirror]} />
                     <View style={styles.accessoryRowBar} onLayout={handleBarCellLayout}>
                         {/* Bounded by its cell, so a bar of more items than fit scrolls instead of spilling past the edges. */}
                         <View style={styles.pillBounds}>{bar}</View>

@@ -38,6 +38,7 @@ export function detailNavigationTab(item: Pick<PhoneMenuItem, 'id' | 'title' | '
     const count = item.count?.trim();
     const short = count === undefined ? undefined : TAB_STATUS_COUNT.exec(count)?.[0];
     return { id: item.id, label: item.title, icon: item.icon, sfSymbol: sfSymbolForCockpitTabIcon(item.icon),
+        namesItselfWhenSelected: true,
         disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined,
         ...(count === undefined || count === '' ? {} : {
             accessibilityLabel: `${item.title}, ${count}`,

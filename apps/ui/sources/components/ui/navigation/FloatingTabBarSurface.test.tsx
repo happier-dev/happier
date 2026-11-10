@@ -66,19 +66,20 @@ describe('FloatingTabBarSurface', () => {
         expect(mergedStyle(bounds?.props.style).maxWidth).toBe('100%');
     });
 
-    // Four tabs and More beside the "+" and its mirror, icons only at the regular bar: 42 tall, 50 wide tabs.
+    // Four tabs and More beside the "+", icons only at the regular bar: 42-tall, 50-wide tabs in a 50-tall bar,
+    // bar and "+" centred together as one group (phone lab R1).
     it.each([
         { windowWidth: 430, expected: 50 },
         { windowWidth: 390, expected: 50 },
-        { windowWidth: 360, expected: 44 },
+        { windowWidth: 360, expected: 50 },
     ])('gives each of five slots what the accessory row leaves at $windowWidth', async ({ windowWidth, expected }) => {
         const { resolveFloatingTabBarAccessorySlotWidth } = await import('./FloatingTabBarSurface');
 
         const width = resolveFloatingTabBarAccessorySlotWidth({ windowWidth, maxWidth: 800, accessorySize: 42, slots: 5, tabMinWidth: 50 });
 
         expect(width).toBe(expected);
-        // The whole row still fits inside the gutters with the bar centred on the screen.
-        expect(16 + 42 + 8 + (width * 5 + 4) + 8 + 42 + 16).toBeLessThanOrEqual(windowWidth);
+        // The whole group (the bar, 8, then a "+" as tall as the bar) still fits inside the gutters.
+        expect(16 + (width * 5 + 8) + 8 + 50 + 16).toBeLessThanOrEqual(windowWidth);
     });
 
     it('stretches the accessory row so the accessory cannot change the measured bar height', async () => {
@@ -107,7 +108,7 @@ describe('FloatingTabBarSurface', () => {
     // The accessory and its leading mirror are squares as tall as the bar. `aspectRatio` alone
     // cannot size them on web: a row item's stretched height is not definite there, so Chromium
     // drew the mirror 0px wide and the "+" at its content width (a 26x26 circle in a 26x44 shadow).
-    it('sizes the accessory and its leading mirror as squares of the bar height', async () => {
+    it('sizes the accessory as a square of the bar height, beside the bar with no leading mirror', async () => {
         const { FloatingTabBarSurface } = await import('./FloatingTabBarSurface');
         const { act } = await import('react-test-renderer');
 
@@ -130,9 +131,10 @@ describe('FloatingTabBarSurface', () => {
 
         const row = findAccessoryRow(screen.tree.root);
         const cells = (row as unknown as { children: TestNode[] }).children;
-        const leading = mergedStyle(cells[0]!.props.style);
         const trailing = mergedStyle(cells[cells.length - 1]!.props.style);
-        expect(leading.width).toBe(44);
+        // Two cells, the bar then the accessory: the group is centred as one, so nothing mirrors the "+".
+        expect(cells).toHaveLength(2);
+        expect(cells[0]!.findAll((node) => node.props.testID === 'tab-bar-surface').length).toBeGreaterThan(0);
         expect(trailing.width).toBe(44);
         expect(cells[cells.length - 1]!.findAllByType('TrailingAccessory' as never)).toHaveLength(1);
         // A sibling capsule beside the bar, never a tab: creating a session is not a navigation

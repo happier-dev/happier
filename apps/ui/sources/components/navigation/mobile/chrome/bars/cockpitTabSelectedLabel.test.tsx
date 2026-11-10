@@ -28,4 +28,17 @@ describe('the phone detail bar', () => {
             expect(screen.findHostByTestId('tab-checks')?.props.accessibilityLabel).toBe('Checks, 2 failing');
         } finally { await screen.unmount(); }
     });
+
+    it('keeps the main and Session bars icon-only: their selected tab shows no label while labels are off (R1)', async () => {
+        const tabs = [
+            { id: 'sessions', label: 'Sessions', icon: 'chats-circle' as const },
+            { id: 'projects', label: 'Projects', icon: 'folder' as const },
+        ];
+        const screen = await renderScreen(<CockpitTabBarView tabs={tabs} activeSurface="sessions" onSurfacePress={() => {}}
+            barTestId="bar" tabTestIdPrefix="tab-" layout="fit" bottomInset={0} metrics={resolveTabBarMetrics('regular', false)} />);
+        try {
+            expect(screen.getTextContent()).not.toContain('Sessions');
+            expect(screen.findHostByTestId('tab-sessions')?.props.accessibilityLabel).toBe('Sessions');
+        } finally { await screen.unmount(); }
+    });
 });
