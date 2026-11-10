@@ -5,7 +5,7 @@ import {
   type OfferedChoicesProps as PresentationOfferedChoicesProps,
   type OfferedChoiceFeedbackInputProps as PresentationFeedbackInputProps,
 } from '../presentation/interaction/OfferedChoices.js';
-import { Icon } from './Icon.js';
+import { PluginUiIconGlyph } from './Icon.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 
 export type { OfferedChoice } from '../presentation/interaction/OfferedChoices.js';
@@ -15,7 +15,7 @@ export type OfferedChoiceFeedbackInputProps = Omit<PresentationFeedbackInputProp
 /** Author theme/icon adapter; scope and submission remain with the caller. */
 export function OfferedChoices(props: OfferedChoicesProps): ReactElement {
   return <PresentationOfferedChoices {...props} theme={usePluginTheme()}
-    unavailableIcon={<Icon name="info" size={14} tone="secondary" />} />;
+    unavailableIcon={<PluginUiIconGlyph name="info" size={14} tone="secondary" />} />;
 }
 
 export function OfferedChoiceFeedbackInput(props: OfferedChoiceFeedbackInputProps): ReactElement {

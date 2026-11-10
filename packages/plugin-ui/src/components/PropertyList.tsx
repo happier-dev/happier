@@ -31,7 +31,7 @@ export type PropertyChoice = Readonly<{
 }>;
 
 /** @internal One choice as a picker row: its words, supporting identity, person and trailing fact. */
-export function propertyChoiceMenuItem(choice: PropertyChoice): MenuItem {
+export function propertyChoiceMenuItem(choice: PropertyChoice): PropertyChoice {
   return {
     id: choice.id,
     label: choice.label,
