@@ -5,7 +5,7 @@ import { isMachineRequestReachabilityFailure } from '@/sync/domains/machines/rea
 import { isMachineStoppedAnsweringError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { subscribeActionOperationByRequestId } from './subscribeActionOperationByRequestId';
-import { isActionOperationTerminal } from './actionOperationStore';
+import { actionOperationStore, isActionOperationTerminal } from './actionOperationStore';
 
 /** Follow an issued request through publication/reconnect, then join its existing finite runner. */
 export function observeActionOperationByRequestId(input: Readonly<{
@@ -33,6 +33,10 @@ export function observeActionOperationByRequestId(input: Readonly<{
             finished = true;
             releases.splice(0).forEach(release => release());
             readController.abort();
+            // The finite owner may answer before its push reaches this client.
+            // Publish that same complete result before a continuation consumes it.
+            if (operation) actionOperationStore.mergeSnapshots({ serverId: input.serverId,
+                snapshots: [operation], snapshotComplete: true });
             resolve(operation);
         };
         const read = async () => {

@@ -16,6 +16,23 @@ import { log } from '@/log';
 
 const SERVER_ID = 'home-a';
 
+describe('admitted New Session continuation', () => {
+    it('retains the composer handoff across result refresh and consumes it once', async () => {
+        const store = createActionOperationStore();
+        const snapshot = operation({ state: 'succeeded', revision: 5, settledAt: 10,
+            result: { kind: 'prepared', repositoryPath: '/review' } });
+        merge(store, [snapshot]);
+        const resume = vi.fn(async () => null);
+        store.retainNewSessionContinuation(operationAddress(snapshot.operationId), resume);
+        store.mergeSnapshots({ serverId: SERVER_ID, snapshots: [snapshot], snapshotComplete: true });
+        const continuation = store.takeNewSessionContinuation(operationAddress(snapshot.operationId));
+        expect(continuation).toBe(resume);
+        await continuation?.();
+        expect(store.takeNewSessionContinuation(operationAddress(snapshot.operationId))).toBeNull();
+        expect(resume).toHaveBeenCalledTimes(1);
+    });
+});
+
 function merge(store: ActionOperationStore, snapshots: readonly ActionOperationSnapshotV1[]): void {
     store.mergeSnapshots({ serverId: SERVER_ID, snapshots });
 }

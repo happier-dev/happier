@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { qualifyActionOperationSnapshot } from '@/sync/domains/actionOperations/qualifiedActionOperation';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 import { createActionOperationPresentationCoordinator } from './actionOperationPresentationCoordinator';
 
@@ -28,6 +29,26 @@ const qualified = (snapshot: ActionOperationSnapshotV1, serverId: string = 'home
 );
 
 describe('action operation presentation coordinator', () => {
+    it('acknowledges the retained composer handoff only after navigation succeeds', async () => {
+        const completed = qualified(operation({ state: 'succeeded', revision: 2, settledAt: 3 }));
+        const address = { serverId: completed.serverId, operationId: completed.snapshot.operationId };
+        const markPresented = vi.fn();
+        const coordinator = createActionOperationPresentationCoordinator({
+            openDetail() {}, openDestination() {}, markPresented,
+        });
+        actionOperationStore.reset();
+        try {
+            actionOperationStore.mergeSnapshots({ serverId: completed.serverId, snapshots: [completed.snapshot] });
+            actionOperationStore.retainNewSessionContinuation(address, async () => ({ code: 'unavailable' }));
+            coordinator.open(completed);
+            await Promise.resolve();
+            expect(markPresented).not.toHaveBeenCalled();
+            actionOperationStore.retainNewSessionContinuation(address, async () => null);
+            coordinator.open(completed);
+            await vi.waitFor(() => expect(markPresented).toHaveBeenCalledTimes(1));
+        } finally { actionOperationStore.reset(); }
+    });
+
     it.each([
         ['current', 0, 0],
         ['detail', 1, 0],

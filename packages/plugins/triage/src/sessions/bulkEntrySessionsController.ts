@@ -1,7 +1,9 @@
 import type { PluginUiHostApi, PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import { buildQualifiedPluginContributionKey, PluginError } from '@happier-dev/plugin-sdk';
 
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import type { TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
+import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
 import type { TriageConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
@@ -176,8 +178,8 @@ export type TriageBulkSessionsControllerV1 = Readonly<{
      * Withdraws the question. Sessions already created keep their outcomes —
      * they exist — and only units that have not started are abandoned.
      */
-    cancel: () => void;
-    reset: () => void;
+    cancel: () => Promise<void>;
+    reset: () => Promise<void>;
 }>;
 
 /** The mounted controls and Action adapter consume the controller's same live phases. */
@@ -208,6 +210,7 @@ export type TriageBulkSessionsRequestV1 = Readonly<{
 const IDLE: TriageBulkSessionsPhaseV1 = Object.freeze({ kind: 'idle' });
 const RESOLVING: TriageBulkSessionsPhaseV1 = Object.freeze({ kind: 'resolving' });
 const CHOOSING: TriageBulkSessionsPhaseV1 = Object.freeze({ kind: 'choosing' });
+const START_ENTRY_ACTION_ID = buildQualifiedPluginContributionKey({ pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 });
 
 function unavailable(reason: TriageBulkUnavailableReasonV1): TriageBulkSessionsPhaseV1 {
     return Object.freeze({ kind: 'unavailable', reason });
@@ -562,9 +565,11 @@ export type TriageBulkHostV1 = TriageBulkSessionExecutionHostV1
     & TriageProjectRegistryHostV1
     & TriageActionResolutionHostV1
     & Pick<PluginUiHostApi, 'selectActionInput'>
+    & Pick<PluginUiHostApi, 'executeAction'>
     & Readonly<{
         context(options?: Parameters<PluginUiHostApi['context']>[0]): Promise<Readonly<{
             targetedContributions?: PluginUiTargetedContributionsV1 | null;
+            accountScope?: Readonly<{ serverId: string; accountId: string }>;
         }>>;
     }>;
 
@@ -639,6 +644,9 @@ export function createTriageBulkEntrySessionsController(
     const inFlight = ({ current: false } as { current: boolean });
     const retired = ({ current: false } as { current: boolean });
     const abort = ({ current: null } as { current: AbortController | null });
+    let stopped = false;
+    let activeRequestIdentity: Readonly<{ actionId: string; requestId: string }> | null = null;
+    let completion: Promise<void> = Promise.resolve();
     const retryContext = ({ current: null } as { current: TriageBulkRetryContextV1 | null });
     const mintCreationKey = options?.mintCreationKey ?? mintTriageOpaqueIdV1;
 
@@ -700,10 +708,11 @@ export function createTriageBulkEntrySessionsController(
             return;
         }
         inFlight.current = true;
+        stopped = false;
         const controller = new AbortController();
         abort.current = controller;
         setPhase(RESOLVING);
-        void (async () => {
+        completion = (async () => {
             try {
                 let plan = initialPlan;
                 // 1. BOTH of the action's references, through the one resolver
@@ -718,7 +727,7 @@ export function createTriageBulkEntrySessionsController(
                     { signal: controller.signal },
                 );
                 if (retired.current) return;
-                if (controller.signal.aborted) {
+                if (stopped || controller.signal.aborted) {
                     setPhase(IDLE);
                     return;
                 }
@@ -741,7 +750,7 @@ export function createTriageBulkEntrySessionsController(
                     { signal: controller.signal },
                 );
                 if (retired.current) return;
-                if (controller.signal.aborted) {
+                if (stopped || controller.signal.aborted) {
                     setPhase(IDLE);
                     return;
                 }
@@ -765,7 +774,7 @@ export function createTriageBulkEntrySessionsController(
                         const context = await host.context({ signal: controller.signal });
                         const complete = new Map<string, TriageBulkSessionsRequestV1['entries'][number]>();
                         for (const entry of allEntries) {
-                            if (controller.signal.aborted || retired.current) break;
+                            if (stopped || controller.signal.aborted || retired.current) break;
                             const facts = entry.reviewWorkspace !== undefined || context.targetedContributions === null ? null
                                 : await readTriageEntrySessionFactsV1(host, {
                                     entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId,
@@ -774,7 +783,7 @@ export function createTriageBulkEntrySessionsController(
                             complete.set(entry.key, facts ?? entry);
                         }
                         if (retired.current) return;
-                        if (controller.signal.aborted) { setPhase(IDLE); return; }
+                        if (stopped || controller.signal.aborted) { setPhase(IDLE); return; }
                         plan = plan.status === 'seedNewSession'
                             ? { ...plan, entries: plan.entries.map((entry) => complete.get(entry.key) ?? entry) }
                             : { ...plan, units: plan.units.map((unit) => ({ ...unit, entries: unit.entries.map((entry) => complete.get(entry.key) ?? entry) })) };
@@ -796,6 +805,7 @@ export function createTriageBulkEntrySessionsController(
 
                 if (plan.status === 'seedNewSession') {
                     const placement = placementFor(plan.entries);
+                    const preparationAction = checkoutIntent === 'preparedReviewWorkspace' ? plan.entries[0]?.reviewWorkspace?.operation.action : undefined;
                     const seeded = await seedNewSession({
                         host,
                         entries: plan.entries,
@@ -806,9 +816,13 @@ export function createTriageBulkEntrySessionsController(
                         placement,
                         candidates: registry.status === 'read' ? registry.projects.map(projectTriageSessionPlacementCandidateV1) : [],
                         signal: controller.signal,
+                        isCurrent: () => !stopped && !controller.signal.aborted,
+                        ...(preparationAction === undefined ? {} : { requestId: mintTriageOpaqueIdV1(),
+                            onRequest: (requestId: string | null) => { activeRequestIdentity = requestId === null ? null
+                                : { actionId: buildQualifiedPluginContributionKey(preparationAction), requestId }; } }),
                     });
                     if (retired.current) return;
-                    if (seeded.status === 'cancelled') {
+                    if (stopped || seeded.status === 'cancelled') {
                         setPhase(IDLE);
                         return;
                     }
@@ -858,7 +872,7 @@ export function createTriageBulkEntrySessionsController(
                         { signal: controller.signal },
                     ) : { status: 'settled' as const, settlement: explicitSettlement };
                     if (retired.current) return;
-                    if (draft.status === 'cancelled' || controller.signal.aborted) {
+                    if (draft.status === 'cancelled' || stopped || controller.signal.aborted) {
                         setPhase(IDLE);
                         return;
                     }
@@ -912,8 +926,10 @@ export function createTriageBulkEntrySessionsController(
                     inputForUnit: (unit) => inputs.find(
                         (candidate) => candidate.creationKey === unit.creationKey,
                     )!.input,
-                    onPreparationCancelled: () => controller.abort(),
+                    onPreparationCancelled: () => { stopped = true; },
                     signal: controller.signal,
+                    isStopped: () => stopped,
+                    onRequest: (requestId) => { activeRequestIdentity = requestId === null ? null : { actionId: START_ENTRY_ACTION_ID, requestId }; },
                     onStarted: () => {
                         started += 1;
                         if (!retired.current) {
@@ -921,7 +937,6 @@ export function createTriageBulkEntrySessionsController(
                         }
                     },
                 });
-                if (retired.current) return;
                 setPhase(Object.freeze({
                     kind: 'settled',
                     results,
@@ -934,7 +949,7 @@ export function createTriageBulkEntrySessionsController(
                 }));
             } catch {
                 if (!retired.current) {
-                    setPhase(controller.signal.aborted ? IDLE : unavailable('dispatch'));
+                    setPhase(stopped || controller.signal.aborted ? IDLE : unavailable('dispatch'));
                 }
             } finally {
                 inFlight.current = false;
@@ -956,15 +971,16 @@ export function createTriageBulkEntrySessionsController(
 
         const prior = phase;
         inFlight.current = true;
+        stopped = false;
         const controller = new AbortController();
         abort.current = controller;
         let started = 0;
         setPhase(Object.freeze({ kind: 'starting', started, total: units.length }));
-        void (async () => {
+        completion = (async () => {
             try {
                 const resolved = await resolveTriageConfiguredActionForExecutionV1(host, context.action.actionId, undefined, { signal: controller.signal });
                 if (retired.current) return;
-                if (controller.signal.aborted || resolved.status !== 'resolved') {
+                if (stopped || controller.signal.aborted || resolved.status !== 'resolved') {
                     setPhase(prior);
                     return;
                 }
@@ -987,8 +1003,10 @@ export function createTriageBulkEntrySessionsController(
                     inputForUnit: (unit) => context.inputs.find(
                         (candidate) => candidate.creationKey === unit.creationKey,
                     )!.input,
-                    onPreparationCancelled: () => controller.abort(),
+                    onPreparationCancelled: () => { stopped = true; },
                     signal: controller.signal,
+                    isStopped: () => stopped,
+                    onRequest: (requestId) => { activeRequestIdentity = requestId === null ? null : { actionId: START_ENTRY_ACTION_ID, requestId }; },
                     previousResults: prior.results,
                     onStarted: () => {
                         started += 1;
@@ -997,7 +1015,6 @@ export function createTriageBulkEntrySessionsController(
                         }
                     },
                 });
-                if (retired.current) return;
                 setPhase(Object.freeze({
                     ...prior,
                     results: mergeTriageBulkRetryResultsV1(prior.results, retried),
@@ -1012,10 +1029,26 @@ export function createTriageBulkEntrySessionsController(
         })();
     };
 
-    const cancel = () => { abort.current?.abort(); };
-    const reset = () => {
+    const cancel = async () => {
+        stopped = true;
+        const requestIdentity = activeRequestIdentity;
+        if (requestIdentity === null) return;
+        const result = await host.executeAction('action.operations.list', { requestIdentity });
+        const operation = result.items[0];
+        const context = await host.context();
+        if (!operation || !context.accountScope) throw new PluginError({ code: 'unavailable', diagnostics: [
+            { code: 'action_operation_not_found', severity: 'error' },
+        ] });
+        const cancellation = await host.executeAction('action.operations.cancel', {
+            serverId: context.accountScope.serverId, machineId: operation.scope.machineId, operationId: operation.operationId,
+        });
+        if (cancellation.kind !== 'requested' && cancellation.kind !== 'already_settled') throw new PluginError({ code: 'unavailable', diagnostics: [
+            { code: 'action_operation_stop_unconfirmed', severity: 'error' },
+        ] });
+    };
+    const reset = async () => {
         if (inFlight.current) {
-            abort.current?.abort();
+            await cancel();
             return;
         }
         retryContext.current = null;
@@ -1066,10 +1099,7 @@ export function createTriageBulkEntrySessionsController(
         activate: () => { retired.current = false; },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         dispose: () => { retired.current = true; abort.current?.abort(); listeners.clear(); },
-        waitForSettled: () => inFlight.current ? new Promise<TriageBulkSessionsControllerV1>((resolve) => {
-            const listener = () => { if (!inFlight.current) { listeners.delete(listener); resolve(snapshot); } };
-            listeners.add(listener);
-        }) : Promise.resolve(snapshot),
+        waitForSettled: async () => { await completion; return snapshot; },
     });
 }
 
@@ -1088,6 +1118,9 @@ async function seedNewSession(input: Readonly<{
     placement: TriageBulkSeedPlacementV1;
     candidates: Parameters<typeof requestTriageNewSessionAuthoringV1>[1]['candidates'];
     signal: AbortSignal;
+    requestId?: string;
+    onRequest?: Parameters<typeof requestTriageNewSessionAuthoringV1>[1]['onRequest'];
+    isCurrent: () => boolean;
 }>): ReturnType<typeof requestTriageNewSessionAuthoringV1> {
     return await requestTriageNewSessionAuthoringV1(input.host, {
         entries: input.entries, promptText: input.promptText, profileId: input.profileId,
@@ -1095,5 +1128,7 @@ async function seedNewSession(input: Readonly<{
         checkoutIntent: input.checkoutIntent, candidates: input.candidates,
         placement: input.placement.kind === 'exact' ? input.placement.placement : null,
         signal: input.signal,
+        isCurrent: input.isCurrent,
+        ...(input.requestId === undefined ? {} : { requestId: input.requestId, onRequest: input.onRequest }),
     });
 }

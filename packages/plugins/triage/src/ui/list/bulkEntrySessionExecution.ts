@@ -6,6 +6,7 @@ import type {
     TriageStartEntrySessionResultV1,
 } from '../../actions/entrySessionProtocol.js';
 import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
+import { mintTriageOpaqueIdV1 } from '../../opaqueId.js';
 import type { TriageActionV1 } from '../../settings/actions.js';
 import { projectTriageNewSessionDestinationV1 } from '../header/newSessionDestination.js';
 import { authorizeTriagePreparedReviewWorkspaceV1 } from '../../sessions/entrySessionStartController.js';
@@ -155,6 +156,8 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     inputForUnit?: (unit: TriageBulkSessionUnitV1<TriageBulkSelectedEntryV1>) => TriageStartEntrySessionInputV1;
     onPreparationCancelled?: () => void;
     signal: AbortSignal;
+    isStopped?: () => boolean;
+    onRequest?: (requestId: string | null) => void;
     onStarted?: () => void;
     /** Prior same-key answers; used only to project the canonical resume arm. */
     previousResults?: readonly TriageBulkStartedSessionResultV1[];
@@ -171,6 +174,7 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     return await runTriageBulkEntrySessions<TriageBulkStartedSessionOutcomeV1, TriageBulkSelectedEntryV1>({
         units: input.units,
         signal: input.signal,
+        isStopped: input.isStopped,
         start: async (unit) => {
             const first = unit.entries[0];
             if (first === undefined) throw new Error('triage:bulk:emptyUnit');
@@ -219,11 +223,14 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
                 preparationSelection = authorization.selection;
                 startOptions = { ...authorization.options, signal: input.signal };
             }
+            if (input.isStopped?.() || input.signal.aborted) return undefined;
+            const requestId = mintTriageOpaqueIdV1();
+            input.onRequest?.(requestId);
             const result = await submitTriageEntrySessionStart(input.host, {
                 ...start,
                 ...(preparationSelection === undefined ? {} : { prepareReviewWorkspaceSelection: preparationSelection }),
                 ...(resume === undefined ? {} : { resume }),
-            }, startOptions);
+            }, { ...startOptions, requestId }).finally(() => input.onRequest?.(null));
             input.onStarted?.();
             const secondaryLinks: readonly TriageBulkLinkOutcomeV1[] =
                 result.type === 'opened' || result.type === 'openPending' || result.type === 'linked'

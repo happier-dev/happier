@@ -3,6 +3,7 @@ import type { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/acti
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { z } from 'zod/mini';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 export type ActionOperationProjectScriptSelection = z.infer<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)['projects.script.run']>['selection'];
 
@@ -61,6 +62,8 @@ export type ActionOperationRequestAddress = Readonly<{
 export type QualifiedActionOperation = Readonly<{
     serverId: string;
     snapshot: ActionOperationSnapshotV1;
+    /** Device-local composer handoff retained with this admitted result until presentation resumes. */
+    resumeNewSession?: () => Promise<PluginUiJsonValueV1>;
     /** A full owner read, distinct from a result-free list summary of the same revision. */
     snapshotComplete?: true;
     /** Fresh Machine CHECK, never a reconstructed receipt for the old invocation. */

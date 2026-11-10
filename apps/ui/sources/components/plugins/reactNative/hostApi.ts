@@ -303,7 +303,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         assertActive();
         throwIfAborted(options?.signal);
         const envelope = createRequestEnvelope({
-            requestId: createRequestId(),
+            requestId: options?.requestId ?? createRequestId(),
             surface: params.requestSurface,
             method,
             ...(payload !== undefined ? { payload } : {}),
@@ -1068,9 +1068,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const custody = selectedInputs.settle(action, options?.selectedActionInput, consumeSelectedActionInput);
             if (!custody.ok) throwHostApiError('invalid_payload', [custody.reason]);
             const targetedSelection = custody.selected;
-            const requestOptions = options?.signal || targetedSelection
+            const requestOptions = options?.signal || options?.requestId || targetedSelection
                 ? {
                     ...(options?.signal ? { signal: options.signal } : {}),
+                    ...(options?.requestId ? { requestId: options.requestId } : {}),
                     ...(targetedSelection
                         ? {
                             targetedOperation: targetedSelection.carrier.operation,
@@ -1135,9 +1136,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // failure, cancellation and an ambiguous transport result cannot
             // leave a replayable workspace mutation.
             selected?.release();
-            const requestOptions = options?.signal || selected
+            const requestOptions = options?.signal || options?.requestId || selected
                 ? {
                     ...(options?.signal ? { signal: options.signal } : {}),
+                    ...(options?.requestId ? { requestId: options.requestId } : {}),
                     ...(selected
                         ? {
                             targetedOperation: selected.carrier.operation,

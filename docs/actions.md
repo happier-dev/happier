@@ -10,6 +10,17 @@ This page describes the platform's owners and its admission vocabulary. The publ
 contract lives in [api.md](api.md#external-action-api-developer-preview-source-contract); the CLI
 host is in [cli-architecture.md](cli-architecture.md#action-derived-command-arguments).
 
+In unreleased 0.3 source, the plugin dispatcher owns finite-operation admission.
+Before admission, the requesting view's abort signal cancels the request. After
+admission, that signal releases the view's subscriber while the existing finite
+runner completes. Deliberate Stop uses `action.operations.cancel` for the exact
+operation. Transient reads and input forms retain their ordinary abort behavior.
+A prepared New Session handoff stays on the existing device-local operation
+result record while its view is detached. Opening that operation consumes the
+handoff once through the ordinary plugin New Session producer; it neither
+prepares another checkout nor admits another operation. Account retirement still
+withdraws the captured Account's presentation authority.
+
 In unreleased 0.3 source, contextual Run, opinion and Workflow forms open in the
 shared [Start presentation](app-shell-panes.md). Opening, editing, choosing a
 reviewer or recipe, Back and dismissal do not admit work. Explicit Start or Ask
@@ -2034,6 +2045,10 @@ when one is declared, otherwise from its input schema, and preserves hinted labe
 and typed references. Durable requests still validate the full captured invocation;
 an intentionally omitted observation operand does not waive its replay requirement.
 Declared review hints retain their intentional omissions, including private retry keys.
+Machine Preset create and update save configuration under the Preset owner's
+and selected controller or pool's management authority. Current provisioner,
+credential and pool-candidate availability is decided when acquiring a Machine;
+an unavailable configuration can still be saved and edited.
 In 0.3 development, declared select and multiselect options can carry a `labelKey`
 alongside their portable `label`. The shared approval presenter carries the selected
 labels and keys to every approval surface; the UI resolves known string keys through
@@ -4461,6 +4476,16 @@ linking use the parsed Machine selector; operation controls and materialization 
 the linked Session's authenticated owner. Explicit target conflicts are refused, and
 delivery never remaps an exact target to a replacement Machine. Operation results use the
 existing semantic projection rather than exposing private daemon progress.
+
+In 0.3 development, agent, MCP and CLI callers can read linked-session readiness
+with `sessions.external.status.get`, read transcript deltas with
+`sessions.external.transcript.readAfter`, and request
+`sessions.external.takeover.start`. The takeover Action carries the linked Session
+id and destination intent; the host captures the current linked source for the
+existing Machine operation. Readiness excludes private Machine observations,
+and takeover results expose the shared operation reference and presentation.
+Dangerous takeover follows the ordinary surface approval policy. Ephemeral
+viewer leases and the predecessor takeover adapter remain internal.
 
 Client-placed Actions retain the exact Home's signed-root admission and connected-client
 reverse dispatcher. Session-only commands outside the signed-root vocabulary require a

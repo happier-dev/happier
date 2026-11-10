@@ -209,6 +209,11 @@ describe('planTriageBulkEntrySessions', () => {
 });
 
 describe('runTriageBulkEntrySessions', () => {
+    it('keeps a unit not started when Stop arrives during its input selection', async () => {
+        const unit = { creationKey: 'not-dispatched', entries: [selected('17')] };
+        const results = await runTriageBulkEntrySessions({ units: [unit], start: async () => undefined });
+        expect(results).toEqual([{ unit, status: 'notStarted' }]);
+    });
     const units: readonly TriageBulkSessionUnitV1[] = [
         { creationKey: 'key-1', entries: [selected('17')] },
         { creationKey: 'key-2', entries: [selected('18')] },

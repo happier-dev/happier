@@ -680,7 +680,7 @@ function createClientActionActivation(input: Readonly<{
     });
     const resolvedAction = resolved[0];
     if (!resolvedAction || resolved.length !== 1) {
-        throw new Error('client Action fixture did not resolve through the production projection');
+        throw new Error(`client Action fixture did not resolve through the production projection: ${JSON.stringify({ count: resolved.length, actions: Object.values(projectedActions).map(action => ({ id: action.id, execution: action.execution })), bundles: Object.keys(projection.reactNativeBundlesById) })}`);
     }
     const cache = createPluginReactNativeBundleCache();
     cache.putInstalledArtifact({
@@ -2914,7 +2914,8 @@ describe('Account Action placement through the executable dispatcher', () => {
         const accountLifetime = clientAccountLifetime();
         const machine = vi.fn<PluginSurfaceContributedActionTransport>(async () => { throw new Error('Account handler must not be sent to a Machine'); });
         const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
-            accountHandler: async (_input, context) => ({ host: 'invoking-process', invocationId: context.invocationId ?? null }) });
+            accountHandler: async (_input, context) => ({ host: 'invoking-process', invocationId: context.invocationId ?? null,
+                requestId: context.requestId ?? null }) });
         await activation.composition.unload();
         try {
             await activation.composition.reconcile([activation.activation]);
@@ -2923,7 +2924,8 @@ describe('Account Action placement through the executable dispatcher', () => {
                 action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {},
                 clientAction: {}, contributedAction: { machineId: 'optional-provider-machine', serverId: 'server-client-action', execute: machine },
                 pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
-            })).toEqual({ ok: true, result: { host: 'invoking-process', invocationId: 'optional-machine-read-request' } });
+            })).toEqual({ ok: true, result: { host: 'invoking-process', invocationId: 'optional-machine-read-request',
+                requestId: 'optional-machine-read-request' } });
             expect(machine).not.toHaveBeenCalled();
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
@@ -5260,7 +5262,8 @@ describe('plugin-surface action branch selection', () => {
     });
 
     it('reaches the canonical catalog transport from the real configured browser handler', async () => {
-        const { activate } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
+        const { createTriageRunConfiguredActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRun');
+        const { createTriageReadActionsActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
@@ -5293,7 +5296,12 @@ describe('plugin-surface action branch selection', () => {
             confirmationWhen: declaration.confirmationWhen,
             inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
             artifactGraph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'triage-account-runtime', executable: { exports: ['activate'] } },
-            accountManifest: admitted.manifest, accountActivate: activate });
+            accountManifest: { ...admitted.manifest, contributes: { actions: admitted.manifest.contributes.actions.filter(action =>
+                action.id === declaration.id || action.id === 'actions/read-v1') } },
+            accountActivate: api => {
+                api.actions.register(declaration.id, createTriageRunConfiguredActionHandler());
+                api.actions.register('actions/read-v1', createTriageReadActionsActionHandler());
+            } });
         newSessionNavigation.mockClear();
         accountBrowserRelay.enabled = true;
         await activation.composition.unload();

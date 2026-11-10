@@ -46,7 +46,7 @@ describe('consumeActionOperationSnapshotPush', () => {
             readSnapshot: operationId => getActionOperation({ machineId: 'machine-1', serverId: 'home-1',
                 accountId: 'account-1', requireCurrentDomainFacts: true, operationId, rpc: unavailable }),
         });
-        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: reboot }]);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: reboot, snapshotComplete: true }]);
         expect([...store.getSnapshot().machineObservationByKey.values()]).toEqual(['unavailable']);
     });
     it('does not let abandoned read cleanup discard a replacement observer\'s pending revision', async () => {
@@ -76,7 +76,7 @@ describe('consumeActionOperationSnapshotPush', () => {
         pending[3]?.({ kind: 'found', operation: snapshot });
         await Promise.all([current, joined]);
         expect(beforeReplies).toBe(3);
-        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot }]);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot, snapshotComplete: true }]);
     });
     it('joins concurrent notifications of one new revision while a newer revision retains its own fresh read', async () => {
         const store = createActionOperationStore();
@@ -94,11 +94,11 @@ describe('consumeActionOperationSnapshotPush', () => {
         pending[1]!({ kind: 'found', operation: newer });
         pending[0]!({ kind: 'found', operation: snapshot });
         await Promise.all(requests);
-        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: newer }]);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: newer, snapshotComplete: true }]);
     });
     it('does not re-admit unchanged pushed revisions and admits one changed revision exactly once', async () => {
         const store = createActionOperationStore();
-        store.mergeSnapshots({ serverId: 'home-1', snapshots: [snapshot] });
+        store.mergeSnapshots({ serverId: 'home-1', snapshots: [snapshot], snapshotComplete: true });
         let current = snapshot;
         let reads = 0;
         // The external generic RPC transport returns this owner's parsed response.
@@ -115,8 +115,8 @@ describe('consumeActionOperationSnapshotPush', () => {
         current = { ...snapshot, revision: 3, state: 'succeeded', settledAt: 4, result: { sessionId: 'created' } };
         await consume(current);
         expect(reads).toBe(1);
-        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: current }]);
-        expect(onSnapshot).toHaveBeenCalledWith({ serverId: 'home-1', snapshot: current });
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: current, snapshotComplete: true }]);
+        expect(onSnapshot).toHaveBeenCalledWith({ serverId: 'home-1', snapshot: current, snapshotComplete: true });
     });
     it('does not present an older recovery result after a newer owner observation has arrived', async () => {
         const store = createActionOperationStore();
@@ -157,9 +157,9 @@ describe('consumeActionOperationSnapshotPush', () => {
             onSnapshot,
         });
 
-        expect([...store.getSnapshot().operationsByKey.values()]).toStrictEqual([{ serverId: 'home-1', snapshot }]);
+        expect([...store.getSnapshot().operationsByKey.values()]).toStrictEqual([{ serverId: 'home-1', snapshot, snapshotComplete: true }]);
         expect([...store.getSnapshot().machineObservationByKey.values()]).toEqual(['available']);
-        expect(onSnapshot).toHaveBeenCalledWith({ serverId: 'home-1', snapshot });
+        expect(onSnapshot).toHaveBeenCalledWith({ serverId: 'home-1', snapshot, snapshotComplete: true });
     });
 
     it.each([

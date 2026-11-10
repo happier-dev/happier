@@ -244,18 +244,22 @@ export async function runTriageBulkEntrySessions<
     TEntry = TriageBulkEntrySelectionV1,
 >(input: Readonly<{
     units: readonly TriageBulkSessionUnitV1<TEntry>[];
-    start: (unit: TriageBulkSessionUnitV1<TEntry>) => Promise<TOutcome>;
+    /** No answer means the person stopped input selection before dispatch. */
+    start: (unit: TriageBulkSessionUnitV1<TEntry>) => Promise<TOutcome | undefined>;
     signal?: AbortSignal;
+    /** Deliberate bulk Stop prevents later units while the current operation settles. */
+    isStopped?: () => boolean;
 }>): Promise<readonly TriageBulkSessionUnitResultV1<TOutcome, TEntry>[]> {
     const results: TriageBulkSessionUnitResultV1<TOutcome, TEntry>[] = [];
     let cancelled = false;
     for (const unit of input.units) {
-        if (cancelled || input.signal?.aborted === true) {
+        if (cancelled || input.signal?.aborted === true || input.isStopped?.() === true) {
             results.push({ status: 'notStarted', unit });
             continue;
         }
         try {
-            results.push({ status: 'settled', unit, outcome: await input.start(unit) });
+            const outcome = await input.start(unit);
+            results.push(outcome === undefined ? { status: 'notStarted', unit } : { status: 'settled', unit, outcome });
         } catch (error) {
             // The key is retained on the unit this result carries, so a retry
             // re-sends the SAME key and the canonical creator rejoins rather

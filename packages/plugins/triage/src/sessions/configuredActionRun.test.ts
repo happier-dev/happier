@@ -32,7 +32,7 @@ import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/acti
 import { TriageLinkEntryToSessionInputV1Schema } from '../actions/sessionLinksProtocol.js';
 import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import type { OpenNewSessionOptions, PluginUiActionExecutionOptions, PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
 
 type TestAccountActionContext = PluginAccountActionContext & Readonly<{ ui: PluginClientActionUi }>;
 
@@ -86,6 +86,115 @@ function projectOperation(sourceWorkspace = acceptedWorkspace.checkout) {
 }
 
 describe('configured action execution through the shared Session owner', () => {
+    it('retains a typed catalog transport refusal in the configured handoff', async () => {
+        const controller = new AbortController();
+        const host = createTriageConfiguredActionHost({ signal: controller.signal,
+            services: { actions: { execute: async () => { throw new PluginError({ code: 'admission_unavailable' }); } } },
+        } as PluginAccountActionContext);
+        const subject = { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment-a' } as const;
+        const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'deployments.set-up',
+            context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } });
+        expect(await runTriageConfiguredHandoffV1(host, input.handoff, { entries: [], signal: controller.signal }))
+            .toMatchObject({ handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable',
+                detail: { reason: 'action_references_unresolved', cause: 'admission_unavailable' } } });
+    });
+
+    it.each([
+        { control: 'cancel', authoring: false, duringSelection: false }, { control: 'reset', authoring: false, duringSelection: false }, { control: 'dispose', authoring: false, duringSelection: false },
+        { control: 'cancel', authoring: true, duringSelection: false }, { control: 'reset', authoring: true, duringSelection: false }, { control: 'dispose', authoring: true, duringSelection: false },
+        { control: 'cancel', authoring: true, duringSelection: true },
+    ] as const)('routes bulk $control through its own lifetime control (authoring=$authoring, duringSelection=$duringSelection)', async ({ control, authoring, duringSelection }) => {
+        let entered!: () => void;
+        const issued = new Promise<void>(resolve => { entered = resolve; });
+        let finish!: () => void;
+        const stopped = new Promise<void>(resolve => { finish = resolve; });
+        let requestId: string | undefined;
+        let startSignal: AbortSignal | undefined;
+        let starts = 0;
+        const stopInputs: JsonValue[] = [];
+        const operation = {
+            point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } },
+            contributor: { pluginId: entry.entryRef.source.pluginId, contributionId: entry.entryRef.source.localId,
+                occurrenceId: 'source-generation', sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' } },
+            role: 'prepareReviewWorkspace', action: { pluginId: entry.entryRef.source.pluginId, localId: 'prepare-review-workspace' },
+        };
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            selectActionInput: async (request: { hostAction?: unknown; draft?: JsonValue }) => {
+                if (request.hostAction !== undefined) return { kind: 'sessionPlacement', candidate: { projectKey: { id: 'workspace-a' }, serverId: 'server-a',
+                    machineId: 'runtime-machine', rootPath: '/workspace', reachable: true, worktrees: [] } };
+                if (duringSelection) { await owner.getSnapshot().cancel(); entered(); }
+                return { kind: 'submitted', action: operation.action, input: request.draft,
+                    selection: { target: { pluginId: 'happier.triage', sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+                        point: operation.point, contributor: { pluginId: operation.contributor.pluginId,
+                            contributionId: operation.contributor.contributionId, sourceCustody: operation.contributor.sourceCustody } },
+                    connectedAccount: { kind: 'selected', fieldPath: 'instance.binding.account', ref: testkitConfiguredInstance().binding.account },
+                    presentation: { connectedAccountLabel: 'Example forge', machineDisplayName: 'Development machine' } };
+            },
+            openNewSession: async (_input: unknown, options?: OpenNewSessionOptions) => {
+                starts += 1;
+                requestId = options?.requestId;
+                startSignal = options?.signal;
+                entered();
+                await stopped;
+                throw new PluginError({ code: 'unavailable' });
+            },
+            executeAction: async (id: string, input: JsonValue, options?: PluginUiActionExecutionOptions) => {
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (triageBoundaryActionId(id) === 'sessions/start-entry-v1') {
+                    starts += 1;
+                    requestId = options?.requestId;
+                    startSignal = options?.signal;
+                    entered();
+                    await stopped;
+                    return { v: 1, type: 'creationFailed' };
+                }
+                if (id === 'action.operations.list') {
+                    expect(input).toEqual({ requestIdentity: {
+                        actionId: authoring ? `${operation.action.pluginId}/${operation.action.localId}` : 'happier.triage/sessions/start-entry-v1', requestId,
+                    } });
+                    return { items: [{ ...projectOperation().operation, operationId: 'exact-operation',
+                        state: 'running', settledAt: undefined, cancellation: 'supported',
+                        scope: { accountId: 'account-a', machineId: 'runtime-machine' } }], nextCursor: null };
+                }
+                if (id === 'action.operations.cancel') {
+                    stopInputs.push(input);
+                    finish();
+                    return { kind: 'requested' };
+                }
+                throw new Error(`unexpected Action ${id}`);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1;
+        const owner = createTriageBulkEntrySessionsController(host);
+        owner.getSnapshot().run({ action: authoring ? { ...action, workspaceMode: 'pull_request' } : action,
+            destination: authoring ? 'attachAllToNewSession' : 'oneSessionPerEntry', entries: authoring ? [{ ...entry,
+                reviewWorkspace: { operation, preparation: { instance: testkitConfiguredInstance(), entryRef: entry.entryRef,
+                    lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION } },
+            }] : [entry, {
+            ...entry, key: 'issue-2', entryRef: { ...entry.entryRef, entryId: '2' },
+        }], settlementForEntries: () => settlement });
+        await issued;
+        const settled = owner.waitForSettled();
+        if (duringSelection) finish();
+        else if (control === 'dispose') { owner.dispose(); finish(); }
+        else {
+            const cancelling = owner.getSnapshot()[control]();
+            expect(startSignal?.aborted).toBe(false);
+            await cancelling;
+            finish();
+        }
+        const result = await settled;
+        expect(requestId).toEqual(duringSelection ? undefined : expect.any(String));
+        expect(startSignal?.aborted).toBe(duringSelection ? undefined : control === 'dispose');
+        expect(stopInputs).toEqual(control === 'dispose' || duringSelection ? [] : [{ serverId: 'server-a', machineId: 'runtime-machine', operationId: 'exact-operation' }]);
+        expect(starts).toBe(duringSelection ? 0 : 1);
+        if (control !== 'dispose') expect(result.phase).toMatchObject(authoring ? { kind: 'idle' }
+            : { kind: 'settled', results: [{ status: 'settled' }, { status: 'notStarted' }] });
+        owner.dispose();
+    });
+
     it.each([
         { composer: true, preference: 'unresolved' }, { composer: false, preference: 'unresolved' },
         { composer: true, preference: 'ask' }, { composer: true, preference: 'fixed' },

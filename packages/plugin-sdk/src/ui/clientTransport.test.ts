@@ -158,6 +158,26 @@ describe('managed Machine configuration handoff', () => {
 });
 
 describe('exact Session Action addressing', () => {
+    it('preserves a caller request identity for exact operation observation', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['executeAction', 'openNewSession'] });
+                if (message.kind === 'request') { sent.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result: null }); }
+            },
+        } });
+        await api.executeAction('plugins.reload', { pluginId: 'com.acme.fixture' }, { requestId: 'exact-operation-request' });
+        expect(sent).toEqual([expect.objectContaining({ requestId: 'exact-operation-request' })]);
+        await expect(api.executeAction('plugins.reload', { pluginId: 'com.acme.fixture' }, { requestId: '' }))
+            .rejects.toMatchObject({ code: 'invalid_request_id' });
+        await api.openNewSession({}, { requestId: 'exact-authoring-request' });
+        expect(sent.at(-1)).toMatchObject({ method: 'openNewSession', requestId: 'exact-authoring-request' });
+    });
+
     it('serializes the reviewed address separately from strict Action input on the hosted wire', async () => {
         let receive: ((message: unknown) => void) | undefined;
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];

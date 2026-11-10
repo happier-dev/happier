@@ -13,6 +13,10 @@ import { openOrdinaryNewSessionSeed } from '@/components/sessions/new/newSession
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { actionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 
 import {
     createPluginSurfaceHostApiError,
@@ -88,6 +92,8 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
         if (!parsed.success) return errorPayload('invalid_payload', 'open_new_session_request_invalid');
         const mergedSignal = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
         const signal = mergedSignal.signal;
+        let admittedRequestId: string | undefined;
+        let continuationAddress: Readonly<{ serverId: string; operationId: string }> | undefined;
         try {
             const isCurrent = () => input.isCurrent() && input.accountLifetime.isCurrent();
             if (signal?.aborted || !isCurrent()) {
@@ -124,6 +130,10 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                     input: selected.data.input,
                 }, {
                     ...(signal ? { signal } : {}),
+                    onDaemonActionOperationAdmitted: requestId => {
+                        admittedRequestId = requestId;
+                        options?.onDaemonActionOperationAdmitted?.(requestId);
+                    },
                     targetedOperation: operation,
                     selectedActionInput: selected.data,
                 });
@@ -141,7 +151,7 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                         ...(typeof result.reason === 'string' ? [result.reason] : []),
                     ]);
                 }
-                if (signal?.aborted || !isCurrent()) {
+                if (!admittedRequestId && (signal?.aborted || !isCurrent())) {
                     return errorPayload(isCurrent() ? 'unavailable' : 'stale_surface', 'open_new_session_aborted');
                 }
                 const { candidates: _preparedCandidates, ...seedWithoutCandidates } = parsed.data;
@@ -167,15 +177,46 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
             ) {
                 return errorPayload('invalid_payload', 'prepared_review_workspace_selection_unexpected');
             }
-            const outcome = await (input.openNewSession ?? openOrdinaryNewSessionSeed)({
-                seed: settledSeed,
-                pluginId: input.pluginId,
-                scope: input.accountLifetime.scope,
-                ...(signal ? { signal } : {}),
-                isCurrent,
-                ...(input.origin === undefined ? {} : { origin: input.origin }),
-            });
-            return outcome.kind === 'opened' ? null : failure(outcome);
+            const resume = async () => {
+                const outcome = await (input.openNewSession ?? openOrdinaryNewSessionSeed)({
+                    seed: settledSeed,
+                    pluginId: input.pluginId,
+                    scope: input.accountLifetime.scope,
+                    ...(!admittedRequestId && signal ? { signal } : {}),
+                    isCurrent: admittedRequestId ? () => input.accountLifetime.isCurrent() : isCurrent,
+                    ...(input.origin === undefined ? {} : { origin: input.origin }),
+                });
+                if (outcome.kind !== 'opened' && outcome.kind !== 'stale' && continuationAddress && admittedRequestId) {
+                    actionOperationStore.retainNewSessionContinuation(continuationAddress, resume);
+                    actionOperationStore.markFollowUpNeedsAttention({ ...input.accountLifetime.scope,
+                        requestId: admittedRequestId, message: outcome.reason });
+                }
+                return outcome.kind === 'opened' ? null : failure(outcome);
+            };
+            if (admittedRequestId && input.executionTarget) {
+                const scope = input.accountLifetime.scope;
+                let operation = actionOperationSelectors.selectSnapshotByRequestId(
+                    actionOperationStore.getSnapshot(), admittedRequestId, scope.serverId, scope.accountId,
+                );
+                // The finite result owner also joins immediate completions when
+                // the transport answered before its snapshot reached this client.
+                if (!operation && (signal?.aborted || !isCurrent()) && options?.targetedOperation) {
+                    operation = await observeActionOperationByRequestId({ ...scope,
+                        machineId: input.executionTarget.machineId,
+                        requestIdentity: { requestId: admittedRequestId,
+                            actionId: buildQualifiedPluginContributionKey(options.targetedOperation.action) },
+                    });
+                }
+                if (operation) {
+                    const address = { serverId: scope.serverId, operationId: operation.operationId };
+                    continuationAddress = address;
+                    actionOperationStore.retainNewSessionContinuation(address, resume);
+                    if (signal?.aborted || !isCurrent()) return null;
+                    const continuation = actionOperationStore.takeNewSessionContinuation(address);
+                    return continuation ? await continuation() : null;
+                }
+            }
+            return await resume();
         } finally {
             mergedSignal.dispose();
         }

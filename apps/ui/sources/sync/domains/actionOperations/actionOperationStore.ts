@@ -61,6 +61,8 @@ export type ActionOperationStoreSnapshot = Readonly<{
 
 export type ActionOperationStore = Readonly<{
     getSnapshot(): ActionOperationStoreSnapshot;
+    retainNewSessionContinuation(address: ActionOperationAddress, resume: NonNullable<QualifiedActionOperation['resumeNewSession']>): boolean;
+    takeNewSessionContinuation(address: ActionOperationAddress): QualifiedActionOperation['resumeNewSession'] | null;
     subscribe(listener: () => void): () => void;
     readWorkerStatusRevision(scope: ServerAccountScope, machineId: string): number;
     subscribeWorkerStatus(scope: ServerAccountScope, machineIds: readonly string[], listener: () => void): () => void;
@@ -181,6 +183,25 @@ export function createActionOperationStore(): ActionOperationStore {
 
     const store: ActionOperationStore = {
         getSnapshot: () => state,
+        retainNewSessionContinuation(address, resume) {
+            const key = actionOperationAddressKey(address);
+            const current = state.operationsByKey.get(key);
+            if (!current) return false;
+            const operationsByKey = new Map(state.operationsByKey);
+            operationsByKey.set(key, Object.freeze({ ...current, resumeNewSession: resume }));
+            publish(Object.freeze({ ...state, operationsByKey }), false, [key]);
+            return true;
+        },
+        takeNewSessionContinuation(address) {
+            const key = actionOperationAddressKey(address);
+            const current = state.operationsByKey.get(key);
+            if (!current?.resumeNewSession) return null;
+            const { resumeNewSession, ...operation } = current;
+            const operationsByKey = new Map(state.operationsByKey);
+            operationsByKey.set(key, Object.freeze(operation));
+            publish(Object.freeze({ ...state, operationsByKey }), false, [key]);
+            return resumeNewSession;
+        },
         readWorkerStatusRevision: workerStatusChanges.read,
         subscribeWorkerStatus: workerStatusChanges.subscribe,
         subscribe(listener) {
@@ -226,7 +247,9 @@ export function createActionOperationStore(): ActionOperationStore {
                     && current?.snapshot.scope.accountId === snapshot.scope.accountId
                     && current.snapshot.scope.machineId === snapshot.scope.machineId ? current.agentIsolationRecovery : undefined;
                 operationsByKey ??= new Map(state.operationsByKey);
-                operationsByKey.set(incomingOperationKey, recovery ? Object.freeze({ ...qualified, agentIsolationRecovery: recovery }) : qualified);
+                operationsByKey.set(incomingOperationKey, Object.freeze({ ...qualified,
+                    ...(current?.resumeNewSession ? { resumeNewSession: current.resumeNewSession } : {}),
+                    ...(recovery ? { agentIsolationRecovery: recovery } : {}) }));
                 if ((machineObservationByKey ?? state.machineObservationByKey).get(incomingMachineKey) !== 'available') {
                     machineObservationByKey ??= new Map(state.machineObservationByKey);
                     machineObservationByKey.set(incomingMachineKey, 'available');
@@ -368,7 +391,9 @@ export function createActionOperationStore(): ActionOperationStore {
                 if (!canMergeSnapshot((operationsByKey ?? state.operationsByKey).get(incomingOperationKey)?.snapshot, snapshot)) continue;
                 operationsByKey ??= new Map(state.operationsByKey);
                 seenAtByOperationKey = bindPredecessorSeenRevision(incoming, seenAtByOperationKey);
-                operationsByKey.set(incomingOperationKey, incoming);
+                const current = state.operationsByKey.get(incomingOperationKey);
+                operationsByKey.set(incomingOperationKey, current?.resumeNewSession
+                    ? Object.freeze({ ...incoming, resumeNewSession: current.resumeNewSession }) : incoming);
             }
 
             const scopedMachineKey = actionOperationMachineAddressKey({ serverId, machineId: input.machineId });

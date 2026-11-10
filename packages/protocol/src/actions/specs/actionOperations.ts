@@ -3,11 +3,11 @@ import { z } from 'zod/mini';
 
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { TerminalStreamReadRequestSchema, TerminalStreamReadOkResponseSchema } from '../../terminal/stream.js';
-import { ActionOperationListV1RequestSchema, ActionOperationListV1ResponseSchema,
+import { ActionOperationListV2RequestSchema, ActionOperationListV1ResponseSchema,
   ActionOperationGetV2RequestSchema, ActionOperationGetV1ResponseSchema,
   ActionOperationCancelV1ResponseSchema } from '../operations/v1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '../operations/methodsV1.js';
-import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
 import type { ActionInputFieldHint } from '../actionInputHintsRuntime.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -16,7 +16,7 @@ import { ManagedGetInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 export { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 
-import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
+import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export const ActionOperationActionIdV1Schema = lazyZodSchema(() => z.enum(ACTION_OPERATION_ACTION_IDS_V1));
 
@@ -24,7 +24,25 @@ const homeMachine = { serverId: z.string().check(z.trim(), z.minLength(1)), mach
 const managedObservation = () => ({ ...homeMachine, managed: z.optional(ManagedGetInputV1Schema) });
 export const ActionOperationAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionOperationAddressV1Schema));
 export const ActionOperationListActionInputV1Schema = lazyZodSchema(() =>
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV1RequestSchema, managedObservation())));
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV2RequestSchema, managedObservation())));
+/** Mounted callers can address their exact request without learning the runtime placement. */
+export const ActionOperationListPluginInputV1Schema = lazyZodSchema(() => z.safeExtend(ActionOperationListV2RequestSchema, {
+  ...managedObservation(),
+  serverId: z.optional(homeMachine.serverId), machineId: z.optional(homeMachine.machineId),
+}).check(z.superRefine((input, context) => {
+  if (input.serverId !== undefined && input.machineId !== undefined) return;
+  if (input.serverId === undefined && input.machineId === undefined && input.requestIdentity !== undefined && input.managed === undefined) return;
+  context.addIssue({ code: 'custom', message: 'An operation address or exact mounted request is required.' });
+})));
+
+function bindOperationListPluginInput(value: unknown, context: ActionSurfaceBindingContext) {
+  const input = value as z.infer<typeof ActionOperationListPluginInputV1Schema>;
+  if (input.serverId !== undefined && input.machineId !== undefined) return input;
+  if (context.externalActionTarget?.kind !== 'machine' || !context.serverId) {
+    throw new Error('plugin_action_input_binding_failed');
+  }
+  return { ...input, serverId: context.serverId, machineId: context.externalActionTarget.machineId };
+}
 export const ActionOperationGetActionInputV1Schema = lazyZodSchema(() =>
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationGetV2RequestSchema, {
     ...managedObservation(), environmentId: z.optional(DeploymentIdentifierV1Schema),
@@ -158,6 +176,9 @@ function createActionOperationActionSpecs() {
   cli: { commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   inputHints: { title: titles[id], fields: inputFields[id] },
   inputSchema: ActionOperationActionInputSchemasV1[id], outputSchema: ActionOperationActionOutputSchemasV1[id],
+  ...(id === ACTION_OPERATION_LIST_ACTION_ID_V1 ? { surfaceBindings: { plugin: {
+    inputSchema: ActionOperationListPluginInputV1Schema, bindInput: bindOperationListPluginInput,
+  } } } : {}),
 }));
 }
 

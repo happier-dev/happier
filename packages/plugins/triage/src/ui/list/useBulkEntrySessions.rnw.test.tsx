@@ -30,6 +30,7 @@ type BoundaryHost = Readonly<{
     }>) => Promise<unknown>;
     selectActionInput?: (request: unknown) => Promise<unknown>;
     openNewSession?: () => Promise<void>;
+    notify?: (message: string) => Promise<void>;
 }>;
 
 import {
@@ -131,6 +132,7 @@ function repositoryAction() {
 
 function deferredHost(deferredAction: 'sessions.spawn.profiles.list' | 'projects.list') {
     let observedSignal: AbortSignal | undefined;
+    let release!: () => void;
     const host = {
         executeAction: async (
             actionId: string,
@@ -141,14 +143,16 @@ function deferredHost(deferredAction: 'sessions.spawn.profiles.list' | 'projects
                 throw new Error(`triage:test:unexpectedAction:${actionId}`);
             }
             observedSignal = options?.signal;
-            await new Promise<never>((_resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
+                release = resolve;
                 options?.signal?.addEventListener('abort', () => reject(
                     Object.assign(new Error('aborted'), { name: 'AbortError' }),
                 ), { once: true });
             });
+            return deferredAction === 'projects.list' ? { items: [], truncated: false } : { items: [] };
         },
     } as unknown as BoundaryHost;
-    return { host, readSignal: () => observedSignal };
+    return { host, readSignal: () => observedSignal, release: () => release() };
 }
 
 let fixture: PluginUiTestkit | null = null;
@@ -186,6 +190,7 @@ async function mount(host: BoundaryHost, targetedContributions?: ReturnType<type
                     ),
                 }),
                 ...(host.openNewSession === undefined ? {} : { openNewSession: host.openNewSession }),
+                ...(host.notify === undefined ? {} : { notify: async ({ message }) => host.notify!(message) }),
             },
         });
     });
@@ -208,6 +213,36 @@ afterEach(async () => {
 });
 
 describe('bulk cancellation ownership', () => {
+    it('presents an unavailable exact Stop without losing the ongoing bulk result', async () => {
+        let finish!: () => void;
+        const completion = new Promise<void>(resolve => { finish = resolve; });
+        const notices: string[] = [];
+        let starts = 0;
+        await mount({ executeAction: async id => {
+            if (id === 'projects.list') return { items: [], truncated: false };
+            if (id === 'sessions/start-entry-v1') {
+                starts += 1;
+                await completion;
+                return { v: 1, type: 'creationFailed' };
+            }
+            if (id === 'action.operations.list') return { items: [], nextCursor: null };
+            throw new Error(`unexpected Action ${id}`);
+        }, notify: async message => { notices.push(message); } });
+        await act(async () => { controller?.run({ action: action(null), destination: 'oneSessionPerEntry',
+            entries: [ENTRY], settlementForEntries: () => ({
+                executionTarget: { serverId: 'server-a', machineId: 'destination-machine' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } },
+                directory: { kind: 'path', path: '/workspace' },
+            }) }); });
+        await flush();
+        expect(starts).toBe(1);
+        await act(async () => { await controller?.cancel(); });
+        expect(notices).toHaveLength(1);
+        expect(controller?.phase.kind).toBe('starting');
+        finish();
+        await flush();
+        expect(controller?.phase).toMatchObject({ kind: 'settled', results: [{ status: 'settled' }] });
+    });
     it('acquires source get facts before authoring a single PR whose list projection has no review revision', async () => {
         const reads: string[] = [];
         const selections: unknown[] = [];
@@ -284,7 +319,7 @@ describe('bulk cancellation ownership', () => {
         'sessions.spawn.profiles.list',
         'projects.list',
     ] as const) {
-        it(`aborts the in-flight ${deferredAction} read when Stop is pressed`, async () => {
+        it(`stops after the in-flight ${deferredAction} read without aborting its subscriber`, async () => {
             const deferred = deferredHost(deferredAction);
             await mount(deferred.host);
             await act(async () => {
@@ -297,14 +332,15 @@ describe('bulk cancellation ownership', () => {
             await flush();
 
             expect(deferred.readSignal()).toBeDefined();
-            await act(async () => { controller?.cancel(); });
-            expect(deferred.readSignal()?.aborted).toBe(true);
+            await act(async () => { await controller?.cancel(); });
+            expect(deferred.readSignal()?.aborted).toBe(false);
+            deferred.release();
             await flush();
             expect(controller?.phase).toEqual({ kind: 'idle' });
         });
     }
 
-    it('does not let reset hide an in-flight read before it has cancelled that read', async () => {
+    it('does not let reset hide an in-flight read before it settles', async () => {
         const deferred = deferredHost('projects.list');
         await mount(deferred.host);
         await act(async () => {
@@ -316,14 +352,17 @@ describe('bulk cancellation ownership', () => {
         });
         await flush();
 
-        await act(async () => { controller?.reset(); });
-        expect(deferred.readSignal()?.aborted).toBe(true);
+        await act(async () => { await controller?.reset(); });
+        expect(deferred.readSignal()?.aborted).toBe(false);
+        expect(controller?.phase.kind).toBe('resolving');
+        deferred.release();
+        await flush();
         expect(controller?.phase).toEqual({ kind: 'idle' });
     });
 });
 
 describe('bulk placement ownership', () => {
-    it.each(['lostReply', 'cancelledSelection'] as const)('starts ordinary PR repairs through selected preparation and preserves per-unit recovery: %s', async (recovery) => {
+    it.each(['lostReply', 'cancelledSelection', 'stopDuringSelection'] as const)('starts ordinary PR repairs through selected preparation and preserves per-unit recovery: %s', async (recovery) => {
         const starts: TriageStartEntrySessionInputV1[] = [];
         const selections: unknown[] = [];
         const carriers: unknown[] = [];
@@ -347,6 +386,7 @@ describe('bulk placement ownership', () => {
             selectActionInput: async (request: { operation?: typeof operation; draft?: unknown }) => {
                 if (request.operation !== undefined) {
                     authorizationCalls += 1;
+                    if (recovery === 'stopDuringSelection') await controller?.cancel();
                     if (recovery === 'cancelledSelection' && authorizationCalls === 2) return { kind: 'cancelled' };
                     const result = {
                         kind: 'submitted', action: operation.action, input: request.draft,
@@ -379,6 +419,13 @@ describe('bulk placement ownership', () => {
         await mount(host);
         await act(async () => { controller?.run({ action: { ...repositoryAction(), workspaceMode: 'pull_request' }, destination: 'oneSessionPerEntry', entries }); });
         await flush();
+        if (recovery === 'stopDuringSelection') {
+            expect(starts).toEqual([]);
+            expect(controller?.phase).toMatchObject({ kind: 'settled', results: [
+                { status: 'notStarted' }, { status: 'notStarted' },
+            ] });
+            return;
+        }
         if (recovery === 'cancelledSelection') {
             expect(starts).toHaveLength(1);
             expect(controller?.phase).toMatchObject({ kind: 'settled', results: [

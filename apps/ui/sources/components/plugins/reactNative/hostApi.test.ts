@@ -262,6 +262,7 @@ describe('canonical React Native plugin Host API adapter', () => {
             // Substitute the Action delivery boundary, keeping mounted request
             // parsing, admission and public result normalization real.
             executeAction: request => { requests.push(request); return { plugins: [] }; },
+            openNewSession: request => { requests.push(request); return null; },
         } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
@@ -273,9 +274,13 @@ describe('canonical React Native plugin Host API adapter', () => {
         try {
             await adapter.api.executeAction('plugins.list', {});
             await adapter.api.executeAction('plugins.list', {});
-            expect(requests).toHaveLength(2);
+            await adapter.api.executeAction('plugins.list', {}, { requestId: 'bulk-action-request' });
+            await adapter.api.openNewSession({ prompt: 'Review changes' }, { requestId: 'bulk-composer-request' });
+            expect(requests).toHaveLength(4);
             for (const request of requests) expect(ExternalActionRequestIdV1Schema.safeParse(request.requestId).success).toBe(true);
             expect(requests[0]!.requestId).not.toBe(requests[1]!.requestId);
+            expect(requests[2]!.requestId).toBe('bulk-action-request');
+            expect(requests[3]!.requestId).toBe('bulk-composer-request');
         } finally { adapter.dispose(); }
     });
 

@@ -34,6 +34,9 @@ export async function requestTriageNewSessionAuthoringV1(
         placement: TriageActionExecutionPlacementV1 | null;
         candidates: readonly PluginUiSessionPlacementCandidateV1[];
         signal?: AbortSignal;
+        /** Correlates this bulk press with its prepared workspace operation. */
+        requestId?: string;
+        onRequest?: (requestId: string | null) => void;
         /** The single-entry controller's existing mount-currentness owner. */
         isCurrent?: () => boolean;
         directoryIntent?: Parameters<typeof requestTriageNewSessionSeed>[1]['directoryIntent'];
@@ -72,6 +75,7 @@ export async function requestTriageNewSessionAuthoringV1(
         if (input.signal?.aborted || input.isCurrent?.() === false) return { status: 'cancelled' };
         const directoryIntent = input.directoryIntent
             ?? (input.checkoutIntent === 'preparedReviewWorkspace' ? undefined : placement?.directoryIntent);
+        if (input.requestId !== undefined) input.onRequest?.(input.requestId);
         return await requestTriageNewSessionSeed(host, {
             ...(delivery.kind === 'compose' && delivery.text !== undefined ? { prompt: delivery.text } : {}),
             ...(input.actionDefault === undefined ? {} : { actionDefault: input.actionDefault }),
@@ -88,7 +92,8 @@ export async function requestTriageNewSessionAuthoringV1(
             } }),
             ...(input.candidates.length === 0 ? {} : { candidates: [...input.candidates] }),
             ...(delivery.kind === 'compose' && delivery.attachments.length > 0 ? { attachments: delivery.attachments } : {}),
-        }, { ...preparation, signal: input.signal });
+        }, { ...preparation, signal: input.signal, ...(input.requestId === undefined ? {} : { requestId: input.requestId }) })
+            .finally(() => input.onRequest?.(null));
     } catch (error) {
         if (input.signal?.aborted || input.isCurrent?.() === false) return { status: 'cancelled' };
         return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };

@@ -268,7 +268,9 @@ describe('Action operation v1 contract', () => {
     }
   });
   it('retains one qualified immutable deployment receipt for current readers and omits it for released V1 readers', () => {
-    const domainRef = { kind: 'deployment', serverId: 'home', environmentId: 'staging', deploymentId: 'receipt-a' };
+    const domainRef = { kind: 'deployment', serverId: 'home', environmentId: 'staging', deploymentId: 'receipt-a',
+      expectedDown: { operation: 'backup', targetLinkId: 'link', machineId: 'machine-1', installationId: 'installation', serviceIds: ['instance/web'],
+        domains: [{ environmentId: 'staging', targetLinkId: 'link', domainId: 'domain', machineId: 'machine-1', installationId: 'installation' }] } };
     const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, domainRef });
     expect(snapshot.domainRef).toEqual(domainRef);
     expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('domainRef');

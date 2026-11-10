@@ -455,10 +455,10 @@ export async function createPluginUiHostApiClientFromTransport(
     function unavailable(code = 'ui_host_unavailable', message = 'Plugin UI host API is unavailable.'): PluginUiHostApiClientError {
         return new PluginUiHostApiClientError(code, message, true);
     }
-    function nextRequestId(): string {
-        const requestId = createRequestId();
+    function nextRequestId(requestedId?: string): string {
+        const requestId = requestedId ?? createRequestId();
         if (requestId.trim() === '') throw new PluginUiHostApiClientError('invalid_request_id', 'The host API request id must not be empty.');
-        if (issuedInjectedRequestIds?.has(requestId)) throw new PluginUiHostApiClientError('duplicate_request_id', 'The host API request id was already issued.');
+        if (pending.has(requestId) || issuedInjectedRequestIds?.has(requestId)) throw new PluginUiHostApiClientError('duplicate_request_id', 'The host API request id was already issued.');
         issuedInjectedRequestIds?.add(requestId);
         return requestId;
     }
@@ -689,12 +689,13 @@ export async function createPluginUiHostApiClientFromTransport(
         selectedActionInput?: SelectedActionInputCarrier,
         consumeSelectedActionInput?: true,
         onIssued?: (requestId: string) => void,
+        requestedId?: string,
     ): Promise<JsonValue | undefined> {
         if (!online) return Promise.reject(unavailable());
         if (!advertises(method)) return Promise.reject(new PluginUiHostApiClientError('unsupported_method', `Host method ${method} is unavailable.`));
         if (signal?.aborted) return Promise.reject(new PluginUiHostApiClientError('aborted'));
         let requestId: string;
-        try { requestId = nextRequestId(); } catch (error) { return Promise.reject(error); }
+        try { requestId = nextRequestId(requestedId); } catch (error) { return Promise.reject(error); }
         onIssued?.(requestId);
         return settleWithHost({
             method,
@@ -897,6 +898,8 @@ export async function createPluginUiHostApiClientFromTransport(
                 requestOptions?.signal,
                 selectedActionInput,
                 consumeSelectedActionInput ? true : undefined,
+                requestOptions?.onIssued,
+                requestOptions?.requestId,
             )) ?? null;
         }
         ) as PluginUiHostApi['executeAction'],
@@ -987,6 +990,8 @@ export async function createPluginUiHostApiClientFromTransport(
                 requestOptions?.signal,
                 selected?.success ? selected.data : undefined,
                 selected?.success ? true : undefined,
+                undefined,
+                requestOptions?.requestId,
             );
         },
         openAutomationEvent: async (openRequest, requestOptions) => {

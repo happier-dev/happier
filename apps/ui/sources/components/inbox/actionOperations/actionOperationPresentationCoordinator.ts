@@ -1,4 +1,5 @@
 import type { ActionOperationDeclarationV1, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import {
     actionOperationAddress,
     actionOperationAddressKey,
@@ -118,6 +119,15 @@ export function createActionOperationPresentationCoordinator(deps: Readonly<{
         open(operation: QualifiedActionOperation): void {
             if (!normalizeActionOperationServerId(operation.serverId)) return;
             const { snapshot } = operation;
+            const resumeNewSession = actionOperationStore.takeNewSessionContinuation(
+                actionOperationAddress(operation.serverId, snapshot.operationId),
+            );
+            if (resumeNewSession) {
+                void resumeNewSession().then(result => {
+                    if (result === null) acknowledgePresented(operation);
+                });
+                return;
+            }
             const registration = registrationFor(operation);
             const reopen = registration?.origin?.resolve(snapshot) ?? null;
             if (reopen) {

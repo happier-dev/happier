@@ -12,7 +12,7 @@ import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
-import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failureResponse.js';
@@ -42,6 +42,7 @@ import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploy
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
   type DeploymentBackupFailureResultV1 } from '../../deployments/deploymentBackupActionsV1.js';
+import { MachineProvisionerSnapshotResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { DeploymentRestoreFailureResultV1Schema, type DeploymentRestoreFailureResultV1 } from '../../deployments/deploymentBackupRestoreV1.js';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
@@ -358,6 +359,13 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
   z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,
+    /** Exact subjects declared by the admitted native owner before interruption. */
+    expectedDown: z.optional(z.strictObject({
+      operation: z.enum(['deploy', 'backup']), targetLinkId: ActionOperationIdentifierV1Schema,
+      machineId: ActionOperationIdentifierV1Schema, installationId: ActionOperationIdentifierV1Schema,
+      serviceIds: z.readonly(z.array(ActionOperationIdentifierV1Schema)),
+      domains: z.readonly(z.array(MachineDeploymentDomainReferenceV1Schema)),
+    })),
   }),
   z.strictObject({
     kind: z.literal('forkRequest'),
@@ -472,6 +480,8 @@ export const ActionOperationObservationV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.enum(['outcome_uncertain', 'stop_unconfirmed']), code: ActionOperationErrorCodeV1Schema }),
   z.strictObject({ kind: z.literal('review_required'), code: z.literal('agent_isolation_effect_changed'),
     machineId: ActionOperationIdentifierV1Schema, enabled: z.boolean(), current: MachineAgentIsolationReadyPreviewV1Schema }),
+  z.strictObject({ kind: z.literal('review_required'), code: z.literal('restore_snapshot_not_confirmed'),
+    snapshot: asProtocolZod(MachineProvisionerSnapshotResultV1Schema).check(z.refine(value => value.kind !== 'confirmed')) }),
 ]));
 export type ActionOperationObservationV1 = Readonly<z.infer<typeof ActionOperationObservationV1Schema>>;
 
@@ -561,9 +571,14 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   if (terminal && snapshot.observation !== undefined) {
     context.addIssue({ code: 'custom', path: ['observation'], message: 'Unconfirmed observations cannot accompany terminal process evidence.' });
   }
-  if (snapshot.observation?.kind === 'review_required' && (snapshot.actionId !== 'machines.agentIsolation.set'
+  if (snapshot.observation?.kind === 'review_required' && snapshot.observation.code === 'agent_isolation_effect_changed'
+    && (snapshot.actionId !== 'machines.agentIsolation.set'
     || snapshot.observation.machineId !== snapshot.scope.machineId)) {
     context.addIssue({ code: 'custom', path: ['observation'], message: 'Isolation review belongs to its exact Machine operation.' });
+  }
+  if (snapshot.observation?.kind === 'review_required' && snapshot.observation.code === 'restore_snapshot_not_confirmed'
+    && (snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || snapshot.domainRef?.kind !== 'deployment')) {
+    context.addIssue({ code: 'custom', path: ['observation'], message: 'Snapshot review belongs to its exact restore operation.' });
   }
   if (snapshot.setupReview && (terminal || snapshot.domainRef?.kind !== 'projectCommand'
     || !canRetainProjectSetupReviewV1(snapshot.actionId)
@@ -594,7 +609,8 @@ export function projectDeploymentBackupFailureResultV1(actionId: string, errorCo
   if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
   if (actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
     const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined,
-      ...readDeploymentBackupMaintenanceFailureEvidenceV1({ details }) });
+      ...readDeploymentBackupMaintenanceFailureEvidenceV1({ details }),
+      ...('snapshot' in details ? { snapshot: details.snapshot } : {}) });
     return parsed.success ? parsed.data : undefined;
   }
   if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;

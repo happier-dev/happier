@@ -9,6 +9,46 @@ import { executeActionOperationActionV1 } from './executor/actionOperationAction
 import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
 
 describe('operation and retained output Actions', () => {
+  it('binds a plugin exact-request lookup to its mounted runtime without changing qualified operands', async () => {
+    const transport = vi.fn(async () => ({ items: [], nextCursor: null }));
+    const executor = createActionExecutor({
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
+    } as ActionExecutorDeps);
+    const requestIdentity = { actionId: 'happier.triage/sessions/start-entry-v1', requestId: 'bulk-start-request' };
+    const context = { surface: 'plugin' as const, serverId: 'home', bypassApprovals: true,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'runtime-machine' },
+      actionCaller: { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'list' } };
+    expect(await executor.execute('action.operations.list', { requestIdentity }, context))
+      .toMatchObject({ ok: true, result: { items: [], nextCursor: null } });
+    expect(transport).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: 'home', machineId: 'runtime-machine',
+      payload: { requestIdentity } }));
+    expect(await executor.execute('action.operations.list', { serverId: 'home', machineId: 'explicit-machine', requestIdentity }, context))
+      .toMatchObject({ ok: true });
+    expect(transport).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: 'explicit-machine' }));
+    expect(await executor.execute('action.operations.list', {}, context)).toMatchObject({ ok: false });
+    transport.mockClear();
+    expect(await executor.execute('action.operations.list', { serverId: 'other-home', machineId: 'explicit-machine', requestIdentity }, context))
+      .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+    expect(await executor.execute('action.operations.list', { requestIdentity }, { ...context, externalActionTarget: undefined }))
+      .toMatchObject({ ok: false });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('looks up only the exact retained request identity through operation admission', async () => {
+    const transport = vi.fn(async () => ({ items: [], nextCursor: null }));
+    const executor = createActionExecutor({
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
+    } as ActionExecutorDeps);
+    const input = { serverId: 'home', machineId: 'machine', requestIdentity: {
+      actionId: 'happier.triage/sessions/start-entry-v1', requestId: 'bulk-start-request',
+    } };
+    expect(await executor.execute('action.operations.list', input,
+      { surface: 'ui', serverId: 'home', bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { items: [], nextCursor: null } });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ method: 'actionOperation.list.v2',
+      payload: { requestIdentity: input.requestIdentity } }));
+  });
+
   it.each(['accept', 'decline', 'unmounted'] as const)(
     'keeps %s product Stop confirmation out of agent approval custody', async outcome => {
       const transport = vi.fn(async () => ({ kind: 'requested' }));

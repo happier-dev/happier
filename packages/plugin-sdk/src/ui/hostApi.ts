@@ -433,6 +433,10 @@ export type EphemeralInputSettlement = PluginUiEphemeralInputSettlementV1;
  * It is transient host-selection data, never part of the Action input payload.
  */
 export type PluginUiActionExecutionOptions = ActionExecutionOptions & Readonly<{
+    /** Observe the issued host request identity without changing the Action result. */
+    onIssued?: (requestId: string) => void;
+    /** Exact invocation identity for observing or stopping this Action operation. */
+    requestId?: string;
     selectedActionInput?: PluginUiSelectedActionInputCarrierV1;
 }>;
 
@@ -447,6 +451,8 @@ export type PluginUiActionExecutionOptions = ActionExecutionOptions & Readonly<{
  * own contribution protocol remains the full result-schema owner.
  */
 export type OpenNewSessionOptions = PluginCancellationOptions & Readonly<{
+    /** Correlates any admitted preparation with this exact host request. */
+    requestId?: string;
     preparedReviewWorkspace?: PluginUiSelectedActionInputCarrierV1;
 }>;
 
