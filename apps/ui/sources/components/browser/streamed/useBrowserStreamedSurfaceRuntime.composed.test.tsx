@@ -90,7 +90,7 @@ const boundary = vi.hoisted(() => ({
     maxFrameBytes: undefined as number | undefined,
     sourceAdmission: null as ((payload: unknown) => Promise<unknown>) | null,
     startRelay: null as ((payload: unknown) => Promise<unknown>) | null,
-    sharedViewer: false,
+    sharedViewer: false as false | 'use' | 'manage',
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -257,7 +257,8 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     machine: { id: 'machine_1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
                         metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
                         storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                        access: { custodian: { accountId: home.accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } },
+                        access: { custodian: { accountId: boundary.sharedViewer ? 'machine-owner' : home.accountId, displayName: 'Owner' },
+                            role: boundary.sharedViewer || 'manage', resourceMode: 'plain', accessState: 'ready' } },
                 }] }));
             }
             if (boundary.actionDispatch && /^\/v1\/actions\/browser\.(goBack|goForward|reload|stop|navigate)$/.test(path)) {
@@ -552,10 +553,10 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             rpcContext: { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } };
         boundary.sourceAdmission = payload => rpc.invokeLocal(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, payload, rpcContext);
         client.registerBrowserControlRoutes(routes);
-        boundary.sharedViewer = role !== 'owner';
+        boundary.sharedViewer = role === 'owner' ? false : role;
         const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_1', nowMs: Date.now,
             accountId: 'machine-owner', sourceMachineInstallationId: 'installation',
-            resolveRelayAuthorizationTrustRoots: () => [{ keyId: 'viewer-test', publicKeyBase64Url: installation.publicKey }],
+            resolveRelayAuthorizationTrustRoots: () => [{ keyId: 'viewer-test', publicKey: installation.publicKey }],
             captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry),
             emitEnvelope: envelope => { for (const listener of boundary.listeners) listener(envelope); } });
         client.registerLiveStreamRelayRoutes(relay);
@@ -600,7 +601,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             if (role === 'use' && browserOwner !== 'self') {
                 // A guest can present a known/stale source id directly. The mounted viewer must
                 // fail admission even when discovery previously supplied that exact source.
-                await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.unavailableReason)
+                await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.playerState?.diagnostic?.reasonCode)
                     .toBe('capture_source_denied')); });
                 expect(captureStarted).toBe(false);
                 expect(boundary.requests).not.toContainEqual(expect.objectContaining({
@@ -615,7 +616,8 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             await act(async () => { await vi.waitFor(() => expect(boundary.requests).toContainEqual(expect.objectContaining({
                 method: role === 'owner' ? RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START : RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
             }))); });
-            await act(async () => { await vi.waitFor(() => expect(captureStarted).toBe(true)); });
+            await act(async () => { await vi.waitFor(() => expect(captureStarted,
+                JSON.stringify(hook.getCurrent().picture?.playerState)).toBe(true)); });
             await act(async () => { for (const listener of cdpListeners) listener({ method: 'Page.screencastFrame', sessionId: 'cdp',
                 params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } }); });
             await flushHookEffects();
