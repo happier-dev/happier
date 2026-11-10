@@ -1,6 +1,7 @@
 import type { AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '../../connectedAccounts/service.js';
 
-const GEMINI_ACCOUNT_SERVICE_ID = 'happier.agent.gemini/gemini-account';
+const GEMINI_ACCOUNT_SERVICE_ID = `${GEMINI_CONNECTED_ACCOUNT_SERVICE.pluginId}/${GEMINI_CONNECTED_ACCOUNT_SERVICE.localId}`;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

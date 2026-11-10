@@ -2,10 +2,12 @@
 // and cli-v0.2.1 (b1d15a8a9c241737d1ca9b167459901e6259173a). The unsupported
 // sentinel is storage/migration-only. Remove after that support window ends and no persisted
 // Gemini OAuth row requires reverse projection.
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from './service.js';
+
 export const BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY = Object.freeze([
   {
     legacyServiceId: 'gemini',
-    serviceLocalId: 'gemini-account',
+    serviceLocalId: GEMINI_CONNECTED_ACCOUNT_SERVICE.localId,
     peerOperations: {
       exactV0_2_1: [
         'account_list',

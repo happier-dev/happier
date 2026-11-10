@@ -1,12 +1,10 @@
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { QualifiedConnectedAccountRefJsonSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
 
-export const GITHUB_PLUGIN_ID = 'happier.scm.forge.github';
-export const GITHUB_CONNECTED_ACCOUNT_ID = 'github-account';
-export const GITHUB_CONNECTED_ACCOUNT_SERVICE = Object.freeze({
-  pluginId: GITHUB_PLUGIN_ID,
-  localId: GITHUB_CONNECTED_ACCOUNT_ID,
-});
+export { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
+export const GITHUB_PLUGIN_ID = GITHUB_CONNECTED_ACCOUNT_SERVICE.pluginId;
+export const GITHUB_CONNECTED_ACCOUNT_ID = GITHUB_CONNECTED_ACCOUNT_SERVICE.localId;
 /** Declared host-access purpose for materializing the selected GitHub account. */
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';
@@ -21,6 +19,22 @@ export const GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID = 'automat
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION = 1;
 export const GITHUB_API_ORIGIN = 'https://api.github.com';
 export const GITHUB_API_VERSION = '2026-03-10';
+export const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    v: { type: 'integer', const: 1 },
+    repositoryId: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
+    owner: { type: 'string', minLength: 1, maxLength: 256 },
+    name: { type: 'string', minLength: 1, maxLength: 256 },
+    nameWithOwner: { type: 'string', minLength: 3, maxLength: 512 },
+  }, required: ['v', 'repositoryId', 'owner', 'name', 'nameWithOwner'],
+} satisfies PluginJsonSchema;
+/** Source setup, observation and receipt publication retain one exact provider contract. */
+export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: { v: { type: 'integer', const: 1 }, credentialRef: QualifiedConnectedAccountRefJsonSchema,
+    repository: GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA }, required: ['v', 'credentialRef', 'repository'],
+} satisfies PluginJsonSchema;
 /** Known media locations for cooperative network disclosure, not a redirect allowlist. */
 export const GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1 = Object.freeze([
   'actions.githubusercontent.com', 'blob.core.windows.net', 'release-assets.githubusercontent.com',

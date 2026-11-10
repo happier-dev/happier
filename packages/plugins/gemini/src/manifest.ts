@@ -10,6 +10,7 @@ import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connecte
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createGeminiAgentRuntime } from './agent/runtime/factory.js';
 import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from './connectedAccounts/service.js';
 import { geminiPortableAuthentication } from './connectedAccounts/portableAuthentication.js';
 import { GEMINI_PROVIDER_BINDING_ADAPTER_V1, GEMINI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 
@@ -20,7 +21,7 @@ const resolveGeminiDaemonSpawnPrerequisitesHook: HookHandler =
     resolveGeminiDaemonSpawnPrerequisites(event, context);
 
 export const GEMINI_PLUGIN = definePlugin({
-  id: 'happier.agent.gemini',
+  id: GEMINI_CONNECTED_ACCOUNT_SERVICE.pluginId,
   version: '0.0.0',
   displayName: 'Gemini',
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
@@ -52,7 +53,7 @@ export const GEMINI_PLUGIN = definePlugin({
     optional: [],
   },
   connectedAccountDescriptors: {
-    'gemini-account': {
+    [GEMINI_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
         title: 'Gemini',
         ui: { iconResourceId: 'agent-mark', setup: { order: 2, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogGemini', fallback: 'API key or a Google Cloud service account.' } } },
@@ -153,7 +154,7 @@ export const GEMINI_PLUGIN = definePlugin({
         },
         connectedAccounts: [{
           purpose: 'model_upstream',
-          service: 'gemini-account',
+          service: GEMINI_CONNECTED_ACCOUNT_SERVICE.localId,
           required: false,
           materializationKinds: ['files', 'environment'],
           credentialKinds: ['token'],
@@ -213,6 +214,7 @@ export const GEMINI_PLUGIN = definePlugin({
         continuity: {
           generationApplicationScope: 'per_session_runtime',
           runtimeAuthAdapter: createGeminiConnectedServiceRuntimeAuthAdapter(),
+          verifyResumeReachable: async () => ({ ok: false, reason: 'gemini_resume_reachability_unsupported' }),
         },
       },
       cliSessionCommand: {

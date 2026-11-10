@@ -21,7 +21,12 @@
     "./happier-plugin-ui/github-forge-native": "./src/ui/forge/renderForgeSurface.tsx",
     "./happier-plugin-ui/github-local-act-actions": "./src/ui/actions/local/activate.ts",
     "./happier-plugin-ui/github-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx",
-    "./happier-plugin-ui/github-collection-migrations": "./src/collectionMigrationArtifact.ts"
+    "./happier-plugin-ui/github-collection-migrations": "./src/collectionMigrationArtifact.ts",
+    "./connected-account-service": {
+      "happier-source": "./src/connectedAccounts/service.ts",
+      "types": "./dist/connectedAccounts/service.d.ts",
+      "default": "./dist/connectedAccounts/service.js"
+    }
   },
   "files": [
     "dist",

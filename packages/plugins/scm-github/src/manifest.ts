@@ -1,4 +1,5 @@
 import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
+import { GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA, GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA } from './observations/githubProviderContracts.js';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { githubAccountCredentialRuntime } from './auth/credentialMaterialization.js';
 import { activate as activateGithubAccountRuntime } from './accountRuntime.js';
@@ -338,31 +339,6 @@ const GITHUB_REPOSITORY_SETUP_INPUT_HINTS = {
   }],
 } satisfies ActionInputHints;
 
-const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    repositoryId: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-    owner: { type: 'string', minLength: 1, maxLength: 256 },
-    name: { type: 'string', minLength: 1, maxLength: 256 },
-    nameWithOwner: { type: 'string', minLength: 3, maxLength: 512 },
-  },
-  required: ['v', 'repositoryId', 'owner', 'name', 'nameWithOwner'],
-} satisfies PluginJsonSchema;
-
-/** Private source facts persisted only through the canonical Automation writer. */
-const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    credentialRef: QualifiedConnectedAccountRefJsonSchema,
-    repository: GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA,
-  },
-  required: ['v', 'credentialRef', 'repository'],
-} satisfies PluginJsonSchema;
-
 const GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA = {
   ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
   properties: { ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.properties,
@@ -588,7 +564,7 @@ function createGithubPlugin(): GithubPlugin {
           { kind: 'fixedOrigin', origin: 'https://api.github.com' },
           { kind: 'fixedOrigin', origin: 'https://github.com' },
           { kind: 'scmProviderOrigin', provider: 'github' },
-          { kind: 'connectedAccountOrigin', service: 'github-account' },
+          { kind: 'connectedAccountOrigin', service: GITHUB_CONNECTED_ACCOUNT_ID },
         ],
         // The host revalidates the exact origin AND method at dispatch, so a verb a
         // declared Action consumes but this grant omits is rejected as
@@ -613,7 +589,7 @@ function createGithubPlugin(): GithubPlugin {
       capability: 'connectedAccounts',
       reason: 'Materialize the declared GitHub credential: an exact selected Connected Account or this machine’s GitHub CLI login.',
       scope: {
-        serviceRefs: ['github-account'],
+        serviceRefs: [GITHUB_CONNECTED_ACCOUNT_ID],
         operations: ['select', 'use'],
         materializationKinds: ['httpHeaders'],
       },

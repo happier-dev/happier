@@ -22,6 +22,11 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "exports": {
+    "./connected-account-service": {
+      "happier-source": "./src/connectedAccounts/service.ts",
+      "types": "./dist/connectedAccounts/service.d.ts",
+      "default": "./dist/connectedAccounts/service.js"
+    },
     "./happier-plugin-ui/connected-account-authentication": {
       "happier-source": "./src/connectedAccounts/portableAuthentication.ts",
       "default": "./dist/connectedAccounts/portableAuthentication.js"

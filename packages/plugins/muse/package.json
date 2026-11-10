@@ -20,6 +20,11 @@
       "happier-source": "./src/agent/runtime.ts",
       "types": "./dist/agent/runtime.d.ts",
       "default": "./dist/agent/runtime.js"
+    },
+    "./connected-account-service": {
+      "happier-source": "./src/connectedAccounts/declarations.ts",
+      "types": "./dist/connectedAccounts/declarations.d.ts",
+      "default": "./dist/connectedAccounts/declarations.js"
     }
   },
   "files": [
