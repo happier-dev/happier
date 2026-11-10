@@ -5,8 +5,9 @@ import { readRegistryFailureStatus, type RegistryFailureStatus } from './describ
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { invalidateUiRegistryItemMemoV1, invalidateUiRegistryUpdateMemoV1, useRegistryCarrierRecovery } from './registryHostDeps';
+import { invalidateUiRegistryItemMemoV1, invalidateUiRegistryUpdateMemoV1, invalidateUiRegistrySourcesMemoV1, useRegistryCarrierRecovery } from './registryHostDeps';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useStoreActionTarget } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 class RegistryReadFailure extends Error {
     constructor(message: string, readonly status: RegistryFailureStatus | null) { super(message); }
@@ -28,14 +29,16 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     refresh: () => Promise<void>;
     execution: ReturnType<typeof useMountedActionExecution>;
     scope: ReturnType<typeof useAccountSettingsScope>;
+    externalActionTarget: ReturnType<typeof useStoreActionTarget>;
 } {
     const presented = useLayoutPresentationActive();
     enabled = enabled && presented;
     const demand = React.useRef(enabled);
     demand.current = enabled;
     const scope = useAccountSettingsScope();
+    const externalActionTarget = useStoreActionTarget();
     const execution = useMountedActionExecution(scope);
-    const scopeKey = JSON.stringify([scope?.serverId, scope?.accountId]);
+    const scopeKey = JSON.stringify([scope?.serverId, scope?.accountId, externalActionTarget]);
     const inputKey = JSON.stringify(input);
     const args = React.useMemo(() => JSON.parse(inputKey) as unknown, [inputKey]);
     const parser = React.useRef(parse);
@@ -60,13 +63,14 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         // Healthy reads keep their memo; outages do not start an automatic retry loop.
         if (previous.scopeKey === scopeKey && previous.inputKey === inputKey && Object.is(previous.revision, revision)) {
             const retryable = (status: RegistrySourceStatusV1 | null) => status?.state === 'needs_machine' || status?.state === 'unreachable';
-            // Listing pages own recovery independently. A failed source retries on
-            // reopen without forcing every healthy sibling to fetch again.
+            // Listing pages retain admitted failures until explicit Retry, without
+            // forcing healthy siblings to fetch again on navigation.
             force ||= actionId !== REGISTRY_ITEMS_LIST_ACTION_ID_V1 && (retryable(previous.status)
                 || Boolean(recoveryOptions.current?.failures?.(previous.value).some(page => retryable(page.status))));
         }
         if (force && actionId === 'registries.items.read' && scope) invalidateUiRegistryItemMemoV1(scope, args);
         if (force && actionId === 'registries.updates.check' && scope) invalidateUiRegistryUpdateMemoV1(scope, args);
+        if (force && actionId === 'registries.sources.list' && scope) invalidateUiRegistrySourcesMemoV1(scope, args);
         setState(previous => {
             // A source-list revision refreshes descriptors, not their Account authority. Keep this exact
             // list mounted (including mutation receipts); item reads still withdraw on source changes.
@@ -78,7 +82,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         try {
             const value = force && actionId === 'registries.items.list' && args && typeof args === 'object'
                 ? { ...args, refresh: true } : args;
-            const result = await execution.execute(actionId, value, { signal: controller.signal });
+            const result = await execution.execute(actionId, value, { signal: controller.signal, externalActionTarget });
             if (request !== generation.current || !execution.isCurrent()) return;
             if (!result.ok) throw new RegistryReadFailure(result.error, readRegistryFailureStatus(result.details));
             // The registry protocol host already validated this same-process Action result.
@@ -98,7 +102,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
                     status: error instanceof RegistryReadFailure ? error.status : null };
             });
         } finally { if (pending.current === controller) pending.current = null; }
-    }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision]);
+    }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget]);
     const refresh = React.useCallback(() => load(true), [load]);
     React.useEffect(() => {
         void load(false);
@@ -118,5 +122,5 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         status: execution.ready ? current.status : null,
         // A demanded read that has not answered is still loading: the render between demand and its effect never settles empty.
         loading: enabled && (current.loading || !execution.ready || !answered || stale && current.error === null),
-        stale, refresh, execution, scope };
+        stale, refresh, execution, scope, externalActionTarget };
 }

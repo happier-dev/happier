@@ -543,7 +543,10 @@ grant access or replace current source authority. Failed refresh can preserve
 last-known items only for the same Account/query/source identity; removal,
 disablement or supplier retirement withdraws old results and install authority.
 In 0.3 development, first-page listings are reused per source across Store views,
-so a failed catalog does not refetch healthy siblings. Rate-limited pages retain
+including settled unreachable pages, so navigation does not retry known failures
+or refetch healthy siblings. Source descriptors share the same Account/source
+revision memo, including their kind-specific Picks emptiness read; explicit Retry
+reacquires them. Rate-limited pages retain
 last-good rows and discovery metadata across navigation, with an “Updated earlier”
 status and manual Retry; no idle timer refetches them. Discovery artwork consumes
 listing summaries rather than fetching an item's installation payload per card.

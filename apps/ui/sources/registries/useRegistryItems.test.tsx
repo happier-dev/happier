@@ -264,7 +264,11 @@ describe('registry item last-known reads through the Account and HTTP owners', (
             return item ? Response.json({ name: item.name, versions: { [item.version]: item }, 'dist-tags': { latest: item.version } }) : null;
         } });
         onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
-        const hook = await renderHook((enabled: boolean) => useRegistryItems({ kind, sourceIds: [HAPPIER_PICKS_SOURCE_ID, sourceId] }, enabled),
+        const hook = await renderHook((enabled: boolean) => {
+            // The directory's catalog selector consumes this alongside its items.
+            useRegistrySources(kind, enabled);
+            return useRegistryItems({ kind, sourceIds: [HAPPIER_PICKS_SOURCE_ID, sourceId] }, enabled);
+        },
             { initialProps: true });
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         const ids = kind === 'mcpServer' ? ['retained/server0', 'retained/server1', 'retained/server2'] : packages.map(item => item.name);
@@ -280,8 +284,9 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids.slice(0, 2));
         expect(hook.getCurrent().pages.find(page => page.sourceId === sourceId)?.nextCursor).toBe('2');
         expect(hook.getCurrent().sourceFailures.map(page => page.sourceId)).toEqual(unavailable ? [HAPPIER_PICKS_SOURCE_ID] : []);
-        // Reopening an unavailable curated source must not spend the healthy
-        // registry's upstream budget again.
+        // APPS-WARM-PERF-1110: reopening consumes the admitted failure too;
+        // only explicit Retry should reacquire a known-unreachable source.
+        expect(requests).toHaveLength(beforeHide);
         expect(requests.filter(url => url !== DEFAULT_CURATED_MARKETPLACE_SOURCE_URL)).toHaveLength(
             requests.slice(0, beforeHide).filter(url => url !== DEFAULT_CURATED_MARKETPLACE_SOURCE_URL).length);
         // Explicit revalidation also preserves healthy continuation, even when the first read gets a new fetchedAt.

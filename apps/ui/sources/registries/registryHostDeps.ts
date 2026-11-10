@@ -115,8 +115,8 @@ function registryReadKey(actionId: RegistryActionIdV1, input: RegistryActionInpu
     return machineId === undefined ? key : `${key}:${JSON.stringify(machineId)}`;
 }
 
-/** Explicit item refresh is an owner-local memo operation, not an unapproved wire field. */
-function invalidateUiRegistryReadMemoV1(scope: Readonly<{ serverId: string; accountId: string }>, actionId: 'registries.items.read' | 'registries.updates.check', input: unknown) {
+/** Explicit read refresh is an owner-local memo operation, not an unapproved wire field. */
+function invalidateUiRegistryReadMemoV1(scope: Readonly<{ serverId: string; accountId: string }>, actionId: 'registries.items.read' | 'registries.updates.check' | 'registries.sources.list', input: unknown) {
     const memo = sessionMemos.get(JSON.stringify([scope.serverId, scope.accountId]));
     if (!memo) return;
     const key = registryReadKey(actionId, REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input));
@@ -130,6 +130,9 @@ export function invalidateUiRegistryItemMemoV1(scope: Readonly<{ serverId: strin
 }
 export function invalidateUiRegistryUpdateMemoV1(scope: Readonly<{ serverId: string; accountId: string }>, input: unknown) {
     invalidateUiRegistryReadMemoV1(scope, 'registries.updates.check', input);
+}
+export function invalidateUiRegistrySourcesMemoV1(scope: Readonly<{ serverId: string; accountId: string }>, input: unknown) {
+    invalidateUiRegistryReadMemoV1(scope, 'registries.sources.list', input);
 }
 
 /** Compose the protocol registry owner with the captured Account's existing row CAS and Machine transport. */
@@ -275,7 +278,9 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 const revision = registrySourceRevision([source]);
                 const held = memo.values.get(key);
                 const cached = held?.revision === revision && 'pages' in held.value ? held.value : null;
-                const reusable = cached?.pages.every(page => page.status.state === 'ok' || page.status.state === 'rate_limited'
+                // A settled unreachable source remains named and retryable. Reopening
+                // consumes that admitted result; explicit Retry refreshes it below.
+                const reusable = cached?.pages.every(page => page.status.state === 'ok' || page.status.state === 'unreachable' || page.status.state === 'rate_limited'
                     && (page.status.retryAt === undefined || page.status.retryAt > Date.now()));
                 if (cached && !args.refresh && reusable) return project(cached);
                 const next = await host.execute(actionId, input) as ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[typeof actionId]['parse']>;
@@ -295,7 +300,9 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         const read = actionId === 'registries.items.read';
         const args = admitted as Record<string, unknown>;
         const appCheck = actionId === 'registries.updates.check' && 'environments' in admitted;
-        const cacheable = appCheck || read;
+        // Kind-filtered descriptors also acquire Picks to hide a confirmed-empty
+        // catalog. Reuse that admitted answer on navigation, just like item reads.
+        const cacheable = appCheck || read || actionId === 'registries.sources.list';
         const sourceIds = 'sourceId' in admitted ? [admitted.sourceId] : 'sourceIds' in admitted ? admitted.sourceIds : undefined;
         const revision = cacheable ? registrySourceRevision(await readSources(), sourceIds) : '';
         const machineId = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId
