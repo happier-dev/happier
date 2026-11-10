@@ -17,7 +17,7 @@ async function runtime() {
   if (!result) throw new Error('Devin account runtime is not registered');
   return result;
 }
-function context(status = 200, payload: unknown = { token: 'eyJ.fake.session' }) {
+function context(status = 200, payload: unknown = { token: 'eyJ.fake.session' }, profile?: unknown) {
   const credentials = store();
   const requests: Array<{ url: string; body?: Uint8Array; headers?: Readonly<Record<string, string>> }> = [];
   // HTTP is the external boundary; the complete registered plugin path remains real.
@@ -25,13 +25,22 @@ function context(status = 200, payload: unknown = { token: 'eyJ.fake.session' })
     attemptCredentials: credentials, signal: new AbortController().signal,
     configuration: { target: { kind: 'attempt', attemptId: 'fake-attempt', service: { pluginId: 'happier.agent.devin', localId: 'devin-account' }, modeId: 'browser-session' }, revision: '1', values: {}, async getSecret() { return null; } },
     services: { http: { async request(request: typeof requests[number]) { requests.push(request);
-      return { status: request.url.endsWith('/self') ? 503 : status, finalUrl: request.url, headers: {},
-        body: new TextEncoder().encode(JSON.stringify(payload)) }; } } },
+      return { status: request.url.endsWith('/self') ? profile ? 200 : 503 : status, finalUrl: request.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify(request.url.endsWith('/self') ? profile : payload)) }; } } },
   } as ConnectedAccountAuthenticationContext;
   return { ctx, credentials, requests };
 }
 const completion = { code: 'fake-code', callbackUrl: 'http://localhost:53100/callback', state: 'fake-state', pkceVerifier: 'fake-verifier' };
 describe('Devin connected account through registered plugin', () => {
+  it('keeps the confirmed upstream user and organization separate from the saved grant identity', async () => {
+    const owner = await runtime();
+    const mode = owner.authentication.modes['browser-session'];
+    if (mode?.kind !== 'oauthAuthorizationCode') throw new Error('Missing browser session mode');
+    const { ctx } = context(200, { token: 'eyJ.fake.session' }, { user_id: 'devin-user', org_id: 'devin-org' });
+    const connected = await mode.complete(completion, ctx);
+    expect(connected).toMatchObject({ status: 'connected', providerIdentity: { accountId: 'devin-user', organizationId: 'devin-org' } });
+    expect(connected).not.toHaveProperty('accountId');
+  });
   it('uses host PKCE and one code exchange; optional identity failure preserves a session without inventing refresh', async () => {
     const owner = await runtime();
     const mode = owner.authentication.modes['browser-session'];
@@ -42,7 +51,11 @@ describe('Devin connected account through registered plugin', () => {
     const url = new URL(begin.authorizationUrl);
     expect(url.origin + url.pathname).toBe('https://app.devin.ai/auth/cli/continue');
     expect(Object.fromEntries(url.searchParams)).toMatchObject({ code_challenge: 'fake-challenge', code_challenge_method: 'S256', state: 'fake-state', redirect_uri: completion.callbackUrl });
-    expect(await mode.complete(completion, ctx)).toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes: [] });
+    const connected = await mode.complete(completion, ctx);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes: [] });
+    if (connected.status !== 'connected') throw new Error('Devin grant was not connected');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'devin')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(requests.map(r => r.url)).toEqual(['https://api.devin.ai/auth/cli/token', 'https://api.devin.ai/v3/self']);
     expect(JSON.parse(new TextDecoder().decode(requests[0].body))).toEqual({ code: 'fake-code', code_verifier: 'fake-verifier' });
     expect(credentials.values.get('sessionToken')).toBe('devin-session-token$eyJ.fake.session');
@@ -78,6 +91,8 @@ describe('Devin connected account through registered plugin', () => {
     const connected = await mode.complete({ fields: { seatToken: 'fake-seat-key', apiServerUrl: 'https://enterprise.example.test' } }, ctx);
     expect(connected).toMatchObject({ status: 'connected', credentialKind: 'token' });
     if (connected.status !== 'connected') throw new Error('Expected connected enterprise credential');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'devin')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     const key = 'happier.agent.devin/devin-account';
     const inventory = applyProjectedCredentialKindRestrictions({ optionsByServiceId: { [key]: [
       { profileId: 'known-allowed', status: 'connected', kind: connected.credentialKind },

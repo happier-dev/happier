@@ -58,7 +58,9 @@ describe('GitHub Copilot device authentication', () => {
     expect(await mode.begin(f.context)).toMatchObject({ status: 'awaitingDeviceAuthorization', userCode: 'ABCD', pollIntervalMs: 5000 });
     expect(await mode.poll(f.context)).toEqual({ status: 'pending', retryAfterMs: 5000 });
     expect(await mode.poll(f.context)).toEqual({ status: 'pending', retryAfterMs: 10000 });
-    expect(await mode.poll(f.context)).toMatchObject({ status: 'connected', credentialKind: 'oauth', accountId: '123' });
+    const connected = await mode.poll(f.context);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth', providerIdentity: { accountId: '123' } });
+    expect(connected).not.toHaveProperty('accountId');
     expect(f.values.get('token')).toBe('gho_fake');
     expect(f.values.get('refreshToken')).toBe(expiring ? 'fake-refresh' : undefined);
     expect(f.values.has('expiresAtMs')).toBe(expiring);

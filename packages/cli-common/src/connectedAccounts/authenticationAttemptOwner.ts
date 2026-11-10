@@ -310,6 +310,7 @@ type ActiveStoredAttempt = {
     createdAtMs: number;
     intent: 'connect' | 'reconnect';
     account: PluginConnectedAccountRef | null;
+    expectedProviderIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
     expectedCredentialRevision: string | null;
     expectedCredentialConfigurationRevision: string | null;
     admission: ConnectedAccountAttemptModeAdmission & Readonly<{ modeId: string }>;
@@ -360,6 +361,7 @@ type AttemptTarget = Readonly<{
     intent: 'connect' | 'reconnect';
     service: PluginContributionRef;
     account: PluginConnectedAccountRef | null;
+    expectedProviderIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
     modeId: string;
     expectedCredentialRevision: string | null;
     expectedCredentialConfigurationRevision: string | null;
@@ -524,12 +526,15 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         findByProviderIdentity?(input: Readonly<{
             service: PluginContributionRef;
             providerIdentity: NonNullable<QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity']>;
+            /** Private staged grant material; never serialized or published. */
+            stagedCredentials: Readonly<Record<string, string>>;
         }>): Promise<QualifiedConnectedAccountProfileV4 | null>;
         readExact(account: PluginConnectedAccountRef): Promise<Readonly<{
             account: PluginConnectedAccountRef;
             authenticationModeId: string;
             credentialRevision: string;
             configurationRevision: string | null;
+            providerIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
         }> | null>;
     }>;
     configuration: Readonly<{
@@ -992,6 +997,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             intent: 'reconnect' as const,
             service: exact.account.service,
             account: exact.account,
+            expectedProviderIdentity: exact.providerIdentity,
             modeId: exact.authenticationModeId,
             expectedCredentialRevision: exact.credentialRevision,
             expectedCredentialConfigurationRevision: exact.configurationRevision,
@@ -1093,6 +1099,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         ...(restored ? { addressExpiresAtMs: restored.expiresAtMs } : {}),
                         intent: input.intent,
                         account: input.account,
+                        expectedProviderIdentity: input.expectedProviderIdentity,
                         expectedCredentialRevision: input.expectedCredentialRevision,
                         expectedCredentialConfigurationRevision:
                             input.expectedCredentialConfigurationRevision,
@@ -1165,6 +1172,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             ...(restored ? { addressExpiresAtMs: restored.expiresAtMs } : {}),
             intent: input.intent,
             account: input.account,
+            expectedProviderIdentity: input.expectedProviderIdentity,
             expectedCredentialRevision: input.expectedCredentialRevision,
             expectedCredentialConfigurationRevision:
                 input.expectedCredentialConfigurationRevision,
@@ -1958,11 +1966,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         if (drift) {
             return await resolveReconciliationCurrentness(attempt, drift);
         }
-        if (
-            attempt.account
-            && result.accountId !== undefined
-            && attempt.account.accountId !== result.accountId
-        ) {
+        const expectedIdentity = attempt.expectedProviderIdentity;
+        const identityMismatch = expectedIdentity?.accountId && result.providerIdentity?.accountId
+            && (expectedIdentity.accountId !== result.providerIdentity.accountId
+                || (expectedIdentity.organizationId ?? null) !== (result.providerIdentity.organizationId ?? null));
+        if (attempt.account && (identityMismatch
+            || (result.accountId !== undefined && attempt.account.accountId !== result.accountId))) {
             attempt.phase = 'rejected';
             const response: AttemptResponse = {
                 status: 'rejected',
@@ -1979,6 +1988,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             const existing = await params.accounts.findByProviderIdentity({
                 service: attempt.admission.service,
                 providerIdentity: result.providerIdentity,
+                stagedCredentials: attempt.credentials.snapshot(),
             });
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
@@ -2011,6 +2021,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
                 attempt.intent = target.intent;
                 attempt.account = target.account;
+                attempt.expectedProviderIdentity = target.expectedProviderIdentity;
                 attempt.expectedCredentialRevision = target.expectedCredentialRevision;
                 attempt.expectedCredentialConfigurationRevision = target.expectedCredentialConfigurationRevision;
                 attempt.configuration = configuration;
@@ -2881,6 +2892,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_runtime_generation_changed',
                 });
             }
+            let expectedProviderIdentity: ActiveStoredAttempt['expectedProviderIdentity'];
             if (snapshot.intent === 'reconnect' && !snapshot.preparedSettlement) {
                 let exact: Awaited<ReturnType<typeof params.accounts.readExact>>;
                 try {
@@ -2910,6 +2922,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         code: 'connected_account_credential_changed',
                     });
                 }
+                expectedProviderIdentity = exact.providerIdentity;
             }
             let configuration: ConnectedAccountAttemptConfigurationAdmission;
             try {
@@ -3036,6 +3049,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 createdAtMs: snapshot.createdAtMs,
                 intent: snapshot.intent,
                 account: snapshot.account ?? null,
+                expectedProviderIdentity,
                 expectedCredentialRevision: snapshot.expectedCredentialRevision,
                 expectedCredentialConfigurationRevision:
                     snapshot.expectedCredentialConfigurationRevision,
@@ -3106,8 +3120,15 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_attempt_internal_unavailable' }; }
                 input.signal?.throwIfAborted();
                 if (!manual) return unavailable(input.attemptId);
+                const reconnectTarget = manual.account ? await prepareReconnectTarget(manual.account) : null;
+                if (manual.account && (!reconnectTarget
+                    || reconnectTarget.expectedCredentialRevision !== manual.expectedCredentialRevision
+                    || reconnectTarget.expectedCredentialConfigurationRevision !== manual.expectedCredentialConfigurationRevision)) {
+                    return { status: 'conflict', attemptId: input.attemptId, code: 'connected_account_credential_changed' };
+                }
                 const response = await begin({ intent: record.scope.intent, service: record.scope.service,
                     modeId: record.scope.modeId, account: manual.account,
+                    expectedProviderIdentity: reconnectTarget?.expectedProviderIdentity,
                     expectedCredentialRevision: manual.expectedCredentialRevision,
                     expectedCredentialConfigurationRevision: manual.expectedCredentialConfigurationRevision,
                     ...(manual.expectedConfigurationRevision === null ? {}
@@ -3409,6 +3430,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         code: 'connected_account_runtime_generation_changed',
                     });
                 }
+                let expectedProviderIdentity: ActiveStoredAttempt['expectedProviderIdentity'];
                 if (snapshot.intent === 'reconnect' && !snapshot.preparedSettlement) {
                     if (!snapshot.account) {
                         return await cleanUpTerminal({
@@ -3447,6 +3469,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                             code: 'connected_account_credential_changed',
                         });
                     }
+                    expectedProviderIdentity = exact.providerIdentity;
                 }
                 let configuration: ConnectedAccountAttemptConfigurationAdmission;
                 try {
@@ -3537,6 +3560,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     createdAtMs: snapshot.createdAtMs,
                     intent: snapshot.intent,
                     account: snapshot.account ?? null,
+                    expectedProviderIdentity,
                     expectedCredentialRevision: snapshot.expectedCredentialRevision,
                     expectedCredentialConfigurationRevision:
                         snapshot.expectedCredentialConfigurationRevision,

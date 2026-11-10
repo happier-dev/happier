@@ -149,7 +149,6 @@ function manualTokenMode(copilot: boolean): Extract<NonNullable<ConnectedAccount
       return {
         status: 'connected',
         credentialKind: 'token',
-        accountId: identity.providerAccountId,
         providerIdentity: { accountId: identity.providerAccountId, ...(identity.email ? { email: identity.email } : {}) },
         displayName: identity.displayName,
         scopes: identity.scopes,

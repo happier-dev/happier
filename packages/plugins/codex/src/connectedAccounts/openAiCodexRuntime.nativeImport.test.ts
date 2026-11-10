@@ -43,9 +43,11 @@ describe('Codex Connected Account native import', () => {
     } });
     await writeFile(join(home, 'auth.json'), original);
     const values = new Map<string, string>();
-    await expect(mode().complete({ fields: { source: 'native' } }, context(values))).resolves.toMatchObject({
-      status: 'connected', expiresAt: 4_102_444_800_000, accountId: 'account-native', providerIdentity: { accountId: 'account-native', email: 'native@example.test' },
+    const connected = await mode().complete({ fields: { source: 'native' } }, context(values));
+    expect(connected).toMatchObject({
+      status: 'connected', expiresAt: 4_102_444_800_000, providerIdentity: { accountId: 'account-native', email: 'native@example.test' },
     });
+    expect(connected).not.toHaveProperty('accountId');
     expect(values.get('accessToken')).toBe(accessToken);
     expect(values.get('refreshToken')).toBe('native-refresh');
     expect(values.get('idToken')).toBe(idToken);

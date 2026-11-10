@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createXaiConnectedAccountRuntime } from './runtime.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 function fixture(modeId = 'api-key') {
   const saved = new Map<string, string>();
@@ -25,7 +26,11 @@ describe('xAI selected credential runtime', () => {
     const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
     const mode = runtime.authentication.modes['api-key'];
     if (mode.kind !== 'manual') throw new Error('Expected manual mode');
-    expect(await mode.complete({ fields: { apiKey: 'fake-paid-key' } }, f.context)).toMatchObject({ status: 'connected', credentialKind: 'token' });
+    const connected = await mode.complete({ fields: { apiKey: 'fake-paid-key' } }, f.context);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'token' });
+    if (connected.status !== 'connected') throw new Error('xAI key was not connected');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'grok')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.x.ai', headerNames: ['authorization'] }, f.read))
       .toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-paid-key' }, facts: { mode: 'api-key', base: 'https://api.x.ai/v1' } });
     expect(runtime.quota).toBeTypeOf('function');
@@ -62,7 +67,11 @@ describe('xAI OAuth discovery and refresh', () => {
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
     });
     await mode.begin(f.context);
-    expect(await mode.poll(f.context)).toMatchObject({ status: 'connected', credentialKind: 'oauth' });
+    const connected = await mode.poll(f.context);
+    expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth' });
+    if (connected.status !== 'connected') throw new Error('xAI grant was not connected');
+    const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'grok')?.connectedAccounts?.[0];
+    expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(JSON.parse(f.saved.get('xaiCredential') ?? 'null')).toMatchObject({ accessToken: 'fake-granted' });
   });
   it('discovers once per device attempt and preserves polling under the attempt owner', async () => {
@@ -83,7 +92,9 @@ describe('xAI OAuth discovery and refresh', () => {
     expect(await mode.begin(f.context)).toMatchObject({ status: 'awaitingDeviceAuthorization', userCode: 'FAKE', pollIntervalMs: 5000 });
     expect(await mode.poll(f.context)).toMatchObject({ status: 'pending', retryAfterMs: 5000 });
     expect(await mode.poll(f.context)).toMatchObject({ status: 'pending', retryAfterMs: 10000 });
-    expect(await mode.poll(f.context)).toMatchObject({ status: 'connected', accountId: 'fake-user' });
+    const connected = await mode.poll(f.context);
+    expect(connected).toMatchObject({ status: 'connected', providerIdentity: { accountId: 'fake-user' } });
+    expect(connected).not.toHaveProperty('accountId');
     expect(f.request.mock.calls).toHaveLength(6);
     await mode.cancel(f.context);
     expect(f.saved.has('xaiDevice')).toBe(false);
@@ -164,7 +175,9 @@ describe('xAI explicit native import and access-only materialization', () => {
       const f = fixture('native-import'); const runtime = createXaiConnectedAccountRuntime();
       const mode = runtime.authentication.modes['native-import'];
       if (mode.kind !== 'manual') throw new Error('Expected explicit native import');
-      expect(await mode.complete({ fields: { source: 'native' } }, f.context)).toMatchObject({ status: 'connected', credentialKind: 'oauth', accountId: 'fake-native-user' });
+      const connected = await mode.complete({ fields: { source: 'native' } }, f.context);
+      expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth', providerIdentity: { accountId: 'fake-native-user' } });
+      expect(connected).not.toHaveProperty('accountId');
       const material = await runtime.materialize({ kind: 'files', fileIds: ['auth.json'] }, f.read);
       if (material.kind !== 'files') throw new Error('Expected selected native file');
       const content = new TextDecoder().decode(material.files['auth.json']);

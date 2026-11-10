@@ -125,7 +125,7 @@ export function createGithubCopilotAuthentication(confirmIdentity: ConfirmIdenti
           if (identity.status !== 'confirmed') return identity;
           await stageTokenGrant(context.attemptCredentials, token, grant.clientId, { signal });
           await context.attemptCredentials.delete(DEVICE_GRANT_KEY, { signal });
-          return { status: 'connected' as const, credentialKind: 'oauth' as const, accountId: identity.providerAccountId,
+          return { status: 'connected' as const, credentialKind: 'oauth' as const,
             providerIdentity: { accountId: identity.providerAccountId, ...(identity.email ? { email: identity.email } : {}) },
             displayName: identity.displayName, scopes: identity.scopes };
         },

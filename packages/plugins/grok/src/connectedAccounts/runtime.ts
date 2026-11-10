@@ -51,7 +51,7 @@ function parseDeviceState(value: string | null): DeviceState {
 async function saveCredential(credential: XaiCredential, context: ConnectedAccountAuthenticationContext): Promise<ConnectedAccountAuthCompletionResult> {
   await context.attemptCredentials.set(XAI_CREDENTIAL_KEY, JSON.stringify(credential));
   return { status: 'connected', credentialKind: credential.mode === 'api-key' ? 'token' : 'oauth',
-    ...(credential.subject ? { accountId: credential.subject, providerIdentity: { accountId: credential.subject, ...(credential.email ? { email: credential.email } : {}) } } : {}),
+    ...(credential.subject ? { providerIdentity: { accountId: credential.subject, ...(credential.email ? { email: credential.email } : {}) } } : {}),
     displayName: credential.email ?? (credential.mode === 'api-key' ? 'xAI paid API key' : 'xAI subscription'),
     scopes: credential.scope?.split(/\s+/).filter(Boolean) ?? [],
   };

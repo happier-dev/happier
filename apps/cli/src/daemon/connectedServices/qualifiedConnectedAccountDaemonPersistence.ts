@@ -5,7 +5,7 @@ import {
   randomUUID,
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { createConnectedAccountCredentialSettlement, type ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountCredentialSettlement, readQualifiedConnectedAccountCredentialMaterial, type ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import { promoteConnectedAccountCredentialSecrets } from '@/settings/secrets/promoteConnectedAccountCredentialSecrets';
 
 import { ConnectedConfigurationCatalogV1Schema,
@@ -659,14 +659,30 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           });
       },
       accounts: Object.freeze({
-        async findByProviderIdentity({ service, providerIdentity }: Parameters<NonNullable<
+        async findByProviderIdentity({ service, providerIdentity, stagedCredentials }: Parameters<NonNullable<
           ConnectedAccountDaemonPersistence['attempts']['accounts']['findByProviderIdentity']
         >>[0]) {
           const profiles = await persistence.profiles.list(service);
-          return profiles.filter(profile => sameService(profile.ref.service, service)
+          const candidates = profiles.filter(profile => sameService(profile.ref.service, service)
             && profile.providerIdentity?.accountId === providerIdentity.accountId
             && (profile.providerIdentity?.organizationId ?? null) === (providerIdentity.organizationId ?? null))
-            .sort((left, right) => left.ref.accountId.localeCompare(right.ref.accountId))[0] ?? null;
+            .sort((left, right) => left.ref.accountId.localeCompare(right.ref.accountId));
+          const entries = Object.entries(stagedCredentials);
+          if (entries.length === 0 || candidates.length === 0) return null;
+          const accountMode = await resolveAccountMode({ usage: 'fresh-authority' });
+          for (const candidate of candidates) {
+            const held = await readQualifiedConnectedAccountCredentialMaterial({
+              account: candidate.ref,
+              getAccountEncryptionMode: async () => accountMode,
+              readCredential: ({ ref }) => readCredential({ token: params.credentials.token, ref,
+                requestPurpose: 'connected-accounts:persistence' }),
+              openCredentialContent: (mode, envelope) => openContent({ kind: 'credential', accountMode: mode,
+                credentials: params.credentials, material, envelope }),
+              secrets: params.secrets,
+            });
+            if (held && entries.every(([key, value]) => held.credential.values[key] === value)) return candidate;
+          }
+          return null;
         },
         async readExact(account: ExactAccount) {
           const snapshot = await executeNegotiatedOperation({
@@ -697,6 +713,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             authenticationModeId: snapshot.authenticationModeId,
             credentialRevision: snapshot.credentialRevision,
             configurationRevision: snapshot.configurationRevision,
+            providerIdentity: snapshot.metadata.providerIdentity,
           });
         },
       }),

@@ -48,11 +48,10 @@ async function writeTokens(store: CredentialStore, tokens: Tokens, options?: Rea
   await writeOptional(store, 'expiresAtMs', tokens.expiresAtMs === null ? '' : String(tokens.expiresAtMs), options);
 }
 function connected(tokens: Tokens, attempt: ConnectedAccountAuthenticationContext['attempt']) {
-  // The host matches this verified ID against the captured reconnect account.
+  // The host matches this verified upstream identity against the admitted grant.
   // Reject missing proof here before either acquisition mode stages a replacement grant.
   if (attempt.kind === 'reconnect' && !tokens.providerAccountId) return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_reconnect_identity_unavailable', 'A verified Antigravity account ID is required to reconnect this account.') };
   return { status: 'connected' as const, credentialKind: 'oauth' as const, displayName: tokens.providerEmail || 'Google Antigravity', scopes: tokens.scopes,
-    ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}),
     ...((tokens.providerAccountId || tokens.providerEmail) ? { providerIdentity: {
       ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}), ...(tokens.providerEmail ? { email: tokens.providerEmail } : {}),
     } } : {}),

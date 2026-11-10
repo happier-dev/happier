@@ -228,7 +228,6 @@ describe('GitHub Connected Account mode contract', () => {
       expect(connectResult).toEqual({
         status: 'connected',
         credentialKind: 'token',
-        accountId: '12345',
         providerIdentity: { accountId: '12345', email: 'octocat@example.com' },
         displayName: 'octocat',
         scopes: ['repo', 'read:org'],
@@ -267,7 +266,6 @@ describe('GitHub Connected Account mode contract', () => {
       expect(reconnectResult).toEqual({
         status: 'connected',
         credentialKind: 'token',
-        accountId: '67890',
         providerIdentity: { accountId: '67890' },
         displayName: 'renamed-octocat',
         scopes: [],

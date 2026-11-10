@@ -72,7 +72,7 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
           await save(context, { sessionToken: token, credentialMode: 'session', apiServerUrl: DEVIN_DEFAULT_API_SERVER, nativeGeneration: DEVIN_NATIVE_GENERATION, nativeMetadata: JSON.stringify(DEVIN_SESSION_METADATA) }, signal);
           const accountId = text(profile?.user_id), organizationId = text(profile?.org_id);
           return { status: 'connected', credentialKind: 'oauth', displayName: text(profile?.user_name) || 'Devin', scopes: [],
-            ...(accountId ? { accountId, providerIdentity: { accountId, ...(organizationId ? { organizationId } : {}) } } : {}),
+            ...(accountId ? { providerIdentity: { accountId, ...(organizationId ? { organizationId } : {}) } } : {}),
           };
         },
         async cancel() {},

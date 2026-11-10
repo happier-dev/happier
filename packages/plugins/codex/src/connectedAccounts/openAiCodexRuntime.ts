@@ -225,11 +225,6 @@ export function codexConnectedAccountResult(tokens: CodexTokens) {
     status: 'connected' as const,
     credentialKind: 'oauth' as const,
     ...(tokens.expiresAtMs === null ? {} : { expiresAt: tokens.expiresAtMs }),
-    ...(tokens.providerAccountId
-      ? {
-          accountId: tokens.providerAccountId,
-        }
-      : {}),
     ...((tokens.providerAccountId || identity.email) ? {
       providerIdentity: {
         ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}),

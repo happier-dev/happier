@@ -109,7 +109,7 @@ const ReleasedCredentialRecordSchema = z.discriminatedUnion('kind', [
 ]);
 
 describe('createQualifiedConnectedAccountDaemonPersistence', () => {
-  it('reimports a retained native identity by replacing its fenced credential and recovering health', async () => {
+  it('reimports the same retained native grant through its fenced credential and recovers health', async () => {
     const oldRevision = 'csr_0000000000000000000000';
     const nextRevision = 'csr_1234567890123456789012';
     const providerIdentity = { accountId: '123' };
@@ -147,7 +147,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       })] }),
       readCredential: async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
         ref: account, authenticationModeId: 'native-import', revisionSemantics: 'revisioned', credentialRevision: oldRevision,
-        configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { token: 'expired-native-token' } } },
+        configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { token: 'replacement-native-token' } } },
         metadata: { providerIdentity, scopes: [] }, health: { v: 1, status: 'needs_reauth', reconnectRequired: true },
       }),
       readConfiguration: async () => null, mutateCredential, mutateCredentialHealth, mutateConfiguration: vi.fn(),
@@ -196,10 +196,14 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           { ...profile, ref: { service: { ...requested, localId: 'other-host' }, accountId: 'a-foreign' } },
           { ...profile, ref: { service: requested, accountId: 'z-account' } }, profile,
         ] }),
-        readCredential: vi.fn(), readConfiguration: vi.fn(), mutateCredential: vi.fn(), mutateConfiguration: vi.fn(),
+        readCredential: async ({ ref }) => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+          ref, authenticationModeId: 'native-import', revisionSemantics: 'revisioned', credentialRevision: 'csr_1234567890123456789012',
+          configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { accessToken: 'same-grant' } } },
+          metadata: { providerIdentity: profile.providerIdentity, scopes: [] },
+        }), readConfiguration: vi.fn(), mutateCredential: vi.fn(), mutateConfiguration: vi.fn(),
         secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
       });
-      await expect(persistence.attempts.accounts.findByProviderIdentity?.({ service, providerIdentity: { accountId: '123' } }))
+      await expect(persistence.attempts.accounts.findByProviderIdentity?.({ service, providerIdentity: { accountId: '123' }, stagedCredentials: { accessToken: 'same-grant' } }))
         .resolves.toEqual(scenario === 'different' || scenario === 'unknown' || scenario === 'different-organization' ? null : profile);
     },
   );
