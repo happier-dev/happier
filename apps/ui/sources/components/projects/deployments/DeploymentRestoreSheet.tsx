@@ -57,6 +57,11 @@ export type DeploymentRestoreSheetInput = Readonly<{
    * A point the restore Action can't admit yet is listed but not selectable.
    */
   loadChoices?: (signal: AbortSignal) => Promise<readonly DeploymentRestoreChoice[]>;
+  /** A verified copy can continue to the existing app-change review; failures offer no continuation. */
+  continuation?: Readonly<{
+    title: string;
+    onContinue: (result: Extract<DeploymentBackupRestoreResultV1, { kind: 'restored' }>) => void;
+  }>;
 }>;
 
 /** One backup the person can pick; `restore` is null when the restore Action can't restore it yet. */
@@ -227,12 +232,25 @@ function DeploymentRestoreSheet(
   const footer =
     step.kind === 'settled' ? (
       <ModalCardFooterActions>
-        <RoundButton
-          testID="project-deployments.restore.done"
-          size="normal"
-          title={t('common.done')}
-          onPress={onClose}
-        />
+        {step.result.kind === 'restored' && props.continuation ? (
+          <RoundButton
+            testID="project-deployments.restore.continue"
+            size="normal"
+            title={props.continuation.title}
+            onPress={() => {
+              if (step.result.kind !== 'restored') return;
+              onClose();
+              props.continuation?.onContinue(step.result);
+            }}
+          />
+        ) : (
+          <RoundButton
+            testID="project-deployments.restore.done"
+            size="normal"
+            title={t('common.done')}
+            onPress={onClose}
+          />
+        )}
       </ModalCardFooterActions>
     ) : (
       <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.restore.cancel', disabled: busy }}>

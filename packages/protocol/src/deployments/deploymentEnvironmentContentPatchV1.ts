@@ -7,6 +7,7 @@ import { DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentComposeDefinitionInputV1Schema, DeploymentIngressV1Schema,
     DeploymentPrivateServiceExportsV1Schema, OwnServerEnvironmentReleasePolicyV1Schema } from './storedAppInputV1.js';
 import { DeploymentPreviewTemplateV1Schema } from './deploymentPreviewTemplateV1.js';
+import { DeploymentBindingsPatchV1Schema } from './deploymentBindingPatchV1.js';
 
 /** Content authoring operands share one schema and classification across admission and preparation. */
 export const DeploymentEnvironmentContentPatchV1Schema = lazyZodSchema(() => z.strictObject({
@@ -17,12 +18,13 @@ export const DeploymentEnvironmentContentPatchV1Schema = lazyZodSchema(() => z.s
     ownServer: z.optional(z.strictObject({ ...z.partial(OwnServerEnvironmentReleasePolicyV1Schema).shape,
         serviceExports: z.optional(DeploymentPrivateServiceExportsV1Schema) })),
     definition: z.optional(DeploymentComposeDefinitionInputV1Schema),
+    bindings: z.optional(DeploymentBindingsPatchV1Schema),
     retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
     previewTemplate: z.optional(z.nullable(DeploymentPreviewTemplateV1Schema)),
 }));
 
 /** These authored leaves travel only in the private invocation and prepared Artifact. */
-export const deploymentEnvironmentPrivateContentPatchFieldsV1 = { backup: true, previewTemplate: true, definition: true } as const;
+export const deploymentEnvironmentPrivateContentPatchFieldsV1 = { backup: true, previewTemplate: true, definition: true, bindings: true } as const;
 
 type MetadataPatch<T extends object> = Omit<T, keyof typeof deploymentEnvironmentPrivateContentPatchFieldsV1 | 'ownServer'> & {
     ownServer?: T extends { ownServer?: infer Policy } ? Omit<NonNullable<Policy>, 'serviceExports'> : never;

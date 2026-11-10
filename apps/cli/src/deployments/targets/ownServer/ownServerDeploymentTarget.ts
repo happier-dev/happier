@@ -73,8 +73,6 @@ export type OwnServerDeploymentRetentionRequest = Readonly<{
  * Final receipt settlement remains the sole membership commit. */
 export type OwnServerDeploymentMemberRouteEnrollmentForHost = Readonly<{
     link: DeploymentTargetLinkHeaderV1;
-    member: Readonly<{ machineId: string; installationId: string }>;
-    selectedDeploymentId: string;
     signal: AbortSignal;
 }>;
 export type OwnServerDeploymentReadContext = Readonly<{

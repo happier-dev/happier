@@ -33,7 +33,7 @@ describe('native restore adapter', () => {
             { signal: new AbortController().signal }, async () => { throw failure; })).rejects.toBe(failure);
     });
 
-    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'receiptCapture', 'publicRestore', 'dumpFailure', 'repositoryOnly'] as const)(
+    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'dumpFailure', 'repositoryOnly'] as const)(
         'settles the real restore and releases its one backup preparation: %s', async mode => {
             await withFiniteComposeFixture(async ({ project, docker, source, root, exec, io }) => {
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -49,7 +49,13 @@ describe('native restore adapter', () => {
                 const activation = await machineNativeEffectAdmission.run({ operation: { operationId: 'restore-seed', kind: 'deploy' },
                     keys: render.keys, settleNative: project.settleNative }, context => project.activate({ render, context }));
                 await source.commit();
-                const boundary = await installRestoreBoundary(root, mode === 'cancelPublication' ? 'healthFailure' : mode);
+                const copying = mode === 'copySafety' || mode === 'copySafetyFailure';
+                const boundary = await installRestoreBoundary(root, mode === 'cancelPublication' ? 'healthFailure'
+                    : copying ? 'safety' : mode);
+                if (mode === 'copySafetyFailure') {
+                    const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                    await writeFile(boundary.stateFile, JSON.stringify({ ...state, mode: 'dumpFailure' }));
+                }
                 const seed = new Uint8Array(32).fill(48);
                 const roles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const;
                 const bindings = roles.map((role): Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> => ({
@@ -75,15 +81,16 @@ describe('native restore adapter', () => {
                     content: { kind: 'environmentValues', definition: usernameBinding.source } });
                 const controller = new AbortController();
                 let passwordPath: string | undefined;
+                let destinationPasswordPath: string | undefined;
                 let pending = 0;
                 const progressPhases: string[] = [];
                 const stoppedServices: string[][] = [];
                 const observed = createDeploymentReceiptDetailV1();
                 let observedReceipt: OwnServerDeploymentReceipt = { deployment: observed.deployment,
                     content: DeploymentOwnServerContentV1Schema.parse(observed.content) };
-                const destination = { environmentId: source.environmentId, revision: 1, adapter: 'postgres-v1' as const,
+                const destination = { environmentId: copying ? 'copy-destination' : source.environmentId, revision: 1, adapter: 'postgres-v1' as const,
                     service: 'worker', database, stagingDatabase: 'restore-stage', recoveryDatabase: 'restore-old',
-                    databaseExists: mode === 'safety', hasMeaningfulData: mode === 'safety',
+                    databaseExists: mode === 'safety' || copying, hasMeaningfulData: mode === 'safety' || copying,
                     writerServices: mode === 'healthFailure' || mode === 'cancelPublication' ? ['writer'] : [] };
                 try {
                     await machineNativeEffectAdmission.run({ operation: { operationId: `restore-${mode}`, kind: 'restore', signal: controller.signal },
@@ -143,6 +150,64 @@ describe('native restore adapter', () => {
                             credentialBindings: roles.map(role => ({ purpose: 'backupDestination', configKey: 'destination', role })),
                             sources: [{ kind: 'dump', sourceId: 'safety', service: 'worker', consistency: 'logical' }],
                             ownership: { environmentId: source.environmentId, prefix: source.environmentId }, retention: { kind: 'keepEverything' } };
+                        if (copying) {
+                            const observed = await adapter.observeOwnServerNativeRestoreDestination(input, {
+                                operationId: `restore-${mode}`, environmentId: destination.environmentId, revision: 1, target: destination });
+                            expect(observed).toMatchObject({ databaseExists: true, hasMeaningfulData: true });
+                            const destinationBindings = bindings.map(binding => ({ ...binding,
+                                source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(`destination-${binding.role}`), resourceRevision: 1 } }));
+                            const destinationGrants = roles.map(role => sealMachineSecretGrant({ subject: { v: 1, kind: 'secret',
+                                environmentId: destination.environmentId, machineId: source.machineId, installationId: source.installationId,
+                                resourceId: `destination-${role}`, resourceRevision: 1 }, installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
+                                content: { kind: 'secret', value: `destination-private-${role}` } }));
+                            const destinationEnvironment = backupEnvironment.createDeploymentBackupEnvironmentForHost({
+                                repository: 's3:https://fixture.invalid/destination-backup', signal: context.operation.signal!, isCurrent: () => true,
+                                preparation: { environmentId: destination.environmentId, machineId: source.machineId, installationId: source.installationId,
+                                    installationPrivateSeed: seed, bindings: destinationBindings, backupDestinationUses: destinationBindings,
+                                    grants: destinationGrants, backupConfigBaseDir: root, assertCurrent: source.assertCurrent } });
+                            const destinationUsernameBinding = { purpose: 'variable' as const, phase: 'runtime' as const,
+                                name: 'LOGICAL_USER', source: { kind: 'value' as const, value: 'destination-database-user' } };
+                            const destinationUsernameGrant = sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
+                                environmentId: destination.environmentId, machineId: source.machineId, installationId: source.installationId,
+                                binding: { purpose: 'variable', phase: 'runtime', name: destinationUsernameBinding.name } },
+                                installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
+                                content: { kind: 'environmentValues', definition: destinationUsernameBinding.source } });
+                            const destinationInput = { ...input, ...destinationEnvironment,
+                                readAccess() {
+                                    const selected = destinationEnvironment.readAccess();
+                                    destinationPasswordPath = selected.credentialFiles[0]?.hostPath;
+                                    return selected;
+                                },
+                                readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({
+                                    data: [{ engine: 'postgres', service: 'worker', logicalBackup: {
+                                        adapter: 'postgres-v1', username: destinationUsernameBinding.name } }],
+                                    preparation: { environmentId: destination.environmentId, machineId: source.machineId,
+                                        installationId: source.installationId, installationPrivateSeed: seed,
+                                        bindings: [destinationUsernameBinding], grants: [destinationUsernameGrant], assertCurrent: source.assertCurrent } }) };
+                            const prepare = adapter.prepareOwnServerNativeRestore(input, { ...capture, operationId: `restore-${mode}`,
+                                safetyBackup: { environmentId: destination.environmentId,
+                                    configuration: { ...configuration, ownership: { environmentId: destination.environmentId, prefix: destination.environmentId } },
+                                    data: { engine: 'postgres', service: 'worker', logicalBackup: { adapter: 'postgres-v1' } } } }, destinationInput);
+                            if (mode === 'copySafetyFailure') await expect(prepare).rejects.toMatchObject({ code: 'backup_failed' });
+                            else {
+                                const prepared = await prepare;
+                                expect(prepared.repository.repository).toBe('s3:https://fixture.invalid/backup');
+                                expect(prepared.safetyBackup).toMatchObject({ kind: 'verified', manifests: [{ environmentId: destination.environmentId }] });
+                            }
+                            const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+                            const sourceCommands = events.filter(row => row.kind === 'restic' && row.argv[row.argv.indexOf('--repo') + 1] === 's3:https://fixture.invalid/backup');
+                            expect(sourceCommands.length).toBeGreaterThan(0);
+                            expect(sourceCommands.every(row => !row.argv.includes('backup') && !row.argv.includes('init')
+                                && !row.argv.includes('forget') && !row.argv.includes('prune'))).toBe(true);
+                            expect(events.find(row => row.kind === 'restic' && row.argv.includes('backup'))?.argv)
+                                .toContain('s3:https://fixture.invalid/destination-backup');
+                            expect(events.find(row => row.kind === 'postgres' && row.argv[0] === 'pg_dump' && !row.argv.includes('--version'))?.argv)
+                                .toContain('--username=destination-database-user');
+                            expect(events.some(row => row.kind === 'imported' || row.kind === 'rename'
+                                || row.kind === 'postgres' && row.argv[0] === 'createdb' && !row.argv.includes('--version'))).toBe(false);
+                            expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toEqual([database]);
+                            return;
+                        }
                         let recoveryReceipt: OwnServerDeploymentReceipt | undefined;
                         let restoreInput = input;
                         const forRecordedCapture = (resolved: DeploymentRestoreResolvedCaptureV1) => {
@@ -319,6 +384,12 @@ describe('native restore adapter', () => {
                         keys: render.keys, settleNative: project.settleNative }, async () => {});
                 }
                 await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
+                if (copying) {
+                    if (!destinationPasswordPath) throw new Error('Expected destination-owned backup credentials');
+                    await expect(access(destinationPasswordPath)).rejects.toMatchObject({ code: 'ENOENT' });
+                    expect(await docker.readOperationContainerIds()).toEqual([]);
+                    return;
+                }
                 const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
                 if (mode !== 'repositoryOnly') {
                     const commands = events.filter(row => row.kind === 'postgres');

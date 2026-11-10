@@ -11,7 +11,8 @@ function sameBinding(left: EnvironmentSecretBindingV1, right: EnvironmentSecretB
     switch (a.kind) {
         case 'secret': return b.kind === 'secret' && a.ref === b.ref && a.resourceRevision === b.resourceRevision;
         case 'value': return b.kind === 'value' && a.value === b.value;
-        case 'reference': return b.kind === 'reference' && a.environmentId === b.environmentId && a.export === b.export && a.via === b.via;
+        case 'reference': return b.kind === 'reference' && a.environmentId === b.environmentId && a.export === b.export
+            && a.via === b.via && a.component === b.component;
         case 'deploymentFact': return b.kind === 'deploymentFact' && a.fact === b.fact
             && (a.fact !== 'domainUrl' || b.fact === 'domainUrl' && a.domainId === b.domainId);
     }

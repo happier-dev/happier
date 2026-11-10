@@ -43,7 +43,8 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
+    isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -1227,6 +1228,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof) {
     const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
+    const membershipDomainContinuation = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+        && effectActionId === 'deployments.domains.add' && domainPurpose !== null;
     const setupPreparationRead = isSetupDeploymentPreparationReadEffect(binding, effectActionId);
     const candidatePublication = isDeploymentCandidatePublicationEffect(binding, effectActionId);
     const templateDeployEffect = binding.actionId === 'deployments.templates.instantiate' && candidatePublication
@@ -1269,7 +1272,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
     };
     const crossesEffectFamily = setupPreparationRead || createPreparationEffect || Boolean(targetRetentionPurpose)
-        || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect || teardownDomainContinuation;
+        || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
+        || teardownDomainContinuation || membershipDomainContinuation;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -2294,19 +2298,22 @@ function isDeploymentApprovalMetadataHttpPurpose(verified: VerifiedExternalActio
 function isDeploymentBindingPreparationHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const root = verified.binding.actionId;
-    if ((root !== 'deployments.bindings.set' && root !== 'deployments.environments.update') || verified.effectActionId !== root) return false;
-    if (isReadOnlyArtifactHttpPurpose(proof)) return true;
+    if ((root !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && root !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1)
+        || verified.effectActionId !== root && verified.effectActionId !== 'deployments.environments.get') return false;
     if (isAccountActionHttpOperation('deployments.environments.get', proof)) {
         const read = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
-        return read.success && read.data.serverId === verified.binding.serverIdentityId;
+        return read.success && read.data.serverId === verified.binding.serverIdentityId
+            && read.data.environmentId === verified.binding.environmentId;
     }
+    if (verified.effectActionId !== root) return false;
+    if (isReadOnlyArtifactHttpPurpose(proof)) return true;
     const url = new URL(proof.path, 'http://home.invalid');
     if (proof.method.toUpperCase() !== 'POST' || url.search !== '' || url.hash !== '') return false;
     const prepared = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
     return prepared.success && prepared.data.materialization.kind === 'bindings'
-        && (root === 'deployments.environments.update' ? prepared.data.materialization.buildMachineId !== undefined
-            : prepared.data.materialization.buildMachineId === undefined)
+        && (root === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || prepared.data.materialization.buildMachineId === undefined)
         && prepared.data.serverId === verified.binding.serverIdentityId
+        && prepared.data.environmentId === verified.binding.environmentId
         && prepared.data.machineId === verified.binding.machineId && prepared.data.installationId === verified.binding.installationId
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(prepared.data.environmentId)}/secret-launch-admission`
         && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, prepared.data));
@@ -2559,8 +2566,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     });
     if (isMachineDeploymentEnvironmentAccessActionIdV1(root)
         && readDeploymentEnvironmentAccessPurpose(verified, proof)) return true;
-    if (root === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && verified.effectActionId === root) {
-        if (isAccountActionHttpOperation(root, proof)) {
+    if (root === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
+        if (verified.effectActionId === root && isAccountActionHttpOperation(root, proof)) {
             return typeof proof.body === 'object' && proof.body !== null && 'environmentId' in proof.body
                 && proof.body.environmentId === verified.binding.environmentId;
         }
@@ -2574,7 +2581,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             || root === 'deployments.environments.update' && isDeploymentBindingPreparationHttpPurpose(verified, proof)) return true;
         if (root !== 'deployments.environments.update' || !isAccountActionHttpOperation('deployments.environments.get', proof)) return false;
         const read = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
-        return read.success && read.data.serverId === verified.binding.serverIdentityId;
+        return read.success && read.data.serverId === verified.binding.serverIdentityId
+            && read.data.environmentId === verified.binding.environmentId;
     }
     if (verified.signedChildPurpose.sibling.deploymentRead) {
         if (verified.effectActionId !== 'projects.sources.read') return isAccountActionHttpOperation(verified.effectActionId, proof);

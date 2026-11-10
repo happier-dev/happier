@@ -5,7 +5,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, createOwnServerEnvironmentConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, createOwnServerEnvironmentConfigurationV1, DeploymentEnvironmentContentV1Schema,
+    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
@@ -17,6 +18,10 @@ import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironme
     projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+const authoredPreviewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+    repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+    runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } satisfies NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>;
 
 describe('opened Environment content preparation', () => {
     it.each(['plain', 'e2ee'] as const)('saves release settings, private exports and explicit source through the %s Environment update', async mode => {
@@ -146,6 +151,8 @@ describe('opened Environment content preparation', () => {
         detail.content.ownServer = createOwnServerEnvironmentConfigurationV1({ serviceExports: [] });
         for (const [index, privatePatch] of [
             { definition: originalDefinitionInput }, { ownServer: { serviceExports: [] } },
+            { ownServer: { serviceExports, rollout: 'startFirst' as const } },
+            { previewTemplate: authoredPreviewTemplate },
         ].entries()) {
             const authored = { ...input, patch: privatePatch };
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-private-update', binding: {
@@ -159,10 +166,74 @@ describe('opened Environment content preparation', () => {
             const prepared = await createPrepareEnvironmentContentForHost(host)({ actionId: 'deployments.environments.update',
                 input: authored, context: { externalActionExecutionAuthorization: authorization } });
             const id = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, environmentId: input.environmentId });
-            expect(prepared).toMatchObject({ input: { patch: {}, contentArtifactId: id },
+            expect(prepared).toMatchObject({ input: { patch: index === 2 ? { ownServer: { rollout: 'startFirst' } } : {}, contentArtifactId: id },
                 authoredInputDigest: expect.any(String) });
             expect(created.has(id)).toBe(true);
+            if (index === 2) {
+                const authoredExports = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read(id, {
+                    prepareRecipients: false, includeSharedAudience: false,
+                }));
+                expect(JSON.parse(authoredExports!.body!).ownServer)
+                    .toEqual({ ...detail.content.ownServer, serviceExports, rollout: 'startFirst' });
+            }
+            if (index === 3) {
+                const authoredPreview = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read(id, {
+                    prepareRecipients: false, includeSharedAudience: false,
+                }));
+                expect(JSON.parse(authoredPreview!.body!).previewTemplate).toEqual(authoredPreviewTemplate);
+            }
         }
+        detail.content.definition = { ...await normalizeStoredComposeDefinitionInput({ ...originalDefinitionInput,
+            document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17"}, cache: {image: "redis:7"}}',
+            services: ['app', 'database', 'cache'] }), contentRevision: 4 };
+        detail.content.template = { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17',
+            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+            definition: { kind: 'stored', contentRevision: 4, composeDigest: detail.content.definition.composeDigest },
+            services: ['database', 'cache'], health: [{ service: 'database', participates: true }, { service: 'cache', participates: true }],
+            data: [{ engine: 'postgres', service: 'database' }, { engine: 'redis', service: 'cache' }],
+            exports: { database: { service: 'database', port: 5432, scheme: 'postgres', defaultExposure: 'internal' },
+                cache: { service: 'cache', port: 6379, scheme: 'redis', defaultExposure: 'internal' } } };
+        detail.content.ownServer = createOwnServerEnvironmentConfigurationV1({ serviceExports: [
+            { key: 'database', service: 'database', containerPort: 5432, scheme: 'postgres', exposure: 'loopback' },
+            { key: 'cache', service: 'cache', containerPort: 6379, scheme: 'redis', exposure: 'loopback' },
+        ] });
+        detail.content.backup = { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: 'open' },
+            occurrenceId: 'backup', config: {}, credentialBindings: [], ownership: { environmentId: detail.environment.id, prefix: 'backup/' },
+            sources: [{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' },
+                { kind: 'volume', sourceId: 'cache', service: 'cache', volume: 'cache-data', consistency: 'stopDuringCopy' }],
+            retention: { kind: 'keepEverything' } };
+        DeploymentEnvironmentContentV1Schema.parse(detail.content);
+        const removed = { ...originalDefinitionInput,
+            document: 'services: {app: {image: "example/app:1"}, cache: {image: "redis:7"}}\nvolumes: {data: {}, cache-data: {}}',
+            services: ['app', 'cache'] };
+        const removalResult = await deps.deploymentAction!('deployments.environments.update', { ...input, patch: { definition: removed } }, {});
+        expect(removalResult, JSON.stringify(removalResult)).toMatchObject({ ok: true });
+        const reconciled = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read([...created.keys()].at(-1)!, {
+            prepareRecipients: false, includeSharedAudience: false,
+        }));
+        const reconciledContent = JSON.parse(reconciled!.body!);
+        expect(reconciledContent.template.data).toEqual([{ engine: 'redis', service: 'cache' }]);
+        expect(reconciledContent.template.services).toEqual(['cache']);
+        expect(reconciledContent.template.health).toEqual([{ service: 'cache', participates: true }]);
+        expect(Object.keys(reconciledContent.template.exports)).toEqual(['cache']);
+        expect(reconciledContent.ownServer.serviceExports).toHaveLength(1);
+        expect(reconciledContent.backup.sources).toEqual([detail.content.backup.sources[1]]);
+        expect(reconciledContent.backup.configRevision).toBe(2);
+        expect(reconciledContent.definition.document).toContain('data: {}');
+        detail.content.backup.sources = [detail.content.backup.sources[0]!];
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input, patch: { definition: removed } }, {}))
+            .toMatchObject({ ok: true });
+        const retiredBackup = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read([...created.keys()].at(-1)!, {
+            prepareRecipients: false, includeSharedAudience: false,
+        }));
+        expect(JSON.parse(retiredBackup!.body!).backup).toBeUndefined();
+        detail.content.backup = { notNeeded: true };
+        expect(await deps.deploymentAction!('deployments.environments.update', { ...input, patch: { definition: removed } }, {}))
+            .toMatchObject({ ok: true });
+        const noBackupNeeded = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read([...created.keys()].at(-1)!, {
+            prepareRecipients: false, includeSharedAudience: false,
+        }));
+        expect(JSON.parse(noBackupNeeded!.body!).backup).toEqual({ notNeeded: true });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits only the current definition sub-revision before %s storage through requester custody', async mode => {
@@ -256,6 +327,28 @@ describe('opened Environment content preparation', () => {
         candidate = { ...detail.content, backup: undefined };
         await expect(update()).resolves.toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
         expect(writes).toHaveLength(5);
+        detail.content.ownServer = createOwnServerEnvironmentConfigurationV1({ serviceExports: [
+            { key: 'database', service: 'app', containerPort: 5432, scheme: 'postgres', exposure: 'loopback' },
+        ] });
+        for (const privateCandidate of [
+            { ownServer: { ...detail.content.ownServer, serviceExports: [] } },
+            { ownServer: { ...detail.content.ownServer, rollout: 'startFirst' as const } },
+            { previewTemplate: authoredPreviewTemplate },
+        ]) {
+            candidate = { ...detail.content, ...privateCandidate };
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-prepared-update', binding: {
+                accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+                machineId: 'controller', installationId: 'installed-controller', actionId: 'deployments.environments.update',
+                environmentId: input.environmentId, requestId: 'prepared-update', requestEnvelopeDigest: 'A'.repeat(43),
+                target: { kind: 'machine', machineId: 'controller' }, accountEncryptionMode: mode,
+                deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.environments.update', input),
+            } });
+            await expect(deps.deploymentAction!('deployments.environments.update', input,
+                { externalActionExecutionAuthorization: authorization }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
+            await expect(update()).resolves.toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
+            expect(writes).toHaveLength(5);
+        }
         const prepare = createPrepareEnvironmentContentForHost(contentHost);
         const createRequest = { actionId: 'deployments.environments.create' as const, context: {}, input: {
             serverId: 'home', projectSourceId: 'source', requestKey: 'create-without-backup',

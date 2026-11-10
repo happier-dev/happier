@@ -36,6 +36,7 @@ type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalAc
     operationAcceptance?: Pick<NonNullable<ActionExecutorContext['operationAcceptance']>, 'operationId'>;
 }>;
 type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'materialization'> & Readonly<{
+    environmentUpdate?: true;
     materialization: OwnServerSecretLaunchAdmissionRequest['materialization']
         | Extract<EnvironmentSecretLaunchAdmissionBodyV1['materialization'], { kind: 'bindings' | 'domain' }>;
 }>;
@@ -175,7 +176,8 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
     const read = async () => {
         const { response, requestHeaders } = await custody.request(`/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`,
             body, input.materialization.kind === 'bindings'
-                ? input.materialization.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set'
+                ? input.materialization.buildMachineId || input.environmentUpdate
+                    ? 'deployments.environments.update' : 'deployments.bindings.set'
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
                     : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'

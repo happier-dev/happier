@@ -2,12 +2,13 @@ import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import { prepareDeploymentBackupConfigurationV1, prepareDeploymentBackupRetentionV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
-    omitDeploymentEnvironmentPrivateContentPatchV1 } from '@happier-dev/protocol';
+    omitDeploymentEnvironmentPrivateContentPatchV1, applyEnvironmentSecretBindingsPatchV1,
+    EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentEnvironmentArtifactV1, resolveDeploymentStoredDefinitionRevisionV1,
-    createOwnServerEnvironmentConfigurationV1,
+    applyOwnServerEnvironmentConfigurationPatchV1, reconcileDeploymentRemovedDataServicesV1,
     type DeploymentEnvironmentDefinitionV1 } from '@happier-dev/deployment-protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -119,13 +120,27 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     : readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
                 if (!previous.ok) return { ok: false, errorCode: previous.error, error: previous.error };
                 previousDefinition = previous.content.definition;
+                let desiredTemplate = previous.content.template;
+                let desiredOwnServer = previous.content.ownServer;
+                let desiredPreviewTemplate = previous.content.previewTemplate;
+                const bindingPatch = request.input.patch?.bindings;
+                if (bindingPatch?.set.some(binding => binding.source.kind === 'secret' && binding.source.ref === 'person_selects'))
+                    return { ok: false, errorCode: 'client_required', error: 'client_required' };
+                const desiredBindings = bindingPatch ? applyEnvironmentSecretBindingsPatchV1(previous.content.bindings,
+                    { set: bindingPatch.set.map(binding => EnvironmentSecretBindingV1Schema.parse(binding)), remove: bindingPatch.remove })
+                    : previous.content.bindings;
+                if (bindingPatch) {
+                    if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                    candidate = { ...candidate, content: { ...candidate.content, bindings: desiredBindings } };
+                    preparedContent = { input: request.input, owner: loaded.environment.owner };
+                }
                 const ingress = request.input.patch?.ingress;
                 const desiredIngress = ingress === undefined ? previous.content.ingress : ingress ?? undefined;
                 if (!isDeepStrictEqual(candidate.content.ingress, desiredIngress)) {
                     if (!currentReference || ingress === undefined) return { ok: false, errorCode: 'deployment_invalid',
                         error: 'deployment_invalid (deployment.environment.ingress_content_mismatch)',
                         details: { requiredFact: 'preparedEnvironmentIngress' } };
-                    candidate = { ...candidate, content: { ...previous.content, ingress: desiredIngress } };
+                    candidate = { ...candidate, content: { ...candidate.content, ingress: desiredIngress } };
                     preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
                 if (definitionInput !== undefined) {
@@ -135,12 +150,14 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     if (contentRevision === null) return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' };
                     const desiredDefinition = { ...definition, contentRevision };
                     if (!isDeepStrictEqual(candidate.content.definition, desiredDefinition)) {
-                        candidate = { ...candidate, content: { ...candidate.content, definition: desiredDefinition } };
+                        candidate = { ...candidate, content: await reconcileDeploymentRemovedDataServicesV1(candidate.content, desiredDefinition) };
+                        desiredTemplate = candidate.content.template;
+                        desiredOwnServer = candidate.content.ownServer;
                         preparedContent = { input: request.input, owner: loaded.environment.owner };
                     }
                 }
                 const retention = request.input.patch?.backupRetention;
-                let desiredBackup = previous.content.backup;
+                let desiredBackup = definitionInput === undefined ? previous.content.backup : candidate.content.backup;
                 const backup = request.input.patch?.backup;
                 if (backup) {
                     const lease = host.acquirePluginRuntimeRegistryLease ? await host.acquirePluginRuntimeRegistryLease()
@@ -173,10 +190,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 }
                 const ownServerPatch = request.input.patch?.ownServer;
                 if (ownServerPatch) {
-                    const selectedPolicy = Object.fromEntries(Object.entries(ownServerPatch).filter(([, value]) => value !== undefined));
-                    const desiredOwnServer = previous.content.ownServer
-                        ? { ...previous.content.ownServer, ...selectedPolicy }
-                        : Object.keys(selectedPolicy).length > 0 ? createOwnServerEnvironmentConfigurationV1(selectedPolicy) : undefined;
+                    desiredOwnServer = applyOwnServerEnvironmentConfigurationPatchV1(desiredOwnServer, ownServerPatch);
                     if (!isDeepStrictEqual(candidate.content.ownServer, desiredOwnServer)) {
                         if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
                         candidate = { ...candidate, content: { ...candidate.content, ownServer: desiredOwnServer } };
@@ -192,15 +206,18 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 const previewTemplate = request.input.patch?.previewTemplate;
                 if (previewTemplate !== undefined) {
                     if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
-                    candidate = { ...candidate, content: { ...candidate.content, previewTemplate: previewTemplate ?? undefined } };
+                    desiredPreviewTemplate = previewTemplate ?? undefined;
+                    candidate = { ...candidate, content: { ...candidate.content, previewTemplate: desiredPreviewTemplate } };
                     preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
                 // This check owns opened content in both Account modes. An E2EE
                 // server cannot inspect this private leaf on the client's behalf.
-                if (!isDeepStrictEqual(previous.content.template, candidate.content.template)
+                if (!isDeepStrictEqual(desiredTemplate, candidate.content.template)
+                    || !isDeepStrictEqual(desiredOwnServer, candidate.content.ownServer)
+                    || !isDeepStrictEqual(desiredPreviewTemplate, candidate.content.previewTemplate)
                     || !isDeepStrictEqual(previous.content.previewProvenance, candidate.content.previewProvenance)
                     || !isDeepStrictEqual(desiredBackup, candidate.content.backup)
-                    || !isDeepStrictEqual(previous.content.bindings, candidate.content.bindings))
+                    || !isDeepStrictEqual(desiredBindings, candidate.content.bindings))
                     return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
                 // Signed private authoring must publish its invocation's Artifact,
                 // including when the selected content is already current.

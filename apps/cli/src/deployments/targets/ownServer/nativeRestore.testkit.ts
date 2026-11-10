@@ -119,6 +119,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         process.stdin.on('end', () => {
             const filename = argv[argv.indexOf('--stdin-filename')+1];
             state.safetySnapshot = {...state.snapshot,id:'d'.repeat(64),tree:'e'.repeat(64),paths:['/'+filename],
+                hostname:argv[argv.indexOf('--host')+1],
                 tags:argv.flatMap((value,index)=>value === '--tag' ? [argv[index+1]] : [])};
             save(); event({kind:'safetyBytes',bytes}); finish();
         });

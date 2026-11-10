@@ -14,6 +14,17 @@ import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurr
 import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
 
+/** Source syntax only; native Compose remains the effective model and merge owner. */
+export async function parseDeploymentComposeSourceV1(document: string): Promise<Record<string, unknown>> {
+    const yaml = await import('yaml');
+    let value: unknown;
+    try { value = { ...yaml.default, ...yaml }.parse(document, { merge: true }); }
+    catch { throw Object.assign(new Error('Invalid Compose source'), { code: 'invalid_request' }); }
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw Object.assign(new Error('Invalid Compose source'), { code: 'invalid_request' });
+    return value as Record<string, unknown>;
+}
+
 /** Shared serialized leaves: feature-owned Environment records compose these same definitions. */
 export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
 export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));

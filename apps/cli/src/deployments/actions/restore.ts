@@ -35,7 +35,7 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             if (input.mode === 'prepare') {
                 let backup: Parameters<typeof host.restore>[0]['backup'];
                 if (input.backupOperationId) {
-                    const operations = await host.readBackupOperations?.(input, context);
+                    const operations = await host.readBackupOperations?.({ ...input, ...input.copy?.source }, context);
                     if (!operations) return failure('service_operation_unavailable');
                     const selected = operations.find(({ snapshot }) => snapshot.operationId === input.backupOperationId
                         && snapshot.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && snapshot.state === 'succeeded');

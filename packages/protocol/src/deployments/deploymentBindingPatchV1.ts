@@ -105,13 +105,20 @@ export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly Environ
     return result;
 }
 
+const bindingPatchShape = () => ({
+    set: z.array(EnvironmentSecretBindingInputV1Schema), remove: z.array(EnvironmentSecretBindingIdentityV1Schema),
+});
+const uniqueBindingPatchIdentities = (input: { set: readonly EnvironmentSecretBindingIdentityV1[];
+    remove: readonly EnvironmentSecretBindingIdentityV1[] }) => {
+    const identities = [...input.set, ...input.remove].map(environmentSecretBindingIdentityV1);
+    return new Set(identities).size === identities.length;
+};
+/** One ordinary binding patch also participates in a reviewed Environment definition update. */
+export const DeploymentBindingsPatchV1Schema = lazyZodSchema(() => z.strictObject(bindingPatchShape())
+    .check(z.refine(uniqueBindingPatchIdentities, { message: 'Each binding identity may occur once in a patch.' })));
 /** Authored binding intent is a leaf: Copy continuations must not import the Action catalog. */
 export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strictObject({
     serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
-    expectedRevision: DeploymentRevisionV1Schema,
-    set: z.array(EnvironmentSecretBindingInputV1Schema), remove: z.array(EnvironmentSecretBindingIdentityV1Schema),
-}).check(z.refine(input => {
-    const identities = [...input.set, ...input.remove].map(environmentSecretBindingIdentityV1);
-    return new Set(identities).size === identities.length;
-}, { message: 'Each binding identity may occur once in a patch.' })));
+    expectedRevision: DeploymentRevisionV1Schema, ...bindingPatchShape(),
+}).check(z.refine(uniqueBindingPatchIdentities, { message: 'Each binding identity may occur once in a patch.' })));
 export type DeploymentBindingsPatchInputV1 = z.infer<typeof DeploymentBindingsPatchInputV1Schema>;

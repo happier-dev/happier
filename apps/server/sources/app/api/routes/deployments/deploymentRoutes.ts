@@ -134,7 +134,8 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => updateDeploymentEnvironmentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), 'environment', undefined, undefined,
+            readDeploymentExecutionBindingFromRequest(request)), { isolationLevel: 'Serializable' });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/controller', {

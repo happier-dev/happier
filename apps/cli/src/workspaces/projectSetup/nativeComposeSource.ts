@@ -6,16 +6,10 @@ import type { DeploymentStoredDefinitionInputV1 } from '@happier-dev/protocol';
 import { WorkspaceManifestRelativePathSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { isNativeDefinitionRecord } from './nativePackageScripts';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 /** Source syntax only. Native Compose remains the effective-model/merge owner. */
-export async function parseNativeComposeSource(document: string): Promise<Record<string, unknown>> {
-    const yaml = await import('yaml');
-    let value: unknown;
-    try { value = { ...yaml.default, ...yaml }.parse(document, { merge: true }); }
-    catch { throw Object.assign(new Error('Invalid Compose source'), { code: 'invalid_request' }); }
-    if (!isNativeDefinitionRecord(value)) throw Object.assign(new Error('Invalid Compose source'), { code: 'invalid_request' });
-    return value;
-}
+export const parseNativeComposeSource = parseDeploymentComposeSourceV1;
 
 export type StoredComposeDefinition = Extract<DeploymentSourceIntentV1, { kind: 'stored' }>;
 

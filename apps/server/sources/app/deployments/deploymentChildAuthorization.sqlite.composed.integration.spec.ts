@@ -352,6 +352,69 @@ describe('deployment children retain their controller Action authority', () => {
             accountKeys, memberContentKeys, artifactKeys };
     }
 
+    it('reconciles joining membership under an accepted existing-Environment template Deploy root', async () => {
+        const f = await fixture('account', 'account', { templateRoot: true });
+        await db.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: f.link.id }, data: { state: 'joining' } });
+        const domainInput = { serverId, environmentId: f.environment.id, domainId: crypto.randomUUID(),
+            expectedRevision: f.environmentRevision, targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+            ...await f.content('deployment-domain.v1'), placements: [{ machineId: f.member.id,
+                installationId: f.member.installationId, nativeServer: 'private' as const,
+                listener: 'privateOrigin' as const, dockerEngineId: 'membership-engine' }] };
+        const created = await inTx(tx => createDeploymentDomainInTx(tx, f.account.id, domainInput));
+        if (!created.ok) throw new Error(created.error);
+        const prepared = { serverId, environmentId: f.environment.id, domainId: domainInput.domainId,
+            expectedRevision: created.revision, expectedDomainRevision: created.domain.revision,
+            targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+            contentArtifactId: created.domain.contentArtifactId, contentHeaderVersion: created.domain.contentHeaderVersion,
+            contentBodyVersion: created.domain.contentBodyVersion, requestKey: crypto.randomUUID(),
+            membershipDeploymentId: f.receipt.id,
+            membershipMachines: [{ machineId: f.member.id, installationId: f.member.installationId }] };
+        const target = f.originalActionEnvelope.target;
+        const verifyChild = (params: DeploymentChildRpcV1) => {
+            const method = `${params.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId = crypto.randomUUID();
+            const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+            const externalActionExecution = { v: 1 as const, authorization: f.authorization,
+                effectActionId: 'deployments.domains.add', target, installationId: f.controller.installationId,
+                deploymentChildRouting, machineSignature: signExternalActionMachineRpcRequestV1({
+                    authorizationToken: f.authorization.token, effectActionId: 'deployments.domains.add', target,
+                    installationId: f.controller.installationId, method, requestId, params, deploymentChildRouting,
+                    privateKey: f.controller.keys.secretKey }) };
+            return verifyExternalActionMachineRpcExecution(externalActionExecution,
+                { method, requestId, params, originalActionEnvelope: f.originalActionEnvelope });
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const path = `/v1/deployments/environments/${f.environment.id}/domains`;
+            const payload = { ...prepared, requestId: f.authorization.binding.requestId,
+                actionOperationId: f.receipt.actionOperationId!, placements: domainInput.placements };
+            const request = (body = payload) => app.inject({ method: 'POST', url: path, payload: body, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.domains.add',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: f.authorization.token, effectActionId: 'deployments.domains.add', target,
+                    installationId: f.controller.installationId, requestId: f.authorization.binding.requestId,
+                    method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+            } });
+            const response = await request();
+            expect(response.statusCode, response.body).toBe(200);
+            expect((await request({ ...payload, membershipDeploymentId: 'foreign-receipt' })).statusCode).toBe(403);
+            const added = DeploymentDomainMutationResultV1Schema.parse(response.json());
+            if (!added.ok) throw new Error(added.error);
+            const capture = added.domain.placements![0]!;
+            expect(capture.placement.requestId).toBe(f.authorization.binding.requestId);
+            const native = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain', actionId: 'deployments.domains.add',
+                input: { serverId, environmentId: f.environment.id, domainId: domainInput.domainId },
+                machineId: f.member.id, installationId: f.member.installationId, expectedDomainRevision: added.domain.revision,
+                actionOperationId: f.receipt.actionOperationId!, capture });
+            expect(await verifyChild(native)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domain' } } });
+        }, { authentication: 'real' });
+        const discovery = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.add',
+            input: prepared, machineId: f.member.id, installationId: f.member.installationId });
+        expect(await verifyChild(discovery)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domainDiscover' } } });
+        expect(await verifyChild({ ...discovery, installationId: 'wrong-installation' })).toBeNull();
+    });
+
     it('explains the persisted #76 controller mismatch for teardown and Domain Remove without substituting Machines', async () => {
         // Persisted QA-DOMAIN-1104 persisted-g-{preread,teardown,domain-remove}-r76 fixtures.
         // Keys are freshly generated at the installation boundary; placement and CAS facts retain the captured values.
@@ -1227,7 +1290,7 @@ describe('deployment children retain their controller Action authority', () => {
         const destinationLink = await db.deploymentTargetLink.create({ data: { environmentId: destination.id,
             createdByAccountId: f.account.id, role: 'runtime', state: 'deployed', sourceKind: 'host',
             hostTargetId: 'own-server', targetKind: 'ownServer', ...await f.content('deployment-target-link.v1'),
-            machines: { create: [{ machineId: f.builder.id, installationId: f.builder.installationId, position: 0, state: 'active' }] } } });
+            machines: { create: [{ machineId: f.member.id, installationId: f.member.installationId, position: 0, state: 'active' }] } } });
         await db.deploymentEnvironment.update({ where: { id: destination.id }, data: { runtimeTargetLinkId: destinationLink.id } });
         const activeDestination = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
             environmentId: destination.id, targetLinkId: destinationLink.id, requestKey: crypto.randomUUID(),
@@ -1325,10 +1388,13 @@ describe('deployment children retain their controller Action authority', () => {
         const secretBody = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
             machineId: f.member.id, installationId: f.member.installationId,
             materialization: { kind: 'copySourceRead', deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId } };
-        const signed = (body: typeof secretBody) => ({ ...body, proof: signMachineInstallationProof({ payload: { version: 1,
-            accountId: f.account.id, machineId: body.machineId, installationId: body.installationId,
-            deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(
-                EnvironmentSecretLaunchAdmissionBodyV1Schema.parse(body)) } }, privateKey: f.member.keys.secretKey }) });
+        const signed = (value: unknown) => {
+            const body = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse(value);
+            return { ...body, proof: signMachineInstallationProof({ payload: { version: 1,
+                accountId: f.account.id, machineId: body.machineId, installationId: body.installationId,
+                deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(
+                    body) } }, privateKey: f.member.keys.secretKey }) };
+        };
         await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); projectSourceRoutes(app); }, async app => {
             const path = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
             const body = signed(secretBody);
@@ -1345,6 +1411,27 @@ describe('deployment children retain their controller Action authority', () => {
                 .toEqual({ kind: 'secret', value: 'private-copy-repository-password' });
             expect(openMachineSecretGrant({ grant, machineId: f.outsider.id, installationId: f.outsider.installationId,
                 installationPrivateSeed: f.outsider.keys.secretKey.slice(0, 32) })).toBeNull();
+            const destinationSecretBody = { serverId, environmentId: destination.id, targetLinkId: destinationLink.id,
+                machineId: f.member.id, installationId: f.member.installationId,
+                materialization: { kind: 'deployment', deploymentId: activeDestination.id,
+                    actionOperationId: activeDestination.actionOperationId } };
+            const destinationPath = `/v1/deployments/environments/${destination.id}/secret-launch-admission`;
+            const destinationBody = signed(destinationSecretBody);
+            const destinationResponse = await app.inject({ method: 'POST', url: destinationPath, payload: destinationBody,
+                headers: headers(destinationPath, destinationBody) });
+            expect(destinationResponse.statusCode, destinationResponse.body).toBe(200);
+            expect(EnvironmentSecretLaunchAdmissionResultV1Schema.parse(destinationResponse.json()))
+                .toEqual({ ok: true, grants: [destinationGrant] });
+            for (const materialization of [
+                { ...destinationSecretBody.materialization, deploymentId: f.receipt.id },
+                { ...destinationSecretBody.materialization, actionOperationId: f.receipt.actionOperationId },
+            ]) {
+                const substituted = signed({ ...destinationSecretBody, materialization });
+                const denied = await app.inject({ method: 'POST', url: destinationPath, payload: substituted,
+                    headers: headers(destinationPath, substituted) });
+                expect(denied.statusCode).toBe(401);
+                expect(denied.json()).not.toHaveProperty('grants');
+            }
             let deliveredSourceBindings: readonly EnvironmentSecretBindingV1[] | undefined;
             const sourceEnvironment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
             const receiptSpec = getActionSpec('deployments.receipts.get');

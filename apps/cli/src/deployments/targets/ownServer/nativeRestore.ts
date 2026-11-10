@@ -311,20 +311,22 @@ function restoreOperation(capture: OwnServerNativeRestorePrepareCapture) {
     return safety ? 'restoreWithSafety' as const : 'restore' as const;
 }
 
-async function prepareNativeRestore(capture: OwnServerNativeRestorePrepareCapture, native: NativeRestore): Promise<OwnServerNativeRestorePrepareReceipt> {
+async function prepareNativeRestore(capture: OwnServerNativeRestorePrepareCapture, native: NativeRestore,
+    safetyNative: Pick<NativeRestore, 'access' | 'signal' | 'executeBackup'> = native): Promise<OwnServerNativeRestorePrepareReceipt> {
     const safety = capture.safetyBackup;
     return { ...await prepareDeploymentRestoreV1({ ...capture, ...native,
-        safetyBackup: safety ? { ...safety, access: native.access, signal: native.signal, execute: native.executeBackup } : undefined,
+        safetyBackup: safety ? { ...safety, access: safetyNative.access, signal: safetyNative.signal, execute: safetyNative.executeBackup } : undefined,
     }), repository: { repository: native.access.repository, ...(native.access.s3 ? { s3: native.access.s3 } : {}) } };
 }
 
 /** Standalone phases own separate P42 preparations; confirmation receives a fresh input. */
 export function prepareOwnServerNativeRestore(input: OwnServerNativeRestoreInput,
-    admitted: OwnServerNativeRestorePrepareCapture): Promise<OwnServerNativeRestorePrepareReceipt>;
+    admitted: OwnServerNativeRestorePrepareCapture, destinationSafetyInput?: OwnServerNativeRestoreInput): Promise<OwnServerNativeRestorePrepareReceipt>;
 export function prepareOwnServerNativeRestore(input: OwnServerNativeRestoreInputFactory,
-    admitted: OwnServerNativeRestoreByIdCapture): Promise<OwnServerNativeRestorePrepareReceipt>;
+    admitted: OwnServerNativeRestoreByIdCapture, destinationSafetyInput?: OwnServerNativeRestoreInput): Promise<OwnServerNativeRestorePrepareReceipt>;
 export async function prepareOwnServerNativeRestore(input: OwnServerNativeRestoreInput | OwnServerNativeRestoreInputFactory,
-    admitted: OwnServerNativeRestorePrepareCapture | OwnServerNativeRestoreByIdCapture): Promise<OwnServerNativeRestorePrepareReceipt> {
+    admitted: OwnServerNativeRestorePrepareCapture | OwnServerNativeRestoreByIdCapture,
+    destinationSafetyInput?: OwnServerNativeRestoreInput): Promise<OwnServerNativeRestorePrepareReceipt> {
     let capture: OwnServerNativeRestorePrepareCapture;
     let nativeInput: OwnServerNativeRestoreInput;
     if (typeof input === 'function') {
@@ -337,6 +339,11 @@ export async function prepareOwnServerNativeRestore(input: OwnServerNativeRestor
         nativeInput = input;
     }
     const operation = restoreOperation(capture);
+    // A copy reads the source repository but protects an incumbent destination
+    // through that destination's own backup credentials and native service.
+    if (capture.safetyBackup && destinationSafetyInput) return withNativeRestore(nativeInput, capture.destination,
+        native => withOwnServerNativeBackup(destinationSafetyInput, capture.destination,
+            safetyNative => prepareNativeRestore(capture, native, safetyNative)), 'restore');
     return withNativeRestore(nativeInput, capture.destination, native => prepareNativeRestore(capture, native), operation);
 }
 

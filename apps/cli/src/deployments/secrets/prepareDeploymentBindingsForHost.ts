@@ -11,7 +11,8 @@ import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/depl
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, DeploymentActionIdV1 } from '@happier-dev/protocol';
 import { readDeploymentEnvironmentArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
-    DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+    isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
+    machineSecretGrantSubjectKey, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -59,7 +60,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             if (input.serverId !== host.serverId) return refuse('target_mismatch');
             const assertAuthority = () => assertDeploymentSecretInvocationCurrent(context);
             const headers = async (transport: Parameters<ArtifactRequestAuthorizationHeaders>[0],
-                actionId: DeploymentActionIdV1 = request.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set') => {
+                actionId: DeploymentActionIdV1 = request.buildMachineId || request.environmentUpdate
+                    ? 'deployments.environments.update' : 'deployments.bindings.set') => {
                 await assertAuthority();
                 const authorized = await host.resolveRequestHeaders(context, actionId, transport);
                 if (!authorized) return refuse('action_forbidden');
@@ -90,10 +92,10 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     { set: input.set.map(binding => EnvironmentSecretBindingV1Schema.parse(binding)), remove: input.remove }) } }
                 : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
             if (!candidate.ok) return refuse(candidate.error);
-            if (request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
+            if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
                 : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content)) return refuse('deployment_invalid');
             const selectedCaptures = captureDeploymentBindingSavedSecretRevisionsV1(candidate.content.bindings);
-            if (!request.buildMachineId && 'referencedSavedSecretRevisions' in input
+            if (!request.buildMachineId && !request.environmentUpdate && 'referencedSavedSecretRevisions' in input
                 && !matchesDeploymentBindingSavedSecretCapturesV1(selectedCaptures,
                 input.referencedSavedSecretRevisions)) return refuse('deployment_invalid');
             const operation = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)
@@ -143,10 +145,15 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 serverId: storageServerId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
                 installationId: identity.installationId, environmentId: input.environmentId, targetLinkId,
                 expectedRevision: input.expectedRevision, ...(request.buildMachineId ? { buildMachineId: request.buildMachineId } : {}),
-                domainIds: [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
+                ...(request.environmentUpdate ? { environmentUpdate: true } : {}),
+                domainIds: request.environmentUpdate ? [] : [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
                     binding.purpose === 'domainCredential' ? [binding.domainId] : []))],
                 context, signal: context.signal ?? new AbortController().signal });
             const retainedAdmission = admission;
+            const retainedOperationalGrants = request.environmentUpdate
+                ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
+                    bindings: candidate.content.bindings, existingGrants: retainedAdmission.grants }) : [];
+            if (retainedOperationalGrants === null) return refuse('deployment_invalid');
             if (retainedAdmission.bindingPreparation.buildInstallation?.machineId !== loaded.environment.buildMachineId
                 || request.buildMachineId && retainedAdmission.bindingPreparation.proposedBuildInstallation?.machineId !== request.buildMachineId) {
                 return refuse('deployment_conflict');
@@ -169,8 +176,12 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const decodedDomainDestinations = domainDestinations ? { status: domainDestinations.status,
                 domains: domainDestinations.domains.map(domain => ({ domainId: domain.domainId,
                     installations: domain.installations.map(decodeInstallation) })) } : undefined;
+            const preparedBindings = request.environmentUpdate
+                ? candidate.content.bindings.filter(isEnvironmentSecretBindingManagedByBindingsWriterV1) : candidate.content.bindings;
+            const previousBindings = request.environmentUpdate
+                ? current.content.bindings.filter(isEnvironmentSecretBindingManagedByBindingsWriterV1) : current.content.bindings;
             const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
-                bindings: candidate.content.bindings, previousBindings: current.content.bindings,
+                bindings: preparedBindings, previousBindings,
                 runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                 ...(buildInstallation ? { buildInstallation: decodeInstallation(buildInstallation) } : {}),
                 ...(decodedDomainDestinations ? { domainDestinations: decodedDomainDestinations } : {}),
@@ -181,9 +192,12 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                         ? { buildInstallation: decodeInstallation(retainedAdmission.bindingPreparation.buildInstallation) } : {}),
                 } } : {}),
                 existingGrants: retainedAdmission.grants, materializer, assertCurrent });
-            if (!matchesDeploymentBindingSavedSecretCapturesV1(selectedCaptures,
+            if (!matchesDeploymentBindingSavedSecretCapturesV1(request.environmentUpdate
+                ? captureDeploymentBindingSavedSecretRevisionsV1(preparedBindings) : selectedCaptures,
                 prepared.referencedSavedSecretRevisions)) return refuse('deployment_invalid');
-            return await complete(prepared.grants);
+            const grants = new Map([...prepared.grants, ...retainedOperationalGrants]
+                .map(grant => [machineSecretGrantSubjectKey(grant), grant]));
+            return await complete([...grants.values()]);
         } catch (error) { return failure(request.context.signal?.aborted ? { code: 'cancelled' } : error); }
         finally { admission?.release(); }
     });

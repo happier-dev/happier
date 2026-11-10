@@ -405,12 +405,14 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 signal: input.snapshot.signal }, keys: render.keys, settleNative: project.settleNative }, run);
         } finally {
             try { await copySecrets?.release?.(); }
-            finally { try { await activation?.dispose(); }
             finally {
-                try { if (project !== recovery.project) await project.dispose(); }
-                finally { try { await recovery.project.dispose(); }
-                    finally { try { await recovery.source.abort(); } finally { await recovery.runtime.release(); } } }
-            } }
+                try { await activation?.dispose(); }
+                finally {
+                    try { if (project !== recovery.project) await project.dispose(); }
+                    finally { try { await recovery.project.dispose(); }
+                        finally { try { await recovery.source.abort(); } finally { await recovery.runtime.release(); } } }
+                }
+            }
         }
     }
 
@@ -479,7 +481,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const captureReceipt = input.copy || input.mode === 'prepare' && !input.backupOperationId ? await host.readReceipt({ environmentId: input.copy?.source.environmentId ?? input.environmentId,
             deploymentId: input.deploymentId, context }) : undefined;
         const backup = request.backup?.capture ?? captureReceipt?.content.ownServer?.preMigrationBackup;
-        if (input.mode === 'prepare' && !backup && !request.backup) refuse('backup_required');
+        if (input.mode === 'prepare' && !backup && (input.copy || !request.backup)) refuse('backup_required');
         const runtimeRequest: OwnServerDeploymentRuntimeRequest = { actionId: 'deployments.rollback', context,
             input: { serverId: input.serverId, environmentId: input.environmentId, targetLinkId: input.targetLinkId,
                 expectedRevision: input.expectedRevision, expectedTargetLinkRevision: snapshot.link.revision,
@@ -491,7 +493,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             snapshot: { ...snapshot, content: generation.content, deployment: generation.deployment },
             generation, installationId: input.installationId,
             ...(copySourceEnvironment && captureReceipt ? { copySource: { environment: copySourceEnvironment, receipt: captureReceipt } } : {}),
-            ...(request.backup && !backup ? { operationKind: 'deployments.backups.restore' as const } : {}) },
+            ...(input.copy || request.backup && !backup ? { operationKind: 'deployments.backups.restore' as const } : {}) },
         async ({ native, createInput, runtime, createBackupInput }) => {
             const retained = request.prepared;
             // Manifest-only retained runs have no historical database/configuration.
@@ -499,6 +501,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             // bytes are still verified against the original manifest before safety.
             const operands = input.mode === 'prepare' && request.backup && !backup
                 ? await runtime.preparePreMigrationBackupOperands?.() : undefined;
+            let safetyOperands: typeof operands;
             try {
                 const target = input.mode === 'prepare' ? input.copy
                     ? { ...input.copy.destination, adapter: 'postgres-v1' as const }
@@ -521,13 +524,23 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 : { receipt: captureReceipt! }) });
                     if (resolved.kind === 'refused') refuse(resolved.code);
                     const capture = resolved.capture;
+                    if (input.copy && destination.hasMeaningfulData) {
+                        safetyOperands = await runtime.preparePreMigrationBackupOperands?.();
+                        if (!safetyOperands) refuse('backup_required');
+                        const safetyDestination = safetyOperands.destination;
+                        if (safetyDestination.environmentId !== destination.environmentId
+                            || safetyDestination.service !== destination.service
+                            || safetyDestination.database !== destination.database) refuse('stale_input');
+                    }
                     const prepared = await prepareOwnServerNativeRestore(operands ? await createBackupInput(operands) : await createInput(capture),
                         { ...capture, operationId,
-                            // Copy's source purpose is read-only. The lifecycle's existing
-                            // safety requirement refuses an occupied destination without a
-                            // destination-owned backup; a new database needs no safety write.
-                            ...(input.copy ? {} : { safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
-                                data: { engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } } } }) });
+                            // Copy reads the source repository and protects an existing
+                            // destination through that Environment's own backup custody.
+                            ...(input.copy ? safetyOperands ? { safetyBackup: { environmentId: destination.environmentId,
+                                configuration: safetyOperands.configuration, data: safetyOperands.data } } : {}
+                                : { safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
+                                data: { engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } } } }) },
+                        safetyOperands ? await createBackupInput(safetyOperands) : undefined);
                     return { kind: 'prepared', prepared, configuration: capture.configuration };
                 }
                 const prepared = retained!.prepared;
@@ -535,7 +548,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     destination, repository: prepared.repository, configuration: retained!.configuration };
                 return confirmOwnServerNativeRestore(await createInput(capture), { prepare: prepared, source: prepared.source,
                     sourceFormat: prepared.sourceFormat, destination });
-            } finally { if (operands) await operands.dispose(); }
+            } finally {
+                try { if (safetyOperands) await safetyOperands.dispose(); }
+                finally { if (operands) await operands.dispose(); }
+            }
         });
     }
 

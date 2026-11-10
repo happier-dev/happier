@@ -18,6 +18,9 @@ import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import { prepareDatabaseMoveCutoverPatch, type DatabaseMoveCutoverSelection } from './databaseMoveCutover';
 
 type PreparedCreate = Omit<DeploymentEnvironmentCreateInputV1, 'serverId' | 'projectSourceId'>;
 export type DeploymentUiCreateInput = Omit<DeploymentEnvironmentCreateIntentInputV1,
@@ -68,6 +71,21 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         }
     }
     return {
+        /** Verified copy precedes one review and one ordinary Environment update. */
+        prepareDatabaseMoveCutover(environment: DeploymentEnvironmentHeaderV1, content: DeploymentEnvironmentContentV1,
+            selection: DatabaseMoveCutoverSelection, restored: DeploymentBackupRestoreResultV1) {
+            assertCurrent();
+            const prepared = prepareDatabaseMoveCutoverPatch(content, selection, restored);
+            if (prepared.kind !== 'ready') return prepared;
+            return { ...prepared, async save(operation?: UiActionOperation) {
+                assertCurrent();
+                return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke('deployments.environments.update', {
+                    serverId: lifetime.scope.serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                    contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+                    contentBodyVersion: environment.contentBodyVersion, patch: prepared.patch,
+                }, operation));
+            } };
+        },
         async runBackup(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();
             return DeploymentBackupActionResultSchemasV1['deployments.backups.run'].parse(await invoke(

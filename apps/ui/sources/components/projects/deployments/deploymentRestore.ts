@@ -65,13 +65,25 @@ export function deploymentRestoreOperands(
     'environment' | 'runtimeTargetLink'
   >,
   backup: DeploymentRetainedBackup,
+  copy?: Readonly<{
+    detail: Pick<DeploymentEnvironmentReadDetailV1, 'environment' | 'runtimeTargetLink'>;
+    service: string;
+    database: string;
+    backupOperationId: string;
+  }>,
 ): DeploymentRestoreOperands | null {
-  const target = deploymentDataTargetOperands(detail);
+  const target = deploymentDataTargetOperands(copy?.detail ?? detail);
   if (!target) return null;
+  if (copy && !detail.runtimeTargetLink) return null;
   return {
     ...target,
     deploymentId: backup.deploymentId,
     restoreBackupId: backup.restoreBackupId,
+    ...(copy && detail.runtimeTargetLink ? {
+      backupOperationId: copy.backupOperationId,
+      copy: { source: { environmentId: detail.environment.id, targetLinkId: detail.runtimeTargetLink.id },
+        destination: { service: copy.service, database: copy.database } },
+    } : {}),
   };
 }
 

@@ -29,7 +29,7 @@ import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifie
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, projectDeploymentReadAdmissionV1,
@@ -923,7 +923,8 @@ export type ExternalActionRequestEnvelope = z.infer<typeof ExternalActionRequest
 /** Public resource scope only; metadata content remains sealed in V2. */
 export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId: string, input: unknown): string | undefined {
   return (isDeploymentEnvironmentMetadataReadActionIdV1(actionId) || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
-    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentApprovalMetadataPreparationActionIdV1(actionId))
+    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    || isDeploymentApprovalMetadataPreparationActionIdV1(actionId))
     ? z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
 }
 export function projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(input: Readonly<{
@@ -1325,7 +1326,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     && !isDeploymentEnvironmentMetadataReadActionIdV1(value.actionId)
     && !isDeploymentApprovalMetadataPreparationActionIdV1(value.actionId)
     && value.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-    && !(value.actionId === 'deployments.environments.update' && isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
+    && value.actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'
       || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(value.actionId) || value.actionId === 'deployments.receipts.observe')))
     || value.target.kind !== 'machine')) {

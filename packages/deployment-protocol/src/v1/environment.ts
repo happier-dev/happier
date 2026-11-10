@@ -78,6 +78,14 @@ export function createOwnServerEnvironmentConfigurationV1(
     });
 }
 
+/** Policy and private export authoring share one partial-update/default rule. */
+export function applyOwnServerEnvironmentConfigurationPatchV1(current: OwnServerEnvironmentConfigurationV1 | undefined,
+    patch: Partial<OwnServerEnvironmentConfigurationV1>): OwnServerEnvironmentConfigurationV1 | undefined {
+    const selected = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+    return current ? { ...current, ...selected }
+        : Object.keys(selected).length ? createOwnServerEnvironmentConfigurationV1(selected) : undefined;
+}
+
 export const DeploymentEnvironmentContentV1Schema = z.strictObject({
     name: text, retainPreviousDeployments: DeploymentRetainPreviousDeploymentsV1Schema,
     definition: DeploymentEnvironmentDefinitionV1Schema, bindings: z.array(EnvironmentSecretBindingV1Schema),
@@ -126,7 +134,8 @@ export async function reconcileDeploymentRemovedDataServicesV1(content: Deployme
     definition: Extract<DeploymentEnvironmentDefinitionV1, { kind: 'stored' }>): Promise<DeploymentEnvironmentContentV1> {
     const updated = { ...content, definition };
     const template = content.template;
-    if (!template?.data?.length || content.definition.kind !== 'stored') return updated;
+    if (!template?.data?.length || content.definition.kind !== 'stored'
+        || definition.document === content.definition.document) return updated;
     const source = await parseDeploymentComposeSourceV1(definition.document);
     const previousSource = await parseDeploymentComposeSourceV1(content.definition.document);
     const services = source.services;

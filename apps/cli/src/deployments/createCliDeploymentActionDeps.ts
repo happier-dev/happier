@@ -49,6 +49,8 @@ export type DeploymentBindingPreparationRequestV1 = Readonly<{
   input: DeploymentBindingsSetInputV1; context: ActionExecutorContext;
   /** Exact future placement from this invocation's admitted update operand. */
   buildMachineId?: string;
+  /** Full candidate already admitted by the Environment content owner, before the same storage CAS. */
+  environmentUpdate?: true;
 }>;
 export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironmentAccessInputV1, 'environmentIds'>
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
@@ -232,6 +234,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
             || current.environment.contentHeaderVersion !== preparedInput.contentHeaderVersion
             || current.environment.contentBodyVersion !== preparedInput.contentBodyVersion;
           if (preparedInput.patch.buildMachineId !== undefined && preparedInput.patch.buildMachineId !== current.environment.buildMachineId
+            && preparedInput.patch.bindings === undefined
             && params.prepareBindings && (current.environment.runtimeTargetLinkId !== undefined || needsContentAdmission)) {
             const prepared = await params.prepareBindings({ input: {
               serverId: preparedInput.serverId, environmentId: preparedInput.environmentId,
@@ -251,6 +254,19 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           if (preparedContent) {
             input = preparedContent.input;
             authoredEnvironmentInputDigest = preparedContent.authoredInputDigest;
+          }
+          if ('patch' in preparedInput && preparedInput.patch?.bindings) {
+            if (!params.prepareBindings) return failure('client_required');
+            const candidate = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(input);
+            const prepared = await params.prepareBindings({ input: {
+              serverId: candidate.serverId, environmentId: candidate.environmentId, expectedRevision: candidate.expectedRevision,
+              contentArtifactId: candidate.contentArtifactId, contentHeaderVersion: candidate.contentHeaderVersion,
+              contentBodyVersion: candidate.contentBodyVersion, referencedSavedSecretRevisions: [],
+            }, context, environmentUpdate: true,
+              ...(preparedInput.patch.buildMachineId ? { buildMachineId: preparedInput.patch.buildMachineId } : {}) });
+            if ('errorCode' in prepared) return prepared;
+            preparedUpdateBindings = { grants: prepared.grants,
+              referencedSavedSecretRevisions: prepared.referencedSavedSecretRevisions };
           }
         }
         const changed = await params.admitAccount(input.serverId, context);

@@ -62,6 +62,7 @@ import { getActionSpec, projectSessionSpawnNewApiRequest } from '@happier-dev/pr
 import { Server } from 'socket.io';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 // Database I/O is the only substitute: installation signatures, Machine and
 // Session admission, credential policy, Home minting and currentness stay real.
@@ -1167,22 +1168,45 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     '/v1/deployments/environments/staging/targets', input, actionId, 'POST', input))).toBeNull();
             } finally { await app.close(); }
         });
-    it.each(['deployments.bindings.set', 'deployments.environments.update'] as const)(
-        'admits binding preparation reads under %s without granting runtime materialization or other writes', async actionId => {
+    it.each([
+        ['deployments.bindings.set', false, 'plain', 1], ['deployments.environments.update', true, 'plain', 1],
+        ['deployments.environments.update', false, 'plain', 1], ['deployments.environments.update', false, 'plain', 2],
+        ['deployments.environments.update', false, 'e2ee', 1], ['deployments.environments.update', false, 'e2ee', 2],
+    ] as const)(
+        'admits binding preparation reads under %s with builder change %s in %s v%s without other writes', async (actionId, buildChanged, mode, version) => {
         const { app, mint } = createApp('account');
+        const previousMode = storage.account.encryptionMode;
+        storage.account.encryptionMode = mode;
+        if (mode === 'e2ee') Object.assign(storage.state, { metadata: 'encrypted-controller-metadata',
+            dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: new Uint8Array(32).fill(7),
+                recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes: tweetnacl.randomBytes }) });
         const serverId = 'srv_proposal_admission';
         const content = { serverId, environmentId: 'staging', expectedRevision: 1,
             contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
         const input = actionId === 'deployments.bindings.set'
             ? { ...content, referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] }
-            : { ...content, patch: { buildMachineId: 'future-builder' } };
+            : { ...content, patch: buildChanged ? { buildMachineId: 'future-builder' } : {} };
         try {
-            const minted = await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport(input)));
+            const request = proposal(actionId, projectNativeJsonValueForTransport(input));
+            const envelope = version === 1 ? request.envelope : { v: 2 as const, requestId: request.envelope.requestId,
+                target: request.envelope.target, payload: { t: 'encrypted' as const, c: 'installation-sealed-command' },
+                deploymentMetadataEnvironmentId: projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input) };
+            const installationProof = signMachineInstallationProof({ privateKey: installation.secretKey,
+                payload: { version: 1, accountId: 'account', ...request.sessionActionSource, externalActionOrigin: {
+                    homeId: 'srv_proposal_admission', actionId, requestId: envelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: request.sessionActionOrigin } } });
+            const minted = await mint(actionId, { ...request, envelope, installationProof });
+            if (mode === 'e2ee' && version === 1) {
+                expect(minted.statusCode).toBe(400);
+                expect(minted.json()).toMatchObject({ code: 'invalid_envelope' });
+                return;
+            }
             expect(minted.statusCode, minted.body).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            expect(authorization.binding.environmentId).toBe('staging');
             const body = { serverId, environmentId: 'staging', targetLinkId: 'runtime', machineId: 'machine',
                 installationId: 'installation', materialization: { kind: 'bindings' as const, expectedRevision: 1,
-                    ...(actionId === 'deployments.environments.update' ? { buildMachineId: 'future-builder' } : {}) } };
+                    ...(buildChanged ? { buildMachineId: 'future-builder' } : {}) } };
             const preparation = { ...body, proof: signMachineInstallationProof({ privateKey: installation.secretKey,
                 payload: { version: 1, accountId: 'account', machineId: 'machine', installationId: 'installation',
                     deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } } }) };
@@ -1195,8 +1219,27 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                     path, value, actionId, method, routeInput))), path).toBe(true);
             }
-            const misplacedPurpose = { ...preparation, materialization: { kind: 'bindings', expectedRevision: 1,
-                ...(actionId === 'deployments.bindings.set' ? { buildMachineId: 'future-builder' } : {}) } };
+            const foreignBody = { ...body, environmentId: 'another-environment' };
+            if (actionId === 'deployments.bindings.set') {
+                expect(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                    `/v1/deployments/environments/staging?serverId=${serverId}`, undefined,
+                    'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' })))).toBe(true);
+            }
+            const foreignPreparation = { ...foreignBody, proof: signMachineInstallationProof({ privateKey: installation.secretKey,
+                payload: { version: 1, accountId: 'account', machineId: 'machine', installationId: 'installation',
+                    deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(foreignBody) } } }) };
+            expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                `/v1/deployments/environments/another-environment?serverId=${serverId}`, undefined,
+                actionId, 'GET', { serverId, environmentId: 'another-environment' })))).toBe(false);
+            expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                `/v1/deployments/environments/another-environment?serverId=${serverId}`, undefined,
+                'deployments.environments.get', 'GET', { serverId, environmentId: 'another-environment' })))).toBe(false);
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                '/v1/deployments/environments/another-environment/secret-launch-admission', foreignPreparation,
+                actionId, 'POST', foreignPreparation))).toBeNull();
+            const misplacedPurpose = { ...preparation, materialization: actionId === 'deployments.bindings.set'
+                ? { kind: 'bindings', expectedRevision: 1, buildMachineId: 'future-builder' }
+                : { kind: 'deployment', deploymentId: 'unrelated-deployment', actionOperationId: crypto.randomUUID() } };
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 '/v1/deployments/environments/staging/secret-launch-admission', misplacedPurpose))).toBeNull();
             if (actionId === 'deployments.environments.update') {
@@ -1211,7 +1254,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 '/v1/deployments/environments/staging/secret-launch-admission', { ...preparation,
                     materialization: { kind: 'review', contentArtifactId: 'candidate' } }))).toBeNull();
-        } finally { await app.close(); }
+        } finally { storage.account.encryptionMode = previousMode; await app.close(); }
     });
     it.each(['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown', 'machines.services.logs.read'] as const)(
         'admits only current Environment reads prepared by the installed %s owner', async actionId => {

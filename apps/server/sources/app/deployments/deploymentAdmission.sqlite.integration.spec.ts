@@ -7,12 +7,13 @@ import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects
 import { createTeamGroupForActorInTx, addTeamGroupMemberForActorInTx } from '@/app/teams/groups/groupService';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachinesInTx } from './deploymentAdmission';
 import { createSavedSecretResourceInTx, readSavedSecretResourcesForPrincipalInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, signMachineInstallationProof,
     DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, DeploymentEnvironmentUpdateStorageInputV1Schema,
-    captureDeploymentBindingSavedSecretRevisionsV1,
+    captureDeploymentBindingSavedSecretRevisionsV1, createOwnServerEnvironmentConfigurationV1,
     type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
@@ -63,7 +64,170 @@ describe('current Source deployment authority', () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('persists signed prepared backup setup and refuses ordinary forged backup content', async () => {
+    it('atomically cuts over reviewed definition and Saved Secret bindings through Environment update', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            name: 'Database cutover', requestKey: crypto.randomUUID() }));
+        if (!source.ok) throw new Error(source.error);
+        const signing = nacl.sign.keyPair();
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            installationId: crypto.randomUUID(), installationPublicKey: privacyKit.encodeBase64(signing.publicKey),
+            metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
+                host: 'database-cutover', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
+            })), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const content = { name: 'Database cutover', retainPreviousDeployments: 1, bindings: [],
+            template: { templateRef: { sourceId: 'builtin:apps', itemId: 'database-app', version: '1',
+                ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                services: ['app', 'db'], data: [{ engine: 'postgres', service: 'db', port: 5432 }] },
+            definition: { kind: 'stored', document: 'services:\n  app:\n    image: app:1\n  db:\n    image: postgres:17\n',
+                contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app', 'db'] } };
+        const artifact = async (body: unknown, target = false, artifactId: string = crypto.randomUUID()) => {
+            const saved = await createArtifact({ actorUserId: owner.id, artifactId,
+                kind: target ? DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 : DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({
+                    kind: target ? 'deployment-target-link.v1' : 'deployment-environment.v1', title: content.name })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!saved.ok) throw new Error(saved.error);
+            return { contentArtifactId: saved.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const initial = await artifact(content);
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, { ...initial, serverId,
+            projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id }));
+        if (!created.ok) throw new Error(created.error);
+        const targetContent = await artifact({}, true);
+        const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId,
+            environmentId: created.environmentId, expectedRevision: created.revision, requestKey: crypto.randomUUID(),
+            targetId: 'own-server', role: 'runtime', machines: [{ machineId: machine.id, installationId: machine.installationId! }],
+            ...targetContent }));
+        if (!linked.ok) throw new Error(linked.error);
+        const resourceId = crypto.randomUUID();
+        const secret = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: 'Database administrator', kind: 'token', encryptionMode: 'plain', accountGrants: [], teamGrants: [], keyEnvelopes: [],
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+                content: { v: 1, name: 'Database administrator', kind: 'token', value: 'private-admin-password' } }) }));
+        if (!secret.ok) throw new Error(secret.error);
+        const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DATABASE_PASSWORD',
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: secret.value.revision } };
+        const operationalBinding = { purpose: 'backupDestination' as const, configKey: 'destination', role: 'repositoryPassword',
+            source: binding.source };
+        const ownServer = { rollout: 'recreate' as const, autoRestorePreviousRelease: true };
+        const serviceExport = { key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
+            exposure: 'privateNetwork', privateNetwork: 'database-network' };
+        const candidateContent = { ...content, bindings: [binding, operationalBinding],
+            ownServer,
+            template: { ...content.template, services: ['app'], data: undefined }, definition: { ...content.definition,
+            document: 'services:\n  app:\n    image: app:1\n', contentRevision: 2,
+            composeDigest: `sha256:${'b'.repeat(64)}`, services: ['app'] } };
+        const candidate = await artifact(candidateContent);
+        const forgedProvenance = await artifact({ ...candidateContent, template: { ...candidateContent.template,
+            templateRef: { ...content.template.templateRef, itemId: 'unreviewed-template' } } });
+        const invalidDefinition = await artifact({ ...candidateContent,
+            definition: { ...candidateContent.definition, document: 'services: [' } });
+        const grant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: created.environmentId,
+            machineId: machine.id, installationId: machine.installationId!, resourceId,
+            resourceRevision: secret.value.revision, sealedContent: 'incumbent-admin-seal' };
+        const incumbentContent = await artifact({ ...content, bindings: [{ ...binding, name: 'POSTGRES_PASSWORD' }] });
+        const variableCaptures = captureDeploymentBindingSavedSecretRevisionsV1([binding]);
+        const incumbent = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, { serverId,
+            environmentId: created.environmentId, expectedRevision: linked.revision,
+            ...incumbentContent, grants: [{ ...grant, sealedContent: 'incumbent-admin-seal' }], referencedSavedSecretRevisions: variableCaptures }));
+        if (!incumbent.ok) throw new Error(incumbent.error);
+        const backup = { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'open' },
+            occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
+            sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
+            ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
+        // Existing operational custody is a persisted fixture; only the ordinary writer runs in the mutation below.
+        const operationalContent = await artifact({ ...content, backup, ownServer: { ...ownServer, serviceExports: [serviceExport] },
+            bindings: [{ ...binding, name: 'POSTGRES_PASSWORD' }, operationalBinding] });
+        const operationalRecipient = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const operationalGrant: MachineSecretGrantV1 = { ...grant, machineId: operationalRecipient.id,
+            installationId: operationalRecipient.installationId!, sealedContent: 'incumbent-operational-seal' };
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: created.environmentId,
+            grants: [grant, operationalGrant] }));
+        const captures = captureDeploymentBindingSavedSecretRevisionsV1(candidateContent.bindings);
+        await db.deploymentEnvironment.update({ where: { id: created.environmentId },
+            data: { ...operationalContent, referencedSavedSecretRevisions: captures } });
+        const input = { ...candidate, serverId, environmentId: created.environmentId, expectedRevision: incumbent.revision,
+            preparedBindings: { grants: [grant, operationalGrant], referencedSavedSecretRevisions: captures } };
+        const snapshot = async () => ({
+            environment: await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }),
+            grants: await db.machineSecretGrant.findMany({ where: { environmentId: created.environmentId } }),
+        });
+        const before = await snapshot();
+        // Real HTTP schema, registration, mutation owner and transaction; authentication is the transport fixture boundary.
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const update = (payload: unknown) => app.inject({ method: 'PATCH',
+                url: `/v1/deployments/environments/${created.environmentId}`, headers: { 'x-test-user-id': owner.id }, payload });
+            const refused = await update({ ...input, preparedBindings: { ...input.preparedBindings, grants: [] } });
+            expect(refused.statusCode, refused.body).toBe(409);
+            expect(await snapshot()).toEqual(before);
+            expect((await update({ ...input, ...forgedProvenance })).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(before);
+            expect((await update({ ...input, ...invalidDefinition })).statusCode).toBe(400);
+            expect(await snapshot()).toEqual(before);
+            const changedPolicy = await artifact({ ...candidateContent,
+                ownServer: { ...ownServer, serviceExports: [serviceExport] } });
+            expect((await update({ ...input, ...changedPolicy })).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(before);
+            expect((await update({ ...input, ...await artifact({ ...candidateContent, backup }) })).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(before);
+            for (const bindings of [[binding], [binding, { ...operationalBinding, role: 'another-role' }],
+                [binding, operationalBinding, { ...operationalBinding, configKey: 'another-destination' }]]) {
+                expect((await update({ ...input, ...await artifact({ ...candidateContent, bindings }) })).statusCode).toBe(409);
+                expect(await snapshot()).toEqual(before);
+            }
+            expect((await update({ ...input, preparedBindings: { ...input.preparedBindings,
+                grants: [{ ...grant, sealedContent: 'unreviewed-operational-seal' }] } })).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(before);
+        });
+        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...operationalContent, serverId,
+            environmentId: created.environmentId, expectedRevision: incumbent.revision,
+            patch: { definition: { from: 'compose', document: candidateContent.definition.document,
+                profiles: [], services: ['app'] }, bindings: { set: [binding],
+                remove: [{ purpose: 'variable', phase: 'runtime', name: 'POSTGRES_PASSWORD' }] } } });
+        const target = { kind: 'machine' as const, machineId: machine.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: authored };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: owner.id, authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch },
+            actionId: 'deployments.environments.update', machineId: machine.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: authored });
+        const native = authorization.binding.deploymentNativeAdmission;
+        if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(native)) throw new Error('Expected combined content admission');
+        const signedCandidate = await artifact(candidateContent, false, createDeploymentEnvironmentContentArtifactIdV1({
+            ...authorization.binding, environmentId: created.environmentId }));
+        const signedInput = { ...input, ...signedCandidate, patch: {}, authoredInputDigest: native.inputDigest };
+        const path = `/v1/deployments/environments/${created.environmentId}`;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const update = (payload = signedInput) => app.inject({ method: 'PATCH', url: path, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.environments.update',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: 'deployments.environments.update', target,
+                    installationId: machine.installationId!, requestId: envelope.requestId,
+                    method: 'PATCH', path, body: payload, privateKey: signing.secretKey }),
+            } });
+            expect((await update({ ...signedInput, preparedBindings: { ...signedInput.preparedBindings, grants: [grant] } })).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(before);
+            const accepted = await update();
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(accepted.json()).toMatchObject({ ok: true, revision: incumbent.revision + 1 });
+            const committed = await snapshot();
+            expect(committed.environment).toMatchObject({ ...signedCandidate, revision: incumbent.revision + 1,
+                referencedSavedSecretRevisions: input.preparedBindings.referencedSavedSecretRevisions });
+            expect(committed.grants).toHaveLength(2);
+            expect(committed.grants.map(row => row.contentEnvelope).sort()).toEqual([grant.sealedContent, operationalGrant.sealedContent].sort());
+            expect((await update()).statusCode).toBe(409);
+            expect(await snapshot()).toEqual(committed);
+        }, { authentication: 'real' });
+    });
+
+    it('persists signed prepared private content and refuses ordinary forged backup or preview content', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             name: 'Backup setup', requestKey: crypto.randomUUID() }));
@@ -96,19 +260,24 @@ describe('current Source deployment authority', () => {
             ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
         const base = { ...initial, serverId, environmentId: created.environmentId, expectedRevision: created.revision };
         const path = `/v1/deployments/environments/${created.environmentId}`;
-        const forged = { ...base, ...await artifact({ ...content, backup }) };
+        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            for (const extra of [{}, { authoredInputDigest: 'a'.repeat(43) }]) {
-                const response = await app.inject({ method: 'PATCH', url: path, payload: { ...forged, ...extra },
-                    headers: { 'x-test-user-id': owner.id } });
-                expect(response.statusCode, response.body).toBe(409);
-                expect(response.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            for (const forgedContent of [{ ...content, backup }, { ...content, previewTemplate }]) {
+                const forged = { ...base, ...await artifact(forgedContent) };
+                for (const extra of [{}, { authoredInputDigest: 'a'.repeat(43) }]) {
+                    const response = await app.inject({ method: 'PATCH', url: path, payload: { ...forged, ...extra },
+                        headers: { 'x-test-user-id': owner.id } });
+                    expect(response.statusCode, response.body).toBe(409);
+                    expect(response.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+                }
             }
         });
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
             .toMatchObject({ ...initial, revision: created.revision });
 
-        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...base, patch: { backup } });
+        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...base, patch: { backup, previewTemplate } });
         const target = { kind: 'machine' as const, machineId: machine.id };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: authored };
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
@@ -117,7 +286,7 @@ describe('current Source deployment authority', () => {
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: authored });
         const native = authorization.binding.deploymentNativeAdmission;
         if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(native)) throw new Error('Expected prepared Environment admission');
-        const prepared = await artifact({ ...content, backup }, createDeploymentEnvironmentContentArtifactIdV1({
+        const prepared = await artifact({ ...content, backup, previewTemplate }, createDeploymentEnvironmentContentArtifactIdV1({
             ...authorization.binding, environmentId: created.environmentId }));
         const payload = DeploymentEnvironmentUpdateStorageInputV1Schema.parse({ ...base, ...prepared,
             patch: {}, authoredInputDigest: native.inputDigest });
@@ -166,7 +335,7 @@ describe('current Source deployment authority', () => {
             sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
             ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
         const configuredContent = await artifact({ ...content, backup });
-        const configured = await inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id, {
+        const configured = await inTx(tx => setDeploymentEnvironmentBackupInTx(tx, owner.id, {
             ...configuredContent, serverId, environmentId: created.environmentId, expectedRevision: created.revision }));
         if (!configured.ok) throw new Error(configured.error);
         const retention = { kind: 'keep', last: 7, monthly: 12 };
@@ -258,7 +427,8 @@ describe('current Source deployment authority', () => {
             await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { runtimeTargetLinkId: link.id } });
             targetLinkId = link.id;
         }
-        const candidate = await artifact(writer === 'config' ? { ...body(1), ownServer: { rollout: 'startFirst', autoRestorePreviousRelease: false } }
+        const configuration = createOwnServerEnvironmentConfigurationV1({ rollout: 'startFirst', autoRestorePreviousRelease: false });
+        const candidate = await artifact(writer === 'config' ? { ...body(1), ownServer: configuration }
             : writer === 'bindingValues' ? { ...body(1), bindings: [variable] } : body(2));
         const targetContent = await artifact({}, true);
         const run = (accountId = actor.id, expectedRevision = created.revision) => inTx(async tx => {
@@ -289,7 +459,8 @@ describe('current Source deployment authority', () => {
             if (writer === 'delete' || writer === 'deleteEmpty') return deleteDeploymentEnvironmentInTx(tx, accountId, {
                 ...base, requestKey: crypto.randomUUID(), ...(writer === 'delete' ? { detachKeepRunning: true } : {}) });
             return updateDeploymentEnvironmentInTx(tx, accountId, { ...base,
-                ...(writer === 'builder' ? initial : candidate), ...(writer === 'builder' ? { patch: { buildMachineId: target.id },
+                ...(writer === 'builder' ? initial : candidate), ...(writer === 'config' ? { patch: { ownServer: configuration } } : {}),
+                ...(writer === 'builder' ? { patch: { buildMachineId: target.id },
                     preparedBindings: { referencedSavedSecretRevisions: [], grants: [] } } : {}) });
         });
         const before = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } });
@@ -601,10 +772,16 @@ describe('current Source deployment authority', () => {
             ...initialTargetContent }));
         if (!initial.ok) throw new Error(initial.error);
         const resourceId = crypto.randomUUID();
+        const resourceDataKey = nacl.randomBytes(32);
         const secret = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: creator.id, resourceId,
-            displayName: 'Exact credential', kind: 'token', encryptionMode: 'plain', teamGrants: [team.id],
-            storedContent: { t: 'plain', v: { v: 1, name: 'Exact credential', kind: 'token', value: 'private-test-material' } } }));
-        if (!secret.ok) throw new Error('Expected admitted Saved Secret');
+            displayName: 'Exact credential', kind: 'token', encryptionMode: 'e2ee', teamGrants: [team.id],
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
+                content: { v: 1, name: 'Exact credential', kind: 'token', value: 'private-test-material' }, randomBytes: nacl.randomBytes }),
+            keyEnvelopes: [{ recipientAccountId: creator.id,
+                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys.publicKey),
+                encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceDataKey,
+                    recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes })) }] }));
+        if (!secret.ok) throw new Error(`Expected admitted Saved Secret: ${secret.error}`);
         const bindings = [{ purpose: 'variable' as const, phase, name: 'TOKEN',
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }];
         const boundContent = await artifact('deployment-environment.v1', DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
@@ -742,7 +919,7 @@ describe('current Source deployment authority', () => {
         await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: manager.id } });
         await db.artifactKeyEnvelope.deleteMany({ where: { artifactId: artifact.id, recipientAccountId: manager.id } });
         await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: creator.id } });
+            accessLevel: 'edit', createdByAccountId: creator.id } });
         if (mode === 'e2ee') {
             await refusedWithoutEffect();
             await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id, recipientAccountId: manager.id,
@@ -761,11 +938,16 @@ describe('current Source deployment authority', () => {
         const readerKey = nacl.box.keyPair();
         const reader = await db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding(readerKey.publicKey) : {}) } });
+        await makeShareEligibleForTest(manager.id, reader.id);
         const audience = [{ principal: { kind: 'account' as const, accountId: reader.id }, level: 'view' as const }];
         const expand = () => inTx(tx => updateProjectSourceInTx(tx, manager.id, { serverId,
             sourceId: source.source.id, expectedRevision: moved.source.revision, patch: { audience } }), { isolationLevel: 'Serializable' });
         // Source audience edits do not transfer ownership or pre-share dependent Artifacts.
         expect(await expand()).toMatchObject({ ok: true, source: { owner, audience, revision: moved.source.revision + 1 } });
+        if (mode === 'plain') {
+            expect(await inTx(tx => readProjectDeploymentDefaultsInTx(tx, reader.id,
+                { serverId, projectSourceId: source.source.id }))).toMatchObject({ ok: true, content });
+        }
         await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: manager.id } });
         if (mode === 'e2ee') {

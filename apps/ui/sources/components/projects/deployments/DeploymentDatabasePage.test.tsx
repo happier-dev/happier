@@ -6,6 +6,7 @@ import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptDetailV1,
+  createDeploymentSecretVariableBindingV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentBackupActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -28,6 +29,7 @@ import { DeploymentTemplateV1Schema, BUILT_IN_REGISTRY_SOURCES_V1, projectPlugin
   REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierAppCatalog';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -128,6 +130,9 @@ async function renderDatabase(
     setBindings?: React.ComponentProps<typeof DeploymentDatabasePage>['setBindings'];
     /** The Environment shares the database on a private network (its saved export). */
     shared?: boolean;
+    moveDestination?: boolean;
+    moveCopySucceeds?: boolean;
+    moveDestinationUnprotected?: boolean;
   }> = {},
 ) {
   await homes.reset();
@@ -169,7 +174,10 @@ async function renderDatabase(
       ...base.content,
       ...(input.noBackup ? { backup: undefined } : { backup }),
       ...(input.storedDefinition ? { definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
-        document: 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: ['postgres'], primaryService: 'postgres' } } : {}),
+        document: input.moveDestination
+          ? 'services:\n  app:\n    image: shop:1\n    environment:\n      DATABASE_URL: postgres://shop:password@postgres:5432/shop\n    depends_on: [postgres]\n  postgres:\n    image: postgres:17\n'
+          : 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: input.moveDestination ? ['app', 'postgres'] : ['postgres'],
+        primaryService: input.moveDestination ? 'app' : 'postgres' } } : {}),
       ...(input.shared ? { ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
         { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork' as const,
           privateNetwork: 'shop-net' },
@@ -201,6 +209,27 @@ async function renderDatabase(
     ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines) ? { machines: [machineId] } : {}),
     ...('members' in row.targetLink && Array.isArray(row.targetLink.members)
       ? { members: row.targetLink.members.map((member) => ({ ...member, machineId })) } : {}) } })) } as typeof authored;
+  const moved = createDeploymentEnvironmentDetailV1({
+    environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated' },
+    targetLinks: detail.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+      id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
+    content: { ...detail.content, name: 'Dedicated Postgres',
+      backup: input.moveDestinationUnprotected ? undefined : { ...backup,
+        ownership: { environmentId: 'database-dedicated', prefix: 'dedicated/' } },
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: ['postgres'], primaryService: 'postgres' },
+      bindings: [
+        { purpose: 'variable', phase: 'runtime', name: 'POSTGRES_USER', source: { kind: 'value', value: 'shop' } },
+        { purpose: 'variable', phase: 'runtime', name: 'POSTGRES_DB', source: { kind: 'value', value: 'shop' } },
+        createDeploymentSecretVariableBindingV1({ name: 'POSTGRES_PASSWORD', phase: 'runtime', resourceId: 'database-password', resourceRevision: 1 }),
+      ],
+      ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true, serviceExports: [
+        { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' },
+      ] },
+      template: { ...detail.content.template!, services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres',
+        variables: { username: 'POSTGRES_USER', password: 'POSTGRES_PASSWORD', database: 'POSTGRES_DB' } }] },
+    },
+  });
   const plain = createDeploymentReceiptDetailV1();
   const receipt = input.retainedBackup
     ? createDeploymentReceiptDetailV1({
@@ -332,6 +361,41 @@ async function renderDatabase(
     });
   }
   let setBindings = input.setBindings ?? null;
+  if (input.moveDestination) {
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId, installationId: 'installation-a', actionId: 'deployments.backups.restore', tokenEpoch: 0,
+      execute: raw => {
+        const operand = DeploymentActionInputSchemasV1['deployments.backups.restore'].parse(raw);
+        effects.push({ actionId: 'deployments.backups.restore', input: operand });
+        if (input.moveCopySucceeds) {
+          return operand.mode === 'confirm'
+            ? { kind: 'restored', verified: true, nextAction: 'none', evidence: {} }
+            : { kind: 'prepared', operationId: 'copy-prepared', evidence: { native: {
+              configuration: backup,
+              prepared: { kind: 'prepared', operationId: 'copy-prepared',
+                source: manifest(environmentId, 'e'.repeat(64), '2026-11-07T10:00:00Z'), sourceFormat: 'postgresCustom',
+                repository: { repository: 's3:https://backup.test/bucket' },
+                destination: { service: 'postgres', adapter: 'postgres-v1', database: 'shop', environmentId: moved.environment.id,
+                  revision: 3, stagingDatabase: 'shop_staging', recoveryDatabase: 'shop_recovery', databaseExists: true,
+                  hasMeaningfulData: false, writerServices: [] } },
+            } } };
+        }
+        return { kind: 'recoveryRequired', verified: false, nextAction: 'manualRecovery', evidence: { code: 'restore_failed' } };
+      },
+    });
+    homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
+      ok: true, environment: { ...detail.environment, controllerMachineId: machineId },
+      targetLinks: detail.targetLinks.map(row => row.targetLink),
+    } });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId, installationId: 'installation-a', actionId: 'deployments.environments.update', tokenEpoch: 0,
+      execute: raw => {
+        const operand = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        effects.push({ actionId: 'deployments.environments.update', input: operand });
+        return { ok: true, environmentId, revision: detail.environment.revision + 1 };
+      },
+    });
+  }
   if (input.answers?.bindingRefusal) {
     const code = input.answers.bindingRefusal;
     await answerExternalActionAccountForHome(homes, serverId, {
@@ -357,9 +421,10 @@ async function renderDatabase(
         value: { items: [
           { environment: detail.environment, title: 'Shop database' },
           { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4 }), title: 'Shop web' },
+          ...(input.moveDestination ? [{ environment: moved.environment, title: 'Dedicated Postgres' }] : []),
         ], nextCursor: null },
       }),
-      readEnvironment: async () => ({ ok: true, value: detail }),
+      readEnvironment: async (_scope, id) => ({ ok: true, value: id === moved.environment.id ? moved : detail }),
       listHistory: async () => ({
         ok: true,
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
@@ -416,6 +481,83 @@ async function renderDatabase(
   };
 }
 
+describe('Environment → Database → Move', () => {
+  it('requires destination backups before copying into an already provisioned database', async () => {
+    const view = await renderDatabase({ moveDestination: true, moveDestinationUnprotected: true, storedDefinition: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle('project-deployments.move.destination:database-dedicated');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
+      expect(view.effects.some(effect => effect.actionId === 'deployments.backups.run')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+
+  it('reviews one combined app patch after confirmed copy and leaves deployment to the ordinary Deploy action', async () => {
+    const view = await renderDatabase({ moveDestination: true, moveCopySucceeds: true, storedDefinition: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle('project-deployments.move.destination:database-dedicated');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      await view.settle('project-deployments.move.copy');
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
+      await view.screen.pressByTestIdAsync('project-deployments.move.copy');
+      await view.settle('project-deployments.restore.check');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      expect(await view.settle('project-deployments.restore.confirm')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.restore.continue')).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      expect(await view.settle('project-deployments.restore.continue')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.environments.update')).toHaveLength(0);
+      await view.screen.pressByTestIdAsync('project-deployments.restore.continue');
+      expect(await view.settle('project-deployments.move.save')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.environments.update')).toHaveLength(0);
+      await view.screen.pressByTestIdAsync('project-deployments.move.save');
+      expect(await view.settle('project-deployments.move.saved')).not.toBeNull();
+      const updates = view.effects.filter(effect => effect.actionId === 'deployments.environments.update');
+      expect(updates).toHaveLength(1);
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
+      expect(updates[0]?.input.patch).toMatchObject({
+        definition: { from: 'compose', services: ['app'] },
+        bindings: { set: expect.arrayContaining([
+          expect.objectContaining({ name: 'DB_MOVE_HOST', source: { kind: 'reference', environmentId: 'database-dedicated',
+            export: 'database', via: 'auto', component: 'host' } }),
+          expect.objectContaining({ name: 'DB_MOVE_PASSWORD', source: expect.objectContaining({ kind: 'secret' }) }),
+        ]) },
+      });
+      expect(view.effects.some(effect => effect.actionId === 'deployments.deploy')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+
+  it('copies to the chosen dedicated database and never offers cutover after a failed copy', async () => {
+    const view = await renderDatabase({ moveDestination: true, storedDefinition: true });
+    try {
+      expect(await view.settle(`${page}.move`)).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(0);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      expect(await view.settle('project-deployments.move.copy')).not.toBeNull();
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
+      await view.screen.pressByTestIdAsync('project-deployments.move.copy');
+      expect(await view.settle('project-deployments.restore.check')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      expect(await view.settle('project-deployments.restore.result.recoveryRequired')).not.toBeNull();
+      const copy = view.effects.find(effect => effect.actionId === 'deployments.backups.restore');
+      expect(copy?.input).toMatchObject({ environmentId: 'database-dedicated', expectedRevision: 3,
+        targetLinkId: 'target-database-dedicated', deploymentId: 'deployment-a',
+        backupOperationId: 'manual-backup', restoreBackupId: 'e'.repeat(64),
+        copy: { source: { environmentId: view.environmentId, targetLinkId: 'target-link' },
+          destination: { service: 'postgres', database: 'shop' } } });
+      expect(view.screen.findByTestId('project-deployments.restore.continue')).toBeNull();
+      expect(view.effects.some(effect => effect.actionId === 'deployments.environments.update')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+});
+
 describe('Environment → Data → Add (P10)', () => {
   it.each(['ready', 'unreachable'] as const)('hydrates the selected database on its Environment controller and settles its read (%s)', async outcome => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
@@ -460,9 +602,9 @@ describe('Environment → Data → Add (P10)', () => {
     const previews: unknown[] = [];
     const machines = { machineId: controller.id, installationId: member.installationId, tokenEpoch: 0,
       additionalMachines: [{ machineId: arbitrary.id }] };
-    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.list', execute: () =>
+    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.list', requesterInvocation: 'none', execute: () =>
       REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse({ pages: [listHappierAppCatalogV1({ sourceId, catalog: appCatalog, fetchedAt: 1 })] }) });
-    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.read',
+    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.read', requesterInvocation: 'none',
       failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
       execute: (_input, transport) => {
         reads.push(transport.target.machineId);
@@ -478,10 +620,9 @@ describe('Environment → Data → Add (P10)', () => {
     } });
     homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true, environment: detail.environment, targetLinks: [] } });
     const account = await captureLazyActionAccountContext(serverId);
-    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope,
-      machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])), machineListByServerId: { [serverId]: inventory },
-      machineListStatusByServerId: { [serverId]: 'idle' } });
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
     storage.getState().activateProfileScope(account.accountLifetime.scope);
+    await publishMachineInventoryForTest(account.accountLifetime.scope, inventory);
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const origins = inventory.map(machine => ({ serverIdentityId, materializationRef: { machineId: machine.id, pluginId, materializationId: 'database-templates' } }));
     const pluginUiProjection = unionPluginUiProjections(inventory.map((machine, index) => ({ machineId: machine.id, serverId, phase: 'current' as const,
@@ -496,7 +637,7 @@ describe('Environment → Data → Add (P10)', () => {
       await act(async () => showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'Controller',
         catalogFilters: { source: { include: [sourceId], exclude: [] } }, lifetime: account.accountLifetime }));
       const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
-      await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+      await waitForHomeGovernance(() => expect(screen.findByTestId(rowId), screen.getTextContent()).not.toBeNull());
       await screen.pressByTestIdAsync(rowId);
       if (outcome === 'ready') {
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));

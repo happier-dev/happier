@@ -7,6 +7,7 @@ import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentDeployerPrinc
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
     isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1,
+    applyOwnServerEnvironmentConfigurationPatchV1,
     isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
     captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1,
     normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
@@ -404,10 +405,13 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         // Authentication admitted this exact prepared private edit; opaque and plain content share that owner.
         const admittedPreparedContent = isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
             && native.environmentId === input.environmentId && native.inputDigest === input.authoredInputDigest;
+        const desiredOwnServer = applyOwnServerEnvironmentConfigurationPatchV1(reconciled.ownServer, input.patch?.ownServer ?? {});
         if (contentWriter === 'environment') {
             if ((!input.preparedBindings && !isDeepStrictEqual(previous.content.bindings, content.content.bindings))
                 || !isDeepStrictEqual(previous.content.previewProvenance, content.content.previewProvenance)
                 || !isDeepStrictEqual(reconciled.template, content.content.template)
+                || (!admittedPreparedContent && !isDeepStrictEqual(desiredOwnServer, content.content.ownServer))
+                || (!admittedPreparedContent && !isDeepStrictEqual(previous.content.previewTemplate, content.content.previewTemplate))
                 || ((!admittedPreparedContent || input.patch?.backupRetention !== undefined)
                     && !isDeepStrictEqual(desiredBackup, content.content.backup))) return deploymentFailure('deployment_conflict');
         } else if (contentWriter === 'backup') {

@@ -523,7 +523,7 @@ describe('own-server target at the Action host boundary', () => {
         const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
             controller: pluginReloadController, runtimeOptions: {
                 pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
-                ...(migrationBackup ? ['happier.backup.destinations'] : [])] } });
+                ...(migrationBackup || scenario === 'public_copy' ? ['happier.backup.destinations'] : [])] } });
         // Each scenario is a different installed daemon lifetime. Reusing its
         // Home would collide with the preceding committed immutable release.
         Reflect.set(configuration, 'happyHomeDir', root);
@@ -1312,6 +1312,7 @@ describe('own-server target at the Action host boundary', () => {
             if (scenario === 'public_restore' || scenario === 'standalone_public_restore' || scenario === 'public_copy') {
                 phase('standalone-seed');
                 const captureEnvironment = scenario === 'public_copy' ? promotionSource : environment;
+                const destinationDatabase = 'copied-database';
                 if (scenario === 'public_copy') {
                     promotionSource.environment.id = 'copy-source-environment';
                     promotionSource.targetLinks[0].targetLink.id = 'copy-source-link';
@@ -1326,6 +1327,23 @@ describe('own-server target at the Action host boundary', () => {
                     (scenario === 'public_copy' ? copySourceGrants : runtimeGrants).push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
                         installationId: 'installation-a', environmentId: captureEnvironment.environment.id, resourceId: role, resourceRevision: 1 },
                         installationPublicKey, content: { kind: 'secret', value: `private-${role}` } }));
+                }
+                if (scenario === 'public_copy') {
+                    for (const role of roles) {
+                        const resourceId = `destination-${role}`;
+                        environment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
+                            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } });
+                        runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', machineId: 'machine-a',
+                            installationId: 'installation-a', environmentId: environment.environment.id, resourceId, resourceRevision: 1 },
+                            installationPublicKey, content: { kind: 'secret', value: `private-destination-${role}` } }));
+                    }
+                    const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
+                        source: { kind: 'value' as const, value: destinationDatabase } };
+                    environment.content.bindings.push(databaseBinding);
+                    runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
+                        installationId: 'installation-a', environmentId: environment.environment.id,
+                        binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
+                        content: { kind: 'environmentValues', definition: databaseBinding.source } }));
                 }
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
                 receipt.deployment.state = 'running';
@@ -1440,7 +1458,6 @@ describe('own-server target at the Action host boundary', () => {
                         actionsSettings: setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
                             actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: environment.environment.id },
                             surface: 'ui', mode: 'waived' }) };
-                    const destinationDatabase = 'copied-database';
                     const restoreInput = { mode: 'prepare' as const, serverId: 'home', environmentId: environment.environment.id,
                         machineId: 'machine-a', installationId: 'installation-a', targetLinkId: environment.targetLinks[0].targetLink.id,
                         deploymentId: recoveryCapture.deployment.id, restoreBackupId: recordedCapture.source.snapshot.snapshotId,
@@ -1452,6 +1469,27 @@ describe('own-server target at the Action host boundary', () => {
                     const pointer = environment.targetLinks[0].targetLink.activeDeploymentId;
                     const beforeTransitions = transitionWrites;
                     const beforeDeploys = (await docker.readInvocations()).filter(call => call.args.includes('up')).length;
+                    const destinationState = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                    await writeFile(boundary.stateFile, JSON.stringify({ ...destinationState, names: [destinationDatabase] }));
+                    const beforeUnconfigured = await readFile(boundary.eventsFile, 'utf8');
+                    expect(await executor.execute('deployments.backups.restore', restoreInput,
+                        { ...actionContext, actionRequestId: 'public-copy-unconfigured-prepare' }))
+                        .toMatchObject({ ok: false, errorCode: 'backup_required' });
+                    const unconfiguredEvents = (await readFile(boundary.eventsFile, 'utf8')).slice(beforeUnconfigured.length)
+                        .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                    expect(unconfiguredEvents.filter(event => event.kind === 'safetyBytes'
+                        || event.kind === 'restic' && event.argv?.includes('backup'))).toHaveLength(0);
+                    environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
+                        template: { templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+                            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['app'],
+                            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                            data: { engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } },
+                        backup: { ...recordedCapture.configuration,
+                            destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
+                            occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
+                            config: { endpoint: 'https://fixture.invalid', bucket: 'destination-safety', prefix: '' },
+                            sources: [{ kind: 'dump', sourceId: 'destination-database', service: 'app', consistency: 'logical' }],
+                            ownership: { environmentId: environment.environment.id, prefix: environment.environment.id } } });
                     const preparation = await executor.execute('deployments.backups.restore', restoreInput,
                         { ...actionContext, actionRequestId: 'public-copy-prepare' });
                     expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
@@ -1460,7 +1498,8 @@ describe('own-server target at the Action host boundary', () => {
                     if (prepared.kind !== 'prepared') throw new Error('Expected public copy preparation evidence');
                     expect(prepared.evidence).toMatchObject({ native: { prepared: { source: recordedCapture.source,
                         repository: recordedCapture.repository, destination: { environmentId: environment.environment.id,
-                            database: destinationDatabase, databaseExists: false, hasMeaningfulData: false } },
+                            database: destinationDatabase, databaseExists: true, hasMeaningfulData: true },
+                        safetyBackup: { kind: 'verified', manifests: [expect.objectContaining({ environmentId: environment.environment.id })] } },
                         configuration: recordedCapture.configuration } });
                     const result = await executor.execute('deployments.backups.restore', { ...restoreInput,
                         mode: 'confirm', prepareOperationId: prepared.operationId },
@@ -1469,26 +1508,21 @@ describe('own-server target at the Action host boundary', () => {
                     expect(copySourceAdmissions).toBeGreaterThan(0);
                     const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n')
                         .filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
-                    expect(events.filter(event => event.kind === 'safetyBytes')).toHaveLength(0);
-                    const repositoryReads = events.filter(event => event.kind === 'restic');
+                    expect(events.filter(event => event.kind === 'safetyBytes')).toHaveLength(1);
+                    const repositoryReads = events.filter(event => event.kind === 'restic'
+                        && event.argv?.includes(recordedCapture.repository.repository));
                     expect(repositoryReads.length).toBeGreaterThan(0);
                     for (const event of repositoryReads) {
                         expect(event.argv).toContain(recordedCapture.repository.repository);
                         expect(event.argv).not.toContain('backup');
                     }
+                    const destinationRepository = 's3:https://fixture.invalid/destination-safety';
+                    const destinationWrites = events.filter(event => event.kind === 'restic'
+                        && event.argv?.includes(destinationRepository) && event.argv.includes('backup'));
+                    expect(destinationWrites).toHaveLength(1);
                     expect(events.filter(event => event.kind === 'postgres' && event.argv?.[0] === 'pg_restore'
                         && !event.argv.includes('--version'))).toHaveLength(1);
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toContain(destinationDatabase);
-                    // A second copy encounters meaningful destination data. A
-                    // source-read grant must never write its safety backup there.
-                    const beforeRefusal = await readFile(boundary.eventsFile, 'utf8');
-                    expect(await executor.execute('deployments.backups.restore', restoreInput,
-                        { ...actionContext, actionRequestId: 'public-copy-meaningful-prepare' }))
-                        .toMatchObject({ ok: false, errorCode: 'backup_required' });
-                    const refusalEvents = (await readFile(boundary.eventsFile, 'utf8')).slice(beforeRefusal.length)
-                        .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
-                    expect(refusalEvents.filter(event => event.kind === 'safetyBytes'
-                        || event.kind === 'restic' && event.argv?.includes('backup'))).toHaveLength(0);
                     expect(environment.targetLinks[0].targetLink.activeDeploymentId).toBe(pointer);
                     expect(promotionSource.targetLinks[0].targetLink.activeDeploymentId).toBe('source-current-release');
                     expect(transitionWrites).toBe(beforeTransitions);

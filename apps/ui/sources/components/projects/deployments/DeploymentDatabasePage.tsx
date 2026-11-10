@@ -55,6 +55,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
+import { showDeploymentDatabaseMoveSheet } from './DeploymentDatabaseMoveSheet';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { isPrivateServiceExport, privateServiceExportAuthoring } from './privateServiceExport';
 import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
@@ -348,6 +349,11 @@ export function DeploymentDatabasePage(
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
+  const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput
+    && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
+      controller, source: detail, data: database.data, actions, backupTarget: factsInput,
+      review: props.review, machine: machineName(factsInput.machineId),
+    }) : null;
 
   return (
     <NavigationBackChromeProvider control={backControl}>
@@ -548,6 +554,8 @@ export function DeploymentDatabasePage(
             testID={`${id}.usedBy`}
             title={t('projects.deployments.tabVariables')}
             description={t('projects.deployments.databaseUsedByDescription')}
+            {...(openMove ? { action: <SectionActionButton testID={`${id}.move`}
+              title={t('projects.deployments.databaseMoveTitle')} onPress={openMove} /> } : {})}
           >
             <Item
               testID={`${id}.variables`}

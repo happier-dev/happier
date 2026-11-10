@@ -2,7 +2,8 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, accountSettingsParse,
-    DeploymentBindingsSetResultV1Schema, type ActionExecutorContext, type DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
+    DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
+    type ActionExecutorContext, type DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -33,6 +34,9 @@ import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/r
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
+import { sealMachineSecretGrant } from './machineSecretGrant';
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 
 const sourceFixtures: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>[] = [];
 afterEach(async () => {
@@ -44,10 +48,15 @@ it.each([
     { placementChange: false, mode: 'plain' as const, external: false, name: 'prepares plain authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'e2ee' as const, external: false, name: 'prepares E2EE authored and prepared bindings through the default daemon factory' },
     { placementChange: false, mode: 'plain' as const, external: false, replay: true, name: 'uses the reacquired root requester custody for approved copy bindings' },
+    { placementChange: false, mode: 'plain' as const, external: false, atomicMove: true, name: 'saves reviewed database connection definition and ordinary secret bindings in one Environment update' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove }) => {
     const detail = createDeploymentEnvironmentDetailV1();
+    if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
+        document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17", volumes: ["data:/var/lib/postgresql/data"]}}\nvolumes: {data: {}}',
+        profiles: [], services: ['app', 'database'] });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const machineKey = new Uint8Array(32).fill(47);
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : {
@@ -88,12 +97,27 @@ it.each([
         installationId: installation.installationId, publicKey: installation.publicKey,
         privateKey: Buffer.from(keys.secretKey).toString('base64url'), createdAt: 1 });
     const ref = formatSharedSavedSecretRefV1('credential');
+    const operational: EnvironmentSecretBindingV1[] = atomicMove ? [
+        { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } },
+        { purpose: 'dataRole', service: 'retained-cache', role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } },
+        { purpose: 'domainCredential', domainId: 'retained-domain', role: 'privateKey',
+            source: { kind: 'secret', ref, resourceRevision: 1 } },
+    ] : [];
+    if (atomicMove) detail.content.bindings = operational;
     const bindings: EnvironmentSecretBindingV1[] = [{ purpose: 'variable', phase: 'runtime', name: 'SECRET',
         source: { kind: 'secret', ref, resourceRevision: 1 } }];
     if (placementChange) bindings.push({ purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
         source: { kind: 'secret', ref, resourceRevision: 1 } });
     const content = { ...detail.content, bindings };
-    let grants: readonly MachineSecretGrantV1[] = [];
+    const incumbentOperationalGrants = atomicMove ? [installation, builder].map(recipient => sealMachineSecretGrant({
+        subject: { v: 1, kind: 'secret', environmentId: environment.id, machineId: recipient.machineId,
+            installationId: recipient.installationId, resourceId: 'credential', resourceRevision: 1 },
+        installationPublicKey: Buffer.from(recipient.publicKey, 'base64url'),
+        content: { kind: 'secret', value: 'private-runtime-value' },
+    })) : [];
+    let grants: readonly MachineSecretGrantV1[] = incumbentOperationalGrants;
     const documents = new Map<string, unknown>();
     const put = (id: string, value: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
         publicAudience: 'none', encryptionMode: mode, dataEncryptionKey: resource.mode === 'plain'
@@ -177,6 +201,9 @@ it.each([
             return { status: 403, data: { ok: false, error: 'secret_missing' } };
         if (config.url?.endsWith('/secret-launch-admission')) {
             const admission = EnvironmentSecretAdmissionRequestV1Schema.parse(config.data);
+            if (atomicMove && !('kind' in admission) && admission.materialization.kind === 'bindings'
+                && admission.materialization.domainIds?.length)
+                return { status: 403, data: { ok: false, error: 'deployment_access_denied' } };
             const buildMachineId = 'kind' in admission ? admission.buildMachineId
                 : admission.materialization.kind === 'bindings' ? admission.materialization.buildMachineId : undefined;
             return { status: 200, data: { ok: true, grants,
@@ -228,6 +255,53 @@ it.each([
         const daemon = createDaemonDeploymentActionDeps({
             resolveRequesterIdentity: async () => requesterIdentity,
             ...host, runtime });
+        if (atomicMove) {
+            const definition = { from: 'compose' as const, profiles: [], services: ['app'],
+                document: 'services: {app: {image: "example/app:1", environment: {DATABASE_URL: "postgres://user:${SECRET}@${DB_HOST}:${DB_PORT}/app"}}}' };
+            const update = { serverId: 'home', environmentId: environment.id, expectedRevision: environment.revision,
+                contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+                contentBodyVersion: environment.contentBodyVersion,
+                patch: { definition, bindings: { set: bindings, remove: [] } } };
+            DeploymentEnvironmentUpdateInputV1Schema.parse(update);
+            denyBindingAdmission = true;
+            expect(await daemon.deploymentAction!('deployments.environments.update', update, {}))
+                .toMatchObject({ ok: false, errorCode: 'secret_missing' });
+            expect(placementWrites).toHaveLength(0);
+            expect(writes).toHaveLength(0);
+            denyBindingAdmission = false;
+            for (const patch of [
+                { set: [...bindings, { purpose: 'domainCredential' as const, domainId: 'new-domain', role: 'privateKey' as const,
+                    source: { kind: 'secret' as const, ref, resourceRevision: 1 } }], remove: [] },
+                { set: [...bindings, { purpose: 'backupDestination' as const, configKey: 'destination' as const,
+                    role: 'repositoryPassword' as const, source: { kind: 'secret' as const, ref, resourceRevision: 2 } }], remove: [] },
+                { set: bindings, remove: [{ purpose: 'backupDestination' as const, configKey: 'destination' as const,
+                    role: 'repositoryPassword' as const }] },
+            ]) {
+                expect(await daemon.deploymentAction!('deployments.environments.update', {
+                    ...update, patch: { definition, bindings: patch },
+                }, {})).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
+                expect(placementWrites).toHaveLength(0);
+            }
+            expect(await daemon.deploymentAction!('deployments.environments.update', update, {})).toMatchObject({ ok: true });
+            expect(placementWrites).toHaveLength(1);
+            expect(writes).toHaveLength(0);
+            const written = DeploymentEnvironmentUpdateStorageInputV1Schema.parse(placementWrites[0]);
+            expect(written.preparedBindings?.referencedSavedSecretRevisions)
+                .toEqual(captureDeploymentBindingSavedSecretRevisionsV1([...operational, ...bindings]));
+            expect(written.preparedBindings?.grants).toEqual(incumbentOperationalGrants);
+            expect(materialReads).toBe(0);
+            const opened = readDeploymentEnvironmentArtifactV1(written,
+                await createCredentialedAccountArtifactStore(credentials).read(written.contentArtifactId, {
+                    prepareRecipients: false, includeSharedAudience: false,
+                }));
+            expect(opened.ok).toBe(true);
+            if (!opened.ok) throw new Error(opened.error);
+            expect(opened.content.definition).toMatchObject({ kind: 'stored', document: definition.document });
+            expect(opened.content.bindings).toEqual([...operational, ...bindings]);
+            expect(JSON.stringify(written)).not.toContain('private-runtime-value');
+            expect(written.patch).toEqual({});
+            return;
+        }
         const prepare = async (request: Readonly<{ input: DeploymentBindingsSetInputV1; context: ActionExecutorContext }>) => {
             request = { ...request, context: { ...replayContext, ...request.context } };
             const before = writes.length;
@@ -324,9 +398,10 @@ it.each([
             const authored = { serverId: 'home', environmentId: environment.id, expectedRevision: environment.revision,
                 set: [{ purpose: 'variable' as const, name: 'SELECTED', phase: 'runtime' as const,
                     source: { kind: 'secret' as const, ref: 'person_selects' as const } }], remove: [] };
+            const beforePendingSelectionWrites = writes.length;
             expect(await prepare({ input: authored, context: {} })).toMatchObject({ ok: false, errorCode: 'client_required' });
             expect(materialReads).toBe(beforeIncomplete);
-            expect(writes).toHaveLength(beforeIncompleteWrites);
+            expect(writes).toHaveLength(beforePendingSelectionWrites);
             const exact = { ...authored, set: [{ purpose: 'variable' as const, name: 'COPIED', phase: 'runtime' as const,
                 source: { kind: 'secret' as const, ref, resourceRevision: 1 } }],
                 remove: [{ purpose: 'variable' as const, name: 'SECRET', phase: 'runtime' as const }] };
