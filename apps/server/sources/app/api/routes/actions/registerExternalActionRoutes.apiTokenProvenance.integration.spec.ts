@@ -15,6 +15,8 @@ import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDi
     type ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions/externalActionApi";
 import { computeExternalActionRequestEnvelopeDigestV1 } from "@happier-dev/protocol/actions/externalActionExecutionAuthorization";
 import { Server } from "socket.io";
+import tweetnacl from 'tweetnacl';
+import { signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 import { auth } from "@/app/auth/auth";
 import type { Fastify as AppFastify } from "@/app/api/types";
@@ -32,6 +34,8 @@ import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx,
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { registerExternalActionRoutes } from "./registerExternalActionRoutes";
@@ -138,13 +142,14 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         }
     });
 
-    it("routes an Environment-only CI deploy without granting its controller Machine (prepared)", async () => {
+    it("routes an Environment-only CI deploy without granting its controller Machine and retains exact token consent", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const serverId = await getOrCreateServerIdentityId();
+        const installationKeys = tweetnacl.sign.keyPair();
         const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
             metadata: encodePlainMachineStoredContent({ host: 'ci-controller', platform: 'linux' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
-            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(32), active: true,
+            installationId: crypto.randomUUID(), installationPublicKey: installationKeys.publicKey, active: true,
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
         } });
@@ -171,17 +176,21 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         const environmentId = environment.environmentId;
         const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
             actions: { families: [], ids: ["deployments.deploy", "action.operations.get"] },
-            targets: { sessions: [], machines: [], environments: [environmentId] }, approve: false,
+            targets: { sessions: [], machines: [], environments: [environmentId] }, approve: false, create: null,
         });
         const deployment = { serverId, environmentId, deployApproval: 'automatic' as const };
         const deploymentApproval = { input: { serverId, environmentId } };
         const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
             label: "Staging CI", grant, deployment, deploymentApproval });
+        const askToken = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
+            label: 'Independent Ask token', grant, deployment: { ...deployment, deployApproval: 'ask' } });
         const forwarded: string[] = [];
+        const admittedShas: string[] = [];
+        const holds: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'][] = [];
+        const holdArtifacts: string[] = [];
+        let requireApproval = false;
         let issuedBinding: ExternalActionExecutionAuthorizationBindingV1 | undefined;
-        const preparedInput = { serverId, environmentId, expectedRevision: 1, requestKey: '1-1',
-            targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
-            contentArtifactId: 'prepared-receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const preparedInput = { serverId, environmentId, requestKey: '1-1', targetLinkId: 'runtime', sha: 'a'.repeat(40) };
         // Socket delivery is the boundary. Home's real ingress, persisted token,
         // grant evaluator and dispatcher decide the Environment-only request.
         const io = new Server();
@@ -208,15 +217,45 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                     return loaded.ok ? { ok: true,
                         environment: projectDeploymentEnvironmentHeader(loaded.row, read.serverId, loaded.admission), targetLinks: [] } : loaded;
                 }),
-                deploymentAction: async () => ({ ok: false, error: 'deployment_conflict' }),
+                deploymentAction: (async (actionId, input) => {
+                    if (actionId !== 'deployments.deploy' || !('sha' in input) || typeof input.sha !== 'string')
+                        throw new Error('Expected exact CI deploy at the native transport boundary');
+                    admittedShas.push(input.sha);
+                    return { ok: false, error: 'deployment_conflict' };
+                }) satisfies NonNullable<ActionExecutorDeps['deploymentAction']>,
+                // Durable Artifact storage is the boundary; the executor builds
+                // the real scoped approval and its signed execution origin.
+                approvalsCreate: (async ({ request }) => {
+                    if (request.v !== 2) throw new Error('Expected current scoped approval');
+                    const origin = request.executionOriginV1;
+                    expect(origin.externalActionInputSignature).toBeDefined();
+                    expect(verifyExternalActionApprovalInputV1({ actionId: request.actionId, input: request.actionArgs,
+                        authorizationToken: authorization.token, target: binding.target, publicKey: installationKeys.publicKey,
+                        signature: origin.externalActionInputSignature! })).toBe(true);
+                    const created = await createArtifact({ actorUserId: account.id, artifactId: crypto.randomUUID(),
+                        header: decodeBase64(encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)), 'base64'),
+                        body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), 'base64'),
+                        dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') });
+                    if (!created.ok) throw new Error(created.error);
+                    holds.push(request);
+                    holdArtifacts.push(created.artifact.id);
+                    return { artifactId: created.artifact.id };
+                }) satisfies NonNullable<ActionExecutorDeps['approvalsCreate']>,
             } as unknown as ActionExecutorDeps);
             const context: ActionExecutorContext = { surface: 'api', authority: 'account_automation',
-                bypassApprovals: true, externalActionExecutionAuthorization: authorization,
+                serverId, serverIdentityId: serverId, runtimeAccountId: account.id, actionRequestId: request.envelope.requestId,
+                actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: requireApproval
+                    ? { 'deployments.deploy': { approvalRequiredSurfaces: ['api'] } } : {} }),
+                externalActionExecutionAuthorization: authorization,
+                originalActionEnvelope: request.envelope,
+                signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ actionId: args.actionId,
+                    input: args.input, authorizationToken: args.authorization.token, target: args.target,
+                    requesterConfirmation: args.requesterConfirmation, sessionTargetsV1: args.sessionTargetsV1,
+                    privateKey: installationKeys.secretKey }),
                 externalActionTarget: binding.target, externalActionCredential: { accountId: binding.accountId,
                     principalId: binding.principalId, credentialId: binding.credentialId, grant: binding.grant } };
             if (request.envelope.v !== 1) throw new Error('Expected plain test request');
             const execution = await executor.execute('deployments.deploy', request.envelope.input, context);
-            expect(execution).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
             for (const substitute of ['another-environment', undefined]) {
                 expect(await executor.execute('deployments.deploy', { ...preparedInput,
                     environmentId: substitute }, context)).toMatchObject({ ok: false });
@@ -234,8 +273,41 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                     target: { kind: 'machine', machineId: controller.id }, input: preparedInput } });
             // An explicit reviewed target is routing, not a grant to that Machine.
             expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ execution: { ok: false, errorCode: 'deployment_conflict' } });
             expect(forwarded).toEqual([controller.id]);
+            expect(admittedShas).toEqual([preparedInput.sha]);
+            expect(holds).toEqual([]);
             if (!issuedBinding) throw new Error('Expected issued Environment root');
+            const submit = (token: string, requestId: string, input: unknown = preparedInput, actionId = 'deployments.deploy') =>
+                app.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers: { authorization: `Bearer ${token}` },
+                    payload: { v: 1, requestId, target: { kind: 'machine', machineId: controller.id }, input } });
+            // Saved Automatic survives a Production edit and varies only the
+            // commit/request identity; a second token cannot borrow that choice.
+            await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { protection: 'production' } });
+            const next = await submit(pat.token, 'ci-sha-b', { ...preparedInput, sha: 'b'.repeat(40), requestKey: 'ci-sha-b' });
+            expect(next.statusCode, next.body).toBe(200);
+            expect(next.json()).toMatchObject({ execution: { ok: false, errorCode: 'deployment_conflict' } });
+            expect(admittedShas).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+            const independent = await submit(askToken.token, 'independent-token');
+            expect(independent.statusCode, independent.body).toBe(200);
+            expect(independent.json(), independent.json().execution?.errorCode).toMatchObject({ execution: { ok: true, result: { kind: 'approval_request_created' } } });
+            requireApproval = true;
+            const stricter = await submit(pat.token, 'stricter-policy');
+            expect(stricter.statusCode, stricter.body).toBe(200);
+            expect(stricter.json(), stricter.json().execution?.errorCode).toMatchObject({ execution: { ok: true, result: { kind: 'approval_request_created' } } });
+            expect(holds).toHaveLength(2);
+            expect(holds).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'open', actionId: 'deployments.deploy',
+                actionArgs: preparedInput })]));
+            expect(admittedShas).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+            requireApproval = false;
+            for (const denied of [
+                await submit(pat.token, 'wrong-environment', { ...preparedInput, environmentId: 'another-environment' }),
+                await submit(pat.token, 'wrong-action', preparedInput, 'deployments.rollback'),
+            ]) {
+                expect(denied.statusCode, denied.body).toBe(403);
+                expect(ExternalActionHttpErrorSchema.parse(denied.json())).toMatchObject({ error: 'credential_scope_denied' });
+            }
+            const forwardedBeforeMove = [...forwarded];
             const nextController = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
                 metadata: controller.metadata, installationId: crypto.randomUUID() } });
             await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { controllerMachineId: nextController.id } });
@@ -245,7 +317,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                 headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, requestId: 'after-controller-change',
                     target: { kind: 'machine', machineId: controller.id }, input: preparedInput } });
             expect(moved.statusCode).toBe(403);
-            expect(forwarded).toEqual([controller.id]);
+            expect(forwarded).toEqual(forwardedBeforeMove);
             await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId,
                 deployment: { ...deployment, deployApproval: 'ask' } });
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
@@ -257,7 +329,13 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).not.toBeNull();
             await auth.revokeApiToken({ accountId: account.id, tokenId: pat.tokenId });
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
+            await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { controllerMachineId: controller.id } });
+            const revoked = await submit(pat.token, 'after-revoke');
+            expect(revoked.statusCode, revoked.body).toBe(401);
+            expect(forwarded).toEqual(forwardedBeforeMove);
+            expect(admittedShas).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
         } finally {
+            await db.artifact.deleteMany({ where: { id: { in: holdArtifacts } } });
             await db.deploymentEnvironment.delete({ where: { id: environmentId } });
             await db.artifact.delete({ where: { id: artifact.artifact.id } });
             await new Promise<void>(resolve => { io.close(() => resolve()); });
