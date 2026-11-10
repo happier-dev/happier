@@ -25,8 +25,8 @@ const { MachineOverview } = await import('./MachineOverview');
 const { MachineVitalsBarAccessory } = await import('../vitals/MachineVitalsRangeBar');
 const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { useManagedEnrolledMachine } = await import('@/components/settings/machines/managed/ManagedMachineSections');
-const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
-const { withdrawMachinePresenceForScope, captureMachinePresenceObservation } = await import('@/sync/domains/machines/reachability/machineReachability');
+const { recordMachineRequestFailed, recordMachineRequestSucceeded, clearMachineRequestReachabilityForTest,
+    withdrawMachinePresenceForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { useMachineDaemonReadTarget, useMachineDaemonReadTargets } = await import('@/sync/domains/machines/useMachineDaemonReadTarget');
 const { useMachineWidgetMachine } = await import('../widgets/machineWidgetKit');
 const { MachineDaemonSection } = await import('../daemon/MachineDaemonSection');
@@ -37,7 +37,7 @@ const { MachineVitalsOverview } = await import('../vitals/MachineVitalsOverview'
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 afterEach(async () => { standardCleanup(); machineResourceStore.reset(); boundary.rpc.mockReset(); boundary.rpc.mockImplementation(() => new Promise(() => {})); clearMachineRequestReachabilityForTest(); await accountConnection?.dispose(); accountConnection = null; });
 
-it('withdraws resource admission without presenting an unobserved Machine as offline, and restores only its exact Account', async () => {
+it('retains known presence across socket withdrawal and changes daemon read admission only for its exact Account observations', async () => {
     const serverId = await home.addHome({ name: 'Presence Home', serverUrl: 'https://resource-presence.test', accountId: 'owner' });
     const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
     storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
@@ -49,20 +49,40 @@ it('withdraws resource admission without presenting an unobserved Machine as off
     await vi.waitFor(() => expect(hook.getCurrent().read.enabled).toBe(true));
     const scope = { serverId, accountId: 'owner' };
     await act(async () => { withdrawMachinePresenceForScope(scope); });
-    expect(hook.getCurrent().read).toMatchObject({ enabled: false, offline: false });
-    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: false, offline: false });
-    expect(hook.getCurrent().widget.online).toBeNull();
-    const daemon = await renderScreen(<MachineDaemonSection serverId={serverId} machine={machine} />);
-    expect(daemon.findByProps({ title: t('machine.status') }).props.detail).toBe(t('common.unknown'));
-    expect(daemon.findByTestId('machine-detail-stop-daemon-button')?.props.disabled).toBe(true);
-    await act(async () => { captureMachinePresenceObservation({ ...scope, accountId: 'other' })([machine.id]); });
-    expect(hook.getCurrent().widget.online).toBeNull();
-    await act(async () => { captureMachinePresenceObservation(scope)([machine.id]); });
+    // a4df3f74f0: socket loss supplies no new Machine activity or request fact.
     expect(hook.getCurrent().read).toMatchObject({ enabled: true, offline: false });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: true, offline: false });
+    expect(hook.getCurrent().widget.online).toBe(true);
+    const daemon = await renderScreen(<MachineDaemonSection serverId={serverId} machine={machine} />);
+    expect(daemon.findByProps({ title: t('machine.status') }).props.detail).toBe(t('machine.daemonStatus.likelyAlive'));
+    expect(daemon.findByTestId('machine-detail-stop-daemon-button')?.props.disabled).toBe(false);
+    await act(async () => { recordMachineRequestFailed({ ...scope, accountId: 'other', machineId: machine.id }); });
+    expect(hook.getCurrent().read).toMatchObject({ enabled: true, offline: false });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: true, offline: false });
     expect(hook.getCurrent().widget.online).toBe(true);
     await act(async () => { recordMachineRequestFailed({ ...scope, machineId: machine.id }); });
     expect(hook.getCurrent().read).toMatchObject({ enabled: false, offline: true });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: false, offline: true });
     expect(hook.getCurrent().widget.online).toBe(false);
+    expect(daemon.findByProps({ title: t('machine.status') }).props.detail).toBe(t('machine.daemonStatus.stopped'));
+    expect(daemon.findByTestId('machine-detail-stop-daemon-button')?.props.disabled).toBe(true);
+    await act(async () => {
+        withdrawMachinePresenceForScope(scope);
+        recordMachineRequestSucceeded({ ...scope, accountId: 'other', machineId: machine.id });
+    });
+    expect(hook.getCurrent().read).toMatchObject({ enabled: false, offline: true });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: false, offline: true });
+    expect(hook.getCurrent().widget.online).toBe(false);
+    await act(async () => { recordMachineRequestSucceeded({ ...scope, machineId: machine.id }); });
+    expect(hook.getCurrent().read).toMatchObject({ enabled: true, offline: false });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: true, offline: false });
+    expect(hook.getCurrent().widget.online).toBe(true);
+    await act(async () => { storage.setState({ machineListByServerId: { [serverId]: [] } }); });
+    expect(hook.getCurrent().read).toMatchObject({ enabled: false, offline: false });
+    expect(hook.getCurrent().fleet[0]).toMatchObject({ enabled: false, offline: false });
+    expect(hook.getCurrent().widget.online).toBeNull();
+    expect(daemon.findByProps({ title: t('machine.status') }).props.detail).toBe(t('common.unknown'));
+    expect(daemon.findByTestId('machine-detail-stop-daemon-button')?.props.disabled).toBe(true);
 });
 
 it('shares the Account-qualified Overview sample and retries the same retained read from the tab bar', async () => {
