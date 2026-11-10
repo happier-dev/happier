@@ -369,20 +369,22 @@ async function createSignedRequesterApprovalOrigin(
   const requestId = 'received-question';
   const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input });
   const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+  const actionRequestAttributionV1 = { requestRef: requestId,
+    requester: { serverId: creatorLocalServerId ?? source.serverId, accountId: requesterAccountId },
+    persona: { serverId: creatorLocalServerId ?? source.serverId, sessionId: 'session-1' }, origin: null };
   const context: ActionExecutorContext = {
     surface: 'agent', authority: resolveInvocationAuthority({ credential: source.credentialAuthorityKind, surface: 'agent' }),
     serverId: creatorLocalServerId ?? source.serverId, serverIdentityId: source.serverIdentityId,
     runtimeAccountId: source.accountId, actionRequestId: requestId, actionCaller: caller, defaultSessionId: 'session-1',
     callerPermissionMode: 'yolo', sessionInputSource: { sourceSessionId: 'session-1', sourceTurnId: 'turn-1', via: 'action' },
-    actionRequestAttributionV1: { requestRef: requestId, requester: { serverId: creatorLocalServerId ?? source.serverId, accountId: requesterAccountId },
-      persona: { serverId: creatorLocalServerId ?? source.serverId, sessionId: 'session-1' }, origin: null },
+    actionRequestAttributionV1,
     externalActionTarget: target,
     externalActionExecutionAuthorization: { v: 1, token: 'signed-bot-source', binding: {
       serverIdentityId: source.serverIdentityId!, accountId: source.accountId, custodianAccountId: source.accountId,
       machineId: 'machine-exact', installationId, actionId, requestId, target,
       authentication: { kind: 'account', tokenEpoch: 0 },
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-      sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId },
+      sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId, actionRequestAttributionV1 },
       sessionActionSource: { machineId: 'machine-exact', installationId },
     } },
     signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
