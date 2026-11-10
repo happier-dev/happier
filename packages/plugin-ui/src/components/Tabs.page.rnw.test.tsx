@@ -310,4 +310,32 @@ describe('Tabs lead (what leads the page above its tabs)', () => {
       expect(leads[0]!.compareDocumentPosition(tablists[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     } finally { mount.unmount(); }
   });
+
+  it('keeps a short panel tall enough for the pinned row to stay under the lead when the tab switches', async () => {
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(createSurfaceContext())} context={createSurfaceContext()}>
+        <Tabs value="overview" onValueChange={() => {}} ariaLabel="Entry" lead={lead} layout="fill">
+          <Tabs.Item value="overview" title="Overview"><ScrollArea testID="story-scroll"><Text value="Overview body" /></ScrollArea></Tabs.Item>
+          <Tabs.Item value="files" title="Files"><Text value="Files body" /></Tabs.Item>
+        </Tabs>
+      </PluginUiProvider>,
+    );
+    try {
+      await act(async () => {});
+      // Layout is a native boundary: deliver the scroller's viewport and the pinned row's measured heights.
+      const layout = (testID: string, height: number) => {
+        const node = mount.container.querySelector(`[data-testid="${testID}"]`) as unknown as {
+          __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void;
+        };
+        act(() => { node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }); });
+      };
+      layout('story-scroll', 600);
+      layout('story-scroll:pinned-row', 44);
+      const content = mount.container.querySelector<HTMLElement>('[data-testid="story-scroll:pinned-content"]');
+      expect(content).not.toBeNull();
+      expect(getComputedStyle(content!).minHeight).toBe('556px');
+      expect(content!.textContent).toContain('Overview body');
+    } finally { mount.unmount(); }
+  });
 });
+

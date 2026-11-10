@@ -1,4 +1,4 @@
-import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
+import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import {
   ScrollView,
   View,
@@ -208,6 +208,10 @@ export function HappierScrollArea({
   const palette = useOptionalHappierUiPalette(theme) ?? (theme === null ? null : resolveHappierUiPalette(theme));
   const offsetRef = useRef(0);
   const leadHeightRef = useRef(0);
+  // Under the pinned row the content is at least the rest of the viewport, so the row can stay just under the lead
+  // whatever the selected tab holds: a short panel would otherwise clamp the scroll and drop the row back down.
+  const [viewportHeightPx, setViewportHeightPx] = useState(0);
+  const [rowHeightPx, setRowHeightPx] = useState(0);
   const selection = head?.selection;
   const lastSelection = useRef(selection);
   // A switch while the row is pinned brings the new tab in at its top, the row still pinned; above that, it stays put.
@@ -248,7 +252,10 @@ export function HappierScrollArea({
           tracker?.onScroll(event); reportTop?.(event.nativeEvent.contentOffset.y); scrollProps.onScroll?.(event);
         }}
         {...(head === null ? {} : { stickyHeaderIndices: [1] })}
-        onLayout={event => { tracker?.onLayout(event); scrollProps.onLayout?.(event); }}
+        onLayout={event => {
+          if (head !== null) setViewportHeightPx(event.nativeEvent.layout.height);
+          tracker?.onLayout(event); scrollProps.onLayout?.(event);
+        }}
         onContentSizeChange={tracker?.onContentSizeChange}
         scrollEventThrottle={scrollProps.scrollEventThrottle ?? (reportTop ? 16 : undefined)}
         testID={testID}
@@ -259,11 +266,16 @@ export function HappierScrollArea({
       >
         {head === null ? null : column(<View onLayout={(event) => { leadHeightRef.current = event.nativeEvent.layout.height; }}>{head.lead}</View>)}
         {head === null ? null : (
-          <View style={palette === null ? undefined : { backgroundColor: palette.page }}>{column(head.strip)}</View>
+          <View style={palette === null ? undefined : { backgroundColor: palette.page }}
+            onLayout={(event) => { setRowHeightPx(event.nativeEvent.layout.height); }}
+            {...(testID === undefined ? {} : { testID: `${testID}:pinned-row` })}>{column(head.strip)}</View>
         )}
         {/* A page's scroll owns its column: every block (a banner, a card, a state), not only the
             sections that centre themselves, sits on the column the page header uses (R-APP-4). */}
-        {column(children)}
+        {head === null ? column(children) : (
+          <View style={{ minHeight: Math.max(0, viewportHeightPx - rowHeightPx) }}
+            {...(testID === undefined ? {} : { testID: `${testID}:pinned-content` })}>{column(children)}</View>
+        )}
       </ScrollView>
       </HappierScrollAreaNestedContext.Provider>
       </PluginUiScrollActivityProvider>
