@@ -440,6 +440,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 168,
         flexShrink: 0,
     },
+    /**
+     * A rail pill has no width of its own: it is as wide as its glyph and name (up to its max), and the
+     * rail scrolls rather than squeezing pills. The bar's `flex: 1` keeps a zero basis on native Yoga
+     * even under a later `flexBasis: 'auto'` (auto applies only while `flex` is not positive), so the
+     * press collapsed to its padding and the pill to its touch minimum (device-measured: pill 44,
+     * press 10, label 0). `flex: 0` lets the press take its content's width; it still shrinks under
+     * the pill's max so a long name truncates.
+     */
+    railTabPress: {
+        flex: 0,
+        flexShrink: 1,
+        flexBasis: 'auto',
+    },
     railTabOpen: {
         borderColor: 'transparent',
         backgroundColor: theme.colors.surface.selected,
@@ -1209,7 +1222,7 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
                     ? (event) => props.onKeyDown(event, tab.key)
                     : undefined}
                 testID={props.tabTestID}
-                style={[styles.barTabPress, pinned ? styles.barTabPressPinned : null, { height: props.heightPx }, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
+                style={[styles.barTabPress, pinned ? styles.barTabPressPinned : props.rail ? styles.railTabPress : null, { height: props.heightPx }, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
                 accessibilityRole="tab"
                 accessibilityLabel={status
                     ? `${t('session.detailsPanel.openTabA11y', { title: tab.title })}, ${status.label}`
