@@ -743,7 +743,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const checkedProviderResult: CheckedVoiceProviderReadinessResult | null = isCheckingPassiveSetup
     ? {
         kind: 'checking',
-        detail: t('requirements.checking'),
+        detail: t('profiles.requirements.checking'),
         recoveryAction: 'none',
       }
     : checkedProviderReadiness

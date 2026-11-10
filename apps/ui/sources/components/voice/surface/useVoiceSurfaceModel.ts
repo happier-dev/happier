@@ -217,7 +217,7 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
                     daemonLocalVoiceUnavailable
                         ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
                         : baseAttemptControl.primaryAction === 'setup' || (baseAttemptControl.primaryAction === 'recover' && !baseAttemptControl.live)
-                            ? t('voice.readiness.settings_missing_required_setting', { service: baseAttemptControl.serviceTitle ?? providerLabel ?? t('settingsVoice.title') })
+                            ? t('voice.readiness.settings_missing_required_setting', { service: baseAttemptControl.serviceTitle ?? providerLabel ?? t('voicePresence.title') })
                             : targetLabel ?? t('voiceSurface.selectSessionToStart')
                 )
                 : (targetLabel ? `${t('voiceSurface.targetSession')}: ${targetLabel}` : null)

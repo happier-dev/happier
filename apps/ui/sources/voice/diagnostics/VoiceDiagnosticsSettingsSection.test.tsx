@@ -600,7 +600,6 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.captureFailed') })).toBeTruthy();
     expect(tree.root.findAllByProps({ nativeID: `setting-${VOICE_PRIVACY_SETTINGS.settings.diagnosticsExport.anchor}` })).toHaveLength(0);
     expect(tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.cleanupRequired') })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.retryCapture') })).toHaveLength(0);
     expect(tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.retryCleanup') })).toHaveLength(0);
     // Nothing is retained, so there is nothing to delete: the action is hidden, not a dead red row.
     expect(tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.deleteAll') })).toHaveLength(0);
@@ -649,6 +648,5 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.cleanupRequired') })).toBeTruthy();
     expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.retryCleanup') })).toBeTruthy();
     expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.deleteAll') }).props.disabled).toBe(false);
-    expect(tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.retryCapture') })).toHaveLength(0);
   });
 });

@@ -46,7 +46,7 @@ export function resolveVoiceProviderReadinessPresentation(
   credential?: Readonly<{ resolving: boolean }>,
 ): VoiceProviderReadinessPresentation {
   if (readiness.code === 'credential_unknown' && credential?.resolving) {
-    const checking = translate('requirements.checking');
+    const checking = translate('profiles.requirements.checking');
     return { checking: true, summary: checking, reason: checking, action: null, short: checking };
   }
   const summary = readiness.code === 'agent_signed_out' && readiness.selectedAgent

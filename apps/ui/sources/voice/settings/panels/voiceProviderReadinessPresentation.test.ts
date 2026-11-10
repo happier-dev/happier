@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveVoiceProviderReadinessPresentation } from './voiceProviderReadinessPresentation';
+import { tLoose } from '@/text';
+
+import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } from './voiceProviderReadinessPresentation';
 
 describe('resolveVoiceProviderReadinessPresentation', () => {
   const translate = (key: string) => key;
 
+  it('uses the Voice fallback in the Start setup label without a service name', () => {
+    expect(translateVoiceReadiness('voice.readiness.settings_missing_required_setting'))
+      .toBe('Finish setting up Voice to start.');
+  });
+
   it('shows the catalog acquisition in progress without making an unknown credential ready', () => {
     const readiness = { status: 'unavailable' as const, code: 'credential_unknown',
       reasonKey: 'voice.readiness.credential_unknown', recoveryAction: 'retry' as const };
-    expect(resolveVoiceProviderReadinessPresentation(readiness, translate, undefined, { resolving: true }))
-      .toEqual({ checking: true, summary: 'requirements.checking', reason: 'requirements.checking',
-        action: null, short: 'requirements.checking' });
+    expect(resolveVoiceProviderReadinessPresentation(readiness, tLoose, undefined, { resolving: true }))
+      .toEqual({ checking: true, summary: 'Checking…', reason: 'Checking…',
+        action: null, short: 'Checking…' });
     expect(resolveVoiceProviderReadinessPresentation(readiness, translate).short)
       .toBe('voice.readiness.short.cantCheck');
   });
