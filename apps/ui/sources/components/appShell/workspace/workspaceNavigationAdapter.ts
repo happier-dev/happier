@@ -336,6 +336,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                     const openAction: WorkspaceAction = { type: 'openTab', groupId: openingGroupId, tab, beforeTabId: options.beforeTabId };
                     finishOpen = sourceEntry
                         ? input.prepareOpen?.(sourceEntry, { tabId: tab.id, groupId: openingGroupId, target }, options) : undefined;
+                    // A new preview retires the group's previews; the retained source tab must survive it.
+                    if (options.retainSourceTab && sourceTab?.preview) input.dispatch({ type: 'promoteTab', tabId: sourceTab.id });
                     input.dispatch(openAction);
                 }
             }
