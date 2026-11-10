@@ -4641,6 +4641,111 @@ describe('Channels mounted binding creation', () => {
     }
   });
 
+  it('opens the link step on a healthy bot, says one thing when a broken bot cannot search, and hands that bot to Settings (CH-FIRST-CONTACT G2/G3/G5)', async () => {
+    const connectionRow = (connectionId: string, label: string, notDelivered: boolean) => ({
+      connectionId,
+      revision: 1,
+      authorityEpoch: 1,
+      providerPluginId: providerSetupOperation.contributor.pluginId,
+      selectedMachineId: 'machine-1',
+      selectedTransport: 'checkpointedPull',
+      integrationPrincipalLabel: label,
+      enabled: true,
+      deletionState: 'none',
+      attention: {
+        historyGap: null,
+        pollFailure: null,
+        bestEffortBeforeDurableAdmission: false,
+        oldTransportStopUnconfirmed: false,
+        endpointRetargetOwed: false,
+        acceptedPossibleLoss: false,
+        outwardDelivery: { retryDue: false, notDelivered, partial: false, outcomeUnknown: false },
+      },
+    });
+    // The bot that needs you sorts first; the healthy one is later in the list.
+    const connections = jsonResource({ connections: [
+      connectionRow('connection-tele1111', 'Happier QA Bot', true),
+      connectionRow('connection-disc2222', 'Happier QA Bot', false),
+    ] }, '8');
+    const openedSurfaces: (readonly [string, string])[] = [];
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-ch-g', mountNonce: 'fixture-mount-ch-g' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsPageSurfaceContext(),
+      subPath: 'link',
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction: async ({ action }) => {
+          if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) throw new Error('provider did not answer');
+          throw new Error(`Unexpected mounted Action: ${String(action)}`);
+        },
+        readResource: async ({ resource }) => {
+          const localId = resourceFixtureLocalId(resource);
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return connections;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+        openSurface: ({ view, subPath }) => {
+          openedSurfaces.push([typeof view === 'string' ? view : view.localId, subPath ?? '']);
+        },
+      },
+    });
+    const row = (id: string) => document.querySelector<HTMLElement>(`[data-testid="channels-binding-create-connection-${id}"]`);
+    const byTestId = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+    try {
+      await vi.waitFor(() => expect(row('connection-disc2222')).not.toBeNull());
+      // G3: the healthy bot is chosen even though the broken one is listed first.
+      await vi.waitFor(() => expect(row('connection-disc2222')?.getAttribute('aria-checked')).toBe('true'));
+      expect(row('connection-tele1111')?.getAttribute('aria-checked')).toBe('false');
+
+      await pressByTestId('channels-binding-create-connection-connection-tele1111');
+      await enterTextByTestId('channels-binding-create-endpoint-query', bindingEndpointSelection.query);
+      await fixture.press(await fixture.getByRole('button', { name: 'Search conversations' }));
+      // G5: one message, not two stacked banners: the failed lookup names the bot's own problem.
+      await vi.waitFor(() => expect(byTestId('channels-binding-create-feedback')?.textContent).toContain('The bot couldn’t look this up'));
+      expect(byTestId('channels-binding-create-feedback')?.textContent).toContain('Delivery was not sent');
+      expect(byTestId('channels-binding-create-connection-attention')).toBeNull();
+      // It sits with the field it answers, above the step's Cancel.
+      const feedback = byTestId('channels-binding-create-feedback')!;
+      const cancel = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'))
+        .find((element) => element.textContent?.trim() === 'Cancel');
+      expect(cancel).toBeDefined();
+      expect(feedback.compareDocumentPosition(cancel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      // G2: Manage bot opens Settings on that bot.
+      await fixture.press(await fixture.getByRole('button', { name: 'Manage bot' }));
+      expect(openedSurfaces).toEqual([['connections', 'bots/connection-tele1111']]);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('opens Settings with the bot a handoff names already expanded (CH-FIRST-CONTACT G2)', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-ch-g2', mountNonce: 'fixture-mount-ch-g2' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      subPath: 'bots/connection-1',
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction: async ({ action }) => { throw new Error(`Unexpected mounted Action: ${String(action)}`); },
+        readResource: bindingResourceReader(),
+      },
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-connection-connection-1"]')?.getAttribute('aria-expanded')).toBe('true');
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('says why an endpoint search was refused and keeps the waiting copy for transient provider states', async () => {
     const diagnostic = 'Telegram cannot search chats by name. Enter a numeric chat ID, a public @username, or chatId:topicId for a topic.';
     const settlements = [

@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "合格拒绝",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "关闭",
   "plugins.channels.surface.connectionAccount": "账号",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "通过此实时连接接收的消息可能在 Happier 记录其加入之前丢失。",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "在所选机器离线或重启期间到达的消息可能无法送达 Happier。",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier 无法确认某些接收消息的加入。",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "较早的消息可能尚未导入",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "未导入 {time} 之前的消息",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "提供商报告此连接所需的远程权限不可用。",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "提供商报告其远程配置对此连接无效。",
   "plugins.channels.surface.providerCredentialInvalidDescription": "提供商拒绝了此连接使用的已连接账户凭据。请替换或重新同步该凭据以恢复连接。",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "实时消息在 Happier 加入之前不持久化",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "此机器人实时接收",
   "plugins.channels.surface.historyGapTitle": "对话历史可能不完整",
   "plugins.channels.surface.bindingEnableFailedTitle": "无法更新绑定启用状态",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "无法启用此绑定，因为账户集合配额不兼容。请管理员使账户集合配额兼容，然后刷新并重试。",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "正在加载交货详细信息",
   "plugins.channels.surface.deliveryResolutionEmpty": "目前没有未解决的交付决策。",
   "plugins.channels.surface.disabled": "残疾人",
-  "plugins.channels.surface.bestEffort": "持久录取前尽最大努力",
+  "plugins.channels.surface.bestEffort": "离线时可能会错过消息",
   "plugins.channels.surface.enabled": "启用",
   "plugins.channels.surface.currentPolicy": "当前连接策略",
   "plugins.channels.surface.technicalDetails": "技术细节",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "给 {bot} 发一条消息，确认它能送达。",
   "plugins.channels.page.firstMessageMention": "在 {conversation} 中提及 {bot}，确认消息能送达。",
   "plugins.channels.page.firstMessageAddressed": "在 {conversation} 中提及或回复 {bot}，确认消息能送达。",
-  "plugins.channels.page.firstMessageAll": "在 {conversation} 中发一条消息，确认它能送达。"
+  "plugins.channels.page.firstMessageAll": "在 {conversation} 中发一条消息，确认它能送达。",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}。请在机器人的设置中修复，然后重试。",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "你选择的机器没有接收其中一个机器人的消息。",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "你选择的机器没有接收其中 {count} 个机器人的消息。"
 }

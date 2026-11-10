@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Rifiuti accettabili",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Spento",
   "plugins.channels.surface.connectionAccount": "Account collegato",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "I messaggi ricevuti tramite questa connessione in tempo reale possono essere persi prima che Happier registri la loro adesione.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "I messaggi che arrivano mentre la macchina selezionata è offline o si sta riavviando potrebbero non raggiungere Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier non è riuscito a confermare l'adesione di alcuni messaggi ricevuti.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "I messaggi più vecchi potrebbero non essere stati importati",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "I messaggi precedenti a {time} non sono stati importati",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "Il fornitore segnala che una richiesta di permesso remoto richiesta è non disponibile per questa connessione.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "Il fornitore segnala che la sua configurazione remota non è valida per questa connessione.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "Il fornitore ha rifiutato le credenziali dell’account collegato usate da questa connessione. Sostituiscile o risincronizzale per ripristinare la connessione.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "I messaggi in tempo reale non sono duraturi fino a quando Happier non li accetta.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Questo bot ascolta in diretta",
   "plugins.channels.surface.historyGapTitle": "La storia della conversazione potrebbe essere incompleta.",
   "plugins.channels.surface.bindingEnableFailedTitle": "Impossibile aggiornare l'abilitazione della bind.",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Questa bind non può essere abilitata perché la quota di raccolta dell'Account non è compatibile. Chiedi all'amministratore di rendere la quota di raccolta dell'Account compatibile, poi riscarica e riprova.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Caricamento dei dettagli di consegna",
   "plugins.channels.surface.deliveryResolutionEmpty": "Al momento non sono disponibili decisioni di consegna irrisolte.",
   "plugins.channels.surface.disabled": "Disabilitato",
-  "plugins.channels.surface.bestEffort": "Miglior sforzo prima del ricovero duraturo",
+  "plugins.channels.surface.bestEffort": "I messaggi possono andare persi offline",
   "plugins.channels.surface.enabled": "Abilitato",
   "plugins.channels.surface.currentPolicy": "Politica di connessione attuale",
   "plugins.channels.surface.technicalDetails": "Dettagli tecnici",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Invia un messaggio a {bot} per verificare che arrivi.",
   "plugins.channels.page.firstMessageMention": "Menziona {bot} in {conversation} per verificare che il messaggio arrivi.",
   "plugins.channels.page.firstMessageAddressed": "Menziona {bot} o rispondigli in {conversation} per verificare che il messaggio arrivi.",
-  "plugins.channels.page.firstMessageAll": "Scrivi in {conversation} per verificare che il messaggio arrivi."
+  "plugins.channels.page.firstMessageAll": "Scrivi in {conversation} per verificare che il messaggio arrivi.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Correggilo nelle impostazioni del bot, poi riprova.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "La macchina selezionata non riceve messaggi per uno di questi bot.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "La macchina selezionata non riceve messaggi per {count} di questi bot."
 }

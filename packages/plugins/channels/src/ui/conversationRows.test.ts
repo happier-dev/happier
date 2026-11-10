@@ -7,6 +7,7 @@ import {
   channelsLinkSubPath,
   channelsStatusNeedsYou,
   connectionStatus,
+  defaultLinkConnectionId,
   readChannelsPageLocation,
   parseBinding,
   parseConnection,
@@ -157,6 +158,23 @@ describe('connectionStatus', () => {
     expect(connectionStatus(connection({ outwardDelivery: { ...DELIVERY, outcomeUnknown: true } }), t).tone).toBe('danger');
     // A retry the system owns is a caution, not a request of the reader.
     expect(connectionStatus(connection({ outwardDelivery: { ...DELIVERY, retryDue: true } }), t).tone).toBe('warning');
+  });
+
+  it('states a live-only connection as a quiet fact in plain words, not a repair request (CH-FIRST-CONTACT G1)', () => {
+    const status = connectionStatus(connection({ bestEffortBeforeDurableAdmission: true }), t);
+    // Settings cannot change how a live connection delivers, so it never asks the reader to fix it.
+    expect(channelsStatusNeedsYou(status.tone)).toBe(false);
+    expect(status.label).not.toMatch(/durable|admission|best effort/i);
+    expect(status).not.toEqual(connectionStatus(connection(), t));
+  });
+
+  it('opens the link step on a healthy bot, else on the first one (CH-FIRST-CONTACT G3)', () => {
+    const needsYou = { ...connection({ outwardDelivery: { ...DELIVERY, notDelivered: true } }), connectionId: 'telegram' };
+    const healthy = { ...connection(), connectionId: 'discord' };
+    const deleting = { ...connection(), connectionId: 'gone', deletionState: 'finalizingDelete' as const };
+    expect(defaultLinkConnectionId([needsYou, deleting, healthy], t)).toBe('discord');
+    expect(defaultLinkConnectionId([needsYou], t)).toBe('telegram');
+    expect(defaultLinkConnectionId([deleting], t)).toBeUndefined();
   });
 
   it('treats needs-you, caution and failure as needing a look, and a quiet state as not', () => {

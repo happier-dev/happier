@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Zulässige Ablehnungen",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Aus",
   "plugins.channels.surface.connectionAccount": "Konto",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Über diese Live-Verbindung empfangene Nachrichten können verloren gehen, bevor Happier ihre Annahme aufzeichnet.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Nachrichten, die eintreffen, während die ausgewählte Maschine offline ist oder neu startet, erreichen Happier möglicherweise nicht.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier konnte die Annahme einiger empfangener Nachrichten nicht bestätigen.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Ältere Nachrichten wurden möglicherweise nicht importiert",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "Ältere Nachrichten von vor {time} wurden nicht importiert",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "Der Anbieter meldet, dass eine erforderliche externe Berechtigung für diese Verbindung nicht verfügbar ist.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "Der Anbieter meldet, dass seine externe Konfiguration für diese Verbindung ungültig ist.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "Der Anbieter hat die von dieser Verbindung verwendeten Zugangsdaten des verbundenen Accounts abgelehnt. Ersetze oder synchronisiere sie erneut, um die Verbindung wiederherzustellen.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Live-Nachrichten sind erst dauerhaft, wenn Happier sie annimmt",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Dieser Bot hört live mit",
   "plugins.channels.surface.historyGapTitle": "Der Konversationsverlauf ist möglicherweise unvollständig",
   "plugins.channels.surface.bindingEnableFailedTitle": "Die Aktivierung der Verknüpfung konnte nicht aktualisiert werden",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Diese Verknüpfung konnte nicht aktiviert werden, da das Sammlungskontingent des Accounts inkompatibel ist. Bitte einen Administrator, das Sammlungskontingent des Accounts kompatibel zu machen. Aktualisiere anschließend und versuche es erneut.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Zustellungsdetails werden geladen",
   "plugins.channels.surface.deliveryResolutionEmpty": "Derzeit sind keine ungeklärten Zustellungsentscheidungen verfügbar.",
   "plugins.channels.surface.disabled": "Deaktiviert",
-  "plugins.channels.surface.bestEffort": "Bestmögliche Zustellung vor dauerhafter Übernahme",
+  "plugins.channels.surface.bestEffort": "Offline können Nachrichten verpasst werden",
   "plugins.channels.surface.enabled": "Aktiviert",
   "plugins.channels.surface.currentPolicy": "Aktuelle Verbindungsrichtlinie",
   "plugins.channels.surface.technicalDetails": "Technische Details",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Schick {bot} eine Nachricht, um zu prüfen, ob sie ankommt.",
   "plugins.channels.page.firstMessageMention": "Erwähne {bot} in {conversation}, um zu prüfen, ob die Nachricht ankommt.",
   "plugins.channels.page.firstMessageAddressed": "Erwähne {bot} in {conversation} oder antworte ihm, um zu prüfen, ob die Nachricht ankommt.",
-  "plugins.channels.page.firstMessageAll": "Schreib in {conversation}, um zu prüfen, ob die Nachricht ankommt."
+  "plugins.channels.page.firstMessageAll": "Schreib in {conversation}, um zu prüfen, ob die Nachricht ankommt.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Behebe es in den Einstellungen des Bots und versuche es dann erneut.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Deine ausgewählte Maschine empfängt keine Nachrichten für einen dieser Bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Deine ausgewählte Maschine empfängt keine Nachrichten für {count} dieser Bots."
 }

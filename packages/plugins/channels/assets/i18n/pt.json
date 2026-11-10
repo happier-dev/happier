@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Recusas elegíveis",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Desligado",
   "plugins.channels.surface.connectionAccount": "Conta",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Mensagens recebidas nesta conexão em tempo real podem ser perdidas antes que o Happier registre sua admissão.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Mensagens que chegam enquanto a máquina selecionada está offline ou reiniciando podem não chegar ao Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "O Happier não conseguiu confirmar a admissão de algumas mensagens recebidas.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "As mensagens antigas podem não ter sido importadas",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "As mensagens anteriores a {time} não foram importadas",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "O provedor relata que uma permissão remota necessária não está disponível para esta conexão.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "O provedor relata que sua configuração remota não é válida para esta conexão.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "O provedor rejeitou a credencial da conta conectada que esta conexão usa. Substitua-a ou ressincronize-a para restaurar a conexão.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "As mensagens em tempo real não são duradouras até que o Happier as adote",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Este bot escuta ao vivo",
   "plugins.channels.surface.historyGapTitle": "O histórico da conversa pode ser incompleto",
   "plugins.channels.surface.bindingEnableFailedTitle": "Não foi possível atualizar a ativação da ligação",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Esta ligação não pode ser ativada porque a quota de coleção da Conta é incompatible. Peça ao administrador para tornar a quota de coleção da Conta compatível, depois refresque e tente novamente.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Carregando detalhes da entrega",
   "plugins.channels.surface.deliveryResolutionEmpty": "Nenhuma decisão de entrega não resolvida está disponível atualmente.",
   "plugins.channels.surface.disabled": "Desabilitado",
-  "plugins.channels.surface.bestEffort": "Melhor esforço antes da admissão durável",
+  "plugins.channels.surface.bestEffort": "Mensagens podem ser perdidas offline",
   "plugins.channels.surface.enabled": "Habilitado",
   "plugins.channels.surface.currentPolicy": "Política de conexão atual",
   "plugins.channels.surface.technicalDetails": "Detalhes técnicos",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Envie uma mensagem para {bot} para verificar se ela chega.",
   "plugins.channels.page.firstMessageMention": "Mencione {bot} em {conversation} para verificar se a mensagem chega.",
   "plugins.channels.page.firstMessageAddressed": "Mencione ou responda a {bot} em {conversation} para verificar se a mensagem chega.",
-  "plugins.channels.page.firstMessageAll": "Escreva em {conversation} para verificar se a mensagem chega."
+  "plugins.channels.page.firstMessageAll": "Escreva em {conversation} para verificar se a mensagem chega.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Corrija nas configurações do bot e tente novamente.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Sua máquina selecionada não está recebendo mensagens de um destes bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Sua máquina selecionada não está recebendo mensagens de {count} destes bots."
 }

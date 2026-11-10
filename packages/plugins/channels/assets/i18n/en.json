@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Eligible refusals",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Off",
   "plugins.channels.surface.connectionAccount": "Account",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Messages received through this live connection can be lost before Happier records their admission.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Messages that arrive while the selected machine is offline or restarting may not reach Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier could not confirm the admission of some received messages.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Older messages may not have been imported",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "Older messages from before {time} weren't imported",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "The provider reports that a required remote permission is unavailable for this connection.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "The provider reports that its remote configuration is not valid for this connection.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "The provider rejected the Connected Account credential this connection uses. Replace or resynchronize it to restore the connection.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Live messages are not durable until Happier admits them",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "This bot listens live",
   "plugins.channels.surface.historyGapTitle": "Conversation history may be incomplete",
   "plugins.channels.surface.bindingEnableFailedTitle": "Could not update binding enablement",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "This binding could not be enabled because the Account collection quota is incompatible. Ask an administrator to make the Account collection quota compatible, then refresh and try again.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Loading delivery details",
   "plugins.channels.surface.deliveryResolutionEmpty": "No unresolved delivery decisions are currently available.",
   "plugins.channels.surface.disabled": "Disabled",
-  "plugins.channels.surface.bestEffort": "Best effort before durable admission",
+  "plugins.channels.surface.bestEffort": "Messages can be missed while offline",
   "plugins.channels.surface.enabled": "Enabled",
   "plugins.channels.surface.currentPolicy": "Current connection policy",
   "plugins.channels.surface.technicalDetails": "Technical details",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Send {bot} a message to check that it arrives.",
   "plugins.channels.page.firstMessageMention": "Mention {bot} in {conversation} to check that it arrives.",
   "plugins.channels.page.firstMessageAddressed": "Mention or reply to {bot} in {conversation} to check that it arrives.",
-  "plugins.channels.page.firstMessageAll": "Write in {conversation} to check that it arrives."
+  "plugins.channels.page.firstMessageAll": "Write in {conversation} to check that it arrives.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Fix it in the bot’s settings, then try again.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Your selected machine isn’t receiving messages for one of these bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Your selected machine isn’t receiving messages for {count} of these bots."
 }

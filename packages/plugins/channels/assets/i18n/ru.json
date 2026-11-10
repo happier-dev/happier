@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Допустимые отказы",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Выключено",
   "plugins.channels.surface.connectionAccount": "Аккаунт",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Сообщения, отправленные через эту прямую связь, могут быть потеряны перед тем, как Happier записает их принятие.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Сообщения, пришедшие, пока выбранная машина офлайн или перезапускается, могут не дойти до Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier не смог подтвердить принятие некоторых полученных сообщений.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Старые сообщения могли не быть импортированы",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "Сообщения до {time} не были импортированы",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "Провайдер сообщает, что необходимое удаленное разрешение недоступно для этой связи.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "Провайдер сообщает, что его удаленная конфигурация недействительна для этой связи.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "Провайдер отклонил учётные данные подключённого аккаунта, которые использует это подключение. Замените или синхронизируйте их заново, чтобы восстановить подключение.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Сообщения в режиме прямого подключения не сохраняются до тех пор, пока Happier не подтвердит их принятие",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Этот бот слушает в реальном времени",
   "plugins.channels.surface.historyGapTitle": "История разговора может быть неполной",
   "plugins.channels.surface.bindingEnableFailedTitle": "Не удалось обновить разрешение привязки",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Эта привязка не может быть включена из-за несовместимости квоты коллекции учетных записей. Просьба администратора сделать квоту коллекции учетных записей совместимой, затем обновить и попробовать снова.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Загрузка сведений о доставке",
   "plugins.channels.surface.deliveryResolutionEmpty": "В настоящее время нерешенных решений о доставке нет.",
   "plugins.channels.surface.disabled": "Неполноценный",
-  "plugins.channels.surface.bestEffort": "Лучшее усилие перед длительным поступлением",
+  "plugins.channels.surface.bestEffort": "Офлайн сообщения могут быть пропущены",
   "plugins.channels.surface.enabled": "Включено",
   "plugins.channels.surface.currentPolicy": "Текущая политика подключения",
   "plugins.channels.surface.technicalDetails": "Технические детали",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Отправьте {bot} сообщение, чтобы проверить, что оно доходит.",
   "plugins.channels.page.firstMessageMention": "Упомяните {bot} в {conversation}, чтобы проверить, что сообщение доходит.",
   "plugins.channels.page.firstMessageAddressed": "Упомяните {bot} или ответьте ему в {conversation}, чтобы проверить, что сообщение доходит.",
-  "plugins.channels.page.firstMessageAll": "Напишите в {conversation}, чтобы проверить, что сообщение доходит."
+  "plugins.channels.page.firstMessageAll": "Напишите в {conversation}, чтобы проверить, что сообщение доходит.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Исправьте это в настройках бота и попробуйте снова.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Выбранная машина не получает сообщения для одного из этих ботов.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Выбранная машина не получает сообщения для {count} из этих ботов."
 }

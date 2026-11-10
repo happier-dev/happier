@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Zgodne odrzucenia",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Wyłączone",
   "plugins.channels.surface.connectionAccount": "Konto",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Komunikaty odebrane przez tę aktywną połączenie mogą być utrata przed wpisaniem akceptacji przez Happier.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Wiadomości, które przyjdą, gdy wybrana maszyna jest offline lub się restartuje, mogą nie dotrzeć do Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier nie mógł potwierdzić akceptacji niektórych odebranych komunikatów.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Starsze wiadomości mogły nie zostać zaimportowane",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "Wiadomości sprzed {time} nie zostały zaimportowane",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "Dostawca raportuje, że wymagana uprawnienie zdalne jest niedostępna dla tej sesji.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "Dostawca raportuje, że jego konfiguracja zdalna nie jest ważna dla tej sesji.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "Dostawca odrzucił poświadczenie połączonego konta używane przez to połączenie. Wymień je lub zsynchronizuj ponownie, aby przywrócić połączenie.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Komunikaty aktywne nie są trwałe, dopóki Happier nie wpisze ich",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Ten bot nasłuchuje na żywo",
   "plugins.channels.surface.historyGapTitle": "Historia rozmowy może być niekompletna",
   "plugins.channels.surface.bindingEnableFailedTitle": "Nie można zaktualizować włączania powiązania",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "To powiązanie nie może być włączone ze względu na nieskompatybilność przydziału kolekcji konta. Poproś administratora, aby przydał się dla przydziału kolekcji konta, a następnie odśwież i spróbuj ponownie.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Ładowanie szczegółów dostawy",
   "plugins.channels.surface.deliveryResolutionEmpty": "Obecnie nie są dostępne żadne nierozstrzygnięte decyzje dotyczące dostawy.",
   "plugins.channels.surface.disabled": "Wyłączony",
-  "plugins.channels.surface.bestEffort": "Najlepszy wysiłek przed trwałym przyjęciem",
+  "plugins.channels.surface.bestEffort": "Wiadomości mogą zostać pominięte offline",
   "plugins.channels.surface.enabled": "Włączony",
   "plugins.channels.surface.currentPolicy": "Aktualna polityka połączeń",
   "plugins.channels.surface.technicalDetails": "Szczegóły techniczne",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Wyślij wiadomość do {bot}, aby sprawdzić, czy dociera.",
   "plugins.channels.page.firstMessageMention": "Wspomnij {bot} w {conversation}, aby sprawdzić, czy wiadomość dociera.",
   "plugins.channels.page.firstMessageAddressed": "Wspomnij {bot} lub odpowiedz mu w {conversation}, aby sprawdzić, czy wiadomość dociera.",
-  "plugins.channels.page.firstMessageAll": "Napisz w {conversation}, aby sprawdzić, czy wiadomość dociera."
+  "plugins.channels.page.firstMessageAll": "Napisz w {conversation}, aby sprawdzić, czy wiadomość dociera.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Napraw to w ustawieniach bota, a potem spróbuj ponownie.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Wybrana maszyna nie odbiera wiadomości dla jednego z tych botów.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Wybrana maszyna nie odbiera wiadomości dla {count} z tych botów."
 }

@@ -514,6 +514,24 @@ describe('plugin surface destination navigation', () => {
         expect(openPage).not.toHaveBeenCalled();
     });
 
+    it('hands a Settings page its plugin-local location, the way an App Page route receives one', async () => {
+        const page = settingsPage();
+        const openSettingsPage = vi.fn(async () => ({ ok: true as const }));
+        const open = createPluginSurfaceDestinationOpenSurfaceHandler({
+            placements: [],
+            settingsPages: [page],
+            targetKind: 'app',
+            handlers: { settingsPage: openSettingsPage },
+        });
+        const located: PluginSurfaceOpenRequest = Object.freeze({
+            destination: { pluginId: 'acme.settings', localId: 'preferences' },
+            subPath: 'bots/connection-1',
+        });
+
+        await expect(open(located)).resolves.toEqual({ ok: true });
+        expect(openSettingsPage).toHaveBeenCalledWith(expect.objectContaining({ placement: page, request: located }));
+    });
+
     it('rejects a sub-path for a pane destination instead of selecting it and dropping the location', async () => {
         const rightSidebarTab = placement({ container: 'rightSidebarTab' });
         const openRightSidebarTab = vi.fn(async () => ({ ok: true as const }));

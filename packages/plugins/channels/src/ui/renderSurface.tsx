@@ -36,6 +36,7 @@ import {
   ErrorState,
   Form,
   FreshnessLine,
+  HappierRadioMark,
   Heading,
   Icon,
   IconButton,
@@ -196,7 +197,10 @@ import {
   connectionLabel,
   connectionTwinIdentities,
   channelsStatusNeedsYou,
+  channelsSettingsBotSubPath,
   connectionStatus,
+  defaultLinkConnectionId,
+  readChannelsSettingsBot,
   isBindingInputMode,
   isHostMethodCurrentlyUnavailable,
   isNonEmptyString,
@@ -1455,7 +1459,7 @@ function buildBindingPresentations(
 function bestEffortBeforeDurableAdmissionDescription(t: Translate): string {
   return t(
     'plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription',
-    'Messages received through this live connection can be lost before Happier records their admission.',
+    'Messages that arrive while the selected machine is offline or restarting may not reach Happier.',
   );
 }
 
@@ -1665,10 +1669,11 @@ function ConnectionContinuityDisclosures(props: Readonly<{
       {hasBestEffortBeforeDurableAdmission ? (
         <Banner
           testID="channels-best-effort-before-durable-admission"
-          tone="warning"
+          // How this bot listens, not a fault: nothing in settings changes it, so it stays quiet.
+          tone="neutral"
           title={props.t(
             'plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle',
-            'Live messages are not durable until Happier admits them',
+            'This bot listens live',
           )}
           description={bestEffortBeforeDurableAdmissionDescription(props.t)}
         />
@@ -1859,7 +1864,8 @@ function useChannelsPageNavigation(): Readonly<{
   openRoot: () => void;
   openLink: () => void;
   showConversation: (bindingId: string) => void;
-  openSettings: () => void;
+  /** Opens the bots' Settings page, on one bot's row when a bot is named. */
+  openSettings: (connectionId?: string) => void;
   openSession?: (sessionId: string) => Promise<boolean>;
 }> {
   const hostApi = usePluginHostApi();
@@ -1885,8 +1891,10 @@ function useChannelsPageNavigation(): Readonly<{
       }
       void hostApi.openSurface(CHANNELS_PAGE_VIEW_ID, undefined, { subPath: bindingId }).catch(() => undefined);
     },
-    openSettings: () => {
-      void hostApi.openSurface(CHANNELS_SETTINGS_PAGE_ID).catch(() => undefined);
+    openSettings: (connectionId?: string) => {
+      void hostApi.openSurface(CHANNELS_SETTINGS_PAGE_ID, undefined, connectionId === undefined
+        ? undefined
+        : { subPath: channelsSettingsBotSubPath(connectionId) }).catch(() => undefined);
     },
     // Channels adds no Session-open API: it asks the incumbent `session.open`
     // Action for the exact Session id the binding targets.
@@ -2817,7 +2825,7 @@ function ConversationDetail(props: Readonly<{
             <Button
               variant="secondary"
               title={t('plugins.channels.page.manageBot', 'Manage bot')}
-              onPress={navigation.openSettings}
+              onPress={() => navigation.openSettings(binding.connectionId)}
             />
           )}
         />
@@ -2972,7 +2980,7 @@ function ConversationDetail(props: Readonly<{
         {...(connection === undefined ? {} : { connection })}
         attentionShownAbove={!deleting && botNeedsYou}
         {...(props.connectionTest === undefined ? {} : { connectionTest: props.connectionTest })}
-        onManage={navigation.openSettings}
+        onManage={() => navigation.openSettings(binding.connectionId)}
         t={t}
       />
 
@@ -5643,6 +5651,13 @@ function BindingCreateJourney(props: Readonly<{
   // before anything is searched through it, and leads to its own repair.
   const currentConnectionStatus = currentConnection === undefined ? undefined : connectionStatus(currentConnection, props.t);
   const currentConnectionNeedsYou = currentConnectionStatus !== undefined && channelsStatusNeedsYou(currentConnectionStatus.tone);
+  // A search answers in the step that asked, beside its field; any other outcome closes the flow.
+  const feedbackInSearchStep = stage === 'endpoint' || stage === 'principal';
+  const botFailureMerged = feedback === 'resolverUnavailable' && currentConnectionNeedsYou;
+  // The bots' placement fact, said once for the list: every bot runs on the one selected machine.
+  const machineNotReceivingCount = availableConnections.filter((connection) => (
+    connection.attention.pollFailure?.phase === 'blocked'
+  )).length;
   const onManageConnection = props.onManageConnection;
   const manageCurrentConnection = onManageConnection === undefined || currentConnection === undefined
     ? undefined
@@ -5738,8 +5753,8 @@ function BindingCreateJourney(props: Readonly<{
     if (connectionId !== undefined && availableConnections.some((connection) => connection.connectionId === connectionId)) {
       return;
     }
-    setConnectionId(availableConnections[0]?.connectionId);
-  }, [availableConnections, connectionId]);
+    setConnectionId(defaultLinkConnectionId(availableConnections, props.t));
+  }, [availableConnections, connectionId, props.t]);
 
   // The logical target is public and platform-neutral; the mounted host alone
   // decides whether this retained surface is current and can move physical
@@ -5840,10 +5855,10 @@ function BindingCreateJourney(props: Readonly<{
     setConnectionId((current) => (
       availableConnections.some((connection) => connection.connectionId === current)
         ? current
-        : availableConnections[0]?.connectionId
+        : defaultLinkConnectionId(availableConnections, props.t)
     ));
     setStage('endpoint');
-  }, [actionLocked, availableConnections, pairingContext, resetJourney]);
+  }, [actionLocked, availableConnections, pairingContext, props.t, resetJourney]);
 
   const backToEndpoint = React.useCallback(() => {
     if (actionLocked) return;
@@ -6356,12 +6371,17 @@ function BindingCreateJourney(props: Readonly<{
         ),
       ],
     };
-    const [title, description] = copy[feedback];
-    // A lookup the bot could not answer leads to the bot's own settings, unless its attention banner
-    // above already does.
-    const manageConnection = feedback === 'resolverUnavailable' && !currentConnectionNeedsYou
-      ? manageCurrentConnection
-      : undefined;
+    const [title, genericDescription] = copy[feedback];
+    // A lookup the bot could not answer leads to the bot's own settings. When the bot already needs you,
+    // that is the reason, so this one message names it instead of stacking the bot's banner above it.
+    const description = botFailureMerged && currentConnectionStatus !== undefined
+      ? props.t(
+        'plugins.channels.surface.bindingCreateUnavailableBotDescription',
+        '{status}. Fix it in the bot’s settings, then try again.',
+        { status: currentConnectionStatus.label },
+      )
+      : genericDescription;
+    const manageConnection = feedback === 'resolverUnavailable' ? manageCurrentConnection : undefined;
     return (
       <Banner
         testID="channels-binding-create-feedback"
@@ -6414,6 +6434,18 @@ function BindingCreateJourney(props: Readonly<{
             <ItemGroup
               testID="channels-binding-create-connection"
               title={props.t('plugins.channels.surface.bindingCreateConnection', 'Connection')}
+              {...(machineNotReceivingCount === 0 ? {} : {
+                description: machineNotReceivingCount === 1
+                  ? props.t(
+                    'plugins.channels.surface.bindingCreateMachineNotReceivingOne',
+                    'Your selected machine isn’t receiving messages for one of these bots.',
+                  )
+                  : props.t(
+                    'plugins.channels.surface.bindingCreateMachineNotReceiving',
+                    'Your selected machine isn’t receiving messages for {count} of these bots.',
+                    { count: machineNotReceivingCount },
+                  ),
+              })}
               accessibilityRole="radiogroup"
             >
               {availableConnections.map((connection) => {
@@ -6434,7 +6466,7 @@ function BindingCreateJourney(props: Readonly<{
               })}
             </ItemGroup>
           ) : null}
-          {!currentConnectionNeedsYou || currentConnectionStatus === undefined ? null : (
+          {!currentConnectionNeedsYou || botFailureMerged || currentConnectionStatus === undefined ? null : (
             <Banner
               testID="channels-binding-create-connection-attention"
               tone="warning"
@@ -6479,6 +6511,7 @@ function BindingCreateJourney(props: Readonly<{
                   onPress={searchEndpoints}
                 />
               </Row>
+              {feedbackContent}
               {endpointCandidates.length > 0 ? (
                 <List accessibilityLabel={props.t('plugins.channels.surface.bindingCreateEndpointCandidates', 'Endpoint candidates')}>
                   {endpointCandidates.map((candidate) => (
@@ -6542,6 +6575,7 @@ function BindingCreateJourney(props: Readonly<{
                   onPress={searchPrincipals}
                 />
               </Row>
+              {feedbackContent}
               <BindingPrincipalChoices
                 testID="channels-binding-create-principal-candidates"
                 label={props.t('plugins.channels.surface.bindingCreatePrincipalCandidates', 'Allowed sender candidates')}
@@ -7161,7 +7195,7 @@ function BindingCreateJourney(props: Readonly<{
               />
             </Stack>
           ) : null}
-          {feedbackContent}
+          {feedbackInSearchStep ? null : feedbackContent}
         </Stack>
       )}
     </Stack>
@@ -8628,7 +8662,7 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
       return (
         <ConversationsEmptyPage
           connections={props.connections}
-          onConnectBot={navigation.openSettings}
+          onConnectBot={() => navigation.openSettings()}
           onLink={navigation.openLink}
           t={props.t}
         />
@@ -8839,11 +8873,11 @@ function OnlineBindingsContent({
     showConversation(channelsJustLinkedSubPath(bindingId, false));
   }, [showConversation]);
   // The link step opens the journey at once: on the bot the location names (a session tab's "+"), else on the
-  // first bot that can link, or on the bot just connected inside this step.
+  // first healthy bot that can link (`defaultLinkConnectionId`), or on the bot just connected inside this step.
   const linkableConnections = bindingsProps.connections.filter((connection) => connection.deletionState === 'none');
   const linkConnectionId = linkableConnections.find((connection) => (
     connection.connectionId === bindingsProps.location.connectionId
-  ))?.connectionId ?? linkableConnections[0]?.connectionId;
+  ))?.connectionId ?? defaultLinkConnectionId(linkableConnections, bindingsProps.t);
   const [connectedLinkRequest, setConnectedLinkRequest] = React.useState<
     Readonly<{ connectionId: string; requestId: number }> | undefined
   >();
@@ -9556,9 +9590,28 @@ function AccountLocalChannelsPageSurface(props: Readonly<{
   );
 }
 
+/**
+ * Which bot row Settings shows open. A handoff that names a bot (`bots/<connectionId>`, "Manage bot")
+ * opens that row through the same expand state a press uses; the person can then close or switch it.
+ */
+function useSettingsExpandedConnection(subPath: string | undefined): readonly [
+  string | undefined,
+  React.Dispatch<React.SetStateAction<string | undefined>>,
+] {
+  const requested = readChannelsSettingsBot(subPath);
+  const [expandedConnectionId, setExpandedConnectionId] = React.useState(requested);
+  const [seenRequest, setSeenRequest] = React.useState(requested);
+  if (requested !== seenRequest) {
+    setSeenRequest(requested);
+    if (requested !== undefined) setExpandedConnectionId(requested);
+  }
+  return [expandedConnectionId, setExpandedConnectionId];
+}
+
 /** Settings → Connections while the daemon is unreachable: the bots' Account-local policy. */
 function AccountLocalBindingsSurface(props: Readonly<{
   signal: AbortSignal;
+  subPath: string | undefined;
 }>): React.ReactElement {
   const t = usePluginTranslation();
   const theme = usePluginTheme();
@@ -9566,7 +9619,7 @@ function AccountLocalBindingsSurface(props: Readonly<{
   const { collection, deliveriesCollection } = channels;
   const refreshBindings = channels.bindingsRead.refresh;
   const refreshConnections = channels.connectionsRead.refresh;
-  const [expandedConnectionId, setExpandedConnectionId] = React.useState<string | undefined>();
+  const [expandedConnectionId, setExpandedConnectionId] = useSettingsExpandedConnection(props.subPath);
   const [savedPendingMachineReconciliation, setSavedPendingMachineReconciliation] = React.useState(false);
   if (useReplacedAccountCollectionScope([collection, deliveriesCollection])) {
     setExpandedConnectionId(undefined);
@@ -9698,6 +9751,7 @@ function ConnectionListRow(props: Readonly<{
   | Readonly<{ expanded: boolean; onExpand: () => void; selection?: undefined }>
   | Readonly<{ selection: Readonly<{ selected: boolean; disabled: boolean; onSelect: () => void }> }>
 )>): React.ReactElement {
+  const theme = usePluginTheme();
   const status = connectionStatus(props.connection, props.t);
   const provider = useConversationProviderDisplayName(props.connection.providerPluginId)
     ?? props.t('plugins.channels.surface.providerFallback', 'Integration provider');
@@ -9705,18 +9759,28 @@ function ConnectionListRow(props: Readonly<{
   const continuityDescriptions = connectionContinuityDescriptions(props.connection, props.t);
   const subtitle = props.twinIdentity === undefined ? provider : `${provider} · ${props.twinIdentity}`;
   const testIDBase = props.selection === undefined ? 'channels-connection' : 'channels-binding-create-connection';
+  const statusSpeaks = status.tone !== 'secondary' && status.tone !== 'neutral';
+  const statusLine = statusSpeaks ? (
+    <Status
+      testID={`${testIDBase}-status-${props.connection.connectionId}`}
+      tone={status.tone}
+      label={status.label}
+    />
+  ) : undefined;
+  // A healthy row is quiet: it says where it runs, and only a paused policy is named. The transport
+  // mechanism stays in the connection's detail. Choosing a bot drops the placement: every bot runs on
+  // the one selected machine, so the link step says it once for the list.
+  const detail = [
+    ...(props.connection.enabled ? [] : [connectionPolicyLabel(props.connection, props.t)]),
+    ...(props.selection === undefined ? [connectionMachinePlacementLabel(props.connection, props.t)] : []),
+  ].join(' · ');
   return (
       <List.Item
       testID={`${testIDBase}-${props.connection.connectionId}`}
       {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
       title={label}
       subtitle={subtitle}
-      // A healthy row is quiet: it says where it runs, and only a paused policy is named. The transport
-      // mechanism stays in the connection's detail.
-      detail={[
-        ...(props.connection.enabled ? [] : [connectionPolicyLabel(props.connection, props.t)]),
-        connectionMachinePlacementLabel(props.connection, props.t),
-      ].join(' · ')}
+      {...(detail === '' ? {} : { detail })}
       icon={(
         <BrandMark
           pluginId={props.connection.providerPluginId}
@@ -9727,16 +9791,24 @@ function ConnectionListRow(props: Readonly<{
             : `${testIDBase}-brand-${props.connection.connectionId}`}
         />
       )}
-      accessory={status.tone === 'secondary' || status.tone === 'neutral' ? undefined : (
-        <Status
-          testID={`${testIDBase}-status-${props.connection.connectionId}`}
-          tone={status.tone}
-          label={status.label}
-        />
-      )}
       {...(props.selection === undefined
-        ? { accessibilityExpanded: props.expanded, onPress: props.onExpand }
+        ? {
+          ...(statusLine === undefined ? {} : { accessory: statusLine }),
+          accessibilityExpanded: props.expanded,
+          onPress: props.onExpand,
+        }
         : {
+          // A choice among bots: the shared single-choice mark says which one is chosen, at the row's
+          // end where it never moves; the bot's health takes its own line under its name at every width.
+          accessory: (
+            <HappierRadioMark
+              selected={props.selection.selected}
+              disabled={props.selection.disabled}
+              theme={theme}
+              testID={`${testIDBase}-mark-${props.connection.connectionId}`}
+            />
+          ),
+          ...(statusLine === undefined ? {} : { children: statusLine }),
           accessibilityRole: 'radio' as const,
           selected: props.selection.selected,
           disabled: props.selection.disabled,
@@ -13790,13 +13862,14 @@ function useDaemonChannelsResources(t: Translate) {
 function DaemonChannelsSurface(props: Readonly<{
   signal: AbortSignal;
   targetPluginId: string;
+  subPath: string | undefined;
 }>): React.ReactElement {
   const t = usePluginTranslation();
   const theme = usePluginTheme();
   const hostApi = usePluginHostApi();
   const channels = useDaemonChannelsResources(t);
   const refresh = channels.refreshConnections;
-  const [expandedConnectionId, setExpandedConnectionId] = React.useState<string | undefined>();
+  const [expandedConnectionId, setExpandedConnectionId] = useSettingsExpandedConnection(props.subPath);
   const [pendingBindingConnectionId, setPendingBindingConnectionId] = React.useState<string | undefined>();
   const [bindingCreateRequest, setBindingCreateRequest] = React.useState<
     Readonly<{ connectionId: string; requestId: number }> | undefined
@@ -14678,12 +14751,13 @@ function SessionConversationsAvailabilitySurface(props: Readonly<{
 function ChannelsAccountSettingsSurface(props: Readonly<{
   signal: AbortSignal;
   targetPluginId: string;
+  subPath: string | undefined;
 }>): React.ReactElement {
   const { resource } = useLivePluginResource(CHANNELS_BINDINGS_RESOURCE);
   if (isHostMethodCurrentlyUnavailable(resource.error)) {
-    return <AccountLocalBindingsSurface signal={props.signal} />;
+    return <AccountLocalBindingsSurface signal={props.signal} subPath={props.subPath} />;
   }
-  return <DaemonChannelsSurface signal={props.signal} targetPluginId={props.targetPluginId} />;
+  return <DaemonChannelsSurface signal={props.signal} targetPluginId={props.targetPluginId} subPath={props.subPath} />;
 }
 
 /**
@@ -14733,12 +14807,13 @@ export function ChannelsSurface(context: RenderContext): React.ReactElement {
       : <AccountLocalSessionConversationsSurface sessionId={target.sessionId} signal={context.signal} />;
   }
   if (!context.hostApi.version().methods.includes('readResource')) {
-    return <AccountLocalBindingsSurface signal={context.signal} />;
+    return <AccountLocalBindingsSurface signal={context.signal} subPath={context.subPath} />;
   }
   return (
     <ChannelsAccountSettingsSurface
       signal={context.signal}
       targetPluginId={context.plugin.id}
+      subPath={context.subPath}
     />
   );
 }

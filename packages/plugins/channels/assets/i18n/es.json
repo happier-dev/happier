@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Rechazos elegibles",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Desactivado",
   "plugins.channels.surface.connectionAccount": "Cuenta",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Los mensajes recibidos a través de esta conexión en vivo pueden perderse antes de que Happier los registre.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Los mensajes que llegan mientras la máquina seleccionada está sin conexión o reiniciándose pueden no llegar a Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier no pudo confirmar la admisión de algunos mensajes recibidos.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Es posible que no se hayan importado los mensajes antiguos",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "No se importaron los mensajes anteriores a {time}",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "El proveedor informa que una permisión remota requerida no está disponible para esta conexión.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "El proveedor informa que su configuración remota no es válida para esta conexión.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "El proveedor rechazó la credencial de la cuenta conectada que usa esta conexión. Reemplázala o vuelve a sincronizarla para restaurar la conexión.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Los mensajes en vivo no son duraderos hasta que Happier los apruebe",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Este bot escucha en directo",
   "plugins.channels.surface.historyGapTitle": "El historial de conversación puede estar incompleto",
   "plugins.channels.surface.bindingEnableFailedTitle": "No se pudo actualizar la habilitación de la enlace",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Este enlace no pudo ser habilitado porque la cuota de la colección de cuentas no es compatible. Pida a un administrador que haga que la cuota de la colección de cuentas sea compatible, luego refresque y intente de nuevo.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Cargando detalles de entrega",
   "plugins.channels.surface.deliveryResolutionEmpty": "Actualmente no hay decisiones de entrega sin resolver disponibles.",
   "plugins.channels.surface.disabled": "Desactivado",
-  "plugins.channels.surface.bestEffort": "Mejor esfuerzo antes de la admisión duradera",
+  "plugins.channels.surface.bestEffort": "Se pueden perder mensajes sin conexión",
   "plugins.channels.surface.enabled": "Activado",
   "plugins.channels.surface.currentPolicy": "Política de conexión actual",
   "plugins.channels.surface.technicalDetails": "Detalles técnicos",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Envía un mensaje a {bot} para comprobar que llega.",
   "plugins.channels.page.firstMessageMention": "Menciona a {bot} en {conversation} para comprobar que el mensaje llega.",
   "plugins.channels.page.firstMessageAddressed": "Menciona o responde a {bot} en {conversation} para comprobar que el mensaje llega.",
-  "plugins.channels.page.firstMessageAll": "Escribe en {conversation} para comprobar que el mensaje llega."
+  "plugins.channels.page.firstMessageAll": "Escribe en {conversation} para comprobar que el mensaje llega.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Corrígelo en los ajustes del bot y vuelve a intentarlo.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Tu máquina seleccionada no está recibiendo mensajes de uno de estos bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Tu máquina seleccionada no está recibiendo mensajes de {count} de estos bots."
 }

@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "合格的拒絕",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "關閉",
   "plugins.channels.surface.connectionAccount": "帳號",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "通過此實時連接接收的消息可能在 Happier 記錄其准入之前被損失。",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "在所選機器離線或重新啟動期間到達的訊息可能無法送達 Happier。",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier 無法確認某些接收消息的准入。",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "較早的訊息可能尚未匯入",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "未匯入 {time} 之前的訊息",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "提供商報告此連接所需的遠程權限不可用。",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "提供商報告其遠程配置不适用于此連接。",
   "plugins.channels.surface.providerCredentialInvalidDescription": "提供商拒絕了此連接使用的已連接帳戶憑證。請替換或重新同步該憑證以恢復連接。",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "實時消息在 Happier 准入之前不是持久的",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "此機器人即時接收",
   "plugins.channels.surface.historyGapTitle": "會話歷史可能不完整",
   "plugins.channels.surface.bindingEnableFailedTitle": "無法更新綁定啟用狀態",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "此綁定無法啟用，因為 Account 集合配额不兼容。請要求管理员使 Account 集合配額兼容，然後刷新並重試。",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "正在加載交貨詳細信息",
   "plugins.channels.surface.deliveryResolutionEmpty": "目前沒有未解決的交付決策。",
   "plugins.channels.surface.disabled": "殘障人士",
-  "plugins.channels.surface.bestEffort": "持久錄取前盡力",
+  "plugins.channels.surface.bestEffort": "離線時可能會錯過訊息",
   "plugins.channels.surface.enabled": "啟用",
   "plugins.channels.surface.currentPolicy": "目前連線策略",
   "plugins.channels.surface.technicalDetails": "技術細節",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "傳一則訊息給 {bot}，確認它能送達。",
   "plugins.channels.page.firstMessageMention": "在 {conversation} 中提及 {bot}，確認訊息能送達。",
   "plugins.channels.page.firstMessageAddressed": "在 {conversation} 中提及或回覆 {bot}，確認訊息能送達。",
-  "plugins.channels.page.firstMessageAll": "在 {conversation} 中傳一則訊息，確認它能送達。"
+  "plugins.channels.page.firstMessageAll": "在 {conversation} 中傳一則訊息，確認它能送達。",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}。請在機器人的設定中修正，然後再試一次。",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "你選擇的機器沒有接收其中一個機器人的訊息。",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "你選擇的機器沒有接收其中 {count} 個機器人的訊息。"
 }

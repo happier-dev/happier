@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Refusables éligibles",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Désactivé",
   "plugins.channels.surface.connectionAccount": "Compte",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Les messages reçus par cette connexion en direct peuvent être perdus avant que Happier ne les enregistre.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Les messages qui arrivent pendant que la machine sélectionnée est hors ligne ou redémarre peuvent ne pas parvenir à Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier ne peut pas confirmer l'admission de certains messages reçus.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "Les anciens messages n'ont peut-être pas été importés",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "Les messages antérieurs à {time} n'ont pas été importés",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "Le fournisseur signale que une permission de connexion à distance requise n'est pas disponible pour cette connexion.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "Le fournisseur signale que sa configuration à distance n'est pas valide pour cette connexion.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "Le fournisseur a rejeté les identifiants du compte connecté utilisés par cette connexion. Remplace-les ou resynchronise-les pour rétablir la connexion.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Les messages en direct ne sont pas durables jusqu'à ce que Happier les enregistre.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Ce bot écoute en direct",
   "plugins.channels.surface.historyGapTitle": "L'historique de la conversation peut être incomplet",
   "plugins.channels.surface.bindingEnableFailedTitle": "Impossible de mettre à jour l'état d'activation de la liaison",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Cette liaison ne peut pas être activée car la limite de quota de la collection de compte n'est pas compatible. Demande à un administrateur de rendre la limite de quota de la collection de compte compatible, puis actualise et essaie à nouveau.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "Chargement des détails de livraison",
   "plugins.channels.surface.deliveryResolutionEmpty": "Aucune décision de livraison non résolue n’est actuellement disponible.",
   "plugins.channels.surface.disabled": "Désactivé",
-  "plugins.channels.surface.bestEffort": "Meilleur effort avant une admission durable",
+  "plugins.channels.surface.bestEffort": "Des messages peuvent être manqués hors ligne",
   "plugins.channels.surface.enabled": "Activé",
   "plugins.channels.surface.currentPolicy": "Politique de connexion actuelle",
   "plugins.channels.surface.technicalDetails": "Détails techniques",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Envoyez un message à {bot} pour vérifier qu’il arrive.",
   "plugins.channels.page.firstMessageMention": "Mentionnez {bot} dans {conversation} pour vérifier que le message arrive.",
   "plugins.channels.page.firstMessageAddressed": "Mentionnez {bot} ou répondez-lui dans {conversation} pour vérifier que le message arrive.",
-  "plugins.channels.page.firstMessageAll": "Écrivez dans {conversation} pour vérifier que le message arrive."
+  "plugins.channels.page.firstMessageAll": "Écrivez dans {conversation} pour vérifier que le message arrive.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Corrigez-le dans les réglages du bot, puis réessayez.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "Votre machine sélectionnée ne reçoit pas les messages de l’un de ces bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "Votre machine sélectionnée ne reçoit pas les messages de {count} de ces bots."
 }

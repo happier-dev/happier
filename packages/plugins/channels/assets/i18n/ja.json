@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "許可の資格",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "オフ",
   "plugins.channels.surface.connectionAccount": "アカウント",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "このライブ接続を通じて受信したメッセージは、Happierが受け入れるまで失われることがあります。",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "選択したマシンがオフラインまたは再起動中に届いたメッセージは、Happier に届かないことがあります。",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happierが一部の受信メッセージを受け入れることができませんでした。",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "過去のメッセージがインポートされていない可能性があります",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "{time} より前のメッセージはインポートされませんでした",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "プロバイダーは、この接続に対して必要なリモート権限が利用できないと報告しました。",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "プロバイダーは、この接続に対するリモート構成が無効だと報告しました。",
   "plugins.channels.surface.providerCredentialInvalidDescription": "プロバイダーは、この接続が使用する接続済みアカウントの認証情報を拒否しました。認証情報を置き換えるか再同期すると接続が復旧します。",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "ライブメッセージは、Happierが受け入れるまで永続化されません",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "このボットはライブで受信します",
   "plugins.channels.surface.historyGapTitle": "会話履歴が不完全かもしれません",
   "plugins.channels.surface.bindingEnableFailedTitle": "バインドの有効化を更新できませんでした",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "このバインドを有効にすることができません。アカウントのコレクションクォータが互換性がありません。管理者にアカウントのコレクションクォータを互換性にします。次に更新してから再試行してください。",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "配送の詳細を読み込んでいます",
   "plugins.channels.surface.deliveryResolutionEmpty": "現在、未解決の配送に関する決定はありません。",
   "plugins.channels.surface.disabled": "無効",
-  "plugins.channels.surface.bestEffort": "永続的な入学前の最善の努力",
+  "plugins.channels.surface.bestEffort": "オフライン中のメッセージは届かないことがあります",
   "plugins.channels.surface.enabled": "有効",
   "plugins.channels.surface.currentPolicy": "現在の接続ポリシー",
   "plugins.channels.surface.technicalDetails": "技術的な詳細",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "{bot} にメッセージを送り、届くことを確認してください。",
   "plugins.channels.page.firstMessageMention": "{conversation} で {bot} にメンションして、メッセージが届くことを確認してください。",
   "plugins.channels.page.firstMessageAddressed": "{conversation} で {bot} にメンションするか返信して、メッセージが届くことを確認してください。",
-  "plugins.channels.page.firstMessageAll": "{conversation} に書き込んで、メッセージが届くことを確認してください。"
+  "plugins.channels.page.firstMessageAll": "{conversation} に書き込んで、メッセージが届くことを確認してください。",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}。ボットの設定で修正してから、もう一度お試しください。",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "選択したマシンは、これらのボットのうち 1 つのメッセージを受信していません。",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "選択したマシンは、これらのボットのうち {count} 個のメッセージを受信していません。"
 }

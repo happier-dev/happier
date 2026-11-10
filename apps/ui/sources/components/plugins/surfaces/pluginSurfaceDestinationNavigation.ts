@@ -280,10 +280,12 @@ export function resolvePluginSurfaceDestinationOpen(input: Omit<
     if (placement.availability.state !== 'available' && !routeOnly) {
         return unavailable(placement.availability.reason);
     }
-    // Only the route owner has a bounded plugin-local sub-path grammar. A
-    // pane/cockpit/details adapter must reject it rather than silently losing
-    // a caller-visible location while still reporting navigation success.
-    if (placement.binding.container !== 'appPage' && input.request.subPath !== undefined) {
+    // Only the route owners (an App Page and a Settings page) have a bounded
+    // plugin-local sub-path grammar. A pane/cockpit/details adapter must reject
+    // it rather than silently losing a caller-visible location while still
+    // reporting navigation success.
+    if (placement.binding.container !== 'appPage' && placement.binding.container !== 'settingsPage'
+        && input.request.subPath !== undefined) {
         return {
             ok: false,
             code: 'invalid_payload',

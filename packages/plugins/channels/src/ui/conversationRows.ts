@@ -712,8 +712,9 @@ export function providerReadinessLabel(
 /**
  * The bot's one status line, in the shared status vocabulary: what the reader must act on is
  * `attention`, a failure `danger`, healthy is quiet. `warning` stays only for system-owned
- * in-flight or retrying states and disclosures (deletion cleanup, a pending retry, best-effort
- * admission): cautions, not requests of the reader.
+ * in-flight or retrying states (deletion cleanup, a pending retry): cautions, not requests of the
+ * reader. How a live connection delivers is a fact about the transport that no setting changes, so it
+ * is stated quietly (`neutral`), never as something to fix.
  */
 export function connectionStatus(connection: ChannelsConnection, t: Translate) {
   if (connection.deletionState === 'pendingStopReconciliation') {
@@ -755,7 +756,7 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
     };
   }
   if (connection.attention.bestEffortBeforeDurableAdmission) {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.bestEffort', 'Best effort before durable admission') };
+    return { tone: 'neutral' as const, label: t('plugins.channels.surface.bestEffort', 'Messages can be missed while offline') };
   }
   return {
     tone: 'secondary' as const,
@@ -766,6 +767,20 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
 /** Whether a status tone asks the reader to look: needs-you, a caution or a failure. */
 export function channelsStatusNeedsYou(tone: string): boolean {
   return tone === 'attention' || tone === 'warning' || tone === 'danger';
+}
+
+/**
+ * The bot a link step starts on: the first one that can link and needs nothing from the reader, else
+ * the first one that can link. Starting on a broken bot would make the first search fail for a reason
+ * a healthy sibling never has.
+ */
+export function defaultLinkConnectionId(
+  connections: readonly ChannelsConnection[],
+  t: Translate,
+): string | undefined {
+  const linkable = connections.filter((connection) => connection.deletionState === 'none');
+  return (linkable.find((connection) => !channelsStatusNeedsYou(connectionStatus(connection, t).tone)) ?? linkable[0])
+    ?.connectionId;
 }
 
 export function bindingEndpointLabel(binding: ChannelsBinding, t: Translate): string {
@@ -1036,6 +1051,17 @@ export function channelsLinkSubPath(input: Readonly<{ connectionId?: string; ses
 /** A conversation the link journey just made: review first when it asks for one, then its first message. */
 export function channelsJustLinkedSubPath(bindingId: string, review: boolean): string {
   return review ? `${bindingId}/edit/new` : `${bindingId}/new`;
+}
+
+/** The Settings page location that opens one bot's row (`bots/<connectionId>`), as "Manage bot" asks. */
+export function channelsSettingsBotSubPath(connectionId: string): string {
+  return `bots/${connectionId}`;
+}
+
+/** The bot a Settings page location names: the reverse of {@link channelsSettingsBotSubPath}. */
+export function readChannelsSettingsBot(subPath: string | undefined): string | undefined {
+  const segments = subPath?.split('/') ?? [];
+  return segments.length === 2 && segments[0] === 'bots' && segments[1] !== '' ? segments[1] : undefined;
 }
 
 /** Conversation and bot metadata; each surface demands Session state only after selecting its rows. */

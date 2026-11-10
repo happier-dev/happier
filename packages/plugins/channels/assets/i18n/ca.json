@@ -100,7 +100,7 @@
   "plugins.channels.surface.bindingCreateSenderFeedbackRefusals": "Refusacions elegibles",
   "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Apagat",
   "plugins.channels.surface.connectionAccount": "Compte",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Les missatges rebuts a través d'aquesta connexió en directe poden perdre-se abans que Happier registri la seva admissió.",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription": "Els missatges que arriben mentre la màquina seleccionada està sense connexió o es reinicia poden no arribar a Happier.",
   "plugins.channels.surface.historyGapApplicationAdmissionLostDescription": "Happier no pot confirmar la admissió d'alguns dels missatges rebuts.",
   "plugins.channels.surface.historyGapProviderHistoryUnavailableDescription": "És possible que no s'hagin importat els missatges antics",
   "plugins.channels.surface.historyGapBeforeTimeDescription": "No s'han importat els missatges anteriors a {time}",
@@ -109,7 +109,7 @@
   "plugins.channels.surface.providerPermissionMissingDescription": "El proveïdor informa que una permissió remota necessària no està disponible per aquesta connexió.",
   "plugins.channels.surface.providerConfigurationInvalidDescription": "El proveïdor informa que la seva configuració remota no és vàlida per aquesta connexió.",
   "plugins.channels.surface.providerCredentialInvalidDescription": "El proveïdor ha rebutjat la credencial del compte connectat que fa servir aquesta connexió. Substituïu-la o torneu-la a sincronitzar per restaurar la connexió.",
-  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Les mites en temps real no són durables fins que Happier no les admeti",
+  "plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle": "Aquest bot escolta en directe",
   "plugins.channels.surface.historyGapTitle": "La història de la conversa pot ser incompleta",
   "plugins.channels.surface.bindingEnableFailedTitle": "No s'ha pogut actualitzar l'activació de la vinculació",
   "plugins.channels.surface.bindingEnableQuotaIncompatibleDescription": "Aquesta vinculació no s'ha pogut activar perquè la quota de la recopilació d'elements del compte és incompatible. Demana a un administrador que faig que la quota de la recopilació d'elements del compte sigui compatible, després refresca i intenta-ho de nou.",
@@ -519,7 +519,7 @@
   "plugins.channels.surface.deliveryResolutionLoading": "S'estan carregant els detalls de lliurament",
   "plugins.channels.surface.deliveryResolutionEmpty": "Actualment no hi ha decisions de lliurament no resoltes disponibles.",
   "plugins.channels.surface.disabled": "Inhabilitat",
-  "plugins.channels.surface.bestEffort": "Millor esforç abans de l'ingrés durador",
+  "plugins.channels.surface.bestEffort": "Es poden perdre missatges sense connexió",
   "plugins.channels.surface.enabled": "Habilitat",
   "plugins.channels.surface.currentPolicy": "Política de connexió actual",
   "plugins.channels.surface.technicalDetails": "Detalls tècnics",
@@ -854,5 +854,8 @@
   "plugins.channels.page.firstMessageDirect": "Envia un missatge a {bot} per comprovar que arriba.",
   "plugins.channels.page.firstMessageMention": "Menciona {bot} a {conversation} per comprovar que el missatge arriba.",
   "plugins.channels.page.firstMessageAddressed": "Menciona o respon {bot} a {conversation} per comprovar que el missatge arriba.",
-  "plugins.channels.page.firstMessageAll": "Escriu a {conversation} per comprovar que el missatge arriba."
+  "plugins.channels.page.firstMessageAll": "Escriu a {conversation} per comprovar que el missatge arriba.",
+  "plugins.channels.surface.bindingCreateUnavailableBotDescription": "{status}. Corregeix-ho a la configuració del bot i torna-ho a provar.",
+  "plugins.channels.surface.bindingCreateMachineNotReceivingOne": "La màquina seleccionada no rep missatges d’un d’aquests bots.",
+  "plugins.channels.surface.bindingCreateMachineNotReceiving": "La màquina seleccionada no rep missatges de {count} d’aquests bots."
 }

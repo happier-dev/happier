@@ -11,6 +11,7 @@ import type {
     PluginUiProjectionModel,
     PluginUiSettingsPageProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import { normalizePluginUiSubPathV1 } from '@happier-dev/protocol/plugins/ui';
 import { getPreferredLanguage } from '@/text';
 import { withInternalRouteQueryParams } from '@/utils/path/routeUtils';
 import { SETTINGS_RETURN_QUERY_PARAM } from '../navigation/settingsRouteRegistry';
@@ -56,16 +57,20 @@ export function createPluginSettingsPageDestinationHandler(input: Readonly<{
         if (!page || page.page.id !== resolution.placement.id) {
             return unavailable('plugin_surface_open_destination_unknown');
         }
-        const routePath = pluginSettingsPageRoute(
+        const pagePath = pluginSettingsPageRoute(
             page.page.pluginId,
             page.page.descriptorId,
         );
+        // The caller's plugin-local location rides as the page route's `subPath` param, the same one
+        // `replacePageLocation` writes, so the page opens where it was asked to.
+        const subPath = normalizePluginUiSubPathV1(resolution.request.subPath ?? '') ?? '';
+        const routePath = subPath === '' ? pagePath : withInternalRouteQueryParams(pagePath, { subPath });
         if (resolution.request.presentation === 'window') {
             return input.openWindow?.(routePath) ?? {
                 ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_window_unsupported',
             };
         }
-        if (routePath !== input.pathname) {
+        if (subPath !== '' || pagePath !== input.pathname) {
             const fromSettings = input.pathname === '/settings' || input.pathname.startsWith('/settings/');
             input.navigate(fromSettings ? routePath : withInternalRouteQueryParams(routePath, {
                 [SETTINGS_RETURN_QUERY_PARAM]: '1',
