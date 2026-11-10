@@ -1885,7 +1885,13 @@ async function executeActionBlock(
     const prepared = await context.holds.track(() => builtinActionId.success
       ? context.deps.action!.executor.prepare(builtinActionId.data, input, actionContext)
       : context.deps.action!.executor.prepare('action.invoke', { action: contributedAction, input }, actionContext));
-    if (prepared.kind === 'settled' && !prepared.result.ok) return await fail(prepared.result.errorCode, 'failed', true);
+    if (prepared.kind === 'settled' && !prepared.result.ok) {
+      const offline = prepared.result.errorCode === 'machine_unavailable'
+        || prepared.result.failureCause?.errorCode === 'machine_unavailable';
+      return await fail(offline ? 'machine_unavailable' : prepared.result.errorCode, 'failed', true,
+        undefined, prepared.result.failureCause,
+        offline ? "The target Machine was offline; Retry when it's back." : undefined);
+    }
     await context.deps.waitForNewWorkAdmission?.(context.signal);
     assertWorkflowAbortSignal(context);
     // Read the same declaration used by public approval presentation. The live

@@ -58,7 +58,7 @@ export const DeploymentTeardownDetachInputV1Schema = lazyZodSchema(() => z.safeE
 export const DeploymentTeardownNothingDeployedInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...z.omit(DeploymentRuntimeContentCasV1Schema, { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true }).shape, reason: DeploymentTeardownReasonV1Schema,
   nothingDeployed: z.literal(true), removeEnvironment: z.literal(true),
-  volumes: z.optional(z.tuple([])),
+  volumes: z.optional(DeploymentTeardownVolumesV1Schema.check(z.length(0))),
 }));
 export type DeploymentTeardownNothingDeployedInputV1 = z.infer<typeof DeploymentTeardownNothingDeployedInputV1Schema>;
 export const DeploymentTeardownPreparedInputV1Schema = lazyZodSchema(() => z.union([
