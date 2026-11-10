@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle, PluginProtocolClientSpec } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type {
+  AgentExecutionRunRuntimeContextV1,
   AgentSessionOpenRequest,
   AgentSessionModelsSource,
   AgentSessionRuntime,
@@ -21,7 +23,7 @@ import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../auth/services/requestAut
 const openedSessions: AgentSessionRuntime[] = [];
 
 function hostBoundaries(signal = new AbortController().signal, sessionState: JsonValue = { sessionId: 'pi-shared' }) {
-  const subscriptions: { listener: () => void | Promise<void>; dispose: ReturnType<typeof vi.fn> }[] = [];
+  const subscriptions: { listener: (event?: ConnectedAccountBindingEvent) => void | Promise<void>; dispose: ReturnType<typeof vi.fn> }[] = [];
   const getBinding = vi.fn<AgentSessionRuntimeContext['services']['connectedAccounts']['getBinding']>()
     .mockResolvedValue(null);
   let listener: ((record: unknown) => void | Promise<void>) | undefined;
@@ -57,10 +59,11 @@ function hostBoundaries(signal = new AbortController().signal, sessionState: Jso
     services: {
       logger: { debug() {}, info() {}, warn() {}, error() {} },
       connectedAccounts: {
-        watch(_purpose: string, callback: () => void | Promise<void>) {
-          const subscription = { listener: callback, dispose: vi.fn() };
+        watch(_purpose: string, callback: (event: ConnectedAccountBindingEvent) => void | Promise<void>) {
+          let disposed = false;
+          const subscription = { listener: (event: ConnectedAccountBindingEvent = { kind: 'resync', authorityChanged: true }) => disposed ? undefined : callback(event), dispose: vi.fn(() => { disposed = true; }) };
           subscriptions.push(subscription);
-          void callback();
+          void callback({ kind: 'resync', authorityChanged: false });
           return subscription;
         },
         getBinding,
@@ -105,7 +108,11 @@ describe('Pi Agent runtime', () => {
         mode: { value: null, updatedAtMs: 0 }, model: { value: model, updatedAtMs: 0 },
         permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {},
       } }),
-    }, boundary.context)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
+    }, boundary.context)).rejects.toMatchObject({
+      code: 'agent_startup_model_reconciliation_failed',
+      details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+        phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
+    });
     expect(boundary.spawn).not.toHaveBeenCalled();
   });
 
@@ -303,6 +310,27 @@ describe('Pi Agent runtime', () => {
     });
   });
 
+  it('keeps an admitted finite run alive across Connected Account resync until explicit disposal', async () => {
+    const boundary = hostBoundaries();
+    const open = createPiAgentRuntime().sessions.executionRunContextV1!.open;
+    const run = await open({
+      kind: 'create', runId: 'pi-account-continuity', cwd: '/workspace',
+      profile: { pluginId: 'happier.agent.pi', localId: 'default' },
+      input: { text: 'Keep working.' },
+    }, boundary.context as unknown as AgentExecutionRunRuntimeContextV1);
+    try {
+      await vi.waitFor(() => expect(boundary.spawn).toHaveBeenCalled());
+      // Let the real finite host finish opening its native conversation.
+      await vi.waitFor(() => expect(boundary.write).toHaveBeenCalledWith(expect.objectContaining({ type: 'prompt' })));
+      for (const subscription of boundary.subscriptions) await subscription.listener();
+      expect(boundary.disposeProcess).not.toHaveBeenCalled();
+    } finally {
+      await run.dispose();
+    }
+    // The finite host settles disposal before its detached provider cleanup.
+    await vi.waitFor(() => expect(boundary.disposeProcess).toHaveBeenCalled());
+  });
+
   it('binds Connected Account invalidation outside Pi tool-extension cleanup', async () => {
     const boundary = hostBoundaries();
 
@@ -330,7 +358,10 @@ describe('Pi Agent runtime', () => {
     if (!configPath) throw new Error('Expected a materialized Pi tools config');
     expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({ v: 1, directory: '/workspace', tools: [] });
     expect(boundary.subscriptions.length).toBeGreaterThan(0);
-    await boundary.subscriptions[0]!.listener();
+    await boundary.subscriptions[0]!.listener({ kind: 'resync', authorityChanged: false });
+    expect(boundary.disposeProcess).not.toHaveBeenCalled();
+    expect(existsSync(configPath)).toBe(true);
+    await boundary.subscriptions[0]!.listener({ kind: 'resync', authorityChanged: true });
     expect(boundary.disposeProcess).toHaveBeenCalled();
     expect(existsSync(configPath)).toBe(false);
     for (const subscription of boundary.subscriptions) expect(subscription.dispose).toHaveBeenCalledOnce();

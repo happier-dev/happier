@@ -17,6 +17,8 @@ import { replacePiAuthConfig } from '../auth/services/authConfig.js';
 import { PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
 import {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
+  PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
 } from '../auth/services/qualifiedPurposes.js';
@@ -162,6 +164,8 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     return wrapped;
   };
   const bindExecutionRun = <T extends Readonly<{ dispose(): void | Promise<void> }>>(runtime: T): T => {
+    // A finite run owns its admitted credential snapshot until explicit disposal.
+    disposeSubscriptions();
     let disposed = false;
     const wrapped = {
       ...runtime,
@@ -172,8 +176,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
         await runtime.dispose();
       },
     } as T;
-    disposeBoundRuntime = async () => await wrapped.dispose();
-    if (invalidated) void wrapped.dispose();
     return wrapped;
   };
 
@@ -184,12 +186,13 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
         resolveInitial = resolve;
       }));
       let initial = true;
-      subscriptions.push(connectedAccounts.watch(declaration.purpose, () => {
+      subscriptions.push(connectedAccounts.watch(declaration.purpose, (event) => {
         if (initial) {
           initial = false;
           resolveInitial();
           return;
         }
+        if (!event.authorityChanged) return;
         return invalidate();
       }));
     }
@@ -201,13 +204,17 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => {
         const binding = await connectedAccounts.getBinding(
           declaration.purpose,
-          { signal: input.context.signal },
+          { signal: input.context.signal, observation: true },
         );
         assertExpectedBinding(binding, declaration);
-        return binding;
+        return { purpose: declaration.purpose, binding };
       }),
     );
-    const [claudeSubscription, openaiCodex, openai, anthropic] = bindings;
+    const bindingFor = (purpose: string) => bindings.find((entry) => entry.purpose === purpose)?.binding ?? null;
+    const claudeSubscription = bindingFor(PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID);
+    const openaiCodex = bindingFor(PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID);
+    const openai = bindingFor(PI_OPENAI_API_KEY_PURPOSE_ID);
+    const anthropic = bindingFor(PI_ANTHROPIC_API_KEY_PURPOSE_ID);
     // Pi's authenticated registry advertises candidates, not ChatGPT account
     // entitlement. A fresh launch must not silently pick an arbitrary candidate.
     const selectedModel = input.request?.configuration?.model;
@@ -222,7 +229,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       throw new Error('Pi cannot bind Claude Subscription and direct Anthropic credentials simultaneously');
     }
 
-    const anyBound = bindings.some((binding) => binding !== null);
+    const anyBound = bindings.some(({ binding }) => binding !== null);
     const sourceLaunchEnvironment: AgentLaunchEnvironment = input.launchEnvironment ?? Object.freeze({
       values: Object.freeze({}),
       unset: Object.freeze([]),
@@ -256,7 +263,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     if (claudeSubscription) {
       try {
         const materialized = await connectedAccounts.materialize(
-          PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES[0].purpose,
+          PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
           CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
           { signal: input.context.signal, expectedAccount: claudeSubscription.account },
         );
