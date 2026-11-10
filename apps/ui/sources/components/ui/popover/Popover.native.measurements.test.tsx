@@ -317,4 +317,53 @@ describe('Popover (native measurements)', () => {
 
         expectVisualTop(flattenStyle(findPopoverContentView(screen)?.props?.style), 140);
     });
+    // Native QA r3n (docked Search "This Home"): a chooser placed above its chip took the whole room above it, and
+    // its shorter content sat at the top of that room, far from the chip. A popover placed above its anchor hangs
+    // its content from the anchor: the box ends a gap above the anchor and its content stands at the box's bottom.
+    it('hangs a top-placed popover\'s content from its anchor when the content is shorter than its room', async () => {
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
+            measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
+        } as any;
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(600, 438, 120, 32),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(600, 438, 120, 32),
+        } as any;
+        let renderedMaxHeight = 0;
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } }}>
+                <OverlayPortalProvider>
+                    <Popover open anchorRef={{ current: anchorNode } as any} portal={{ native: true }} placement="top" flip={false}
+                        gap={8} onRequestClose={() => {}}>
+                        {({ maxHeight }) => {
+                            renderedMaxHeight = maxHeight;
+                            return React.createElement('PopoverChild');
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        // 430 of room above the chip (438 - 8); the chooser's content is 319 tall.
+        expect(renderedMaxHeight).toBe(430);
+        const contentView = findPopoverContentView(screen);
+        const outset = readNumericStyle(flattenStyle(contentView?.props?.style), 'paddingTop');
+        // The box takes the room above the chip (as the docked Search's chooser did); its content is shorter.
+        await act(async () => {
+            contentView?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: renderedMaxHeight + outset * 2 } } });
+        });
+        await act(async () => {
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        const style = flattenStyle(findPopoverContentView(screen)?.props?.style);
+        // The box ends a gap above the anchor, and lays its content out from that edge.
+        expect(800 - readNumericStyle(style, 'bottom') - outset).toBe(438 - 8);
+        expect(style.justifyContent).toBe('flex-end');
+    });
 });

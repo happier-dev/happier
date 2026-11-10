@@ -80,6 +80,7 @@ type PopoverLayoutProps = Omit<PopoverRenderProps, 'requestClose'>;
 
 const RECT_UPDATE_TOLERANCE = 1;
 const NATIVE_PORTAL_SHADOW_OUTSET = 16;
+const TOP_PLACED_CONTENT_STYLE = { justifyContent: 'flex-end' } as const satisfies ViewStyle;
 
 /**
  * Width bounds of a content-sized popover (`portal.sizeToContent`): wide enough for a row's title
@@ -1617,6 +1618,15 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         // enough that a fast open->focus sequence misses the show event.)
         const keyboard: any = Keyboard as any;
         if (!keyboard || typeof keyboard.addListener !== 'function') return;
+        // A keyboard already up when this opens sends no event (the docked Search types before its chooser opens):
+        // start from its current frame, and from none when it is down.
+        if (typeof keyboard.isVisible === 'function') {
+            const height = keyboard.isVisible() ? getKeyboardHeightFromEvent({ endCoordinates: keyboard.metrics?.() }) : 0;
+            if (height !== null && height !== keyboardHeightRef.current) {
+                keyboardHeightRef.current = height;
+                schedule();
+            }
+        }
 
         subs = events
             .map((event) => {
@@ -2169,6 +2179,9 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                     placementStyle,
                     paddingStyle,
                     containerStyle,
+                    // Placed above its anchor, the box ends a gap above the anchor and its content hangs from that
+                    // edge: shorter content never sits at the top of the room (native QA r3n, Search "This Home").
+                    shownPlacement === 'top' ? TOP_PLACED_CONTENT_STYLE : null,
                     nativePortalShadowPaddingStyle,
                     // A content-sized popover carries its own (narrower) bounds in `placementStyle`.
                     typeof placementStyle.maxWidth === 'number' ? null : { maxWidth: contentContainerMaxWidth },

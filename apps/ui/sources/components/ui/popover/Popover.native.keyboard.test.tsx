@@ -589,4 +589,47 @@ describe('Popover (native keyboard)', () => {
         expect(renderContent.mock.calls.length).toBe(rendersAfterFirstRecompute);
         vi.useRealTimers();
     });
+    // Native QA r3n (docked Search): the keyboard was already up when the scope chooser opened, so no keyboard event
+    // reached the popover and it measured as if the bottom of the screen were free. It reads the keyboard's
+    // current frame when it opens.
+    it('reads a keyboard that is already up when it opens, without waiting for a keyboard event', async () => {
+        const rn = await import('react-native');
+        const keyboard = (rn as any).Keyboard as Record<string, unknown>;
+        const saved = { isVisible: keyboard.isVisible, metrics: keyboard.metrics, addListener: keyboard.addListener };
+        keyboard.addListener = () => ({ remove: () => {} });
+        keyboard.isVisible = () => true;
+        keyboard.metrics = () => ({ screenX: 0, screenY: 500, width: 1000, height: 300 });
+        try {
+            vi.useFakeTimers();
+            const { Popover } = await import('./Popover');
+            const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+            const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+            const portalRootNode = { measureInWindow: (cb: any) => cb(0, 0, 1000, 800) } as any;
+            const anchorNode = {
+                measureInWindow: (cb: any) => cb(0, 100, 100, 40),
+                measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(0, 100, 100, 40),
+            } as any;
+            const renders: number[] = [];
+            await renderScreen(
+                <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } }}>
+                    <OverlayPortalProvider>
+                        <Popover open anchorRef={{ current: anchorNode } as any} boundaryRef={null} portal={{ native: true }}
+                            placement="bottom" flip={false} gap={0} onRequestClose={() => {}}>
+                            {({ maxHeight }) => {
+                                renders.push(maxHeight);
+                                return React.createElement('PopoverChild');
+                            }}
+                        </Popover>
+                        <OverlayPortalHost />
+                    </OverlayPortalProvider>
+                </PopoverPortalTargetContextProvider>,
+            );
+            await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+            // Below the trigger: 800 - 300 (keyboard) - 140.
+            expect(renders.at(-1)).toBe(360);
+        } finally {
+            Object.assign(keyboard, saved);
+            vi.useRealTimers();
+        }
+    });
 });
