@@ -4,6 +4,8 @@ import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/exec
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { projectBackupReceiverResults } from '@/machines/setup/backupReceiverResult';
+import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { prepareBackupAnotherMachineForHost } from './anotherMachineForHost';
 
 const senderIdentity = { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
@@ -26,17 +28,27 @@ const plan = (sources = [existing]) => MachineSetupPlanResultV1Schema.parse({ de
         machineId: setup.machineId, installationId: setup.expectedInstallationId, status: 'unavailable', reason: 'host_key_unreadable' }] });
 
 describe('Another Machine configuration through existing Setup children', () => {
-    it('refuses the actual source Machine as receiver before setup effects', async () => {
+    it('refuses the actual source Machine as receiver before custody or setup effects', async () => {
+        const fixture = await createSavedSecretsCliHttpFixture();
         const requests: Parameters<HostReviewedChildPortV1['invoke']>[0][] = [];
         const invoke: HostReviewedChildPortV1['invoke'] = async request => {
             requests.push(request);
             return request.action === 'machines.setup.plan' ? { ok: true, result: plan() }
                 : { ok: true, result: { operationId: 'receiver-operation' } };
         };
-        expect(await prepareBackupAnotherMachineForHost({ serverId: 'home', setup,
-            context: { surface: 'agent', hostReviewedChild: { invoke } } }, { ...host,
-                sourceMachineId: setup.machineId })).toMatchObject({ status: 'partial', errorCode: 'invalid_parameters', senderIdentity });
-        expect(requests).toEqual([]);
+        try {
+            const credentials = await fixture.deps.readCredentialsFn?.();
+            if (!credentials) throw new Error('Fixture credentials unavailable');
+            const candidate = { kind: setup.kind, machineId: setup.machineId,
+                expectedInstallationId: setup.expectedInstallationId, receiverInputs: setup.receiverInputs };
+            const result = await fixture.inHome(() => prepareBackupAnotherMachineForHost({ serverId: 'home', setup: candidate,
+                context: { surface: 'agent', hostReviewedChild: { invoke } } }, { ...host,
+                    sourceMachineId: setup.machineId, expectedScopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+                    readCredentials: async () => credentials }));
+            expect(fixture.writes.length).toBe(0);
+            expect(requests.length).toBe(0);
+            expect(result).toMatchObject({ status: 'partial', errorCode: 'invalid_parameters' });
+        } finally { await fixture.close(); }
     });
 
     it('retains existing setup, sends only the public key and uses settled SFTP-visible receiver facts', async () => {

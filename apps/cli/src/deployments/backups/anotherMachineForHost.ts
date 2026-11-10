@@ -59,7 +59,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
     const invoke = input.context.hostReviewedChild?.invoke;
     if (!invoke) return partial('source_unavailable');
     const endpoint = BackupReceiverEndpointV1Schema.safeParse(input.setup.receiverInputs.endpoint);
-    if (!endpoint.success) return partial('invalid_parameters');
+    if (!endpoint.success || input.setup.machineId === host.sourceMachineId) return partial('invalid_parameters');
     const [observer, receiver] = await Promise.all([host.readMachinePrivateNetworks(host.sourceMachineId, input.context),
         host.readMachinePrivateNetworks(input.setup.machineId, input.context)]);
     if (!readSharedPrivateNetworkAddresses({ observer: observer?.networks ?? [], target: receiver?.networks ?? [] })
