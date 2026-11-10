@@ -2929,6 +2929,7 @@ function toReviewChangedFile(
     additions: row.additions,
     deletions: row.deletions,
     ...(row.previousPath === undefined ? {} : { previousPath: row.previousPath }),
+    ...(row.webUrl === undefined ? {} : { webUrl: row.webUrl }),
     // A file GitHub omitted the patch for is a real provider fact: it stays listed and says so.
     ...(row.diffAvailable
       ? {}
@@ -3086,6 +3087,7 @@ function FilesPanel({
       loadDiff={loadDiff}
       fileViewed={viewed}
       focusPath={focusPath}
+      openOnSourceLabel={text('plugins.github.ui.openFileOnGithub', 'Open on GitHub')}
       leadingContent={notices}
       {...(more === undefined ? {} : { trailingContent: more })}
       active={active}

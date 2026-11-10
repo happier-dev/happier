@@ -59,18 +59,23 @@ describe('PaneHeaderLineView pending fact', () => {
     const pendingText = screen.root.findAll((candidate) => typeof candidate.type === 'string'
       && (candidate.children ?? []).some((child) => typeof child === 'string' && child.includes('0 changed')))[0]!;
     let hidden = false;
-    let joinsSeparator = !large;
     for (let current: typeof pendingText | null = pendingText; current; current = current.parent) {
-      if (current.props?.accessibilityElementsHidden === true) {
-        hidden = true;
-        // In the wrapping layout the separator box is a sibling of the words: the hidden node must hold both.
-        if (large) joinsSeparator = current.findAll((node) => typeof node.type === 'string'
-          && (node.children ?? []).some((child) => child === '·')).length > 0;
-        if (joinsSeparator) break;
-      }
+      if (current.props?.accessibilityElementsHidden === true) { hidden = true; break; }
     }
     expect(hidden).toBe(true);
-    expect(joinsSeparator).toBe(true);
+    if (large) {
+      // In the wrapping layout each separator trails its fact: the seen fact before a pending one draws none,
+      // so no separator joins the pending fact where it can be seen or read.
+      const separators = screen.root.findAll((node) => typeof node.type === 'string'
+        && (node.children ?? []).some((child) => child === '·'));
+      const seenSeparators = separators.filter((node) => {
+        for (let current: typeof node | null = node; current; current = current.parent) {
+          if (current.props?.accessibilityElementsHidden === true) return false;
+        }
+        return true;
+      });
+      expect(seenSeparators).toEqual([]);
+    }
     const subtitle = screen.findByTestId('header.subtitle');
       expect(String(subtitle?.props.accessibilityLabel ?? '')).not.toContain(
         '0 changed',

@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "GitHub сократил этот diff. Остальное — на GitHub.",
   "plugins.github.ui.fileDiffNone": "У GitHub нет diff для этого файла.",
   "plugins.github.ui.openCheckOnGithub": "Открыть на GitHub",
+  "plugins.github.ui.openFileOnGithub": "Открыть на GitHub",
   "plugins.github.ui.rereadConversation": "Повторно прочитать это разговор из GitHub",
   "plugins.github.ui.overview.reread": "Повторно прочитать этот обзор из GitHub",
   "plugins.github.ui.overview.unavailable": "Текущий обзор недоступен",

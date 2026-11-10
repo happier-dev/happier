@@ -11,6 +11,8 @@ export type HappierChangedFile = Readonly<{
   binary?: boolean;
   /** Set when the source has no diff for this file: it stays listed with this sentence, and nothing is read for it. */
   diffUnavailableReason?: string;
+  /** This file on its source, offered in the file's ⋯ as the request's `openOnSourceLabel`. */
+  webUrl?: string;
 }>;
 
 /** One file's diff evidence from its source. `reason` is a sentence the reader sees (a shortened diff shows it beside the diff). */
@@ -43,6 +45,8 @@ export type HappierChangedFilesReviewRequest = Readonly<{
   active: boolean;
   /** A file the reader or an agent asked to open: Review opens it and brings it into view. */
   focusPath?: string | null;
+  /** The file ⋯ row that opens a file's `webUrl` ("Open on GitHub"); without it no file offers one. */
+  openOnSourceLabel?: string;
   testID?: string;
 }>;
 
@@ -58,6 +62,7 @@ export function resolveHappierChangedFilesReviewRequest(
     active: input.active,
     ...(input.fileViewed === undefined ? {} : { fileViewed: input.fileViewed }),
     ...(input.focusPath === undefined ? {} : { focusPath: input.focusPath }),
+    ...(input.openOnSourceLabel === undefined ? {} : { openOnSourceLabel: input.openOnSourceLabel }),
     ...(input.leadingContent === undefined
       ? {}
       : { leadingContent: input.leadingContent }),

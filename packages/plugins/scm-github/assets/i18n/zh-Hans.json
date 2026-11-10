@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "GitHub 缩短了此差异。其余内容在 GitHub 上。",
   "plugins.github.ui.fileDiffNone": "GitHub 没有此文件的差异。",
   "plugins.github.ui.openCheckOnGithub": "在 GitHub 上打开",
+  "plugins.github.ui.openFileOnGithub": "在 GitHub 上打开",
   "plugins.github.ui.rereadConversation": "从 GitHub 重新读取此对话",
   "plugins.github.ui.overview.reread": "从 GitHub 重新读取此概览",
   "plugins.github.ui.overview.unavailable": "当前概览不可用",

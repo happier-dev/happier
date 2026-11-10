@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "GitHub hat diesen Diff gekürzt. Der Rest ist auf GitHub.",
   "plugins.github.ui.fileDiffNone": "GitHub hat keinen Diff für diese Datei.",
   "plugins.github.ui.openCheckOnGithub": "Auf GitHub öffnen",
+  "plugins.github.ui.openFileOnGithub": "Auf GitHub öffnen",
   "plugins.github.ui.rereadConversation": "Diese Unterhaltung erneut von GitHub lesen",
   "plugins.github.ui.overview.reread": "Diese Übersicht erneut von GitHub lesen",
   "plugins.github.ui.overview.unavailable": "Die aktuelle Übersicht ist nicht verfügbar",

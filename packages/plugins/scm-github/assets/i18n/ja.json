@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "GitHub がこの差分を短縮しました。続きは GitHub にあります。",
   "plugins.github.ui.fileDiffNone": "GitHub にこのファイルの差分はありません。",
   "plugins.github.ui.openCheckOnGithub": "GitHub で開く",
+  "plugins.github.ui.openFileOnGithub": "GitHub で開く",
   "plugins.github.ui.rereadConversation": "GitHub の会話を再読み取る",
   "plugins.github.ui.overview.reread": "GitHub からこの概要を再読み込み",
   "plugins.github.ui.overview.unavailable": "現在の概要を利用できません",

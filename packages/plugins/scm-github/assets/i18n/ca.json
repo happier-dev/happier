@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "GitHub ha escurçat aquest diff. La resta és a GitHub.",
   "plugins.github.ui.fileDiffNone": "GitHub no té diff per a aquest fitxer.",
   "plugins.github.ui.openCheckOnGithub": "Obre a GitHub",
+  "plugins.github.ui.openFileOnGithub": "Obre a GitHub",
   "plugins.github.ui.rereadConversation": "Rerebuda aquesta conversa des de GitHub",
   "plugins.github.ui.overview.reread": "Torna a llegir aquest resum de GitHub",
   "plugins.github.ui.overview.unavailable": "El resum actual no està disponible",

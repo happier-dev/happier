@@ -30,6 +30,12 @@ function listedText(): string {
   return document.body.textContent ?? '';
 }
 
+/** The hosted review exposes each retained file, independently of its count caption. */
+async function expectFiles(detail: PluginUiTestkit, paths: readonly string[]): Promise<void> {
+  const files = (await detail.queryAllByRole('button')).filter(button => button.name?.startsWith('Open src/'));
+  expect(files.map(file => file.name)).toEqual(paths.map(path => `Open ${path}`));
+}
+
 const SOURCE_CONTRIBUTION = Object.freeze({
   pluginId: GITHUB_PLUGIN_ID,
   localId: 'github-forge',
@@ -161,7 +167,7 @@ async function mountDetail(): Promise<PluginUiTestkit> {
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ changedFilesReview: true }),
       launchInput: launchInput(),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
@@ -261,12 +267,10 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
   it('keeps the pages a reader walked and asks GitHub for none of them again', async () => {
     const detail = await mountDetail();
     await openTab(detail, 'Files');
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
 
     await pressLoadMore(detail);
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
 
     await openTab(detail, 'Checks');
@@ -274,39 +278,19 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
 
     // Every row from both pages is still on screen, at the same position in the
     // same reading order, and GitHub was asked for nothing.
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
     expect(listedText()).toContain('src/alpha.ts');
     expect(listedText()).toContain('src/gamma.ts');
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
   });
 
-  it('draws each changed file\'s line counts with the shared diff-stat readout, exact and one-sided when one side is empty', async () => {
-    const detail = await mountDetail();
-    await openTab(detail, 'Files');
-    expect(listedText()).toContain('src/alpha.ts');
-    expect(listedText()).toContain('+1,234');
-    expect(listedText()).not.toContain('1.2K');
-    expect(listedText()).not.toContain('−0');
-    expect(listedText()).toContain('+3 −1');
-  });
-
-  it('offers a row\'s copy and open from its quiet overflow, not as two buttons on every row', async () => {
-    // Live 2026-10-16: every changed file carried plain "Copy" and "Open" buttons.
-    const detail = await mountDetail();
-    await openTab(detail, 'Files');
-    expect(listedText()).toContain('src/alpha.ts');
-
-    await expect(detail.queryAllByRole('button', { name: 'Copy src/alpha.ts' })).resolves.toEqual([]);
-    const overflow = await detail.queryAllByRole('button', { name: 'More actions' });
-    expect(overflow.length).toBeGreaterThan(0);
-  });
+  // Line counts and the per-file Copy path / Open on GitHub are the host review's: their tests live at the real
+  // host boundary (apps/ui PluginUiPrivateChangedFilesReview.test.tsx), not against this semantic stand-in.
 
   it('re-asks the page that was in flight at the leave, instead of staying pending forever', async () => {
     const detail = await mountDetail();
     await openTab(detail, 'Files');
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
 
     // Page two is dispatched and then held, so the reader steps away while the
     // walk is mid-request.
@@ -326,8 +310,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
     // `refresh` both early-return while `pending` is set, so a reader who
     // glanced away mid-page has no way back to the rest of the files.
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(3);
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
     expect(listedText()).toContain('src/gamma.ts');
 
     // Usable again, not merely unstuck: the page's one refresh re-reads this panel (it draws no refresh of its
@@ -337,16 +320,14 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
       await detail.press(await detail.getByRole('button', { name: 'Refresh page' }));
     });
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(4);
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
   });
 
   it('restarts a warm refresh at page one when its active interval is cancelled', async () => {
     const detail = await mountDetail();
     await openTab(detail, 'Files');
     await pressLoadMore(detail);
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
 
     const releaseRefresh = openRefreshedFirstPageGate();
     await act(async () => {
@@ -364,8 +345,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
       undefined,
       undefined,
     ]);
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
     expect(listedText()).toContain('src/alpha.ts');
     expect(listedText()).not.toContain('src/gamma.ts');
   });
@@ -373,15 +353,13 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
   it('asks GitHub again for the page it refused, from the control the reader is looking at', async () => {
     const detail = await mountDetail();
     await openTab(detail, 'Files');
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
 
     secondPageAnswers.push(PAGE_REFUSED);
     await pressLoadMore(detail);
     // The failure leaves the rows already read on screen and the control mounted
     // and enabled, so the reader is being offered a retry.
-    await expect(detail.getByText('2 changed file(s) read.'))
-      .resolves.toEqual({ content: '2 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts']);
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
 
     await pressLoadMore(detail);
@@ -395,8 +373,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
       'github-files-page-2',
     ]);
     expect(listedText()).toContain('src/gamma.ts');
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
   });
 
   it('still refuses a position GitHub already served, however often it re-advertises it', async () => {
@@ -404,8 +381,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
     await openTab(detail, 'Files');
     secondPageAnswers.push(SECOND_PAGE_REPEATING);
     await pressLoadMore(detail);
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
 
     await pressLoadMore(detail);
@@ -413,8 +389,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
     // This position DID answer once. Reading it again is the loop the walk's own
     // guard exists to stop, and releasing failed positions must not release it.
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
-    await expect(detail.getByText('3 changed file(s) read.'))
-      .resolves.toEqual({ content: '3 changed file(s) read.' });
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
   });
 
   it('redraws a discarded panel from the detail-owned walk without re-reading it', async () => {

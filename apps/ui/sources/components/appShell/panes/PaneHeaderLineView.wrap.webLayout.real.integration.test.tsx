@@ -71,27 +71,27 @@ const sameLine = (a: WebLayoutRect, b: WebLayoutRect) =>
   Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 3;
 
 describe("a phone header's wrapped facts, as a browser lays them out", () => {
-  it("starts the second line at the title's edge and never leads a line with a separator", async () => {
+  it("aligns every line to the header's right edge and never opens or closes a line with a separator", async () => {
+    // Owner 2026-11-10 (PR detail header): the facts under the title sit on the header's right side.
     const layout = await measureLargeLine(300);
     const column = layout.rect('column');
     const clip = layout.rect('header.subtitle');
     const crumb = layout.textRects('assets')[0]!;
     const facts = FACTS.map((fact) => layout.textRects(fact)[0]!);
-    // The crumb opens the one row at the title's edge, and the facts wrap beneath it.
-    expect(crumb.left).toBeCloseTo(column.left, 0);
+    const words = [crumb, ...facts];
     expect(sameLine(crumb, facts[0]!)).toBe(true);
     const wrapped = facts.filter((fact) => !sameLine(fact, crumb));
     expect(wrapped.length).toBeGreaterThan(0);
-    // The wrapped line starts where the title does, not under the crumb.
-    expect(Math.min(...wrapped.map((fact) => fact.left))).toBeCloseTo(
-      column.left,
-      0,
-    );
+    // Each line ends at the column's right edge.
+    for (const line of [[crumb, ...facts.filter((fact) => sameLine(fact, crumb))], wrapped]) {
+      expect(Math.max(...line.map((word) => word.right))).toBeCloseTo(column.right, 0);
+    }
+    // The first line does not start at the title's edge (it is right-aligned, not left).
+    expect(crumb.left).toBeGreaterThan(column.left + 0.5);
     // Every separator a reader can see sits between two facts on its own line.
-    const words = [crumb, ...facts];
     const visibleDots = layout
       .textRects('·')
-      .filter((dot) => dot.right > clip.left + 0.5);
+      .filter((dot) => dot.left < clip.right - 0.5 && dot.right > clip.left + 0.5);
     expect(visibleDots.length).toBe(FACTS.length - 1);
     for (const dot of visibleDots) {
       expect(
@@ -117,8 +117,10 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
     expect(
       layout
         .textRects('·')
-        .filter((dot) => dot.right > layout.rect('header.subtitle').left + 0.5),
+        .filter((dot) => dot.left < layout.rect('header.subtitle').right - 0.5 && dot.right > layout.rect('header.subtitle').left + 0.5),
     ).toHaveLength(FACTS.length);
+    // One line, ending at the column's right edge.
+    expect(layout.textRects(FACTS[FACTS.length - 1]!)[0]!.right).toBeCloseTo(layout.rect('column').right, 0);
   });
 
   it('wraps the final fact\'s own trailing words with it, never floating them beside the facts', async () => {

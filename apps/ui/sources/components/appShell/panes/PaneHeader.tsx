@@ -179,9 +179,10 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
     const bandSeparator = (index: number): string => index === 0 || !line ? ''
         : isToneSegment(line.segments[index]!) && isToneSegment(line.segments[index - 1]!) ? NO_BREAK_SPACE : `${NO_BREAK_SPACE}·${NO_BREAK_SPACE}`;
     if (large && line && (line.segments.length > 0 || line.leading)) {
-        // A phone's large header: the leading words and the facts are one quiet row that wraps from the
-        // title's edge (files lab FV1p/FV6p). Every item carries its separator in a fixed-width box before it,
-        // and the row starts one box to the left under the clip, so a separator that would open a line never shows.
+        // A large header: the leading words and the facts are one quiet row on the header's right side (owner
+        // 2026-11-10, PR detail header), wrapping onto right-aligned lines. Every item carries its separator in a
+        // fixed-width box after it, and the row ends one box to the right under the clip, so a separator that
+        // would close a line never shows.
         const items: React.ReactNode[][] = [];
         // Items that hold a pending fact's room: their separator stays unseen with them.
         const pendingItems = new Set<number>();
@@ -199,6 +200,9 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
         });
         // The final fact's own trailing words (who wrote it, a copy control) wrap with that fact, inside the row.
         if (props.lineEnd) items[items.length - 1]!.push(<React.Fragment key="lineEnd">{props.lineEnd}</React.Fragment>);
+        // A seen item is separated from the next seen one; a pending fact shows and speaks no separator.
+        const separatedFromNext = items.map((_, index) => !pendingItems.has(index)
+            && items.some((__, later) => later > index && !pendingItems.has(later)));
         return (
             <View style={[styles.line, styles.largeLine]}>
                 <View
@@ -210,8 +214,8 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                     <View style={styles.largeFlow}>
                         {items.map((nodes, index) => (
                             <View key={index} style={[styles.largeItem, pendingItems.has(index) ? PENDING_FACT_STYLE : null]} {...(pendingItems.has(index) ? PENDING_FACT_HIDDEN : {})}>
-                                <View style={styles.largeSeparator}>{index === 0 ? null : <Text style={subtitleStyle}>·</Text>}</View>
                                 {nodes}
+                                <View style={styles.largeSeparator}>{separatedFromNext[index] ? <Text style={subtitleStyle}>·</Text> : null}</View>
                             </View>
                         ))}
                     </View>
@@ -570,7 +574,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 0,
         flexGrow: 1,
     },
-    // The phone's one row of leading words and facts: it starts one separator box to the left of the clip.
+    // The large header's one row of leading words and facts, right-aligned: it ends one separator box to the
+    // right of the clip.
     largeFlow: {
         flexGrow: 1,
         flexShrink: 1,
@@ -578,7 +583,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'center',
-        marginLeft: -theme.space.s16,
+        justifyContent: 'flex-end',
+        marginRight: -theme.space.s16,
     },
     largeItem: {
         flexDirection: 'row',
@@ -586,7 +592,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
     },
-    // Every item's separator box is the same width, so the clip hides exactly the one that opens a line.
+    // Every item's separator box is the same width, so the clip hides exactly the one that closes a line.
     largeSeparator: {
         width: theme.space.s16,
         alignItems: 'center',
@@ -624,6 +630,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     largeSubtitle: {
         ...happierPageTextMetrics('pageDescription'),
         marginTop: 0,
+        // The large header's facts sit on its right side, so a fact that wraps inside itself ends its lines there too.
+        textAlign: 'right',
     },
     emphasis: {
         ...Typography.default('semiBold'),

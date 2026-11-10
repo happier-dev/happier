@@ -291,6 +291,7 @@
   "plugins.github.ui.fileDiffTruncated": "O GitHub encurtou este diff. O resto está no GitHub.",
   "plugins.github.ui.fileDiffNone": "O GitHub não tem diff para este arquivo.",
   "plugins.github.ui.openCheckOnGithub": "Abrir no GitHub",
+  "plugins.github.ui.openFileOnGithub": "Abrir no GitHub",
   "plugins.github.ui.rereadConversation": "Volte a ler esta conversa no GitHub",
   "plugins.github.ui.overview.reread": "Voltar a ler este resumo no GitHub",
   "plugins.github.ui.overview.unavailable": "O resumo atual não está disponível",

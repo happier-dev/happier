@@ -74,6 +74,16 @@ export function PluginUiPrivateChangedFilesReview(
   }, [props.files, props.identity]);
   const latest = React.useRef(props);
   latest.current = props;
+  // Each file's page on its source, read through the latest list so a new page does not redraw every row.
+  const webUrlByPath = React.useMemo(() => new Map(props.files.flatMap((file) =>
+    file.webUrl === undefined ? [] : [[file.path, file.webUrl] as const])), [props.files]);
+  const webUrls = React.useRef(webUrlByPath);
+  webUrls.current = webUrlByPath;
+  const openOnSourceLabel = props.openOnSourceLabel;
+  const fileSourceLink = React.useMemo(() => (openOnSourceLabel === undefined ? null : (path: string) => {
+    const url = webUrls.current.get(path);
+    return url === undefined ? null : { label: openOnSourceLabel, url };
+  }), [openOnSourceLabel]);
   // A shortened diff says so beside it; the source's sentence arrives with the diff.
   const [truncated, setTruncated] = React.useState<ReadonlyMap<string, string>>(
     () => new Map(),
@@ -190,6 +200,7 @@ export function PluginUiPrivateChangedFilesReview(
           ? {}
           : { fileViewed: props.fileViewed })}
         focusPath={props.focusPath ?? null}
+        fileSourceLink={fileSourceLink}
         rowDensity="compact"
       />
       {props.trailingContent ?? null}

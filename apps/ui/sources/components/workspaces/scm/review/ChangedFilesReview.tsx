@@ -79,7 +79,7 @@ import { useLentHeaderMenuSection } from '@/components/sessions/files/comparison
 import { ScmFileViewedFact, ScmFileViewedMark } from '@/components/sessions/files/comparison/ScmFileViewedMark';
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
-import { DiffFileActionsMenu } from '@/components/ui/code/diff/DiffFileActionsMenu';
+import { DiffFileActionsMenu, type DiffFileSourceLink } from '@/components/ui/code/diff/DiffFileActionsMenu';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
@@ -213,6 +213,8 @@ type ChangedFilesReviewProps = {
     hunkReview?: ReviewBlockHunkReview | null;
     /** A source's Viewed facts without Keep / Discard (a plugin's pull request); `hunkReview.fileViewed` otherwise. */
     fileViewed?: ScmFileViewedSource | null;
+    /** A file on its source (a pull request's file on GitHub), offered in the file's ⋯ beside Copy path. */
+    fileSourceLink?: ((path: string) => DiffFileSourceLink | null) | null;
     theme: ChangedFilesReviewTheme;
     sessionId?: string;
     /** Presentation/cache identity only. Workspace hosts always supply their Machine diff reader. */
@@ -1159,6 +1161,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     });
 
     const onFilePressPinned = props.onFilePressPinned;
+    const fileSourceLink = props.fileSourceLink ?? null;
     const onToggleSelectionForFile = props.onToggleSelectionForFile;
     const renderFileActions = props.renderFileActions;
     const renderFileTrailingActions = props.renderFileTrailingActions;
@@ -1410,7 +1413,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 {renderFileActions ? renderFileActions(file) : null}
                 {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
                 {openFileButton}
-                {props.evidenceOnly ? null : <DiffFileActionsMenu filePath={file.fullPath} onOpenFile={() => deferOnWeb(() => onFilePress(file))} />}
+                <DiffFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
+                    onOpenFile={props.evidenceOnly ? undefined : () => deferOnWeb(() => onFilePress(file))} />
             </View>
         );
 
@@ -1444,7 +1448,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                             ) : null}
                             {renderFileActions ? renderFileActions(file) : null}
                             {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
-                            {props.evidenceOnly ? null : <DiffFileActionsMenu filePath={file.fullPath} onOpenFile={() => deferOnWeb(() => onFilePress(file))} />}
+                            <DiffFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
+                    onOpenFile={props.evidenceOnly ? undefined : () => deferOnWeb(() => onFilePress(file))} />
                             {fileViewed ? <ScmFileViewedMark source={fileViewed} path={file.fullPath} setFileViewed={setFileViewed}
                                 active={fileViewedActive} /> : null}
                         </View>
@@ -1502,6 +1507,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         fileViewed,
         setFileViewed,
         fileViewedActive,
+        fileSourceLink,
     ]);
 
     const renderFileNotes = props.comparisonChrome?.renderFileNotes ?? null;

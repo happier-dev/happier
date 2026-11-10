@@ -32,6 +32,8 @@ export type ChangedFilesReviewProps = Readonly<{
   focusPath?: string | null;
   /** False while the panel holding it is hidden (an unselected tab): the review keeps its state and reads nothing. */
   active?: boolean;
+  /** The file ⋯ row that opens a file's `webUrl` on its source ("Open on GitHub"). */
+  openOnSourceLabel?: string;
   testID?: string;
 }>;
 
