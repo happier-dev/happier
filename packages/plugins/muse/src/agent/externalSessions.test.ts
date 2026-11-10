@@ -84,7 +84,7 @@ it('discovers, links and pages native history through all six admitted callbacks
     audits.push(auditPath);
     const recordingPath = join(scratch, `recording-${audits.length}.json`);
     await writeFile(recordingPath, JSON.stringify({ rows }));
-    const native = await createMuseMspProcessFixture({ recordingPath, auditPath,
+    const native = await createMuseMspProcessFixture({ recordingPath, auditPath, requireDataDirectory: true,
       playbackSteps: requestRows.map(requestRow => ({ requestRow, receiveUntilRow: requestRow + 2 })),
     });
     const launch = await native.resolveExecutable();

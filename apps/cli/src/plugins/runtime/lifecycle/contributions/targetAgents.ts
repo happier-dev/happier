@@ -48,6 +48,7 @@ import { ExternalAgentObservationLinkEvidenceBatchV1Schema, ExternalAgentObserva
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
+import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../../activationSources';
 import { readRetainedBundledAgentFactory } from '../../retainedBundledAgentFactory';
@@ -1254,6 +1255,7 @@ function createLease(params: Readonly<{
             occurrenceId: params.occurrenceId,
             correlationId: randomUUID(),
             cwd,
+            environment: resolveNativeAgentLaunchEnvironment({ processEnv: process.env }).values,
             ...(auxiliaryNativeOperation ? { auxiliaryNativeOperation } : {}),
             providerBindingActive:
                 params.registration.providerBinding !== undefined,
