@@ -8,7 +8,7 @@ import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { getActionSpec } from './actionSpecs.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
-import type { ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
 import { isApprovalRequiredByActionsSettings, requiresAgentEgressRedaction } from './actionApprovalPolicy.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
@@ -383,19 +383,25 @@ describe('Machine reboot approval review', () => {
   });
 });
 
-function sharedRequesterContext(actionId: ApprovalRequest['actionId'], input: unknown): ActionExecutorContext {
+function sharedRequesterContext(actionId: ApprovalRequest['actionId'], input: unknown,
+  attribution?: Pick<ActionExecutorContext, 'actionRequestAttributionV1'>): ActionExecutorContext {
   const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
   const caller = { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 };
   const target = { kind: 'session' as const, sessionId: 's1' };
   const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const };
-  const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-admitted-source', binding: {
+  const actionRequestAttributionV1 = attribution ? attribution.actionRequestAttributionV1 : {
+    requestRef: 'bob-input', requester: { serverId: 'server-1', accountId: 'bob' },
+    persona: { serverId: 'server-1', sessionId: 's1' }, origin: null,
+  };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-source', binding: {
     serverIdentityId: 'stable-home', accountId: 'alice', custodianAccountId: 'alice',
     machineId: 'machine-1', installationId: 'installation', actionId, requestId: 'action-1', target,
     authentication: { kind: 'account', tokenEpoch: 0 },
     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-1', target, input }),
-    sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-1', causalPermissionAuthority },
+    sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-1',
+      causalPermissionAuthority, actionRequestAttributionV1 },
     sessionActionSource: { machineId: 'machine-1', installationId: 'installation' },
-  } };
+  } });
   return { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'alice',
     defaultSessionId: 's1', serverId: 'server-1', serverIdentityId: 'stable-home', actionRequestId: 'action-1',
     actionCaller: caller, callerPermissionMode: 'yolo', causalPermissionAuthority,
@@ -404,8 +410,7 @@ function sharedRequesterContext(actionId: ApprovalRequest['actionId'], input: un
     signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
       actionId: args.actionId, target: args.target, input: args.input, privateKey: key.secretKey,
       requesterConfirmation: args.requesterConfirmation, sessionTargetsV1: args.sessionTargetsV1 }),
-    actionRequestAttributionV1: { requestRef: 'bob-input', requester: { serverId: 'server-1', accountId: 'bob' },
-      persona: { serverId: 'server-1', sessionId: 's1' }, origin: null },
+    actionRequestAttributionV1,
     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
   };
 }
@@ -848,8 +853,8 @@ describe('createActionExecutor (approvals)', () => {
     const actionId = 'execution.run.permission.respond';
     const input = { runId: 'alice-run', requestId: 'alice-permission', approved: true };
     const source = sharedRequesterContext(actionId, input);
-    const ownerSource = { ...source, actionRequestAttributionV1: { ...source.actionRequestAttributionV1!,
-      requestRef: 'alice-input', requester: { serverId: 'server-1', accountId: 'alice' } } };
+    const ownerSource = sharedRequesterContext(actionId, input, { actionRequestAttributionV1: { ...source.actionRequestAttributionV1!,
+      requestRef: 'alice-input', requester: { serverId: 'server-1', accountId: 'alice' } } });
     let row: ApprovalRequestV2 | null = null;
     const effects: ActionExecutorContext[] = [];
     const executor = createExecutor({
@@ -887,8 +892,8 @@ describe('createActionExecutor (approvals)', () => {
     const input = route === 'requester' ? { runId: 'alice-run', requestId: 'alice-permission', approved: true }
       : { sessionId: 's1', message: 'hello' };
     const source = sharedRequesterContext(actionId, input);
-    const context = { ...source, actionRequestAttributionV1: { ...source.actionRequestAttributionV1!,
-      requester: route.startsWith('shared-') ? source.actionRequestAttributionV1!.requester : null } };
+    const context = sharedRequesterContext(actionId, input, { actionRequestAttributionV1: { ...source.actionRequestAttributionV1!,
+      requester: route.startsWith('shared-') ? source.actionRequestAttributionV1!.requester : null } });
     const origin = buildApprovalExecutionOriginV1({ actionId, input, context, targetSessionId: 's1' });
     if (!origin?.externalActionExecutionAuthorization || !origin.target || !origin.externalActionInputSignature) {
       throw new Error('Missing signed historical origin');
@@ -937,7 +942,8 @@ describe('createActionExecutor (approvals)', () => {
     });
     const input = { sessionId: 's1', message: 'hello' };
     const source = sharedRequesterContext('session.message.send', input);
-    const context = { ...source, actionRequestAttributionV1: { ...source.actionRequestAttributionV1!, requester: null } };
+    const context = sharedRequesterContext('session.message.send', input,
+      { actionRequestAttributionV1: { ...source.actionRequestAttributionV1!, requester: null } });
     const created = route === 'policy'
       ? await executor.execute('session.message.send', input, context)
       : await executor.execute('approval.request.create', { actionId: 'session.message.send', actionArgs: input,
@@ -1028,7 +1034,7 @@ describe('createActionExecutor (approvals)', () => {
       executionRunPermissionRespond: async (_input, context) => { effects.push(context); return { ok: true }; },
     });
     expect(await executor.execute(actionId, actionArgs,
-      shared ? source : { ...source, actionRequestAttributionV1: undefined }))
+      shared ? source : sharedRequesterContext(actionId, actionArgs, { actionRequestAttributionV1: undefined })))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'run-approval' } });
     expect(requests[0]).toMatchObject({ status: 'open', actionId, actionArgs,
       ...(shared ? { requesterConfirmation: { requesterAccountId: 'bob', executionAccountId: 'alice' } } : {}) });
@@ -1060,9 +1066,9 @@ describe('createActionExecutor (approvals)', () => {
     });
     const input = { sessionId: 's1', message: 'hello' };
     const sourceContext = sharedRequesterContext('session.message.send', input);
-    const context = { ...sourceContext, serverId: 'executor-local-home-profile', actionRequestAttributionV1: {
+    const context = { ...sharedRequesterContext('session.message.send', input, { actionRequestAttributionV1: {
       ...sourceContext.actionRequestAttributionV1!, persona: { serverId: 'server-1', sessionId: 'manager-on-another-machine' },
-    } };
+    } }), serverId: 'executor-local-home-profile' };
     const { externalActionExecutionAuthorization: _authorization, signExternalActionApprovalInput: _sign,
       actionCaller: _caller, sessionInputSource: _source, callerPermissionMode: _mode, causalPermissionAuthority: _ceiling, ...unsigned } = context;
     expect(await executor.execute('session.message.send', input, { ...unsigned, surface: 'mcp' }))
