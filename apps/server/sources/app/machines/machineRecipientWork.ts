@@ -71,23 +71,37 @@ function isEffectiveAudienceRecipient<T extends AudienceRow>(row: T): row is T &
 
 /** Notification/liveness reads need membership only, never content or wrapping material. */
 export async function readMachineAudienceAccountIdsInTx(tx: Tx, machineId: string, custodianAccountId?: string): Promise<string[]> {
+    return (await readMachineAudiencesInTx(tx, [machineId], custodianAccountId)).get(machineId) ?? [];
+}
+
+export async function readMachineAudienceAccountIdsForMachinesInTx(tx: Tx, machineIds: readonly string[]): Promise<ReadonlyMap<string, string[]>> {
+    const result = new Map<string, string[]>();
+    for (const ids of portableQueryChunks({ values: [...new Set(machineIds)], bindingsPerValue: 1 })) {
+        for (const [id, audience] of await readMachineAudiencesInTx(tx, ids)) result.set(id, audience);
+    }
+    return result;
+}
+
+async function readMachineAudiencesInTx(tx: Tx, machineIds: readonly string[], custodianAccountId?: string): Promise<Map<string, string[]>> {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     // A successful presence renewal already proved this Machine's custodian.
     // Acquire only current membership; do not read that Machine a second time.
-    const { sql: membership } = machineAudienceQuery([machineId], provider, custodianAccountId);
+    const { sql: membership } = machineAudienceQuery(machineIds, provider, custodianAccountId);
     const sql = `${membership} SELECT s."id" AS "machineId", s."accountId" AS "custodianAccountId",
         r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt", a."id", a."status"
         FROM selected s LEFT JOIN audience r ON r."machineId" = s."id"
         LEFT JOIN "Account" a ON a."id" = r."accountId"`;
     const rows = await tx.$queryRawUnsafe<AudienceRow[]>(provider === 'mysql' ? sql.replaceAll('"', '`') : sql,
-        ...(custodianAccountId === undefined ? [machineId] : [machineId, custodianAccountId]));
-    const accountIds = new Set<string>();
+        ...(custodianAccountId === undefined ? machineIds : [machineIds[0], custodianAccountId]));
+    const audiences = new Map<string, Set<string>>();
     for (const row of rows) {
+        const accountIds = audiences.get(row.machineId) ?? new Set<string>();
         // Custody is structural even while its Account cannot execute work.
         accountIds.add(row.custodianAccountId);
         if (isEffectiveAudienceRecipient(row)) accountIds.add(row.id);
+        audiences.set(row.machineId, accountIds);
     }
-    return [...accountIds].sort();
+    return new Map([...audiences].map(([id, audience]) => [id, [...audience].sort()]));
 }
 
 /** Shared by the compact Machine fact and the exact action_required page. */
