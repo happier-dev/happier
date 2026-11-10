@@ -77,6 +77,19 @@ describe('useSelectableMenu (allowEmptySelection)', () => {
     await hook.unmount();
   });
 
+  it('titles only the groups a caller names, keeping every keyed group its own section', async () => {
+    const { useSelectableMenu } = await import('./useSelectableMenu');
+    const items: SelectableMenuItem[] = [
+      { id: 'a', title: 'Files', category: 'more', left: null, right: null },
+      { id: 'b', title: 'Git', category: 'pinned', left: null, right: null },
+      { id: 'c', title: 'Customize', category: 'customize', left: null, right: null },
+    ];
+    const hook = await renderHook(() => useSelectableMenu({ items, onRequestClose: () => {}, categoryTitles: { pinned: 'Pinned' } }));
+    expect(hook.getCurrent().filteredCategories.map((category) => [category.id, category.title]))
+      .toEqual([['more', ''], ['pinned', 'Pinned'], ['customize', '']]);
+    await hook.unmount();
+  });
+
   it('never invents a group title for items that name no category, browsing or searching', async () => {
     const { useSelectableMenu } = await import('./useSelectableMenu');
     const items: SelectableMenuItem[] = [

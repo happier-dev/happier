@@ -102,7 +102,7 @@ it('keeps floating and native Machine presenters on the same preferences, qualif
     const native = screen.findByType(SystemTabBar);
     const floating = screen.findByType(CockpitTabBar);
     expect(native.props.items.map((item: { id: string }) => item.id)).toEqual([...floating.props.tabs.map((item: { id: string }) => item.id), 'more']);
-    expect(native.props.selectedId).toBe('more');
+    expect(native.props.selectedId).toBe('storage');
     await act(async () => native.props.onPress(pluginId));
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(pluginId);
     await act(async () => storage.setState(state => ({ localSettings: { ...state.localSettings,

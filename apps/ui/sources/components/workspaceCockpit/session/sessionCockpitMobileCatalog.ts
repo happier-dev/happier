@@ -143,6 +143,8 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     /** "Always swipe between sessions" is on (and the sideways swipe with it). */
     alwaysSwipe: boolean;
     pageTabs?: 'bottom' | 'top';
+    /** The open surface: when it is not on the bar it rides it just before More. */
+    activeSurface?: string;
 }>): Readonly<{
     mode: SessionCockpitBarMode;
     top: readonly SessionCockpitMobileCatalogEntry[];
@@ -154,6 +156,6 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     overflow: readonly SessionCockpitMobileCatalogEntry[];
 }> {
     const placement = resolveDetailPhonePlacement(resolveSessionCockpitPhoneItems(input.catalog), input.preferences ?? undefined, input.pageTabs ?? 'bottom');
-    const fit = resolveDetailPhoneBarFit(placement, input.slotCount, input.alwaysSwipe ? 'more' : 'scroll');
+    const fit = resolveDetailPhoneBarFit(placement, input.slotCount, input.alwaysSwipe ? 'more' : 'scroll', { activeId: input.activeSurface });
     return { mode: fit.mode, top: placement.topPages, visible: fit.shown, held: fit.held, overflow: placement.placements.overflow };
 }

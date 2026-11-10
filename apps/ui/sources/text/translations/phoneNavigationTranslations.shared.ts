@@ -31,6 +31,7 @@ export const en = {
             heldInMore: 'In More while “Always swipe” is on',
             keepOnBar: 'Keep on the bar',
             removeFromBar: 'Remove from the bar',
+            pinnedSection: 'Pinned',
             openFiles: 'Open files',
         },
         allTabs: {

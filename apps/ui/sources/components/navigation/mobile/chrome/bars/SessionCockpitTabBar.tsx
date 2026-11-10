@@ -79,15 +79,12 @@ function SessionCockpitTabBarPreview(props: Readonly<{
     const visibility = resolveSessionCockpitMobileTabVisibility({ ...props, pageTabs });
     const tabs = visibility.visible.flatMap(entry => props.tabs.filter(tab => tab.id === entry.id));
     const stripTabs = visibility.top.flatMap(entry => props.tabs.filter(tab => tab.id === entry.id));
-    const activeBehindMore = [...visibility.held, ...visibility.overflow].some(entry => entry.id === props.activeSurface)
-        ? props.tabs.find(tab => tab.id === props.activeSurface) ?? null : null;
     const bar = <CockpitTabBarView activeSurface={props.activeSurface} tabs={tabs}
         barTestId="session-cockpit-preview" tabTestIdPrefix="session-cockpit-preview-tab-"
         metrics={props.metrics} bottomInset={0} layout={visibility.mode === 'scroll' ? 'scroll' : 'fit'}
         onSurfacePress={ignorePreviewPress} trailing={<CockpitTabBarActionView metrics={props.metrics}
-            testID="session-cockpit-preview-more" label={activeBehindMore?.label ?? t('common.more')}
-            icon={activeBehindMore && typeof activeBehindMore.icon === 'string' ? activeBehindMore.icon : 'dots-three'}
-            selected={activeBehindMore !== null} onPress={ignorePreviewPress} />} />;
+            testID="session-cockpit-preview-more" label={t('common.more')} icon="dots-three"
+            selected={false} onPress={ignorePreviewPress} />} />;
     // Top page tabs draw their strip above the bar, as the Session shows them.
     return stripTabs.length > 0 ? <View style={{ gap: theme.space.s12 }}>
         <PhonePageStripView tabs={stripTabs} activeId={props.activeSurface} onSelect={ignorePreviewPress} testID="session-cockpit-preview-strip" />

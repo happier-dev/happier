@@ -252,6 +252,11 @@ export type DropdownMenuProps = Readonly<{
     overlayStyle?: ViewStyle;
     /** When true, category titles like "General" are rendered (default false). */
     showCategoryTitles?: boolean;
+    /**
+     * Titles for some category keys ("Pinned"); the other keys stay untitled sections. Giving it draws those
+     * titles without turning every key into a heading.
+     */
+    categoryTitles?: Readonly<Record<string, string>>;
     /** Draw a hairline between untitled categories (choices, then operations). */
     separateCategories?: boolean;
     /** Per titled category (keyed by its title): an identity mark beside the title and one quiet note under its rows. */
@@ -648,6 +653,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         items: selectableItems,
         itemSource: selectableItemSource,
         onRequestClose,
+        categoryTitles: props.categoryTitles,
         open: props.open,
         initialSelectedId: props.selectedId ?? null,
         onCreateItem: props.onCreateItem ?? null,
@@ -958,7 +964,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     onHoverItem={hoverIntent ? handleHoverItem : IGNORE_SHEET_HOVER}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
-                                    showCategoryTitles={props.showCategoryTitles ?? false}
+                                    showCategoryTitles={props.showCategoryTitles ?? props.categoryTitles !== undefined}
                                     separateCategories={props.separateCategories}
                                     categoryDecorations={props.categoryDecorations}
                                     rowKind={props.rowKind}

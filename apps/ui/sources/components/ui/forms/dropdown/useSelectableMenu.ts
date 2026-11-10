@@ -11,7 +11,11 @@ import {
  * Items that name no category form one untitled group: a menu never invents a heading ("General",
  * "Results") the caller did not write.
  */
-function groupByCategory(items: ReadonlyArray<SelectableMenuItem>): SelectableMenuCategory[] {
+function groupByCategory(
+    items: ReadonlyArray<SelectableMenuItem>,
+    /** When given, only the groups named here are titled; every other key still keeps its own section. */
+    titles?: Readonly<Record<string, string>>,
+): SelectableMenuCategory[] {
     const grouped = items.reduce((acc, item) => {
         const category = item.category || '';
         if (!acc[category]) acc[category] = [];
@@ -22,7 +26,7 @@ function groupByCategory(items: ReadonlyArray<SelectableMenuItem>): SelectableMe
     return Object.entries(grouped).map(([title, groupedItems]) => ({
         // The title is the grouping key above, so it is also the section's identity: no two sections can share a React key.
         id: title || '__uncategorized__',
-        title,
+        title: titles ? titles[title] ?? '' : title,
         items: groupedItems,
     }));
 }
@@ -47,6 +51,8 @@ export function useSelectableMenu(params: {
     onKeyboardSelectionChange?: (index: number) => void;
     /** Clears transient prefix navigation state while the controlled menu is closed. */
     open?: boolean;
+    /** Titles for the named category keys; other categories stay untitled sections. */
+    categoryTitles?: Readonly<Record<string, string>>;
 }) {
     const [searchQuery, setSearchQuery] = useState('');
     const inputRef = useRef<TextInput>(null);
@@ -57,7 +63,7 @@ export function useSelectableMenu(params: {
         const query = searchQuery.trim().toLowerCase();
 
         if (!query) {
-            return groupByCategory(allItemsRaw);
+            return groupByCategory(allItemsRaw, params.categoryTitles);
         }
 
         const filtered = allItemsRaw.filter((item) => {
@@ -82,8 +88,8 @@ export function useSelectableMenu(params: {
             }
             return [];
         }
-        return groupByCategory(filtered);
-    }, [allItemsRaw, params.createItemFactory, params.onCreateItem, searchQuery]);
+        return groupByCategory(filtered, params.categoryTitles);
+    }, [allItemsRaw, params.categoryTitles, params.createItemFactory, params.onCreateItem, searchQuery]);
 
     const { allItems, itemIndexById } = useMemo(() => {
         const allItems = filteredCategories.flatMap((c) => c.items);

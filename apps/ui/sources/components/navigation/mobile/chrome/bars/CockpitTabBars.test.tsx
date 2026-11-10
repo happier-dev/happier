@@ -402,14 +402,14 @@ describe('cockpit tab bars', () => {
         // The bar holds a prefix of the pages; whatever does not fit is reachable from More.
         expect(onBar).toEqual(pages.slice(0, onBar.length));
         const menu = screen.root.findByType(DropdownMenu);
-        const behindMore = menu.props.items.map((item: { id: string }) => item.id);
+        // What is behind More; the bar's own pages come back last, under Pinned.
+        const behindMore = menu.props.items.filter((item: { category?: string }) => item.category !== 'pinned').map((item: { id: string }) => item.id);
         expect([...onBar, ...behindMore.filter((id: string) => pages.includes(id))]).toEqual(pages);
         expect(behindMore).toEqual(expect.arrayContaining(['browser', 'terminal', 'tabs']));
         expect(behindMore).not.toContain('browse');
-        if (!onBar.includes('context')) {
-            expect(menu.props.selectedId).toBe('context');
-            expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? true).toBe(true);
-        }
+        // Context is open: wherever it is placed it shows on the bar, and More stays More.
+        expect(screen.findHostByTestId('project-cockpit-tab-context')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? false).toBe(false);
         await act(async () => { menu.props.onSelect('code'); });
         expect(navigate).toHaveBeenCalledWith('code');
         await act(async () => { screen.findHostByTestId('project-cockpit-tab-overview')?.props.onPress(); });
@@ -876,8 +876,9 @@ describe('cockpit tab bars', () => {
         // One More presentation for every detail kind (orchestrator ruling 11-04): what is behind More,
         // pages before companions, never a second copy of the bar, then Customize.
         expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(['tabs', 'navigation', 'browser', 'services', 'customize']));
-        expect(items.map((item) => item.id)).not.toContain('git');
-        expect(items.map((item) => item.id)).not.toContain('browse');
+        const behind = items.filter((item) => item.category !== 'pinned').map((item) => item.id);
+        expect(behind).not.toContain('git');
+        expect(behind).not.toContain('browse');
         expect(items.find((item) => item.id === 'tabs')?.category).toBe('pages');
         expect(items.find((item) => item.id === 'navigation')?.category).toBe('companions');
         expect(screen.tree.findByType(DropdownMenu).props.popoverPhonePresentation).toBeUndefined();
@@ -940,7 +941,8 @@ describe('cockpit tab bars', () => {
         expect(observed.at(-1)).toBe(false);
     });
 
-    it('shows a tool opened from More in the More slot, selected', async () => {
+    // Owner 11-10: More is never replaced; the tool opened from it rides the bar just before More while open.
+    it('shows a tool opened from More as a tab just before More, which stays More', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         windowState.width = 390;
         const screen = await renderScreen(
@@ -948,9 +950,31 @@ describe('cockpit tab bars', () => {
                 openDetailsTabCount={0} onSurfacePress={() => {}} />,
         );
         const more = screen.findHostByTestId('session-cockpit-tab-more');
-        expect(more?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
-        expect(more?.props.accessibilityLabel).not.toBe('en:common.more');
-        expect(screen.findHostByTestId('session-cockpit-tab-services')).toBeNull();
+        expect(more?.props.accessibilityLabel).toBe('en:common.more');
+        expect(more?.props.accessibilityState?.selected ?? false).toBe(false);
+        expect(screen.findHostByTestId('session-cockpit-tab-services')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+        const tabs = screen.findAll((node) => typeof node.type === 'string' && /^session-cockpit-tab-[a-z]+$/.test(node.props.testID ?? ''))
+            .map((node) => node.props.testID as string).filter((id) => id !== 'session-cockpit-tab-more');
+        expect([...new Set(tabs)].at(-1)).toBe('session-cockpit-tab-services');
+    });
+
+    it('lists what is on the bar under Pinned in More, after what is behind it, with its pin to take it off', async () => {
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        windowState.width = 390;
+        const screen = await renderScreen(
+            <MountedSessionCockpitTabBar sessionId="sess_1" activeSurface="chat" terminalTabAvailable={true}
+                openDetailsTabCount={0} onSurfacePress={() => {}} />,
+        );
+        const menu = () => screen.tree.findByType(DropdownMenu);
+        const items = menu().props.items as readonly Record<string, unknown>[];
+        const pinnedRows = items.filter((item) => item.category === 'pinned').map((item) => item.id);
+        expect(pinnedRows).toEqual(expect.arrayContaining(['browse', 'git', 'companion', 'terminal']));
+        expect(menu().props.categoryTitles).toEqual({ pinned: 'en:phoneNav.bar.pinnedSection' });
+        const ids = items.map((item) => item.id);
+        expect(ids.indexOf('git')).toBeGreaterThan(ids.indexOf('services'));
+        expect(ids.at(-1)).toBe('customize');
+        await act(async () => { menu().props.onOpenChange(true); });
+        expect(screen.findHostByTestId('session-cockpit-pin:git')?.props.accessibilityState?.checked).toBe(true);
     });
 
     it('discovers admitted plugin tabs in More and puts a pinned one on the bar', async () => {
@@ -1246,7 +1270,7 @@ it('scrolls a Project bar whose pinned pages do not fit, and keeps More to what 
     const narrow = await renderScreen(await bar());
     expect(pages.filter(page => narrow.findHostByTestId(`project-cockpit-tab-${page}`) === null)).toEqual([]);
     expect(narrow.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
-    const behindMore = narrow.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+    const behindMore = narrow.tree.findByType(DropdownMenu).props.items.filter((item: { category?: string }) => item.category !== 'pinned').map((item: { id: string }) => item.id);
     expect(behindMore.filter((id: string) => pages.includes(id))).toEqual([]);
     expect(observed.at(-1)).toBe(true);
     await narrow.unmount();
@@ -1299,7 +1323,8 @@ it('keeps every pinned Discussion entry on a narrow bar, scrolling, beside one p
     expect(screen.findHostByTestId('discussion-cockpit-tab-details')).not.toBeNull();
     expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
     expect(screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'discussion-cockpit-tab-more')).toHaveLength(1);
-    expect(screen.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).not.toContain('discussionDetails');
+    expect(screen.tree.findByType(DropdownMenu).props.items.filter((item: { category?: string }) => item.category !== 'pinned')
+        .map((item: { id: string }) => item.id)).not.toContain('discussionDetails');
     await screen.unmount();
 });
 it('keeps Discussion Chat in its bottom slot without a page strip when Top has only Chat', async () => {

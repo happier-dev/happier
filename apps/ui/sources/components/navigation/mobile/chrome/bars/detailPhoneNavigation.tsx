@@ -76,12 +76,23 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     const slotCount = input.native ? null : resolveFloatingTabBarSlotCount({ windowWidth: width, maxWidth: layout.maxWidth, tabMinWidth: metrics.tabMinWidth });
     // More also opens Customize, so it occupies one measured slot even before any item overflows.
-    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior, { selectedLabelSlots: metrics.showLabels ? 0 : 1 });
     // Folded into a page's own bar, More is the bar: it lists every item, and nothing can be pinned to a bar not shown.
     const folded = React.useContext(CockpitBarFoldedContext);
+    // More is never replaced (owner 11-10): an open item from More rides the bar just before it.
+    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior,
+        { selectedLabelSlots: metrics.showLabels ? 0 : 1, activeId: folded ? null : input.activeId });
     const behindMore = folded ? placements.ordered.filter(item => placements.effectivePlacements[item.id] !== 'hidden') : fit.behindMore;
-    const activeBehindMore = behindMore.find(item => item.id === input.activeId)
-        ?? input.items.find(item => item.id === input.activeId && item.phonePlacement === 'none');
+    // Only a folded bar has no tabs, so only there does More name the open item.
+    const foldedActive = folded ? behindMore.find(item => item.id === input.activeId)
+        ?? input.items.find(item => item.id === input.activeId && item.phonePlacement === 'none') : undefined;
+    // A retained item the phone does not offer (an unavailable Terminal still open) rides the bar the same way.
+    const retained = folded || fit.visitor || input.placement.topPages.length > 0 ? undefined
+        : input.items.find(item => item.id === input.activeId && item.phonePlacement === 'none'
+            && !fit.shown.some(entry => entry.id === item.id));
+    const shown = retained ? [...fit.shown, retained] : fit.shown;
+    // What is on the bar comes back last in More, under Pinned, where it can be taken off.
+    const onBar = folded ? [] : fit.shown.filter(item => item !== fit.visitor
+        && (item.allowedPlacements === undefined || item.allowedPlacements.includes('overflow')));
     const openMore = React.useCallback(() => setMoreOpen(true), []);
     const customize = () => {
         setMoreOpen(false);
@@ -105,8 +116,10 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     const more = <DetailPhoneMoreMenu testIDPrefix={`${input.pageKind}-cockpit`} nativeAnchorTestID={`${input.pageKind}-native-more-anchor`}
         native={input.native} surfaceId={input.address} preferences={preferences} activeId={input.activeId}
         open={moreOpen} onOpenChange={setMoreOpen} onSelect={input.select} onCustomize={customize}
-        activeTrigger={activeBehindMore ? { title: activeBehindMore.count ? `${activeBehindMore.title}, ${activeBehindMore.count}` : activeBehindMore.title,
-            icon: activeBehindMore.icon } : null}
+        activeTrigger={foldedActive ? { title: foldedActive.count ? `${foldedActive.title}, ${foldedActive.count}` : foldedActive.title,
+            icon: foldedActive.icon } : null}
+        pinnedEntries={onBar.map(entry => ({ id: entry.id, title: entry.title, icon: entry.icon, kind: entry.navigation.kind,
+            pinned: true, pinnable: true, disabled: Boolean(entry.disabledReason), subtitle: entry.count }))}
         entries={behindMore.map(entry => {
             const pinned = placements.effectivePlacements[entry.id] === 'pinned';
             return { id: entry.id, title: entry.title, icon: entry.icon, kind: entry.navigation.kind, pinned,
@@ -125,7 +138,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
             item={resolveDetailPhoneNavigationItem(heldItem)} preferences={preferences} open={tabMenu.open} anchorRef={tabAnchor}
             onOpenChange={closeTabMenu} onCustomize={customize} /> : null}
     </>;
-    return { ...fit, behindMore, layout: barLayout, menu, openMore, metrics, slotCount, onTabLongPress: input.native ? undefined : holdTab };
+    return { ...fit, shown, behindMore, layout: barLayout, menu, openMore, metrics, slotCount, onTabLongPress: input.native ? undefined : holdTab };
 }
 
 export type DetailPhoneMoreEntry = Readonly<{
@@ -144,8 +157,8 @@ export type DetailPhoneMoreEntry = Readonly<{
 
 /**
  * The one phone More for every detail kind (orchestrator ruling 2026-11-04): an anchored menu from the
- * bar's More listing only what is behind it, pages before companions, each pinnable where its policy
- * allows, then Customize. The bar's own items are not repeated here; Customize moves those.
+ * bar's More listing what is behind it, pages before companions, each pinnable where its policy allows;
+ * then what is on the bar, under Pinned, to open or take off (owner 11-10); then Customize.
  */
 export function DetailPhoneMoreMenu(props: Readonly<{
     testIDPrefix: string;
@@ -154,8 +167,10 @@ export function DetailPhoneMoreMenu(props: Readonly<{
     surfaceId: NavigationPlacementAddress;
     preferences: NavigationPlacementPreferences;
     entries: readonly DetailPhoneMoreEntry[];
+    /** The bar's own items that may leave it, listed last under Pinned. */
+    pinnedEntries?: readonly DetailPhoneMoreEntry[];
     activeId: string;
-    /** The item behind More that is selected, shown in the More slot. */
+    /** A folded bar's selected item, named by its More (the only control it shows). */
     activeTrigger: Readonly<{ title: string; icon: IconName }> | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -164,9 +179,13 @@ export function DetailPhoneMoreMenu(props: Readonly<{
 }>) {
     const { entries, open, testIDPrefix: prefix } = props;
     const ordered = [...entries.filter(entry => entry.kind !== 'companion'), ...entries.filter(entry => entry.kind === 'companion')];
-    const items: readonly DropdownMenuItem[] = [...ordered.map(entry => ({
+    const pinnedTitle = t('phoneNav.bar.pinnedSection');
+    const categoryTitles = React.useMemo(() => ({ pinned: pinnedTitle }), [pinnedTitle]);
+    const rows = [...ordered.map(entry => ({ entry, category: entry.kind === 'companion' ? 'companions' : 'pages' })),
+        ...(props.pinnedEntries ?? []).map(entry => ({ entry, category: 'pinned' }))];
+    const items: readonly DropdownMenuItem[] = [...rows.map(({ entry, category }) => ({
         id: entry.id, title: entry.title, icon: <Icon name={entry.icon} size={18} />,
-        category: entry.kind === 'companion' ? 'companions' : 'pages', checked: entry.id === props.activeId,
+        category, checked: entry.id === props.activeId,
         disabled: entry.disabled === true, ...(entry.subtitle ? { subtitle: entry.subtitle } : {}),
         testID: `${prefix}-more-item:${entry.id}`,
         // Pins mount only while the menu is open: a closed More holds no per-row settings writers.
@@ -178,8 +197,8 @@ export function DetailPhoneMoreMenu(props: Readonly<{
         </> : undefined,
     })), { id: 'customize', title: t('navigationPlacement.customizeTabs'), icon: <Icon name="sliders-horizontal" size={18} />,
         testID: `${prefix}-more-customize` }];
-    return <DropdownMenu open={open} onOpenChange={props.onOpenChange} items={items}
-        selectedId={entries.some(entry => entry.id === props.activeId) ? props.activeId : null}
+    return <DropdownMenu open={open} onOpenChange={props.onOpenChange} items={items} categoryTitles={categoryTitles}
+        selectedId={rows.some(({ entry }) => entry.id === props.activeId) ? props.activeId : null}
         onSelect={id => { props.onOpenChange(false); if (id === 'customize') props.onCustomize(); else props.onSelect(id); }}
         matchTriggerWidth={false} placement="top" trigger={({ open: expanded, toggle }) => props.native
             ? <View collapsable={false} testID={props.nativeAnchorTestID} style={{ width: 0, height: 0 }} />

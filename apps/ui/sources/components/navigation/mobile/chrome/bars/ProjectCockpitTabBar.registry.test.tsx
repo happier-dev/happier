@@ -52,7 +52,8 @@ describe('Project phone registry launchers', () => {
         await screen.update(view);
         expect(screen.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === page.id)?.subtitle)
             .toBe(counted.count);
-        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityLabel).toContain(counted.count);
+        // Open from More, the page rides the bar just before More and still announces its counts (owner 11-10).
+        expect(screen.findHostByTestId(`project-cockpit-tab-${page.id}`)?.props.accessibilityLabel).toContain(counted.count);
     });
 
     it('retains authored disabled explanations in pinned accessibility and overflow details', async () => {
@@ -77,7 +78,9 @@ describe('Project phone registry launchers', () => {
         const bar = (terminalsOpen: boolean) => <ProjectCockpitTabBar pages={pages} workspaceRefId="project" activePage="overview"
             activeSurface="overview" terminalTabAvailable terminalsOpen={terminalsOpen} onSurfacePress={() => {}} />;
         const screen = await renderScreen(bar(false));
-        const menuIds = () => screen.root.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+        // Behind More: the bar's own items come back under Pinned, which this check leaves out.
+        const menuIds = () => screen.root.findByType(DropdownMenu).props.items
+            .filter((item: { category?: string }) => item.category !== 'pinned').map((item: { id: string }) => item.id);
         expect(screen.findHostByTestId('project-cockpit-tab-terminal')).toBeFalsy();
         expect(menuIds()).toContain('terminal');
         await screen.update(bar(true));
@@ -104,14 +107,17 @@ describe('Project phone registry launchers', () => {
         const menu = screen.root.findByType(DropdownMenu);
         expect(menu.props.items.map((item: { id: string }) => item.id)).not.toContain('terminal');
         expect(menu.props.selectedId).toBeNull();
-        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected).toBe(true);
+        // The retained Terminal rides the bar just before More, which stays More.
+        expect(screen.findHostByTestId('project-cockpit-tab-terminal')?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? false).toBe(false);
         expect(screen.getTextContent()).toContain('settings.terminal');
     });
 
     it('suppresses Files on Code while keeping its selection and each canonical page reachable once', async () => {
         const screen = await renderScreen(<ProjectCockpitTabBar pages={pages} workspaceRefId="project" activePage="code"
             activeSurface="browse" terminalTabAvailable={false} onSurfacePress={() => {}} />);
-        const ids: string[] = screen.root.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+        const ids: string[] = screen.root.findByType(DropdownMenu).props.items
+            .filter((item: { category?: string }) => item.category !== 'pinned').map((item: { id: string }) => item.id);
         expect(ids).not.toContain('browse');
         expect(ids).toContain('tabs');
         expect(new Set(ids).size).toBe(ids.length);
@@ -142,7 +148,8 @@ describe('Project phone registry launchers', () => {
         expect(menu.props.items.find((item: { id: string }) => item.id === disabled.id)?.subtitle)
             .toBe(resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: 'plugin_disabled' }).body);
         expect(menu.props.items.some((item: { id: string }) => item.id === 'code')).toBe(false);
-        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findHostByTestId(`project-cockpit-tab-${plugin.id}`)?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? false).toBe(false);
         await menu.props.onSelect(plugin.id);
         expect(selected).toEqual([plugin.id]);
         expect(menu.props.items.some((item: { id: string }) => item.id === 'customize')).toBe(true);
