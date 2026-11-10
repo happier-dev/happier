@@ -395,7 +395,16 @@ function requireSuccessful(result, description) {
         'Install Mutagen locally and ensure `mutagen` is available on PATH, or remove this stack’s dev-targets.json.',
     );
   }
-  const error = new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
+  // Carry only the producer's closed code, never arbitrary remote output.
+  let reasonCode;
+  for (const line of String(result?.err ?? '').split(/\r?\n/)) {
+    try {
+      const failure = JSON.parse(line);
+      if (failure.ok === false && /^[a-z][a-z0-9_]*$/.test(failure.error?.code ?? '')) reasonCode = failure.error.code;
+    } catch { /* SSH diagnostics need not be JSON. */ }
+  }
+  const error = new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`
+    + (reasonCode ? ` reason=${reasonCode}` : ''));
   error.commandExitCode = result?.code;
   throw error;
 }

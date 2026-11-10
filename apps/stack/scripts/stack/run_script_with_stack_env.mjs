@@ -358,6 +358,9 @@ export async function waitForBackgroundStackReadiness({
       && runtimeDaemonPid === daemonPid
       && (!expectedFingerprint || observedFingerprint === expectedFingerprint)
       && sourceLaunchAuthenticated
+      && (runtimeState?.runtimeMode !== 'source-snapshot' || Boolean(
+        runtimeState.sourceRuntimeIdentities?.daemon?.selected
+        && runtimeState.sourceRuntimeIdentities.daemon.loaded === runtimeState.sourceRuntimeIdentities.daemon.selected))
     ) {
       return;
     }

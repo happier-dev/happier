@@ -21,7 +21,9 @@ test('generated attachment owns scoped readiness without inherited Stack environ
     const stackName = `attach-${runtimeMode}`;
     const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
     const statePath = join(paths.stackBaseDir, 'stack.runtime.json');
-    await recordStackRuntimeStart(statePath, { stackName, ownerPid: process.pid });
+    const runtime = await recordStackRuntimeStart(statePath, { stackName, ownerPid: process.pid,
+      ...(runtimeMode === 'source-snapshot' ? { sourceRuntimeIdentities: { daemon: { selected: 'daemon-new', loaded: null } } } : {}),
+    });
     // Execute the actual SSH payload. A remote login does not inherit the
     // controller's scoped identity; only the command producer can supply it.
     const child = spawn('bash', ['-c', buildRemoteStackAttachCommand(target, { stackName, runtimeMode })], {
@@ -37,6 +39,8 @@ test('generated attachment owns scoped readiness without inherited Stack environ
     const reloadRequired = new Promise(resolve => { reload = resolve; });
     let ready;
     const running = new Promise(resolve => { ready = resolve; });
+    let starting;
+    const awaitingIdentity = new Promise(resolve => { starting = resolve; });
     let pending = '';
     child.stdout.on('data', chunk => {
       pending += chunk;
@@ -46,6 +50,7 @@ test('generated attachment owns scoped readiness without inherited Stack environ
         const fact = parseDaemonReadinessLine(line);
         if (fact) states.push(fact.state);
         if (fact?.state === 'running') ready();
+        if (fact?.state === 'starting') starting();
         if (fact?.state === 'reload-required') reload();
       }
     });
@@ -62,13 +67,21 @@ test('generated attachment owns scoped readiness without inherited Stack environ
     // A retained daemon is already alive. Login itself must wake readiness,
     // without requiring an unrelated runtime-state publication afterwards.
     await writeFile(join(serverDir, 'access.key'), randomBytes(32));
+    if (runtimeMode === 'source-snapshot') {
+      await Promise.race([awaitingIdentity, running.then(() => { throw new Error('daemon reported running before loaded identity publication'); })]);
+      await writeFile(`${statePath}.next`, JSON.stringify({ ...runtime,
+        sourceRuntimeIdentities: { daemon: { selected: 'daemon-new', loaded: 'daemon-new' } } }));
+      await rename(`${statePath}.next`, statePath);
+    }
     await Promise.race([running, ended.then(() => { throw new Error('attachment ended before native daemon readiness'); })]);
-    assert.deepEqual(states, ['sign-in-required', 'running']);
+    assert.deepEqual(states, runtimeMode === 'source-snapshot' ? ['sign-in-required', 'starting', 'running'] : ['sign-in-required', 'running']);
     await writeFile(join(serverDir, 'daemon.state.json.next'), JSON.stringify({ pid: process.pid,
       sourceRuntimeReloadRequired: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' } }));
     await rename(join(serverDir, 'daemon.state.json.next'), join(serverDir, 'daemon.state.json'));
     await Promise.race([reloadRequired, ended.then(() => { throw new Error('attachment ended before dependency refusal'); })]);
-    assert.deepEqual(states, ['sign-in-required', 'running', 'reload-required']);
+    assert.deepEqual(states, runtimeMode === 'source-snapshot'
+      ? ['sign-in-required', 'starting', 'running', 'reload-required']
+      : ['sign-in-required', 'running', 'reload-required']);
     child.kill('SIGTERM');
     await ended;
   }

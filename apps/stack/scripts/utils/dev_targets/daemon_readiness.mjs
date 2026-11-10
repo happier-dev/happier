@@ -22,7 +22,7 @@ export function parseDaemonReadinessLine(line) {
 
 // The worker's auth gate and daemon state already own these facts. Both the
 // stdout observer and the one-shot attach probe consume this same projection.
-export async function readDaemonReadiness({ cliHomeDir, activeServerId, env = process.env }) {
+export async function readDaemonReadiness({ cliHomeDir, activeServerId, sourceRuntimeIdentity, env = process.env }) {
   if (!daemonStartGate({ cliHomeDir, env: { ...env, HAPPIER_ACTIVE_SERVER_ID: activeServerId } }).ok) {
     return { state: 'sign-in-required' };
   }
@@ -33,5 +33,8 @@ export async function readDaemonReadiness({ cliHomeDir, activeServerId, env = pr
     throw error;
   }
   if (state.sourceRuntimeReloadRequired && isPidAlive(state.pid)) return { state: 'reload-required' };
+  // A live PID can precede the native runner's loaded-identity publication.
+  if (sourceRuntimeIdentity && (!sourceRuntimeIdentity.selected
+    || sourceRuntimeIdentity.loaded !== sourceRuntimeIdentity.selected)) return { state: 'starting' };
   return { state: Number.isInteger(state.pid) && state.pid > 1 && isPidAlive(state.pid) ? 'running' : 'starting' };
 }

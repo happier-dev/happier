@@ -3150,9 +3150,11 @@ test('source snapshot identity probe observes selected and loaded component iden
   assert.equal(JSON.parse(preserved.stdout).serverPort, 43865,
     'a co-located server restart consumes its recorded private port separately from the daemon route');
   writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'export' }));
-  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]), error =>
+    JSON.parse(error.stderr).error.code === 'runtime_ui_launch_missing');
   writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities }));
-  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]), error =>
+    JSON.parse(error.stderr).error.code === 'runtime_ui_mode_mismatch');
   writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'disabled' }));
   await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
   for (const sourceUi of ['disabled', 'borrowed']) {
@@ -4029,6 +4031,21 @@ test('remote daemon readiness probe requires a live pid from the server-scoped s
     await execFileAsync('/bin/sh', ['-c', `printf '%s\\n' '{"pid":${process.pid}}' > "$1"`, 'sh', statePath]);
     const command = buildRemoteDaemonReadinessProbeCommand(target, { stackName });
     await execFileAsync('/bin/bash', ['-lc', command]);
+    const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'source-snapshot' });
+    mkdirSync(paths.stackBaseDir, { recursive: true });
+    const sourceServerDir = join(paths.cliHomeDir, 'servers', paths.activeServerId);
+    mkdirSync(sourceServerDir, { recursive: true });
+    await writeFile(join(sourceServerDir, 'access.key'), (await import('node:crypto')).randomBytes(32));
+    writeFileSync(join(sourceServerDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid }));
+    const sourceCommand = buildRemoteDaemonReadinessProbeCommand(target, { stackName, runtimeMode: 'source-snapshot' });
+    for (const loaded of [null, 'replacement']) {
+      writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({
+        sourceRuntimeIdentities: { daemon: { selected: 'replacement', loaded } },
+      }));
+      if (loaded) await execFileAsync('/bin/bash', ['-lc', sourceCommand]);
+      else await assert.rejects(execFileAsync('/bin/bash', ['-lc', sourceCommand]),
+        error => JSON.parse(error.stdout).state === 'starting');
+    }
 
     await execFileAsync('/bin/sh', ['-c', `printf '%s\\n' '{"pid":99999999}' > "$1"`, 'sh', statePath]);
     await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]));

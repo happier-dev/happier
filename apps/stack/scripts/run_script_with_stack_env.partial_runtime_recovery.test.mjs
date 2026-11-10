@@ -377,8 +377,11 @@ for (const daemonDistFingerprint of [null, 'aaaaaaaaaaaaaaaa']) {
       daemonPid,
       daemonProcessFingerprint,
       daemonDistFingerprint,
+      loaded = null,
     }) => {
       await writeFile(runtimeStatePath, `${JSON.stringify({
+        runtimeMode: 'source-snapshot',
+        sourceRuntimeIdentities: { daemon: { selected: 'replacement', loaded } },
         ownerPid: launchOwnerPid,
         startedAt: launchOwnerStartedAt,
         processes: { daemonPid },
@@ -423,6 +426,7 @@ for (const daemonDistFingerprint of [null, 'aaaaaaaaaaaaaaaa']) {
             daemonPid: replacementDaemonPid,
             daemonProcessFingerprint: replacementProcessFingerprint,
             daemonDistFingerprint: daemonDistFingerprint,
+            loaded: daemonObservations >= 3 ? 'replacement' : null,
           });
           return {
             status: 'running',
@@ -441,7 +445,7 @@ for (const daemonDistFingerprint of [null, 'aaaaaaaaaaaaaaaa']) {
       };
       await waitForBackgroundStackReadiness(readiness);
 
-      assert.equal(daemonObservations, 2);
+      assert.equal(daemonObservations, 3, 'a live replacement waits for its loaded identity publication');
       await assert.rejects(waitForBackgroundStackReadiness({
         ...readiness, timeoutMs: 30,
         sourceDaemonLaunchAttempt: { ...readiness.sourceDaemonLaunchAttempt, ownerPid: launchOwnerPid + 1 },

@@ -1793,7 +1793,12 @@ Recovery reuses the retained source runtime selection. Its runtime observer
 publishes typed native sign-in/running facts on the existing stdout channel;
 fresh source startup opens no daemon-readiness SSH probes. Retained attachment
 and transport reattachment probe once, then consume that same channel. The
-worker and attach probe share the native auth/PID projection. HTTP server and
+worker and attach probe share the native auth/PID projection. In 0.3 development,
+source daemon readiness also waits for the native runner's selected identity to
+be published as loaded; a live PID alone does not settle startup. Background
+start uses its existing readiness budget and preserves a live runner when that
+budget expires with readiness still pending. Runtime identity probe failures
+carry their structured reason code to the supervisor's error message. HTTP server and
 Metro readiness retain their existing polling owners. Attachment uses the same
 scoped runtime environment prelude as startup, not inherited controller identity.
 Remote server/data admission still

@@ -1413,7 +1413,8 @@ test(`source preparation phase followed by worker death retries only after remot
     runProcess: async ({ command, args }) => {
       const remote = String(args.at(-1));
       if (command === 'ssh' && remote.includes('sourceRuntimeIdentities')) {
-        return { code: runtimeState === 'unreachable' ? 255 : 1, err: 'runtime identity unavailable' };
+        return { code: runtimeState === 'unreachable' ? 255 : 1,
+          err: JSON.stringify({ ok: false, error: { code: 'runtime_state_unreadable' } }) };
       }
       if (command === 'ssh' && remote.includes('stack stop')) stops.push(remote);
       else if (command === 'ssh' && remote.includes('stack.runtime.json')) {
@@ -1453,6 +1454,10 @@ test(`source preparation phase followed by worker death retries only after remot
     assert.equal(states.findLast(state => state.status === 'retrying')?.sourcePreparation, null,
       'worker failure retires preparation diagnostics');
     assert.equal(stops.length, 0, 'retry must not retire a runtime whose absence is unverified');
+    if (runtimeState === 'unreadable') {
+      assert.ok(states.some(state => state.error?.includes('runtime_state_unreadable')),
+        'the caller receives the probe reason code');
+    }
     if (runtimeState === 'absent') {
       assert.match(workers[1].args.at(-1), /--restart/,
         'a failed launch must prepare current source instead of selecting the last-green bundle again');

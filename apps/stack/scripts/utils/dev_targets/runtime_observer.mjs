@@ -77,7 +77,9 @@ export async function observeRemoteStackRuntime(runtimeStatePath, { output = pro
           daemonStateWatched = true;
         } catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
-      const readiness = await readDaemonReadiness({ cliHomeDir, activeServerId, env });
+      const readiness = await readDaemonReadiness({ cliHomeDir, activeServerId, env,
+        sourceRuntimeIdentity: state.sourceRuntimeIdentities?.daemon
+          ?? (state.runtimeMode === 'source-snapshot' ? {} : undefined) });
       if (readiness.state === 'sign-in-required' && !signIn) {
         // Login is an independent producer: a retained daemon may already be
         // alive, so no later runtime-state publication is required to wake us.

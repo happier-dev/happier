@@ -2466,9 +2466,9 @@ export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snap
     'const observed = { sourceRuntimeIdentities, startedAt: s.startedAt };',
     ...daemonEndpointProbe,
     ...(services.server ? [
-      `if (s.sourceUi !== ${JSON.stringify(sourceUi === 'export' ? 'export' : 'disabled')}) process.exit(1); observed.sourceUi = s.sourceUi;`,
+      `if (s.sourceUi !== ${JSON.stringify(sourceUi === 'export' ? 'export' : 'disabled')}) fail('runtime_ui_mode_mismatch'); observed.sourceUi = s.sourceUi;`,
       "if (s.sourceUi === 'export') {",
-      "  if (typeof s.sourceUiLaunch?.uiDir !== 'string' || !s.sourceUiLaunch.uiDir.trim()) process.exit(1);",
+      "  if (typeof s.sourceUiLaunch?.uiDir !== 'string' || !s.sourceUiLaunch.uiDir.trim()) fail('runtime_ui_launch_missing');",
       '  observed.sourceUiLaunch = { uiDir: s.sourceUiLaunch.uiDir };',
       '}',
     ] : []),
@@ -2487,7 +2487,7 @@ export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snap
       : runtimeMode === 'source-snapshot'
       ? sourceProbe
       : includeDaemonServerUrl ? ['const observed = {};', ...daemonEndpointProbe, 'process.stdout.write(JSON.stringify(observed));'].join('\n')
-        : `process.exit(s.runtimeSnapshotId===${JSON.stringify(snapshotId)}?0:1)`,
+        : `if (s.runtimeSnapshotId!==${JSON.stringify(snapshotId)}) fail('runtime_snapshot_mismatch');`,
   ].join('');
   const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
   return wrapRemoteScript(target, target.platform === 'windows' ? `node -e ${quote(expression)}; exit $LASTEXITCODE` : `exec node -e ${quote(expression)}`);
@@ -2997,13 +2997,17 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
 }
 
 export function buildRemoteDaemonReadinessProbeCommand(target, { stackName, runtimeMode = 'source' }) {
-  const { activeServerId, cliHomeDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
+  const { activeServerId, cliHomeDir, stackBaseDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const pathApi = target.platform === 'windows' ? win32 : posix;
   const expression = [
     '(async () => {',
     "const { pathToFileURL } = require('node:url');",
     `const { readDaemonReadiness } = await import(pathToFileURL(${JSON.stringify(pathApi.join(target.repoDir, 'apps/stack/scripts/utils/dev_targets/daemon_readiness.mjs'))}).href);`,
-    `const readiness = await readDaemonReadiness({ cliHomeDir: ${JSON.stringify(cliHomeDir)}, activeServerId: ${JSON.stringify(activeServerId)} });`,
+    ...(runtimeMode === 'source-snapshot' ? [
+      `const { readStackRuntimeStateFile } = await import(pathToFileURL(${JSON.stringify(pathApi.join(target.repoDir, 'apps/stack/scripts/utils/stack/runtime_state.mjs'))}).href);`,
+      `const runtime = await readStackRuntimeStateFile(${JSON.stringify(pathApi.join(stackBaseDir, 'stack.runtime.json'))});`,
+    ] : []),
+    `const readiness = await readDaemonReadiness({ cliHomeDir: ${JSON.stringify(cliHomeDir)}, activeServerId: ${JSON.stringify(activeServerId)}${runtimeMode === 'source-snapshot' ? ', sourceRuntimeIdentity: runtime?.sourceRuntimeIdentities?.daemon ?? {}' : ''} });`,
     'process.stdout.write(JSON.stringify(readiness));',
     "process.exit(readiness.state === 'running' ? 0 : readiness.state === 'sign-in-required' ? 2 : 1);",
     '})().catch(() => process.exit(1));',
