@@ -12,6 +12,7 @@ import { SegmentedTabBar, SegmentedValueSelect } from '@/components/ui/navigatio
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
+import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { useDeploymentReceipt } from './useDeploymentReads';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 
@@ -99,6 +100,8 @@ export function EnvironmentLogsCompanion(
         />
       ) : value ? (
         <ItemList testID="environment-logs.build">
+          <DeploymentUploadProvenance testID="environment-logs.build.upload"
+            provenance={value.content.platform?.observation.uploadProvenance} />
           <DeploymentStepLogs
             testID="environment-logs.build.steps"
             title={t('projects.deployments.steps')}

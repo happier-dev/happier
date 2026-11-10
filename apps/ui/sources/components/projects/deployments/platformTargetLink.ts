@@ -1,3 +1,4 @@
+import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
@@ -30,9 +31,20 @@ export type DeploymentPlatformTarget = Readonly<{
   purpose: string;
   service: Readonly<{ pluginId: string; localId: string }>;
   fields: readonly EffectiveActionInputField[];
+  sourceMethods: readonly DeploymentSourceMethodV1[];
 }>;
 
 type Declaration = Readonly<{ manifest: PluginPortableReleaseManifestV1 }>;
+/** The Action's declared purpose and canonical HostAccess scope own its credential chooser. */
+export function readPluginActionCredentialPurpose(manifest: PluginPortableReleaseManifestV1, localId: string) {
+  const action = manifest.contributes.actions?.find(entry => entry.id === localId);
+  const purpose = action?.connectedAccountPurposeBindings?.find(entry => entry.path === 'credentialRef')?.purpose;
+  if (!purpose) return null;
+  const requests = resolvePluginActionConnectedAccountUseRequestsV2(manifest, localId);
+  const scope = requests ? projectConnectedAccountHostAccessScopes(manifest.id, requests).find(entry => entry.purpose === purpose) : undefined;
+  const service = scope?.serviceRefs[0];
+  return service ? { purpose, service: { pluginId: service.pluginId, localId: service.localId } } : null;
+}
 type UnknownRecord = Record<string, unknown>;
 const record = (value: unknown): value is UnknownRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -59,6 +71,9 @@ export function readDeploymentPlatformTargets(
         !text(target.targetKind)
       )
         return [];
+      const sourceMethods: DeploymentSourceMethodV1[] = [];
+      if (record(target.actions) && text(target.actions.deploy)) sourceMethods.push('gitIntegration');
+      if (record(target.actions) && text(target.actions.uploadDeploy)) sourceMethods.push('upload');
       const inspect = record(target.actions)
         ? target.actions.inspect
         : undefined;
@@ -67,21 +82,9 @@ export function readDeploymentPlatformTargets(
         (entry) => record(entry) && entry.id === inspect,
       );
       if (!record(action)) return [];
-      const bindings = Array.isArray(action.connectedAccountPurposeBindings)
-        ? action.connectedAccountPurposeBindings
-        : [];
-      const binding = bindings.find(
-        (entry) => record(entry) && entry.path === 'credentialRef',
-      );
-      const purpose = record(binding) ? binding.purpose : undefined;
-      if (!text(purpose)) return [];
-      // The purpose's service comes from the canonical HostAccess owner, which qualifies a plugin-local ref.
-      const requests = resolvePluginActionConnectedAccountUseRequestsV2(manifest, inspect);
-      const scope = requests
-        ? projectConnectedAccountHostAccessScopes(manifest.id, requests).find((entry) => entry.purpose === purpose)
-        : undefined;
-      const service = scope?.serviceRefs[0];
-      if (!service) return [];
+      const credential = readPluginActionCredentialPurpose(manifest, inspect);
+      if (!credential) return [];
+      const { purpose, service } = credential;
       const hints =
         record(action.inputHints) && Array.isArray(action.inputHints.fields)
           ? action.inputHints.fields
@@ -104,29 +107,31 @@ export function readDeploymentPlatformTargets(
           purpose,
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],
+          sourceMethods,
         },
       ];
     });
   });
 }
 
-/** The partial draft the options resolver and Inspect both read: recorded credential, exact Environment revision. */
+/** The options resolver and Inspect share this draft; saved Environments include their revision. */
 export function buildPlatformTargetDraft(
   input: Readonly<{
-    target: DeploymentPlatformTarget;
+    target: Pick<DeploymentPlatformTarget, 'pluginId' | 'inspectLocalId' | 'purpose'>;
     ownerAccountId: string;
     serverId: string;
-    environment: Readonly<{ id: string; revision: number }>;
+    environment: Readonly<{ id?: string; revision?: number }>;
     account: QualifiedConnectedAccountRef;
     repository: ScmHostingRepositoryIdentityV1 | null;
     values: Readonly<Record<string, unknown>>;
+    sourceMethod?: DeploymentSourceMethodV1;
   }>,
 ): Record<string, unknown> {
   return {
     v: 1,
     serverId: input.serverId,
-    environmentId: input.environment.id,
-    expectedRevision: input.environment.revision,
+    ...(input.environment.id ? { environmentId: input.environment.id } : {}),
+    ...(input.environment.revision !== undefined ? { expectedRevision: input.environment.revision } : {}),
     credentialRef: input.account,
     credentialPrincipal: {
       kind: 'account',
@@ -142,22 +147,26 @@ export function buildPlatformTargetDraft(
     },
     ...(input.repository ? { repository: input.repository } : {}),
     ...input.values,
+    ...(input.sourceMethod ? { sourceMethod: input.sourceMethod } : {}),
   };
 }
 
 /** Link spends exactly the inspected provider content; the host Action authors and associates it. */
 export function buildPlatformTargetLinkInput(
   input: Readonly<{
-    target: DeploymentPlatformTarget;
+    target: Pick<DeploymentPlatformTarget, 'targetId' | 'pluginId' | 'targetKind'>;
     environment: Readonly<{ id: string; revision: number }>;
     provider: DeploymentTargetLinkProviderContentV1;
+    title?: string;
+    role?: 'runtime' | 'data';
   }>,
 ) {
   return {
     environmentId: input.environment.id,
     expectedRevision: input.environment.revision,
+    ...(input.title ? { title: input.title } : {}),
     targetId: input.target.targetId,
-    role: 'runtime' as const,
+    role: input.role ?? 'runtime',
     targetKind: input.target.targetKind,
     machines: [],
     source: {

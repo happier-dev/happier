@@ -3,10 +3,14 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
   resolveEffectiveActionInputFields,
+  isSameActionInputOptionValue,
   type EffectiveActionInputField,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
@@ -42,6 +46,7 @@ import { t } from '@/text';
 
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
+import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import {
   buildPlatformTargetDraft,
@@ -182,14 +187,19 @@ export function useDeploymentPlatformTargetTitles(lifetime: ServerAccountScopeLi
 const EMPTY_VALUES: Readonly<Record<string, unknown>> = Object.freeze({});
 
 /**
- * Add a platform target (Environment → Servers & build, Overview, or right after a platform draft is created):
+ * Prepare a platform target inline in the draft, or link one from an existing Environment:
  * choose a target from the plugins' declarations, the connected account it uses, and the project, environment
  * and product through the provider's own choices. Check reads the provider only; Link records exactly what the
  * check returned. Linking deploys nothing; the next Deploy does.
  */
-function DeploymentPlatformTargetSheet(
-  props: DeploymentPlatformTargetSheetInput & CustomModalInjectedProps,
+export function DeploymentPlatformTargetEditor(
+  props: Omit<DeploymentPlatformTargetSheetInput, 'environment'> & CustomModalInjectedProps & Readonly<{
+    environment: Readonly<{ id?: string; revision?: number; projectSourceId: string; controllerMachineId?: string }>;
+    /** Drafts review the same provider result in place; the creating page commits the association. */
+    onPrepared?: (provider: DeploymentTargetLinkProviderContentV1 | null) => void;
+  }>,
 ) {
+  const shouldContinue = useMountedShouldContinue();
   const { state: platformsState, retry: retryPlatforms } =
     useDeploymentPlatformTargets(props.lifetime);
   const targets =
@@ -199,6 +209,8 @@ function DeploymentPlatformTargetSheet(
     targets.find((entry) => entry.key === targetKey) ??
     targets[0] ??
     null;
+  const [selectedMethod, setSourceMethod] = React.useState<DeploymentSourceMethodV1>('gitIntegration');
+  const sourceMethod = target?.sourceMethods.includes(selectedMethod) ? selectedMethod : target?.sourceMethods[0];
   const [platformMenuOpen, setPlatformMenuOpen] = React.useState(false);
   const [account, setAccount] =
     React.useState<QualifiedConnectedAccountRef | null>(null);
@@ -238,6 +250,7 @@ function DeploymentPlatformTargetSheet(
             account,
             repository,
             values,
+            ...(target.sourceMethods.includes('upload') && sourceMethod ? { sourceMethod } : {}),
           })
         : null,
     [
@@ -248,6 +261,7 @@ function DeploymentPlatformTargetSheet(
       props.environment,
       repository,
       values,
+      sourceMethod,
     ],
   );
   const fields = React.useMemo(
@@ -256,12 +270,12 @@ function DeploymentPlatformTargetSheet(
         ? disclosePlatformFields(
             resolveEffectiveActionInputFields(
               { inputHints: { fields: [...target.fields] } },
-              values,
+              draft ?? values,
             ),
             values,
           )
         : [],
-    [target, values],
+    [target, values, draft],
   );
   const requests = React.useMemo(
     () =>
@@ -295,11 +309,13 @@ function DeploymentPlatformTargetSheet(
   const resetFrom = React.useCallback(() => {
     setOutcome(null);
     setLinkRefused(null);
-  }, []);
+    props.onPrepared?.(null);
+  }, [props.onPrepared]);
   const choosePlatform = (id: string) => {
     setPlatformMenuOpen(false);
     if (id === target?.key) return;
     setTargetKey(id);
+    setSourceMethod('gitIntegration');
     setAccount(null);
     setValues(EMPTY_VALUES);
     setCursors({});
@@ -358,19 +374,27 @@ function DeploymentPlatformTargetSheet(
       draft,
       props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined,
     );
+    if (!shouldContinue()) return;
     setBusy(null);
-    setOutcome(readPlatformInspectOutcome(result));
+    const inspected = readPlatformInspectOutcome(result);
+    setOutcome(inspected);
+    props.onPrepared?.(inspected.kind === 'ready' ? inspected.provider : null);
   };
   const link = async () => {
-    if (!target || outcome?.kind !== 'ready' || busy) return;
+    if (!target || outcome?.kind !== 'ready' || busy || !props.environment.id || props.environment.revision === undefined) return;
     setBusy('link');
     setLinkRefused(null);
     try {
+      const resourceId = outcome.provider.providerIdentity.providerResourceId;
+      const resourceField = fields.find(field => field.widget === 'select' && getValueAtPath(values, field.path) === resourceId);
+      const resourceTitle = resourceField ? options.resolveOptions(resourceField)
+        .find(option => isSameActionInputOptionValue(option.value, resourceId))?.label : undefined;
       const result = await actions.link(
         buildPlatformTargetLinkInput({
           target,
-          environment: props.environment,
+          environment: { id: props.environment.id, revision: props.environment.revision },
           provider: outcome.provider,
+          ...(resourceTitle ? { title: resourceTitle } : {}),
         }),
         // This sheet is the person's confirmation of the exact Link.
         { confirmed: true },
@@ -410,10 +434,10 @@ function DeploymentPlatformTargetSheet(
 
   const ready = outcome?.kind === 'ready';
   const footer = (
-    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null }}>
+    <ModalCardFooterActions {...(props.onPrepared ? {} : { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null } })}>
       <RoundButton
         testID={
-          ready
+          ready && !props.onPrepared
             ? 'project-deployments.platform.link'
             : 'project-deployments.platform.check'
         }
@@ -421,7 +445,7 @@ function DeploymentPlatformTargetSheet(
         loading={busy !== null}
         disabled={busy !== null || !draft || !target || missing || needsConnect || !drawn.canCheck}
         title={
-          ready && target
+          ready && target && !props.onPrepared
             ? t('projects.deployments.platformLink.link', {
                 platform: target.title,
               })
@@ -430,7 +454,7 @@ function DeploymentPlatformTargetSheet(
               : t('projects.deployments.platformLink.check')
         }
         onPress={() => {
-          void (ready ? link() : check());
+          void (ready && !props.onPrepared ? link() : check());
         }}
       />
     </ModalCardFooterActions>
@@ -444,9 +468,9 @@ function DeploymentPlatformTargetSheet(
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="project-deployments.platform" style={deploymentSheetStyles.body}>
-        <Text style={deploymentSheetStyles.lead}>
+        {props.onPrepared ? null : <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.platformLink.lead')}
-        </Text>
+        </Text>}
         {platformsState.status === 'loading' ? (
           <SurfaceStateCard
             testID="project-deployments.platform.loading"
@@ -474,7 +498,7 @@ function DeploymentPlatformTargetSheet(
         ) : (
           <>
             <ItemGroup header="none">
-              <DropdownMenu
+              {props.onPrepared ? null : <DropdownMenu
                 testID="project-deployments.platform.choice"
                 open={platformMenuOpen}
                 onOpenChange={setPlatformMenuOpen}
@@ -487,6 +511,7 @@ function DeploymentPlatformTargetSheet(
                   itemProps: { disabled: busy !== null },
                 }}
               />
+              }
               {needsConnect ? null : <ConnectedAccountPurposeTargetChooser
                 key={target.key}
                 testID="project-deployments.platform.account"
@@ -508,6 +533,13 @@ function DeploymentPlatformTargetSheet(
                   resetFrom();
                 }}
               />}
+              {sourceMethod ? <DeploymentSourceMethodChoice
+                methods={target.sourceMethods}
+                value={sourceMethod}
+                disabled={busy !== null}
+                testID="project-deployments.platform.sourceMethod"
+                onChange={(method) => { setSourceMethod(method); resetFrom(); }}
+              /> : null}
               {/* Each provider choice is a row of the same sheet: the row names it, the control draws no label. */}
               {draft
                 ? visibleFields.map((field) => {
@@ -616,7 +648,7 @@ export function showDeploymentPlatformTargetSheet(
   input: DeploymentPlatformTargetSheetInput,
 ): void {
   showDeploymentSheet({
-    component: DeploymentPlatformTargetSheet,
+    component: DeploymentPlatformTargetEditor,
     props: input,
     title: t('projects.deployments.platformLink.title', { name: input.name }),
     testID: 'project-deployments.platform.modal',

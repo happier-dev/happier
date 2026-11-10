@@ -165,6 +165,8 @@ describe('platform target link model', () => {
       repositoryAccess: { status: 'ready' as const, repository },
       preparedNative: { projectName: 'site' },
     };
+    expect(buildPlatformTargetLinkInput({ target: target!, environment: { id: 'env-1', revision: 4 }, provider, role: 'data' }))
+      .toMatchObject({ role: 'data', provider });
     expect(
       buildPlatformTargetLinkInput({
         target: target!,
