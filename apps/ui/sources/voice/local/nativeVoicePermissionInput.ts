@@ -7,6 +7,7 @@ import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/rea
 import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from '@/sync/ops/sessionPermissionChoices';
+import { resolveSpokenPermissionDecision } from '@/sync/domains/permissions/resolveSpokenPermissionDecision';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
@@ -28,17 +29,6 @@ export type NativeVoicePermissionInput = Readonly<{
 }>;
 
 type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean; needsReadout: boolean };
-
-function resolveSpokenPermissionDecision(text: string): 'approved' | 'denied' | null {
-  const normalize = (value: string) => value.trim().toLocaleLowerCase()
-    .replace(/[’‘]/gu, "'").replace(/[,.!?。！？]+/gu, ' ').replace(/\s+/gu, ' ').trim();
-  const answer = normalize(text);
-  if (answer === normalize(t('common.yes')) || /^(?:(?:yes|yeah|yep|okay|ok)(?: please)?(?: (?:allow|approve)(?: it| that)?| go ahead| do it)?|(?:please )?(?:allow|approve)(?: it| that)?|(?:please )?(?:go ahead|do it))(?: please)?$/u.test(answer)) return 'approved';
-  // RUN111's short spoken No was transcribed as the unfinished "NO BUT".
-  // Accept that bare hesitation, without accepting a following contrary instruction.
-  if (answer === normalize(t('common.no')) || /^(?:(?:no|nope)(?: thanks| thank you| but)?(?: (?:deny|decline|reject)(?: it| that| the command)?| (?:don't|do not)(?: (?:allow|approve|do)(?: it| that| the command)?)?)?|(?:please )?(?:deny|decline|reject)(?: it| that| the command)?|(?:please )?(?:don't|do not)(?: (?:allow|approve|do)(?: it| that| the command)?)?)(?: please)?$/u.test(answer)) return 'denied';
-  return null;
-}
 
 /** Input for a read-out native request; the existing permission Action owns settlement. */
 export function createNativeVoicePermissionInput(params: Readonly<{
@@ -159,7 +149,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       if (disposed || params.signal.aborted || !selected?.ready) return null;
       selected.ready = false;
       return async (text: string): Promise<void> => {
-        const decision = resolveSpokenPermissionDecision(text);
+        const decision = resolveSpokenPermissionDecision(text, { yes: t('common.yes'), no: t('common.no') });
         let appliedDecision: NativePermissionDecision | null = decision;
         try {
           if (disposed || params.signal.aborted || prompt !== selected) return;
