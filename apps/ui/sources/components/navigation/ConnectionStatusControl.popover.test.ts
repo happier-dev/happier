@@ -391,7 +391,11 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
         React.createElement(React.Fragment, null, props.children),
 }));
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    // Popover consumers read the shared portal preset at module scope; it is plain data.
+    ...await vi.importActual<typeof import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions')>(
+        '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions',
+    ),
     Popover: (props: PopoverCaptureProps) => {
         capture.popoverProps = props;
         if (!props.open) return null;
@@ -576,6 +580,13 @@ async function openStep(id: 'account-identity' | 'connection-details') {
     await act(async () => {
         row.onPress?.();
     });
+}
+
+/** Opens the Connection details step's Technical details disclosure. */
+async function openTechnicalDetails(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const disclosure = screen.findByTestId('connection-details-disclosure');
+    if (!disclosure) throw new Error('expected the Technical details disclosure');
+    await act(async () => pressTestInstanceAsync(disclosure));
 }
 
 /** Presses an inline row button (a RoundButton element passed as the row's `right`). */
@@ -1168,6 +1179,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             expect(screen.getTextContent()).not.toContain('systemStatus.server.activeServer');
             expect(tree!.root.findAllByProps({ testID: 'connection-popover-realtime' }).length).toBeGreaterThan(0);
             expect(tree!.root.findAllByProps({ testID: 'connection-popover-machines' }).length).toBeGreaterThan(0);
+            await openTechnicalDetails(screen);
             expect(screen.getTextContent()).toContain('iroh-endpoint-123');
             expect(screen.getTextContent()).toContain('relay.example.test');
             expect(screen.getTextContent()).not.toContain('connectionStatus.labels.transport');
@@ -2155,7 +2167,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         await act(async () => screen.tree?.unmount());
     });
 
-    it('composes the same Home recovery and copyable Details semantics in the full-screen surface', async () => {
+    it('composes the same Home recovery, live facts and copyable technical details in the full-screen surface', async () => {
         connectionHealthState.kind = 'auth_required';
         connectionHealthState.endpointStatus = 'auth_failed';
         const profiles = await import('@/sync/domains/server/serverProfiles');
@@ -2177,9 +2189,13 @@ describe('ConnectionStatusControl (native popover config)', () => {
         expect(screen.findByTestId('connection-popover-primary-action')).toBeTruthy();
         expect(screen.findByTestId('connection-details-disclosure')?.props.accessibilityState).toMatchObject({ expanded: false });
 
-        await act(async () => pressTestInstanceAsync(screen.findByTestId('connection-details-disclosure')));
+        // The relay's live state shows with the Home's; only the technical facts wait behind the disclosure.
+        expect(screen.findByTestId('connection-popover-relay')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('iroh-endpoint-123');
 
-        expect(screen.findByTestId('connection-transport-diagnostics')).toBeTruthy();
+        await openTechnicalDetails(screen);
+
+        expect(screen.findByTestId('connection-details-disclosure')?.props.accessibilityState).toMatchObject({ expanded: true });
         expect(screen.getTextContent()).toContain('iroh-endpoint-123');
         const copyButton = screen.findByTestId('connection-copy-diagnostics');
         expect((copyButton?.props.accessibilityRole ?? copyButton?.props.role)).toBe('button');
@@ -2238,6 +2254,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         await act(async () => pressTestInstanceAsync(screen.findByProps({ accessibilityRole: 'button' })));
         await openStep('connection-details');
+        await openTechnicalDetails(screen);
 
         expect(screen.getTextContent()).toContain('browser-endpoint-123');
         expect(screen.getTextContent()).not.toContain('connectionStatus.labels.effectiveCarrier');
@@ -2279,6 +2296,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         await act(async () => pressTestInstanceAsync(screen.findByProps({ accessibilityRole: 'button' })));
         await openStep('connection-details');
+        await openTechnicalDetails(screen);
 
         const joined = screen.getTextContent();
         expect(joined).toContain('connectionStatus.labels.lastKnownPath');
@@ -2312,6 +2330,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             await act(async () => pressTestInstanceAsync(screen.findByProps({ accessibilityRole: 'button' })));
             await openStep('connection-details');
+            await openTechnicalDetails(screen);
 
             expect(screen.getTextContent()).toContain('systemStatus.transport.irohHistory');
             expect(screen.getTextContent()).not.toContain('systemStatus.transport.irohCurrent');
@@ -2362,6 +2381,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         expect(screen.getTextContent()).not.toContain('connectionStatus.labels.endpointId');
 
         await openStep('connection-details');
+        await openTechnicalDetails(screen);
 
         const joined = screen.getTextContent();
         expect(joined).toContain('connectionStatus.labels.canonicalAddress');
@@ -2418,6 +2438,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         const screen = await renderScreen(element);
         await act(async () => pressTestInstanceAsync(screen.findByProps({ accessibilityRole: 'button' })));
         await openStep('connection-details');
+        await openTechnicalDetails(screen);
         expect(screen.getTextContent()).toContain('endpoint-before');
 
         irohDiagnosticsState.values = [{
@@ -2467,4 +2488,5 @@ describe('ConnectionStatusControl (native popover config)', () => {
             tree?.unmount();
         });
     });
+
 });

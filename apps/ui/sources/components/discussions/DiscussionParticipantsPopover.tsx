@@ -935,9 +935,7 @@ function DiscussionAgentMenu(
       gap={4}
       maxWidthCap={360}
       matchTriggerWidth={false}
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.title}
-      {...(management ? { popoverSheetSubtitle: policy } : {})}
       onSelect={(id) => {
         setOpen(false);
         if (id === OPEN_ID) {

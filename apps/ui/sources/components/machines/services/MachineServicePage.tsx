@@ -415,7 +415,6 @@ function ServiceMoreMenu(props: Readonly<{
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
         if (id === 'command') props.onRunCommand?.();

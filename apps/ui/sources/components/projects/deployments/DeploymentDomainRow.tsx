@@ -156,7 +156,6 @@ function DomainRowMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.item.content.hostname}
       separateCategories
       onSelect={(itemId) => {

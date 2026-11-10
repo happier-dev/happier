@@ -247,7 +247,6 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
       onSelect={onSelect}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('machineProcesses.portMenu.label', {
         port: props.port,
       })}

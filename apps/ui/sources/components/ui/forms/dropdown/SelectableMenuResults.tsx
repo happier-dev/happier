@@ -247,6 +247,8 @@ type MenuRowStructure = Readonly<{
     /** First flat row of each category, then the row count. */
     categoryStarts: readonly number[];
     checkRoles: readonly CheckRole[];
+    /** Per category: whether its rows reserve the leading icon column. */
+    leadingSlots: readonly boolean[];
     /** Swatch palettes wrap into shared rows, so they are always drawn whole. */
     hasSwatch: boolean;
     /** Estimated top of each flat row from the first, then the estimated end. */
@@ -547,8 +549,6 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
     const submenuAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
 
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
-    // A menu where only some rows carry an icon keeps one text edge: the others hold the same empty slot.
-    const reservesLeadingSlot = React.useMemo(() => allItems.some((item) => item.left != null || item.multiSelect === true), [allItems]);
     // A row the keyboard moves focus to may not be mounted yet (End in a long menu): focus it once it is.
     const pendingFocusIdRef = React.useRef<string | null>(null);
     React.useImperativeHandle(ref, () => ({
@@ -588,6 +588,9 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
         let index = 0;
         for (const category of props.categories) {
             categoryStarts.push(index);
+        // The leading column is reserved per section (owner 2026-11-10): a section where only some rows carry an icon
+        // keeps one text edge, its others holding the same empty slot; a section with none starts at the text edge.
+        const leadingSlots: boolean[] = [];
             let checkedCount = 0;
             let multiSelect = false;
             for (const item of category.items) {
@@ -595,7 +598,9 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                 if (item.multiSelect === true) multiSelect = true;
                 if (item.swatch) hasSwatch = true;
                 const estimate = item.subtitle || item.subtitleNode ? MENU_ROW_WITH_SUBTITLE_ESTIMATE_PX : MENU_ROW_ESTIMATE_PX;
+            let leadingSlot = false;
                 estimatedTops[index + 1] = estimatedTops[index]! + estimate;
+                if (item.left != null || item.multiSelect === true) leadingSlot = true;
                 const known = knownHeights.size > 0 ? knownHeights.get(String(item.id)) : undefined;
                 if (known !== undefined) {
                     measured[index] = known;
@@ -608,9 +613,10 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
             checkRoles.push(checkedCount > 1 && !multiSelect ? 'radio' : 'checkbox');
         }
         categoryStarts.push(index);
-        return { rowCount, categoryStarts, checkRoles, hasSwatch, estimatedTops, measured, measuredDeltas };
+        return { rowCount, categoryStarts, checkRoles, leadingSlots, hasSwatch, estimatedTops, measured, measuredDeltas };
     }, [allItems.length, props.categories]);
     const recordRowHeight = React.useCallback((structure: MenuRowStructure, index: number, itemId: string, height: unknown) => {
+            leadingSlots.push(leadingSlot);
         if (typeof height !== 'number' || !(height > 0)) return;
         const previous = structure.measured[index] || structure.estimatedTops[index + 1]! - structure.estimatedTops[index]!;
         if (structure.measured[index] === height) return;
@@ -758,6 +764,7 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                     const item = (sourceIndex === undefined ? undefined : props.itemSource?.getItem(sourceIndex)) ?? listedItem;
                     const isSelected = itemIndex === props.selectedIndex;
                     const right = item.right ?? (item.checked === true && item.multiSelect !== true ? checkMark : null);
+                const reservesLeadingSlot = rowStructure.leadingSlots[categoryIndex] === true;
                     const left = item.left
                         ?? (item.multiSelect === true ? <MenuCheckBox checked={item.checked === true} rowKind={rowKind} /> : null)
                         ?? (reservesLeadingSlot ? <View style={styles.leadingSlot} /> : null);

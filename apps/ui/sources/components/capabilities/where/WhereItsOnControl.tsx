@@ -170,7 +170,6 @@ const AddMenu: Host['AddMenu'] = ({ testID, title, groups, onSelect }) => {
       showCategoryTitles
       matchTriggerWidth={false}
       rowKind="item"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={title}
       trigger={({ toggle, open: isOpen }) => (
         <SectionActionButton testID={testID} icon="plus" title={title} expanded={isOpen} onPress={toggle} />
@@ -194,7 +193,6 @@ const AgentSelect: Host['AgentSelect'] = ({ testID, label, accessibilityLabel, s
       selectedId={selectedId}
       onSelect={onSelect}
       matchTriggerWidth={false}
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={accessibilityLabel}
       trigger={({ toggle, open: isOpen }) => (
         <HappierPressable

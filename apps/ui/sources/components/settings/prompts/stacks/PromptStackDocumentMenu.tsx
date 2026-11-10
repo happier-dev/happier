@@ -74,7 +74,6 @@ export function PromptStackDocumentMenu(props: Readonly<{
             searchPlaceholder={props.searchPlaceholder ?? t('contextPages.addDocument')}
             emptyLabel={admitted && loaded && !unavailable ? t('contextPages.addDocumentEmpty') : null}
             popoverAnchorRef={props.anchorRef}
-            popoverPhonePresentation="sheet"
             popoverAccessibilityLabel={props.searchPlaceholder ?? t('contextPages.addDocument')}
             matchTriggerWidth={false}
             onSelect={(id) => {

@@ -77,7 +77,6 @@ export const PolicyValueSelect = React.memo(function PolicyValueSelect(
       maxWidthCap={280}
       showCategoryTitles={false}
       popoverPortalWebTarget="body"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.label}
       trigger={({ toggle }) => (
         <HappierPressable

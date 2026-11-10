@@ -60,7 +60,6 @@ export function ProfileSkillSeedsSection(props: Readonly<{
             matchTriggerWidth={false}
             placement="bottom"
             popoverAnchorAlign="end"
-            popoverPhonePresentation="sheet"
             popoverAccessibilityLabel={t('capabilities.profileSeeds.addTitle')}
             trigger={({ open, toggle }) => (
                 <SectionActionButton

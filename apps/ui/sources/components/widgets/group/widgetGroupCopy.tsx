@@ -95,7 +95,6 @@ export function WidgetCopyDestinationMenu(props: Readonly<{
             // Anchored to a ⋯, so the menu takes its own width, names itself and is a sheet on a phone.
             matchTriggerWidth={false}
             showCategoryTitles
-            popoverPhonePresentation="sheet"
             popoverAccessibilityLabel={t('widgetFrame.groupAddTo')}
             items={destinations.map(destination => ({ id: destination.key, testID: `${props.testID}.${destination.key}`, title: destination.label,
                 category: t('widgetFrame.groupAddTo'),

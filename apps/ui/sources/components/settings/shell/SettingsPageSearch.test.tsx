@@ -164,6 +164,19 @@ describe('SettingsPageSearch', () => {
         expect(screen.findByTestId('settings-page-search.result.setting.appearance.density')).toBeTruthy();
     });
 
+    it('shades the search field\'s lower edge once the page scrolls beneath it', async () => {
+        const { StyleSheet } = await import('react-native');
+        const screen = await renderSearch();
+        const shade = () => {
+            const opacity = StyleSheet.flatten(screen.findHostByTestId('pane-header-shade')?.props.style)?.opacity as unknown;
+            return typeof opacity === 'number' ? opacity : (opacity as { __getValue(): number } | undefined)?.__getValue();
+        };
+        expect(shade()).toBe(0);
+        const body = screen.findAllByTestId('settings-page-body').find(node => typeof node.props.onScroll === 'function');
+        await act(async () => { body?.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 40 } } }); });
+        expect(shade()).toBe(1);
+    });
+
     it('says so when nothing matches', async () => {
         const screen = await renderSearch();
         await act(async () => {

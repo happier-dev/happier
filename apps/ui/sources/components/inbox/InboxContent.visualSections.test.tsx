@@ -5,6 +5,7 @@ import { act, type ReactTestRenderer, type ReactTestInstance } from 'react-test-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, createSessionViewerFixture, renderScreen } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAutomationRunFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createInboxAttentionFixture, createInboxApprovalArtifactFixture } from '@/dev/testkit/fixtures/inboxFixtures';
@@ -300,6 +301,20 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         await act(async () => clearPluginAccountAvailabilityProjection());
         expect(screen.findByTestId('inbox.plugin-disabled')).toBeNull();
         expect(screen.tree.findAllByType(InboxWorkRow)).toHaveLength(2);
+        await screen.unmount();
+    });
+    it('explains an active backup on the same stored condition row', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const { InboxWorkRow } = await import('./InboxWorkRow');
+        const item: InboxItem = { key: 'backup-health', producer: 'notice', type: 'update', view: 'updates',
+            title: 'Service down', context: null, createdAt: NOW, read: false, pageRoute: '/inbox',
+            source: { kind: 'account_notice', id: 'backup-health', serverId: 'server-a' },
+            focus: { kind: 'notice', id: 'backup-health', serverId: 'server-a' },
+            expectedDuring: { kind: 'backup', operation: { serverId: 'server-a', machineId: 'machine', operationId: 'backup' } } };
+        const screen = await renderScreen(<InboxContent model={createModel({ needsYou: false, extraItems: [item] })}
+            view="updates" />, { wrapper: PagePresentation });
+        const row = screen.tree.findAllByType(InboxWorkRow).find(row => row.props.title === 'Service down');
+        expect(row?.props.facts).toContain('Expected during backup');
         await screen.unmount();
     });
     it('renders Machine reachability in Updates independently of operation custody', async () => {
@@ -981,9 +996,8 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         for (const [view, notice] of [['updates', notices[0]!], ['needs_you', notices[1]!]] as const) {
             const screen = await renderScreen(<InboxContent model={model} view={view} />, { wrapper: PagePresentation });
             const item = items.find((row) => row.source.id === notice.artifact.id)!;
-            const dismiss = screen.findByTestId(`inbox.item.${item.key}.dismiss`);
-            expect(dismiss).not.toBeNull();
-            await act(async () => { await dismiss!.props.onPress(); });
+            // The row's one trailing control is its … menu, as on every Inbox row; Dismiss is in it.
+            await chooseDropdownMenuItem(screen, `inbox.item.${item.key}.dismiss`, 'inbox.dismiss');
             expect(dismissAccountNotice).toHaveBeenLastCalledWith(notice);
             await screen.unmount();
         }
@@ -1001,3 +1015,4 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         expect(tree.findAllByType(UserCard)).toHaveLength(1);
     });
 });
+

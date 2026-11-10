@@ -2,6 +2,7 @@ import * as React from 'react';
 import { expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Text } from '@/components/ui/text/Text';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
@@ -69,7 +70,7 @@ it('opens Usage in the Inbox workspace and dismisses a notice without opening an
         openUsageNotices: [{ artifact, header: UsageNoticeArtifactHeaderV1Schema.parse(artifact.rawHeader) }], dismissUsageNotice: dismiss,
     };
     const screen = await renderHostedInbox(model, 'updates');
-    await screen.pressByTestIdAsync(`inbox.usage-notice.dismiss.${artifact.id}`);
+    await chooseDropdownMenuItem(screen, `inbox.usage-notice.dismiss.${artifact.id}`, 'inbox.dismiss');
     expect(dismiss.mock.calls[0]?.[0]).toEqual(model.openUsageNotices[0]);
     expect(screen.findByTestId(`inbox.usage-notice.${artifact.id}`)).not.toBeNull();
     await screen.pressByTestIdAsync(`inbox.usage-notice.${artifact.id}`);
@@ -94,8 +95,9 @@ it('files a machine alert under Machines, opens the tab its push would, and dism
     expect(screen.findByTestId('inbox.section.usage')).toBeNull();
     expect(screen.getTextContent()).toContain('edge-1 is short on memory');
     expect(screen.getTextContent()).toContain('Critical for 5 min · swap 1.8 of 2 GB');
-    await screen.pressByTestIdAsync('inbox.machine-notice.dismiss.notice-machine');
+    await chooseDropdownMenuItem(screen, 'inbox.machine-notice.dismiss.notice-machine', 'inbox.dismiss');
     expect(dismiss.mock.calls[0]?.[0]).toEqual(model.openUsageNotices[0]);
     await screen.pressByTestIdAsync('inbox.machine-notice.notice-machine');
     expect(screen.findByTestId('opened-destination')?.props.children).toBe('/machines/edge-1-id?tab=processes&sort=memory');
 });
+

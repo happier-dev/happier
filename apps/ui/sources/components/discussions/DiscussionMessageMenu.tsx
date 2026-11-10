@@ -79,7 +79,6 @@ export function DiscussionMessageMenu(
       matchTriggerWidth={false}
       maxWidthCap={260}
       showCategoryTitles={false}
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.speakerLabel}
       trigger={({ toggle }) => (
         <IconButton

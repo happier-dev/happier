@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { InboxWorkRow } from '../InboxWorkRow';
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { InboxDismissRowMenu } from '../InboxRowMenu';
 import type { OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -19,18 +19,7 @@ export const UsageNoticeInboxRow = React.memo(function UsageNoticeInboxRow(props
             testID={`inbox.usage-notice.${props.entry.artifact.id}`}
             title={props.entry.header.title}
             onPress={props.onOpen}
-            trailingAccessory={(
-                <IconButton
-                    testID={`inbox.usage-notice.dismiss.${props.entry.artifact.id}`}
-                    accessibilityLabel={t('inbox.actionOperations.dismiss')}
-                    tooltip={t('inbox.actionOperations.dismiss')}
-                    iconName="x"
-                    variant="plain"
-                    size={28}
-                    interactiveTargetGapPx={8}
-                    onPress={dismiss}
-                />
-            )}
+            trailingAccessory={<InboxDismissRowMenu testID={`inbox.usage-notice.dismiss.${props.entry.artifact.id}`} onDismiss={dismiss} />}
         />
     );
 });

@@ -614,7 +614,6 @@ function PhaseMenu(
       matchTriggerWidth={false}
       maxWidthCap={320}
       popoverAccessibilityLabel={t('projects.deployments.columnUsedAt')}
-      popoverPhonePresentation="sheet"
       onSelect={(itemId) => props.onSelect(itemId as Phase)}
       trigger={({ toggle }) => (
         <Pressable
@@ -688,7 +687,6 @@ function VariableRowMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.row.name}
       separateCategories
       onSelect={(itemId) => {
@@ -931,7 +929,6 @@ function AddMenu(
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('projects.deployments.addVariable')}
       separateCategories
       onSelect={(choice) => props.onSelect(choice as Adding | 'paste')}

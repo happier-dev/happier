@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -165,7 +166,8 @@ describe('ActionOperationLedgerView', () => {
 
         expect(screen.getTextContent()).toContain('Failed');
         expect(screen.findHostByTestId('inbox.action-operation.operation-inbox-failed')).not.toBeNull();
-        await screen.pressByTestIdAsync('action-operation-dismiss.operation-inbox-failed');
+        // In the Inbox the row's one trailing control is its … menu; Dismiss is in it.
+        await chooseDropdownMenuItem(screen, 'action-operation-dismiss.operation-inbox-failed', 'inbox.dismiss');
         expect(onDismissOperation).toHaveBeenCalledWith(operation);
         expect(onOpenOperation).not.toHaveBeenCalled();
     });
@@ -411,3 +413,4 @@ describe('ActionOperationLedgerView', () => {
         expect(text.indexOf('Home A operation')).toBeLessThan(text.indexOf('Home B operation'));
     });
 });
+

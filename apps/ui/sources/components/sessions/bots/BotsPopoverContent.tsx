@@ -364,15 +364,17 @@ export function BotsPopoverContent(
     </View>
   ) : null;
 
-  // Readiness is offered once for the whole roster, so only once the roster is whole.
+  // Readiness is offered once for the whole roster, so only once the roster is whole. It is a line about
+  // the roster, so it sits in the header under the title: the list keeps its own bottom edge and fade,
+  // and nothing is laid over its last row.
   const readinessLine = !loading && !readinessDemanded && readinessBindings.size > 0 ? (
-    <View style={[styles.line, styles.readinessLine]} testID="bots-roster.readiness">
+    <View style={styles.readinessLine} testID="bots-roster.readiness">
       <Text variant="meta" style={styles.readinessText}>{t('session.collaboration.readiness.rosterNotChecked')}</Text>
       <TextLinkButton
         testID="bots-roster.readiness-check"
         size="meta"
         label={t('session.collaboration.readiness.check')}
-        // The line's own padding is its free space: above it the roster, below it the footer's New bot.
+        // The line's own padding is its free space: above it the title, below it the roster.
         verticalReach={theme.space.s4}
         onPress={() => setReadinessDemanded(true)}
       />
@@ -485,6 +487,7 @@ export function BotsPopoverContent(
       maxHeight={props.maxHeight}
       title={t('bots.title')}
       actions={footerActions}
+      subheader={readinessLine}
       summary={
         <View style={styles.summary}>
           {counts.needsYou > 0 ? (
@@ -558,7 +561,6 @@ export function BotsPopoverContent(
           />
         ) : null}
       </RailPopoverRosterList>
-      {readinessLine}
       {freshnessLine}
     </RailPopoverRoster>
   );
@@ -594,7 +596,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   readinessLine: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 1,
     gap: theme.space.s8,
+    paddingVertical: theme.space.s4,
   },
   readinessText: {
     flexShrink: 1,

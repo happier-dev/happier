@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Stack as ExpoStack, useLocalSearchParams, usePathname, type Href } from 'expo-router';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
+import { PaneHeaderScrollScope, PaneHeaderShade } from '@/components/appShell/panes/paneHeaderScroll';
 import { useRouteNode } from 'expo-router/build/Route';
 import { resolveHref } from 'expo-router/build/link/href';
 import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from './WorkspaceNavigationContext';
@@ -73,7 +74,16 @@ function NativeWorkspaceRouteTitle(props: React.PropsWithChildren) {
     const tab = destination ? workspace?.state.tabs[destination.tabId] : null;
     // Keep this nonvisual boundary mounted before/after phone readiness; only
     // its publication identity changes, never the native editable body.
+    // The native stack header is this page's pane header: the page's primary scroller shades its lower
+    // edge exactly as a pane header's, so content never slides under the header's controls bare. The
+    // shade is a trailing sibling, so the body stays the screen's first view (iOS finds its scroller there).
     return <NavigationTitleChromeProvider showsTitle={nativeShowsTitle && headerShown} showsBack={nativeShowsBack && headerShown}>
-        <DestinationTitlePublication instance={tab ? { tabId: tab.id, ref: tab.target } : null}>{props.children}</DestinationTitlePublication>
+        <PaneHeaderScrollScope passThrough={!headerShown}>
+            <DestinationTitlePublication instance={tab ? { tabId: tab.id, ref: tab.target } : null}>{props.children}</DestinationTitlePublication>
+            {headerShown ? <View pointerEvents="none" style={NATIVE_HEADER_SHADE_ANCHOR}><PaneHeaderShade /></View> : null}
+        </PaneHeaderScrollScope>
     </NavigationTitleChromeProvider>;
 }
+
+/** The native header's lower edge is the top of the screen's content: the shade hangs from a zero-height line there. */
+const NATIVE_HEADER_SHADE_ANCHOR = { position: 'absolute', top: 0, left: 0, right: 0, height: 0 } as const;

@@ -215,6 +215,9 @@ class ModalManagerClass implements IModal {
                         {
                             text: options?.confirmText || t('common.ok'),
                             style: options?.destructive ? 'destructive' : 'default',
+                            // The affirmative choice is the alert's primary, as the app dialog's is; a
+                            // destructive one never is, so the safe choice stays the easy one.
+                            isPreferred: !options?.destructive,
                             onPress: () => resolve(true)
                         }
                     ],

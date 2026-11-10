@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { InboxRowMenu } from '../InboxRowMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { buildSessionReminderMenuItem } from '@/components/sessions/shell/row/actionMenu/buildSessionRowActionMenuItems';
 import {
@@ -81,28 +81,5 @@ export const InboxSessionRowMenu = React.memo(function InboxSessionRowMenu(props
         });
     }, [applyReminderPresetIntent, settle, setReminder, reminderPresets, session, props.presentationSource, standing?.remindAt]);
 
-    return (
-        <DropdownMenu
-            open={open}
-            onOpenChange={setOpen}
-            items={items}
-            onSelect={onSelect}
-            search={false}
-            matchTriggerWidth={false}
-            maxWidthCap={260}
-            placement="bottom"
-            popoverAnchorAlign="end"
-            trigger={({ toggle }) => (
-                <IconButton
-                    testID={`inbox.row_menu.${session.id}`}
-                    iconName="dots-three"
-                    variant="plain"
-                    accessibilityLabel={t('inbox.work.rows.more')}
-                    hasPopup="menu"
-                    expanded={open}
-                    onPress={toggle}
-                />
-            )}
-        />
-    );
+    return <InboxRowMenu testID={`inbox.row_menu.${session.id}`} open={open} onOpenChange={setOpen} items={items} onSelect={onSelect} />;
 });

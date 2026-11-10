@@ -61,7 +61,7 @@ export function WorkflowBuiltinSessionButton(props: Readonly<{ entry: BuiltinWor
         items={[...menu.leadingItems, ...sessions.map((session) => ({ id: session.sessionId, title: session.label, ...workflowSessionOptionRow(session) }))]}
         {...(menu.emptyLabel === undefined ? {} : { emptyLabel: menu.emptyLabel })}
         // Session names are long; the chooser takes the width they need, not the button's.
-        matchTriggerWidth={false} popoverPhonePresentation="sheet" popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}
+        matchTriggerWidth={false} popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}
         trigger={({ toggle }) => <RoundButton testID={props.testID} size="small" display={props.primary ? 'default' : 'secondary'} title={t('workflows.examples.chooseSession')} onPress={toggle} />}
         selectedId={null}
         closeOnSelect={false}

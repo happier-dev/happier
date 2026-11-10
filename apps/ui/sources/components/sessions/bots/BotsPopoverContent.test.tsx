@@ -778,6 +778,8 @@ describe('Bots roster', () => {
 
     const notChecked = t('session.collaboration.readiness.rosterNotChecked');
     expect(screen.getTextContent().split(notChecked)).toHaveLength(2);
+    // A line about the whole roster leads it from the header; it never sits over the list's last row.
+    expect(screen.getTextContent().indexOf(notChecked)).toBeLessThan(screen.getTextContent().indexOf('Deps'));
     expect(screen.findAllHostsByTestId('bots-roster.readiness-check')).toHaveLength(1);
     expect(screen.findByTestId('bots-roster.readiness:quiet-0')).toBeNull();
 

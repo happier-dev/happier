@@ -339,8 +339,7 @@ function ArtifactThreadsMenu(props: Readonly<{ collaboration: DocCollaboration; 
                 collaboration.selectThread(id);
             }}
             placement="bottom"
-            // A body tap far down the Doc opens this list too: a phone shows it as a sheet, never anchored off-screen.
-            popoverPhonePresentation="sheet"
+            // A body tap far down the Doc opens this list too: a phone's anchored panel flips above the tap when below is short.
             popoverAccessibilityLabel={t('artifacts.browser.passage.threadsTitle')}
             popoverAnchorAlign="start"
             matchTriggerWidth={false}

@@ -150,7 +150,6 @@ export const ActionMachineApprovalSection = React.memo(function ActionMachineApp
                         onSelect={handleAdd}
                         emptyLabel={t('settingsActions.scopedMachines.noMachinesToAdd')}
                         matchTriggerWidth={false}
-                        popoverPhonePresentation="sheet"
                         popoverAccessibilityLabel={t('settingsActions.scopedMachines.addMachine')}
                         trigger={({ toggle }) => (
                             <SectionActionButton

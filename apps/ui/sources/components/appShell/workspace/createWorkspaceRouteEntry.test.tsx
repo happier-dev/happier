@@ -18,7 +18,8 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock({ Platform: { get OS() { return platform.os; }, select: (values: Record<string, unknown>) => values[platform.os] ?? values.default } });
 });
 // Expo's current native scene/module identity is an SDK boundary, independent of its global URL.
-vi.mock('expo-router/build/Route', () => ({ useRouteNode: () => ({ contextKey: './(app)/workflows/index.tsx' }) }));
+const routeNode = vi.hoisted(() => ({ contextKey: './(app)/workflows/index.tsx' }));
+vi.mock('expo-router/build/Route', () => ({ useRouteNode: () => routeNode }));
 
 const windowTitle = vi.hoisted(() => ({ options: null as Readonly<Record<string, unknown>> | null }));
 vi.mock('expo-router', async () => {
@@ -55,6 +56,32 @@ describe('WorkspaceRouteEntry', () => {
             expect(screen.findByTestId('workflow-create')).not.toBeNull();
             expect(screen.getTextContent()).toContain('Workflows');
         } finally { platform.os = 'web'; }
+    });
+    it('lets a native-header page shade the header as its list scrolls, and not when the route hides the header', async () => {
+        const { StyleSheet } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { ItemList } = await import('@/components/ui/lists/ItemList');
+        platform.os = 'ios';
+        function Body() { return <ItemList testID="native-page-list"><PageHeader title="Settings" /></ItemList>; }
+        const render = () => renderScreen(<WorkspaceNavigationProvider value={{ ...workspace(false), ownsRoute: false }}>
+            <NavigationTitleChromeProvider showsTitle showsBack><WorkspaceRouteEntry Body={Body} /></NavigationTitleChromeProvider>
+        </WorkspaceNavigationProvider>);
+        try {
+            routeNode.contextKey = './(app)/settings/index.tsx';
+            const screen = await render();
+            const shade = () => {
+                const opacity = StyleSheet.flatten(screen.findHostByTestId('pane-header-shade')?.props.style)?.opacity as unknown;
+                return typeof opacity === 'number' ? opacity : (opacity as { __getValue(): number } | undefined)?.__getValue();
+            };
+            expect(shade()).toBe(0);
+            const list = screen.findAllByTestId('native-page-list').find(node => typeof node.props.onScroll === 'function');
+            await act(async () => { list?.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 40 } } }); });
+            expect(shade()).toBe(1);
+
+            routeNode.contextKey = './(app)/workflows/index.tsx';
+            const hidden = await render();
+            expect(hidden.findHostByTestId('pane-header-shade')).toBeFalsy();
+        } finally { platform.os = 'web'; routeNode.contextKey = './(app)/workflows/index.tsx'; }
     });
     it('updates the window title without republishing hidden Expo options while a retained page is renamed', async () => {
         const ref = { kind: 'workflow', params: { id: 'deploy' } };

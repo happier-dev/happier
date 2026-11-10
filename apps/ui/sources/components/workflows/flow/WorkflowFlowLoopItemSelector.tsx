@@ -94,7 +94,6 @@ export const WorkflowFlowLoopItemSelector = React.memo(function WorkflowFlowLoop
                         variant="slim"
                         matchTriggerWidth={false}
                         popoverPortalWebTarget="body"
-                        popoverPhonePresentation="sheet"
                         popoverAccessibilityLabel={t('workflows.map.itemSelector.label')}
                         trigger={({ toggle }) => (
                             <HappierPressable

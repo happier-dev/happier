@@ -493,7 +493,6 @@ function AddWayInMenu(
       }}
       matchTriggerWidth={false}
       rowKind="item"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={title}
       trigger={({ toggle, open: isOpen }) => (
         <SectionActionButton testID="machine-network-add-way-in-trigger" icon="plus" title={title} expanded={isOpen} onPress={toggle} />

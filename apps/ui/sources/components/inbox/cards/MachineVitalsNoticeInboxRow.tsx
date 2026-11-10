@@ -10,7 +10,7 @@ import { formatAlertSustain } from '@/components/machines/vitals/machineAlertsPr
 import { resolveMachineResourceToneColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { machineVitalsNoticeHref, machineVitalsNoticeTab } from '@/components/machines/page/machinePageHref';
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { InboxDismissRowMenu } from '../InboxRowMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
 import type { OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
@@ -181,16 +181,7 @@ export const MachineVitalsNoticeInboxRow = React.memo(
         time={<InboxRelativeTime timestamp={notice.at} />}
         onPress={open}
         trailingAccessory={
-          <IconButton
-            testID={`inbox.machine-notice.dismiss.${entry.artifact.id}`}
-            accessibilityLabel={t('inbox.actionOperations.dismiss')}
-            tooltip={t('inbox.actionOperations.dismiss')}
-            iconName="x"
-            variant="plain"
-            size={28}
-            interactiveTargetGapPx={8}
-            onPress={dismiss}
-          />
+          <InboxDismissRowMenu testID={`inbox.machine-notice.dismiss.${entry.artifact.id}`} onDismiss={dismiss} />
         }
       />
     );

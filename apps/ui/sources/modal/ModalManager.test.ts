@@ -75,6 +75,24 @@ describe('Modal.prompt', () => {
         await expect(promise).resolves.toBe(true);
     });
 
+    it('makes the affirmative choice of an iOS confirm its primary, unless it is destructive', async () => {
+        const { Modal } = await import('./ModalManager');
+        const { Alert } = await import('react-native');
+        const alertSpy = (Alert as any).alert as ReturnType<typeof vi.fn>;
+        const buttonsOf = (index: number) => (alertSpy.mock.calls[index] as any[])[2] as Array<{ style?: string; isPreferred?: boolean; onPress?: () => void }>;
+        alertSpy.mockClear();
+
+        const enable = Modal.confirm('Turn on notifications?', undefined, { cancelText: 'Not now', confirmText: 'Turn on' });
+        expect(buttonsOf(0).map(button => button.isPreferred === true)).toEqual([false, true]);
+        buttonsOf(0)[0]?.onPress?.();
+        await expect(enable).resolves.toBe(false);
+
+        const remove = Modal.confirm('Delete?', undefined, { confirmText: 'Delete', destructive: true });
+        expect(buttonsOf(1).some(button => button.isPreferred === true)).toBe(false);
+        buttonsOf(1)[0]?.onPress?.();
+        await expect(remove).resolves.toBe(false);
+    });
+
     it('dismisses an invocation-owned confirmation on iOS when that invocation retires', async () => {
         const { Modal } = await import('./ModalManager');
         const { Alert } = await import('react-native');

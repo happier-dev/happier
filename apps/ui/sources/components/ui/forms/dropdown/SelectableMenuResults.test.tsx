@@ -92,6 +92,31 @@ describe('SelectableMenuResults', () => {
         expect(leftOf(plain, 'B')).toBeNull();
     });
 
+    // Owner 17:48 (My work View popover): icon-less sections sat indented to the Organize section's icon column.
+    // The leading column is reserved per section, so a section with no icon starts at the menu's text edge.
+    it('reserves the leading icon column per section, not per menu', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+        const screen = await renderScreen(<SelectableMenuResults
+            categories={[
+                { id: 'view', title: 'View', items: [{ id: 'projects', title: 'Projects' }, { id: 'recent', title: 'Recent activity' }] },
+                { id: 'organize', title: 'Organize', items: [
+                    { id: 'new', title: 'New section', left: <React.Fragment>{'icon'}</React.Fragment> },
+                    { id: 'plain', title: 'Plain row' },
+                ] },
+            ]}
+            selectedIndex={-1}
+            onSelectionChange={() => {}}
+            onPressItem={() => {}}
+            rowVariant="slim"
+            emptyLabel="Empty"
+        />);
+        const leftOf = (title: string) => screen.findAllByType('SelectableRow' as never)
+            .find((row) => row.props.title === title)?.props.left ?? null;
+        expect(leftOf('Projects')).toBeNull();
+        expect(leftOf('Recent activity')).toBeNull();
+        expect(leftOf('Plain row')).not.toBeNull();
+    });
+
     it('omits the category title row when the category title is empty', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 

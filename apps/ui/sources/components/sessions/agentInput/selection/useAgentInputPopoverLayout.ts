@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions } from 'react-native';
+import { Keyboard, Platform, useWindowDimensions } from 'react-native';
 
 import {
     MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
@@ -102,19 +102,27 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         return composerKeyboardLayout?.subscribeKeyboardHeight?.(setComposerKeyboardHeight);
     }, [composerKeyboardLayout]);
 
+    // A chip picker takes the room the keyboard held (UI refinements ruling 2026-11-10, NATIVE-SWEEP L12): opening
+    // it dismisses the keyboard; the draft stays, and a tap on the field brings the keyboard back. The slash/@ menu
+    // is written at the caret, so it keeps the keyboard and the composer's lift.
+    const dismissesKeyboard = Platform.OS !== 'web' && input.anchor !== 'caret' && !submenu;
+    React.useEffect(() => {
+        if (input.open && dismissesKeyboard) Keyboard.dismiss();
+    }, [dismissesKeyboard, input.open]);
+
     React.useEffect(() => {
         if (Platform.OS === 'web') {
             retainedNativeKeyboardHeightRef.current = 0;
             return;
         }
-        if (!input.open) {
+        if (!input.open || dismissesKeyboard) {
             retainedNativeKeyboardHeightRef.current = 0;
             return;
         }
         if (normalizedKeyboardHeight > 0) {
             retainedNativeKeyboardHeightRef.current = normalizedKeyboardHeight;
         }
-    }, [normalizedKeyboardHeight, input.open]);
+    }, [dismissesKeyboard, normalizedKeyboardHeight, input.open]);
 
     const effectiveKeyboardHeight =
         Platform.OS === 'web'
@@ -123,7 +131,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
                 ? normalizedKeyboardHeight
                 : composerKeyboardHeight > 0
                     ? composerKeyboardHeight
-                    : input.open
+                    : input.open && !dismissesKeyboard
                         ? retainedNativeKeyboardHeightRef.current
                         : 0;
 
@@ -157,10 +165,10 @@ export function useAgentInputPopoverLayout(input: Readonly<{
 
     React.useEffect(() => {
         if (Platform.OS === 'web') return undefined;
-        if (!input.open) return undefined;
+        if (!input.open || dismissesKeyboard) return undefined;
         if (effectiveKeyboardHeight <= 0) return undefined;
         return composerKeyboardLayout?.retainKeyboardLift?.();
-    }, [composerKeyboardLayout, effectiveKeyboardHeight, input.open]);
+    }, [composerKeyboardLayout, dismissesKeyboard, effectiveKeyboardHeight, input.open]);
 
     const portal = React.useMemo((): PopoverPortalOptions => {
         // A submenu starts at its row's top edge, as the shared dropdown's submenus do.

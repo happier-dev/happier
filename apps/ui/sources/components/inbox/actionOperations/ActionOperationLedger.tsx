@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { InboxWorkRow } from '../InboxWorkRow';
+import { InboxDismissRowMenu } from '../InboxRowMenu';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import {
     ItemGroupRowPositionProvider,
@@ -157,7 +158,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         accessibilityLiveRegion="polite"
         accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
         mark={<Icon name={status.tone === 'success' ? 'check-circle' : status.tone === 'danger' ? 'warning-circle' : 'clock'} size={ICON_SIZE.md} color={iconColor} />}
-        trailingAccessory={dismissButton}
+        trailingAccessory={canDismiss && props.onDismissOperation
+            ? <InboxDismissRowMenu testID={`action-operation-dismiss.${snapshot.operationId}`} onDismiss={dismiss} /> : undefined}
         onPress={() => props.onOpenOperation(props.operation)}
     />;
 

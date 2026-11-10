@@ -285,6 +285,33 @@ describe('Popover phone presentation', () => {
         expect(renderedBounds?.maxWidth).toBeLessThanOrEqual(390);
     });
 
+    // NATIVE-SWEEP-1110 L10: a draft's ⋯ asked for `left` and stayed a narrow menu beside its trigger (native: at
+    // the top of the screen). A phone panel opens above or below its trigger whatever side its caller named.
+    it.each(['left', 'right', 'auto-horizontal'] as const)('opens a %s-placed phone panel above or below its trigger', async (placement) => {
+        let renderedBounds: PopoverRenderProps | undefined;
+        await renderScreen(
+            <Popover open phonePresentation="panel" placement={placement} accessibilityLabel="Draft" onRequestClose={() => {}}>
+                {(bounds) => {
+                    renderedBounds = bounds;
+                    return <FloatingOverlay maxHeight={bounds.maxHeight}><View testID="panel-content" /></FloatingOverlay>;
+                }}
+            </Popover>,
+        );
+        expect(['top', 'bottom']).toContain(renderedBounds?.placement);
+    });
+
+    // NATIVE-SWEEP-1110 L10: a plain menu (cockpit More, a draft's ⋯) kept its desktop width, or opened left of a
+    // trigger near the bottom and landed at the top of the screen. Every phone menu is the anchored panel.
+    it('opens a plain menu on a phone as the anchored panel, never at its desktop width or beside its trigger', async () => {
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const screen = await renderScreen(
+            <DropdownMenu open onOpenChange={() => {}} placement="left" matchTriggerWidth={false} maxWidthCap={220}
+                items={[{ id: 'delete', title: 'Delete draft' }]} onSelect={() => {}}
+                trigger={({ toggle }) => <RoundButton testID="menu-trigger" title="More" onPress={toggle} />} />,
+        );
+        expect(screen.findByType(Popover).props.phonePresentation).toBe('panel');
+    });
+
     it('pushes a submenu opened inside a phone panel into it in place, with a Back that returns to it', async () => {
         const parentClose = vi.fn();
         function Menu() {

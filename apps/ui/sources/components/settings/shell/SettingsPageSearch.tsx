@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { ItemList } from '@/components/ui/lists/ItemList';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { PaneHeaderScrollScope, PaneHeaderShade } from '@/components/appShell/panes/paneHeaderScroll';
 import { t } from '@/text';
 import { SettingsQueryResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
 import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
@@ -23,16 +24,22 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
         queryState: useSettingsPageSearchQuery(),
         tag: 'SettingsPageSearch.open',
     });
-    // The header is fixed above the page body; a live query swaps the body for the windowed results list.
+    // The field is fixed above the page body, so it is the bottom of the page's header: the body's scroll
+    // shades the field's lower edge (the pane header's shade), rather than rows sliding under it bare.
+    // A live query swaps the body for the windowed results list.
     return (
+        <PaneHeaderScrollScope>
         <View style={styles.page}>
-            <CompactSearchField
-                testID="settings-page-search"
-                placement="page"
-                value={search.query}
-                onChangeText={search.setQuery}
-                placeholder={t('settingsSearch.placeholder')}
-            />
+            <View style={styles.searchBand}>
+                <CompactSearchField
+                    testID="settings-page-search"
+                    placement="page"
+                    value={search.query}
+                    onChangeText={search.setQuery}
+                    placeholder={t('settingsSearch.placeholder')}
+                />
+                <PaneHeaderShade />
+            </View>
             {search.active ? (
                 <SettingsQueryResults
                     presentation="page"
@@ -41,12 +48,15 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
                     emptyTestID="settings-page-search.empty"
                     onOpen={search.openRoute}
                 />
-            ) : <ItemList style={styles.body}>{props.children}</ItemList>}
+            ) : <ItemList testID="settings-page-body" style={styles.body}>{props.children}</ItemList>}
         </View>
+        </PaneHeaderScrollScope>
     );
 });
 
 const styles = StyleSheet.create({
     page: { flex: 1, minHeight: 0 },
+    // The shade hangs below the band, over the body that follows it.
+    searchBand: { zIndex: 1 },
     body: { paddingTop: 0 },
 });

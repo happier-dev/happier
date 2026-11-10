@@ -486,6 +486,9 @@ export function BaseModal({
                         visible={visible}
                         kind="modal"
                         direction={placement === 'bottom' ? 'bottom' : undefined}
+                        // A card or sheet stands on glass: it moves in by transform alone, since UIKit renders no glass
+                        // created under an ancestor below full alpha (NATIVE-SWEEP M2: a clear Sign-in card). Its scrim fades.
+                        material={placement !== 'fullscreen'}
                         pointerEvents="box-none"
                         style={[
                             styles.content,

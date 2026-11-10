@@ -173,7 +173,7 @@ function ExampleSessionChooser(props: Readonly<{
         <DropdownMenu open onOpenChange={(open) => { if (!open) props.onClose(); }} search searchPlaceholder={t('sessionsList.searchSessionsPlaceholder')}
             items={[...menu.leadingItems, ...sessions.map(session => ({ id: session.sessionId, title: session.label, ...workflowSessionOptionRow(session) }))]} selectedId={null}
             {...(menu.emptyLabel === undefined ? {} : { emptyLabel: menu.emptyLabel })}
-            matchTriggerWidth={false} popoverPhonePresentation="sheet" popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}
+            matchTriggerWidth={false} popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}
             closeOnSelect={false}
             trigger={({ toggle }) => <RoundButton testID={`workflow-examples:${props.example.key}:use`} size="small" display="secondary"
                 title={t('workflows.examples.chooseSession')}

@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { MachineVitalsNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { happierPageTextMetrics, type HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, View } from 'react-native';
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { InboxDismissRowMenu } from './InboxRowMenu';
 import { Modal } from '@/modal';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -131,10 +131,7 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         mark={<Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
             color={item.view === 'needs_you' ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />}
         trailingAccessory={item.producer === 'notice' ? (
-            <IconButton testID={`inbox.item.${item.key}.dismiss`} accessibilityLabel={t('inbox.actionOperations.dismiss')}
-                tooltip={t('inbox.actionOperations.dismiss')} iconName="x" variant="plain" size={28}
-                interactiveTargetGapPx={8}
-                onPress={dismiss} />
+            <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss} />
         ) : undefined}
         belowAccessory={item.pluginSessionRows?.length ? (
             <InboxPluginSessionLines rows={item.pluginSessionRows} invoke={props.invokePluginSessionControl}

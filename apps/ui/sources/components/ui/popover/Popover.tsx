@@ -59,6 +59,7 @@ import { AnchoredPhonePushHost, createPhoneSheetPushStack, PhoneSheetPushBody, P
 import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { GlassOpenedLayer } from '@/components/ui/glass/GlassSurface';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
+import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any }>;
 
@@ -534,7 +535,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         initialFocusRef: initialFocusRefProp,
         boundaryRef: boundaryRefProp,
         followScrollRef: followScrollRefProp,
-        placement = 'auto',
+        placement: requestedPlacement = 'auto',
         gap = 8,
         maxHeightCap: maxHeightCapProp,
         maxWidthCap: requestedMaxWidthCap = 520,
@@ -549,6 +550,10 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const phone = useDeviceType() === 'phone';
     // A phone panel spans the screen less its gutters, above or below its trigger (`phonePresentation`).
     const spansPhone = phone && props.phonePresentation === 'panel';
+    // ... whatever side its caller named: a side placement there left a menu narrow beside its trigger, or at the
+    // top of the screen beside a trigger near the bottom (NATIVE-SWEEP L10: a draft's ⋯).
+    const placement = spansPhone && (requestedPlacement === 'left' || requestedPlacement === 'right' || requestedPlacement === 'auto-horizontal')
+        ? 'auto-vertical' : requestedPlacement;
     const keyboardBottomInsetProp = props.keyboardBottomInset;
     const autoFocusOnOpen = props.autoFocusOnOpen === true;
     const resolvedAnchorMode: 'view' | 'rect' = anchorProp ? anchorProp.kind : 'view';
@@ -1018,6 +1023,9 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const contentMaxWidth = Math.max(0, computed.maxWidth - horizontalGutter * 2);
 
     const keyboardHeightRef = React.useRef(0);
+    // The shell's floating bottom chrome (tab bar, docked band) covers the page and reserves nothing, so the popover
+    // treats it like the keyboard: as the bottom of the usable viewport (NATIVE-SWEEP L12: View options over the bar).
+    const bottomChromeClearance = useSessionCockpitPageBottomClearance();
 
     const recompute = React.useCallback(async () => {
         if (!open) return;
@@ -1239,14 +1247,15 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                     ? { x: 0, y: 0, width: portalTarget.layout.width, height: portalTarget.layout.height }
                     : getFallbackBoundaryRect({ windowWidth, windowHeight }));
 
-            // Treat the on-screen keyboard as reducing the usable bottom viewport. Without this,
-            // `placement="auto"` can flip a menu into the region covered by the keyboard, making it
-            // look like the popover disappeared.
+            // Treat the on-screen keyboard, or the floating bottom chrome it rises over, as reducing the usable
+            // bottom viewport. Without this, `placement="auto"` can flip a menu into the covered region, making
+            // it look like the popover disappeared, and a tall panel runs under the tab bar.
+            const bottomOcclusion = Math.max(keyboardHeight, bottomChromeClearance);
             const boundaryRect: WindowRect =
-                keyboardHeight > 0
+                bottomOcclusion > 0
                     ? {
                         ...boundaryRectBase,
-                        height: Math.max(0, boundaryRectBase.height - keyboardHeight),
+                        height: Math.max(0, boundaryRectBase.height - bottomOcclusion),
                     }
                     : boundaryRectBase;
 
@@ -1432,7 +1441,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
         } else {
             scheduleFrame(() => { void measureWithRetries(0); });
         }
-    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;

@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { useUsableHomeServerIds } from '@/sync/domains/scope/usableHomeServerIds';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { HappierPressable, type HappierFocusable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Popover } from '@/components/ui/popover';
 import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -38,7 +37,10 @@ import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/re
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
+import { useRelativeTime } from '@/components/sessions/agents/presentation/agentActivityClock';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -76,7 +78,6 @@ import {
     sanitizeDoctorDiagnosticText,
     type DoctorSnapshotHomeTransportDiagnostics,
 } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
-import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -94,22 +95,6 @@ const DENSE_POINTER_TARGET_SIZE = 24;
 const ACCOUNT_POPOVER_WIDTH = 300;
 
 type ConnectionStatusKey = 'connected' | 'connecting' | 'disconnected' | 'error' | 'action_required' | 'unknown';
-
-function resolveConnectionStatusPillVariant(status: ConnectionStatusKey): StatusPillVariant {
-    switch (status) {
-        case 'connected':
-            return 'success';
-        case 'connecting':
-            return 'info';
-        case 'action_required':
-            return 'warning';
-        case 'error':
-            return 'danger';
-        case 'disconnected':
-        case 'unknown':
-            return 'neutral';
-    }
-}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -154,103 +139,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     popoverContent: {
         paddingVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
     },
-    popoverStatusList: {
-        marginHorizontal: theme.space.s12,
-        borderRadius: 14,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        overflow: 'hidden',
-    },
-    statusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        minHeight: 54,
-        paddingVertical: theme.space.s8,
-        paddingHorizontal: theme.space.s12,
-        position: 'relative',
-    },
-    statusRowDivider: {
-        position: 'absolute',
-        top: 0,
-        left: 44,
-        right: 12,
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: theme.colors.border.default,
-    },
-    statusRowLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s10,
-        flexShrink: 1,
-        minWidth: 0,
-    },
-    statusRowIcon: {
-        width: 22,
-        height: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    statusRowText: {
-        flexShrink: 1,
-        minWidth: 0,
-    },
-    statusRowTitle: {
-        ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    statusRowSubtitle: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-        marginTop: 1,
-    },
-    statusRowRight: {
-        marginLeft: theme.space.s10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-    },
-    popoverStatusPill: {
-        flexShrink: 0,
-    },
-    statusMeta: {
-        paddingHorizontal: theme.space.s16,
-        paddingTop: theme.space.s10,
-        gap: theme.space.s6,
-    },
-    statusMetaRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        gap: theme.space.s12,
-        alignItems: 'flex-start',
-    },
-    statusMetaLabel: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-    },
-    statusMetaValue: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.primary,
-    },
-    technicalDetails: {
-        marginHorizontal: theme.space.s12,
-        marginTop: theme.space.s4,
-        padding: theme.space.s12,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface.inset,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        gap: theme.space.s8,
-    },
-    technicalDetailsTitle: {
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.text.secondary,
-    },
-    technicalDetailsValue: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-        ...Typography.mono(),
-    },
     popoverActionsRow: {
         flexDirection: 'row',
         justifyContent: 'flex-end',
@@ -258,21 +146,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s16,
         paddingTop: theme.space.s12,
     },
-    detailsDisclosure: {
-        marginHorizontal: theme.space.s12,
-        marginTop: theme.space.s6,
-        paddingHorizontal: theme.space.s8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    copyDiagnosticsButton: {
+    // A live fact's state in its row's trailing column: a small dot and one quiet word.
+    statusTrailing: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
     },
-    detailsDisclosureText: {
-        ...Typography.variant('body', 'semiBold'),
+    statusWordText: {
         color: theme.colors.text.secondary,
     },
 }));
@@ -404,20 +284,20 @@ function buildTransportDetailRows(params: Readonly<{
 function resolveStatusPresentation(
     theme: { colors: { status: Record<string, string> } },
     status: ConnectionStatusKey,
-): { labelKey: TranslationKeyNoParams; color: string; dotColor: string; pillVariant: StatusPillVariant } {
+): { labelKey: TranslationKeyNoParams; color: string } {
     switch (status) {
         case 'connected':
-            return { labelKey: 'status.connected', color: theme.colors.status.connected, dotColor: theme.colors.status.connected, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.connected', color: theme.colors.status.connected };
         case 'connecting':
-            return { labelKey: 'status.connecting', color: theme.colors.status.connecting, dotColor: theme.colors.status.connecting, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.connecting', color: theme.colors.status.connecting };
         case 'action_required':
-            return { labelKey: 'status.actionRequired', color: theme.colors.status.actionRequired, dotColor: theme.colors.status.actionRequired, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.actionRequired', color: theme.colors.status.actionRequired };
         case 'error':
-            return { labelKey: 'status.error', color: theme.colors.status.error, dotColor: theme.colors.status.error, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.error', color: theme.colors.status.error };
         case 'disconnected':
-            return { labelKey: 'status.disconnected', color: theme.colors.status.disconnected, dotColor: theme.colors.status.disconnected, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.disconnected', color: theme.colors.status.disconnected };
         default:
-            return { labelKey: 'status.unknown', color: theme.colors.status.default, dotColor: theme.colors.status.default, pillVariant: resolveConnectionStatusPillVariant(status) };
+            return { labelKey: 'status.unknown', color: theme.colors.status.default };
     }
 }
 
@@ -458,6 +338,17 @@ function resolveSocketStatusKey(socketStatus: unknown): 'connected' | 'connectin
     }
 }
 
+/** A live fact's state: a small dot in its colour and the word that names it. */
+function ConnectionStatusWord(props: Readonly<{ label: string; color: string }>) {
+    return (
+        <View style={stylesheet.statusTrailing}>
+            <StatusDot color={props.color} size={6} />
+            <Text variant="meta" style={stylesheet.statusWordText} numberOfLines={1}>{props.label}</Text>
+        </View>
+    );
+}
+
+/** One live fact of the Home (this Home, realtime, machines, the relay): what it is, then its state. */
 const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRow(props: Readonly<{
     testID: string;
     icon: IconName;
@@ -465,50 +356,46 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
     subtitle: string;
     statusLabel: string;
     statusColor: string;
-    dotColor: string;
-    statusVariant: StatusPillVariant;
-    divided?: boolean;
     onRetry?: () => void;
 }>) {
-    const styles = stylesheet;
+    const { theme } = useUnistyles();
     return (
-        <View style={styles.statusRow} testID={props.testID}>
-            {props.divided ? <View pointerEvents="none" style={styles.statusRowDivider} /> : null}
-            <View style={styles.statusRowLeft}>
-                <View style={styles.statusRowIcon}>
-                    <Icon name={props.icon} size={17} color={props.dotColor} />
+        <Item
+            testID={props.testID}
+            mode="info"
+            icon={<Icon name={props.icon} size={16} color={theme.colors.text.secondary} />}
+            title={props.title}
+            subtitle={props.subtitle}
+            subtitleLines={1}
+            rightElementYields={!props.onRetry}
+            rightElement={(
+                <View style={stylesheet.statusTrailing}>
+                    {props.onRetry ? (
+                        <IconButton
+                            testID={`${props.testID}-retry`}
+                            iconName="arrow-clockwise"
+                            variant="plain"
+                            size={DENSE_POINTER_TARGET_SIZE}
+                            iconSize={16}
+                            accessibilityLabel={t('common.retry')}
+                            onPress={props.onRetry}
+                        />
+                    ) : null}
+                    <ConnectionStatusWord label={props.statusLabel} color={props.statusColor} />
                 </View>
-                <View style={styles.statusRowText}>
-                    <Text style={styles.statusRowTitle} numberOfLines={1}>
-                        {props.title}
-                    </Text>
-                    <Text style={styles.statusRowSubtitle} numberOfLines={1} ellipsizeMode="tail">
-                        {props.subtitle}
-                    </Text>
-                </View>
-            </View>
-            <View style={{ flex: 1 }} />
-            <View style={styles.statusRowRight}>
-                {props.onRetry ? (
-                    <IconButton
-                        testID={`${props.testID}-retry`}
-                        iconName="arrow-clockwise"
-                        variant="plain"
-                        size={DENSE_POINTER_TARGET_SIZE}
-                        iconSize={16}
-                        accessibilityLabel={t('common.retry')}
-                        onPress={props.onRetry}
-                    />
-                ) : null}
-                <StatusPill
-                    variant={props.statusVariant}
-                    label={props.statusLabel}
-                    style={styles.popoverStatusPill}
-                />
-            </View>
-        </View>
+            )}
+        />
     );
 });
+
+/**
+ * One group of the Connection details rows. On the popover (and the Account & Homes page, which draws
+ * the popover's surface) it is a menu section; under the Homes page's own disclosure the rows stand bare
+ * in that row's body, so the page never draws a card inside its sheet.
+ */
+function ConnectionDetailsSection(props: Readonly<{ menuSection: boolean; children: React.ReactNode }>) {
+    return props.menuSection ? <ItemGroup>{props.children}</ItemGroup> : <>{props.children}</>;
+}
 
 /**
  * What a host-drawn trigger needs to present this Home's state. The control keeps the popover (and,
@@ -535,9 +422,41 @@ export type ConnectionStatusTriggerState = Readonly<{
 }>;
 
 /** The last sync moves on every sync: only the shown details read it, never the closed trigger. */
-function LastSyncTime(props: Readonly<{ style: React.ComponentProps<typeof Text>['style'] }>) {
+function LastSyncRow() {
     const lastSyncAt = useLastSyncAt();
-    return <Text style={props.style}>{formatTime(lastSyncAt)}</Text>;
+    return lastSyncAt ? <SyncedAgoRow atMs={lastSyncAt} /> : (
+        <Item testID="connection-popover-last-sync" mode="info" title={t('connectionStatus.labels.lastSync')} detail="—" />
+    );
+}
+
+const IS_WEB = Platform.OS === 'web';
+
+/**
+ * "Synced just now": the age, kept current by the shared relative clock. The exact time is the row's
+ * tooltip on the web and its long-press on a phone, and always part of its accessible name.
+ */
+function SyncedAgoRow(props: Readonly<{ atMs: number }>) {
+    const when = useRelativeTime(props.atMs);
+    const [exactShown, setExactShown] = React.useState(false);
+    const relative = t('connectionStatus.syncedAgo', { when });
+    const exact = formatTime(props.atMs);
+    const accessibilityLabel = `${relative}, ${exact}`;
+    if (IS_WEB) {
+        return (
+            <Tooltip testID="connection-popover-last-sync" label={exact} accessibilityLabel={accessibilityLabel}>
+                <Item mode="info" title={relative} />
+            </Tooltip>
+        );
+    }
+    return (
+        <Item
+            testID="connection-popover-last-sync"
+            title={exactShown ? exact : relative}
+            accessibilityLabel={accessibilityLabel}
+            showChevron={false}
+            onLongPress={() => setExactShown((shown) => !shown)}
+        />
+    );
 }
 
 export const ConnectionStatusControl = React.memo(function ConnectionStatusControl(props: {
@@ -618,9 +537,9 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const diagnosticsHomeIdentity = displayServerProfile?.serverIdentityId ?? displayServerId;
     // The popover shows technical facts on its Connection details step; the full-screen surface
     // keeps its disclosure. Either way, transport facts are observed only while shown.
+    // The Homes page mounts the full-screen surface only while its own Connection details row is open.
     const detailsVisible = props.variant === 'fullScreen'
-        ? detailsExpanded
-        : (open || props.variant === 'page') && popoverStep === 'details';
+        || ((open || props.variant === 'page') && popoverStep === 'details');
     const subscribeTransportDiagnostics = React.useCallback((listener: () => void) => (
         detailsVisible ? subscribeIrohHomeTransportDiagnostics(listener) : () => undefined
     ), [detailsVisible]);
@@ -920,44 +839,49 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const primaryActionLabel = homeSummary.action === 'restore'
         ? t('connect.restoreAccount')
         : t('common.retry');
+    const menuSections = props.variant !== 'fullScreen';
     // The Home's live facts: on the Homes page's Connection details, and on the popover's
     // Connection details step (the popover's first layer already names each Home's health).
     const homeStatusList = (
-            <View style={styles.popoverStatusList}>
+        <ConnectionDetailsSection menuSection={menuSections}>
+            <ConnectionPopoverStatusRow
+                testID="connection-popover-home"
+                icon="house"
+                title={activeServerLabel}
+                subtitle={toServerUrlDisplay(displayServerUrl)}
+                statusLabel={t(homeSummary.statusLabelKey)}
+                statusColor={homeSummaryPresentation.color}
+            />
+            <ConnectionPopoverStatusRow
+                testID="connection-popover-realtime"
+                icon="pulse"
+                title={t('systemStatus.ui.realtime')}
+                subtitle={t('systemStatus.ui.socket')}
+                statusLabel={t(socketPresentation.labelKey)}
+                statusColor={socketPresentation.color}
+            />
+            <ConnectionPopoverStatusRow
+                testID="connection-popover-machines"
+                icon="laptop"
+                title={t('settings.machines')}
+                subtitle={machineSubtitle}
+                statusLabel={showsMachineGuidance ? t('status.actionRequired') : t(connectionHealth.machineLabelKey)}
+                statusColor={machinesPresentation.color}
+            />
+            {hasIrohTransportDetails ? (
                 <ConnectionPopoverStatusRow
-                    testID="connection-popover-home"
-                    icon="house"
-                    title={activeServerLabel}
+                    testID="connection-popover-relay"
+                    icon="hard-drives"
+                    title={t(irohTransportTitleKey)}
                     subtitle={toServerUrlDisplay(displayServerUrl)}
-                    statusLabel={t(homeSummary.statusLabelKey)}
-                    statusColor={homeSummaryPresentation.color}
-                    dotColor={homeSummaryPresentation.dotColor}
-                    statusVariant={homeSummaryPresentation.pillVariant}
+                    statusLabel={t(relayPresentation.labelKey)}
+                    statusColor={relayPresentation.color}
+                    onRetry={canRetryRelayConnection ? handleRetry : undefined}
                 />
-                <ConnectionPopoverStatusRow
-                    testID="connection-popover-realtime"
-                    icon="pulse"
-                    title={t('systemStatus.ui.realtime')}
-                    subtitle={t('systemStatus.ui.socket')}
-                    statusLabel={t(socketPresentation.labelKey)}
-                    statusColor={socketPresentation.color}
-                    dotColor={socketPresentation.dotColor}
-                    statusVariant={socketPresentation.pillVariant}
-                    divided
-                />
-                <ConnectionPopoverStatusRow
-                    testID="connection-popover-machines"
-                    icon="laptop"
-                    title={t('settings.machines')}
-                    subtitle={machineSubtitle}
-                    statusLabel={showsMachineGuidance ? t('status.actionRequired') : t(connectionHealth.machineLabelKey)}
-                    statusColor={machinesPresentation.color}
-                    dotColor={machinesPresentation.dotColor}
-                    statusVariant={machinesPresentation.pillVariant}
-                    divided
-                />
-            </View>
+            ) : null}
+        </ConnectionDetailsSection>
     );
+    // The Homes page's Connection details lead with the Home's live facts and the one repair that applies.
     const homeConnectionSummaryContent = (
         <>
             {homeStatusList}
@@ -979,114 +903,67 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         onPress={homeSummary.action === 'restore' ? handleRestoreAccount : handleRetry}
                         accessibilityLabel={primaryActionLabel}
                     />
-                    <CopiedPill
-                        visible={diagnosticsCopied}
-                        testID="connection-copy-diagnostics-feedback"
-                    />
                 </View>
             ) : null}
         </>
     );
+    const copyDiagnosticsLabel = diagnosticsCopied
+        ? t('connectionStatus.diagnosticsCopied')
+        : t('connectionStatus.copyDiagnostics');
+    // When it last synced and when it tries again, then the technical facts behind one quiet
+    // disclosure (one line each, copied on tap), and Copy diagnostics as the step's last row.
     const detailsBody = (
         <>
-            {hasIrohTransportDetails ? (
-                <View style={styles.popoverStatusList}>
-                    <ConnectionPopoverStatusRow
-                        testID="connection-popover-relay"
-                        icon="hard-drives"
-                        title={t(irohTransportTitleKey)}
-                        subtitle={toServerUrlDisplay(displayServerUrl)}
-                        statusLabel={t(relayPresentation.labelKey)}
-                        statusColor={relayPresentation.color}
-                        dotColor={relayPresentation.dotColor}
-                        statusVariant={relayPresentation.pillVariant}
-                        onRetry={canRetryRelayConnection ? handleRetry : undefined}
-                    />
-                </View>
-            ) : null}
-
-            <View style={styles.statusMeta}>
-                <View style={styles.statusMetaRow}>
-                    <Text style={styles.statusMetaLabel}>
-                        {t('connectionStatus.labels.lastSync')}
-                    </Text>
-                    <LastSyncTime style={styles.statusMetaValue} />
-                </View>
+            <ConnectionDetailsSection menuSection={menuSections}>
+                <LastSyncRow />
                 {nextRetryAt ? (
-                    <View style={styles.statusMetaRow}>
-                        <Text style={styles.statusMetaLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
-                        <Text testID="connection-popover-next-retry" style={styles.statusMetaValue}>
-                            {formatTime(nextRetryAt)}
-                        </Text>
-                    </View>
+                    <Item
+                        testID="connection-popover-next-retry"
+                        mode="info"
+                        title={t('connectionStatus.labels.nextRetry')}
+                        detail={formatTime(nextRetryAt)}
+                    />
                 ) : null}
                 {syncErrorPresentation ? (
-                    <View style={styles.statusMetaRow}>
-                        <Text style={styles.statusMetaLabel}>
-                            {t('connectionStatus.labels.lastError')}
-                        </Text>
-                        <Text style={[styles.statusMetaValue, { flexShrink: 1, textAlign: 'right' }]} numberOfLines={2}>
-                            {syncErrorPresentation.message}
-                        </Text>
-                    </View>
+                    <Item
+                        testID="connection-popover-last-error"
+                        mode="info"
+                        title={t('connectionStatus.labels.lastError')}
+                        subtitle={syncErrorPresentation.message}
+                        subtitleLines={2}
+                    />
                 ) : null}
-            </View>
-
-            {transportDetailRows.length > 0 ? (
-                <View style={styles.technicalDetails} testID="connection-transport-diagnostics">
-                    <Text style={styles.technicalDetailsTitle}>
-                        {t('terminal.connectionDetails')}
-                    </Text>
-                    {transportDetailRows.map((row) => (
-                        <View key={row.key} style={styles.statusMetaRow}>
-                            <Text style={styles.statusMetaLabel}>{row.label}</Text>
-                            <Text
-                                style={[styles.technicalDetailsValue, { flexShrink: 1, textAlign: 'right' }]}
-                                selectable
-                            >
-                                {row.value}
-                            </Text>
-                        </View>
-                    ))}
-                    <HappierPressable
-                        testID="connection-copy-diagnostics"
-                        accessibilityRole="button"
-                        accessibilityLabel={diagnosticsCopied
-                            ? t('connectionStatus.diagnosticsCopied')
-                            : t('connectionStatus.copyDiagnostics')}
-                        onPress={handleCopyDiagnostics}
-                        style={styles.copyDiagnosticsButton}
-                    >
-                        <Icon
-                            name={diagnosticsCopied ? 'check' : 'copy'}
-                            size={14}
-                            color={theme.colors.text.secondary}
-                        />
-                        <Text style={styles.detailsDisclosureText}>
-                            {diagnosticsCopied
-                                ? t('connectionStatus.diagnosticsCopied')
-                                : t('connectionStatus.copyDiagnostics')}
-                        </Text>
-                    </HappierPressable>
-                </View>
-            ) : null}
-        </>
-    );
-    const homeConnectionDetailsContent = (
-        <>
-            <HappierPressable
-                testID="connection-details-disclosure"
-                accessibilityRole="button"
-                accessibilityLabel={t('common.details')}
-                expanded={detailsExpanded}
-                onPress={toggleDetails}
-                style={styles.detailsDisclosure}
-            >
-                <Text style={styles.detailsDisclosureText}>{t('common.details')}</Text>
-                <DisclosureCaret expanded={detailsExpanded} size={14} />
-            </HappierPressable>
-
-            {detailsExpanded ? detailsBody : null}
+            </ConnectionDetailsSection>
+            <ConnectionDetailsSection menuSection={menuSections}>
+                {transportDetailRows.length > 0 ? (
+                    <Item
+                        testID="connection-details-disclosure"
+                        title={t('approvals.technicalDetails')}
+                        accessibilityState={{ expanded: detailsExpanded }}
+                        onPress={toggleDetails}
+                    />
+                ) : null}
+                {transportDetailRows.length > 0 && detailsExpanded ? transportDetailRows.map((row) => (
+                    <Item
+                        key={row.key}
+                        testID={`connection-transport-${row.key}`}
+                        title={row.label}
+                        subtitle={row.value}
+                        subtitleLines={1}
+                        subtitleEllipsizeMode="middle"
+                        copy={row.value}
+                        showChevron={false}
+                    />
+                )) : null}
+                <Item
+                    testID="connection-copy-diagnostics"
+                    icon={<Icon name={diagnosticsCopied ? 'check' : 'copy'} size={16} color={theme.colors.text.secondary} />}
+                    title={copyDiagnosticsLabel}
+                    accessibilityLabel={copyDiagnosticsLabel}
+                    onPress={handleCopyDiagnostics}
+                    showChevron={false}
+                />
+            </ConnectionDetailsSection>
         </>
     );
 
@@ -1139,7 +1016,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     if (props.variant === 'fullScreen') {
         return <View testID="connection-status-full-screen" style={styles.popoverContent}>
             {homeConnectionSummaryContent}
-            {homeConnectionDetailsContent}
+            {detailsBody}
         </View>;
     }
 

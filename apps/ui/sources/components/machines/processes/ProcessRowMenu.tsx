@@ -220,7 +220,6 @@ const ProcessRowMenu = React.memo(function ProcessRowMenu(
       wrapItem={wrapItem}
       matchTriggerWidth={false}
       placement="bottom"
-      popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('machineProcesses.menu.label', {
         name: title,
       })}
