@@ -1,3 +1,4 @@
+import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import {
   abortLocalVoiceTurn,
   commitLocalVoiceInput,
@@ -35,7 +36,7 @@ export type LocalVoiceRuntimeController = Readonly<{
     }>;
     onAccepted?: () => Promise<void>;
   }>) => Promise<void>;
-  sendAgentTextUpdate: (sessionId: string, update: string) => Promise<void>;
+  sendAgentTextUpdate: (sessionId: string, update: string, context?: string) => Promise<void>;
   stopSession: (reason?: 'continued_elsewhere', signal?: AbortSignal) => Promise<void>;
   toggleTurn: (
     sessionId: string,
@@ -43,6 +44,7 @@ export type LocalVoiceRuntimeController = Readonly<{
     requestedTargetSessionAddress?: SessionAddress | null,
     conversationSelection?: VoiceConversationSelection,
     onConversationSelection?: (selection: VoiceConversationSelection) => void,
+    onAgentSelection?: VoiceAgentSelectionObserver,
   ) => Promise<void>;
 }>;
 
@@ -58,10 +60,10 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
     setMuted: async (sessionId, muted) => await setLocalVoiceMuted(sessionId, muted),
     sendAgentTextTurn: async ({ controlSessionId, text, durableDispatch, onAccepted }) =>
       await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch, onAccepted),
-    sendAgentTextUpdate: async (sessionId, update) => await sendLocalVoiceAgentTextUpdate(sessionId, update),
+    sendAgentTextUpdate: async (sessionId, update, context) => await sendLocalVoiceAgentTextUpdate(sessionId, update, context),
     stopSession: async (reason, signal) => await stopLocalVoiceSession(reason, signal),
-    toggleTurn: async (sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection) =>
-      await toggleLocalVoiceTurn(sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection),
+    toggleTurn: async (sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection, onAgentSelection) =>
+      await toggleLocalVoiceTurn(sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection, onAgentSelection),
   };
 }
 

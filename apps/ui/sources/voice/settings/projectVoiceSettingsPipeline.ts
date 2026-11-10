@@ -11,6 +11,8 @@ export type VoiceSettingsPipelineStep = Readonly<{
 }>;
 
 export type VoiceSettingsPipeline = Readonly<{
+    /** Activity from the selected credential owner; unknown readiness remains unknown. */
+    credentialResolving?: boolean;
     mode: 'dictation' | 'conversations';
     providerId: string | null;
     steps: readonly VoiceSettingsPipelineStep[];

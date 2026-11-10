@@ -11,6 +11,7 @@ export function translateVoiceReadiness(key: string, params?: { service: string 
 }
 
 export type VoiceProviderReadinessPresentation = Readonly<{
+  checking?: true;
   summary: string;
   reason: string | null;
   action: string | null;
@@ -39,21 +40,31 @@ function resolveVoiceReadinessShort(code: string): VoiceReadinessShort {
 }
 
 export function resolveVoiceProviderReadinessPresentation(
-  readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction'>,
+  readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction' | 'selectedAgent'>,
   translate: (key: string, params?: { service: string }) => string,
   service?: string,
+  credential?: Readonly<{ resolving: boolean }>,
 ): VoiceProviderReadinessPresentation {
-  const summary = translate(readiness.reasonKey, service ? { service } : undefined);
+  if (readiness.code === 'credential_unknown' && credential?.resolving) {
+    const checking = translate('requirements.checking');
+    return { checking: true, summary: checking, reason: checking, action: null, short: checking };
+  }
+  const summary = readiness.code === 'agent_signed_out' && readiness.selectedAgent
+    ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: readiness.selectedAgent.title,
+      machine: readiness.selectedAgent.runtimeTarget?.machineId ?? '' })
+    : translate(readiness.reasonKey, service ? { service } : undefined);
   if (readiness.status === 'ready') {
     return { summary, reason: null, action: null, short: null };
   }
   return {
     summary,
     reason: summary,
-    action: readiness.recoveryAction === 'none'
+    action: readiness.selectedAgent?.runtimeTarget && readiness.recoveryAction === 'open_provider_settings'
+      && (readiness.code === 'agent_signed_out' || readiness.code.startsWith('runtime_'))
+      ? t('voiceSurface.setUpAgent', { agent: readiness.selectedAgent.title }) : readiness.recoveryAction === 'none'
       ? null
       : translate(readiness.recoveryAction === 'enable_voice_agent' ? 'settingsVoice.pages.conversations.turnOnVoiceAgent'
         : readiness.recoveryAction === 'retry' ? 'common.retry' : `voice.readiness.actions.${readiness.recoveryAction}`),
-    short: translate(`voice.readiness.short.${resolveVoiceReadinessShort(readiness.code)}`),
+    short: translate(`voice.readiness.short.${readiness.selectedAgent?.needsSignIn ? 'needsSetup' : resolveVoiceReadinessShort(readiness.code)}`),
   };
 }

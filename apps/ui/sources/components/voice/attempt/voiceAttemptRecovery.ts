@@ -14,32 +14,11 @@ import {
     VOICE_SETTINGS_PROVIDER_FOCUS_TARGET,
 } from '@/voice/settings/voiceSettingsRouteFocus';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import type { VoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { canDispatchProviderRecoveryAction, dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
 
-/**
- * The Agent runtime a recovery would install, update or connect: the exact
- * contribution identity plus the exact machine it must be installed on.
- */
-export type VoiceAttemptRecoveryRuntimeTarget = Readonly<{
-    agentId: string;
-    pluginId: string;
-    machineId: string;
-    serverIdentityId: string;
-}>;
-
-export function resolveVoiceAttemptRecoveryRuntimeTarget(input: Readonly<{
-    agentRuntime: Readonly<{ localId: string; pluginId: string }> | null;
-    serverId: unknown;
-    machineId: unknown;
-}>): VoiceAttemptRecoveryRuntimeTarget | null {
-    const agentId = normalizeNonEmptyString(input.agentRuntime?.localId);
-    const pluginId = normalizeNonEmptyString(input.agentRuntime?.pluginId);
-    const machineId = normalizeNonEmptyString(input.machineId);
-    const serverIdentityId = resolvePortableServerIdentityForRoutingId(normalizeNonEmptyString(input.serverId));
-    return agentId && pluginId && machineId && serverIdentityId ? { agentId, pluginId, machineId, serverIdentityId } : null;
-}
+export { resolveVoiceAttemptRecoveryRuntimeTarget, type VoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
 
 export type VoiceAttemptRecoveryContext = Readonly<{
     connectRecoveryTarget: VoiceConnectRecoveryTarget;

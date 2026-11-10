@@ -62,6 +62,7 @@ export function createLocalVoiceAdapter(
       opts.requestedTargetSessionAddress,
       opts.conversationSelection,
       opts.onConversationSelection,
+      opts.onAgentSelection,
     );
   };
 

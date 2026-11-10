@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -51,6 +52,8 @@ export const VoicePipelineView = React.memo(function VoicePipelineView(props: Re
     children?: React.ReactNode;
 }>) {
     const { onRecoveryAction } = props;
+    const router = useRouter();
+    const navigate = React.useCallback((href: unknown) => router.push(href as Parameters<typeof router.push>[0]), [router]);
     const presentation = React.useMemo(
         () => presentVoicePipeline(props.pipeline, translateVoiceReadiness, props.cardReadiness ?? null, props.title),
         [props.cardReadiness, props.pipeline, props.title],
@@ -68,29 +71,31 @@ export const VoicePipelineView = React.memo(function VoicePipelineView(props: Re
                 message: step.readiness.message,
                 progress: step.readiness.progress,
                 action: step.readiness.recoveryAction && step.readiness.actionLabel
-                    && (step.readiness.recoveryAction === 'retry' || onRecoveryAction)
+                    && (step.readiness.recoveryAction === 'retry' || step.readiness.selectedAgent?.runtimeTarget || onRecoveryAction)
                     ? {
                         label: step.readiness.actionLabel,
-                        onPress: () => recoverVoiceSettingsReadiness(step.readiness!.recoveryAction!, onRecoveryAction),
+                        onPress: () => recoverVoiceSettingsReadiness(step.readiness!.recoveryAction!, onRecoveryAction,
+                            { selectedAgent: step.readiness!.selectedAgent, navigate }),
                         testID: `${props.testID ?? 'settings.voice.pipeline'}.${step.key}.recover`,
                     }
                     : undefined,
             }
             : null,
-    })), [onRecoveryAction, presentation.steps, props.testID]);
+    })), [navigate, onRecoveryAction, presentation.steps, props.testID]);
     const card = presentation.card;
     const serviceReadiness = React.useMemo(() => (card ? {
         tone: card.tone,
         message: card.message,
         progress: card.progress,
-        action: card.recoveryAction && card.actionLabel && (card.recoveryAction === 'retry' || onRecoveryAction)
+        action: card.recoveryAction && card.actionLabel && (card.recoveryAction === 'retry' || card.selectedAgent?.runtimeTarget || onRecoveryAction)
             ? {
                 label: card.actionLabel,
-                onPress: () => recoverVoiceSettingsReadiness(card.recoveryAction!, onRecoveryAction),
+                onPress: () => recoverVoiceSettingsReadiness(card.recoveryAction!, onRecoveryAction,
+                    { selectedAgent: card.selectedAgent, navigate }),
                 testID: `${props.testID ?? 'settings.voice.pipeline'}.recover`,
             }
             : undefined,
-    } : null), [card, onRecoveryAction, props.testID]);
+    } : null), [card, navigate, onRecoveryAction, props.testID]);
     const statusText = props.purpose ? `${presentation.statusWord} · ${props.purpose}` : presentation.statusWord;
     return (
         <VoicePipelineCard

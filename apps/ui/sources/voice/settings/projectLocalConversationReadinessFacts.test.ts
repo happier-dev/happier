@@ -118,6 +118,19 @@ function project(settings: Settings) {
 }
 
 describe('projectLocalConversationReadinessFacts credential readiness', () => {
+  it.each(['missing', 'unknown'] as const)('keeps Same as session Agent readiness %s instead of reporting Ready', (voiceAgentRuntime) => {
+    const settings = createLocalSettings('device', 'device');
+    const current = readLocalConversationVoiceSettings(settings.voice);
+    const voice = writeLocalConversationVoiceSettings(settings.voice, { ...current,
+      conversationMode: 'agent', agent: { ...current.agent, agentSource: 'session' },
+    });
+    const facts = projectLocalConversationReadinessFacts({ registry, voice,
+      voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets, connectedPurposes: { v: 1, bindings: [] },
+      platform: 'web', local, localInput, executionMachineId, voiceAgentAvailability: 'available', voiceAgentRuntime,
+    });
+    expect(facts.thinkReadiness.status).not.toBe('ready');
+    expect(facts.runtime).toBe(voiceAgentRuntime);
+  });
   it.each([
     { runtimeState: 'available', modelState: 'ready', status: 'ready', code: 'ready' },
     { runtimeState: 'unavailable', modelState: 'ready', status: 'needs_setup', code: 'runtime_missing' },
@@ -164,7 +177,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     const facts = projectLocalConversationReadinessFacts({
       registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
       connectedPurposes: null, platform: 'web', local, localInput, executionMachineId,
-      voiceAgentAvailability: arm,
+      voiceAgentAvailability: arm, voiceAgentRuntime: 'ready',
     });
     expect(facts.thinkReadiness).toMatchObject({ code, recoveryAction: recovery });
     expect(resolveVoiceReadinessTone(facts.thinkReadiness)).toBe(tone);
@@ -179,7 +192,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
     { name: 'missing Agent selection', agentId: ' ', enabled: true, selectionKind: 'resolved', code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
     { name: 'Voice Agent feature disabled', agentId: 'claude', enabled: false, selectionKind: 'resolved', code: 'server_feature_disabled', recoveryAction: 'switch_provider' },
-    { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'retry' },
+    { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
     { name: 'all prerequisites ready', agentId: 'claude', enabled: true, selectionKind: 'resolved', code: 'ready', recoveryAction: 'none' },
   ] as const)('projects Think readiness and its recovery independently of speech: $name', (scenario) => {
     const settings = createLocalSettings('device', 'device');
@@ -240,8 +253,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       connectedPurposes: null, platform: 'web', executionMachineId, voiceAgentAvailability: 'available',
       localInput: input,
       local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: input }).local,
-      // Follow session has no fixed Agent selection to resolve in the catalog.
-      voiceAgentRuntime: 'unknown',
+      voiceAgentRuntime: 'ready',
     });
     expect(facts.thinkReadiness).toMatchObject({ status: 'ready' });
     expect(facts.runtime).toBe(scenario.runtime);

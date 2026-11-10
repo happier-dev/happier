@@ -43,14 +43,15 @@ export type LocalVoiceSpeechReadiness = Readonly<{
 
 /** The card preserves exact daemon feature/target recovery ahead of aggregate unknowns. */
 export function projectLocalConversationProviderReadiness(
-  facts: Pick<ReturnType<typeof projectLocalConversationReadinessFacts>, 'daemonRouteReadiness'>,
+  facts: Pick<ReturnType<typeof projectLocalConversationReadinessFacts>, 'daemonRouteReadiness' | 'thinkReadiness'>,
   projected: VoiceRoleReadiness,
 ): VoiceRoleReadiness {
   const daemon = facts.daemonRouteReadiness;
   return daemon && (daemon.code === 'server_feature_disabled' || daemon.code === 'execution_machine_missing'
     || daemon.code === 'execution_machine_incompatible' || daemon.code === 'execution_machine_unknown'
     || projected.code === 'execution_machine_missing')
-    ? daemon : projected;
+    ? daemon : projected.code.startsWith('runtime_') && facts.thinkReadiness.selectedAgent
+      && facts.thinkReadiness.status !== 'ready' ? facts.thinkReadiness : projected;
 }
 
 function projectPathFact(
@@ -86,8 +87,9 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   executionMachineId: string | null | undefined;
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
   voiceAgentAvailability: FeatureAvailabilityArm;
-  /** Existing configured-Agent/catalog availability; never a speech runtime fact. */
+  /** Selected Agent's observed inventory readiness; never a speech runtime fact. */
   voiceAgentRuntime?: VoiceReadinessFact;
+  selectedAgent?: VoiceRoleReadiness['selectedAgent'];
   rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
     contribution: Readonly<{ pluginId: string; localId: string }>;
     machineId: string | null;
@@ -183,22 +185,18 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     ? projectVoiceProviderSettings(adapterEntry, input.voice.providers[local.adapterId] ?? null)
     : null;
   const needsAgent = conversation?.conversationMode === 'agent';
-  const needsConfiguredAgent = needsAgent && conversation.agent.agentSource === 'agent';
   const thinkSettings: VoiceSettingsReadinessFact = adapterSettings?.status !== 'ready'
     ? adapterSettings?.status ?? 'unknown'
     : needsAgent && conversation.agent.agentSource === 'agent' && !conversation.agent.agentId.trim()
       ? 'missing_required_setting'
       : 'ready';
   const agentRuntime = input.voiceAgentRuntime ?? 'unknown';
-  const thinkReadiness = resolveVoiceRoleReadiness({
+  const agentReadiness = resolveVoiceRoleReadiness({
     registry: input.registry,
     role: 'conversation_stt',
     providerId: local.adapterId,
     platform: input.platform,
-    // Follow session resolves its Agent from the bound Session at start. Only a
-    // fixed Agent consumes the configured-selection catalog availability fact.
-    settingsRequirements: needsConfiguredAgent ? ['server_feature', 'execution_machine', 'runtime']
-      : needsAgent ? ['server_feature', 'execution_machine'] : [],
+    settingsRequirements: needsAgent ? ['server_feature', 'execution_machine', 'runtime'] : [],
     facts: {
       settings: thinkSettings,
       serverFeature,
@@ -206,6 +204,15 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       runtime: agentRuntime,
     },
   });
+  const thinkReadiness: VoiceRoleReadiness = {
+    ...agentReadiness,
+    ...(needsAgent && input.selectedAgent ? { selectedAgent: input.selectedAgent } : {}),
+    ...(needsAgent && agentReadiness.code.startsWith('runtime_') && agentReadiness.code !== 'runtime_unknown'
+      && input.selectedAgent?.runtimeTarget ? {
+        recoveryAction: 'open_provider_settings' as const,
+        ...(input.selectedAgent.needsSignIn ? { code: 'agent_signed_out', reasonKey: 'settingsVoice.local.machineErrors.agent_signed_out' } : {}),
+      } : {}),
+  };
   const projectSpeechReadiness = (
     role: 'conversation_stt' | 'conversation_tts',
     providerId: string,
@@ -332,7 +339,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     settings,
     serverFeature,
     executionMachine,
-    runtime: needsConfiguredAgent && agentRuntime !== 'ready' ? agentRuntime : runtime,
+    runtime: needsAgent && agentRuntime !== 'ready' ? agentRuntime : runtime,
     model,
     endpoint,
     credential,

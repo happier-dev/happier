@@ -1,3 +1,10 @@
+import { readMachineAgentsForScope } from '@/agents/machineAgents/useMachineAgents';
+import { EMPTY_MACHINE_AGENTS } from '@/agents/machineAgents/machineAgentInventoryStore';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { projectVoiceExecutionMachineReadiness } from '@/voice/settings/executionMachine';
 import type { ConnectedServiceBindingsV1} from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { DaemonVoiceInferenceModelStatus} from '@happier-dev/protocol/daemon/voiceInference';
@@ -234,11 +241,24 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
             mergedBackendProjectionById: projectionInputs?.mergedBackendProjectionById, discoveredBackendIds: projectionInputs?.discoveredBackendIds });
     const agentTarget = agent ? projectVoiceConfiguredAgentTarget({ selection: agent, entries: agentEntries,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey, mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById }) : null;
+    const selectedAgent = agent
+        ? agentTarget?.ok ? resolveAgentExecutionTargetForBackendTarget({ backendTarget: agentTarget.backendTarget,
+            daemonMergedProjectionInputs: projectionInputs }) : null
+        : projectVoiceDefaultAgentSelection({ ...readLastUsedBackendSelection(scope),
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            acpCatalogSnapshot: catalog?.catalog.status === 'ready' && !catalog.stale ? catalog.catalog : undefined,
+            daemonMergedProjectionInputs: projectionInputs }).agentTarget;
+    const agentLifetime = captureActiveServerAccountScopeLifetime();
+    const observedAgents = machine.machineId && agentLifetime && areAccountSettingsScopesEqual(scope, agentLifetime.scope)
+        ? readMachineAgentsForScope(agentLifetime, machine.machineId) : EMPTY_MACHINE_AGENTS;
+    const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
+        { serverId, machineId: machine.machineId });
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,
         executionMachineId: machine.machineId, executionMachineSelectionKind: machine.selectionKind, voiceAgentAvailability,
-        voiceAgentRuntime: agentTarget === null ? 'unknown' : agentTarget.ok ? 'ready' : 'incompatible', resolveSavedSecret,
+        voiceAgentRuntime: agentTarget?.ok === false ? 'incompatible' : selectedAgentReadiness.runtime,
+        selectedAgent: selectedAgentReadiness.selectedAgent, resolveSavedSecret,
         rawCredentialAuthorizationByContribution: Object.fromEntries((inspection.raw ?? []).map(target => [target.providerId, {
             contribution: target.contribution, machineId: machine.machineId, realm: 'daemon' as const, phase: 'speech' as const, status: target.status }])) });
     const { credential, sourceSelection } = entry ? projectVoiceCredentialReadiness({

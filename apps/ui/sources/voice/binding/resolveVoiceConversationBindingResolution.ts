@@ -1,3 +1,4 @@
+import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import {
     ensureVoiceConversationSessionForSessionRoot,
     ensureVoiceConversationSessionForVoiceHome,
@@ -49,9 +50,10 @@ async function ensureVoiceHomeConversationSessionIdWithRecovery(params: Readonly
     settings: any;
     signal?: AbortSignal;
     conversationSelection?: VoiceConversationSelection;
+    onAgentSelection?: VoiceAgentSelectionObserver;
 }>): Promise<string> {
     try {
-        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection);
+        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection, undefined, params.onAgentSelection);
     } catch (error) {
         if (params.conversationSelection?.kind === 'continue') throw error;
         const isGlobalNativeSessionVoiceAgent =
@@ -62,7 +64,7 @@ async function ensureVoiceHomeConversationSessionIdWithRecovery(params: Readonly
         const recoveryDecision = await recoverUnavailableGlobalVoiceAutoMachine();
         if (recoveryDecision.kind !== 'retry' && recoveryDecision.kind !== 'switch') throw error;
         applyRecoveredGlobalVoiceMachineDecision(recoveryDecision);
-        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection);
+        return await ensureVoiceConversationSessionForVoiceHome(null, params.signal, params.conversationSelection, undefined, params.onAgentSelection);
     }
 }
 
@@ -103,6 +105,7 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     signal?: AbortSignal;
     conversationSelection?: VoiceConversationSelection;
     onConversationSelection?: (selection: VoiceConversationSelection) => void;
+    onAgentSelection?: VoiceAgentSelectionObserver;
 }>): Promise<VoiceConversationBindingResolution | null> {
     const providerId = normalizeNonEmptyString(params.providerId);
     if (!providerId) return null;
@@ -121,6 +124,7 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
         signal: params.signal,
         conversationSelection: params.conversationSelection,
         onConversationSelection: params.onConversationSelection,
+        onAgentSelection: params.onAgentSelection,
     });
     const providerConversationSessionAddress = providerOwnedResolution
         ? normalizeSessionAddress(
@@ -176,6 +180,7 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
             ? targetSessionAddress : resolveHiddenCarrierLogicalTarget(address, metadata);
         const conversationSessionId = await ensureVoiceConversationSessionForSessionRoot({
             sessionRootAddress: address, signal: params.signal, conversationSelection,
+            onAgentSelection: params.onAgentSelection,
         });
         return { controlSessionId, conversationSessionId,
             conversationSessionAddress: { serverId: address.serverId, sessionId: conversationSessionId }, transcriptMode,
@@ -194,13 +199,14 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
     const conversationSessionId =
         rootSessionAddress && !shouldForceVoiceHomeForLocalConversation(params.settings)
             ? await ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: rootSessionAddress, signal: params.signal,
-                conversationSelection })
+                conversationSelection, onAgentSelection: params.onAgentSelection })
             : await ensureVoiceHomeConversationSessionIdWithRecovery({
                   transcriptMode,
                   controlSessionId,
                   settings: params.settings,
                   signal: params.signal,
                   conversationSelection,
+                  onAgentSelection: params.onAgentSelection,
               });
     const conversationSessionAddress = normalizeSessionAddress(
         rootSessionAddress?.serverId ?? targetServerId,

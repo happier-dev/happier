@@ -81,7 +81,9 @@ export function buildLocalVoiceConversationSteps(
     const think: VoiceSettingsPipelineStep = adapter.adapterId === 'local_conversation' && adapter.config.conversationMode === 'agent'
         ? {
             roles: ['think'],
-            engine: adapter.config.agent.agentSource === 'agent'
+            engine: thinkReadiness?.selectedAgent
+                ? { kind: 'agent', agentId: thinkReadiness.selectedAgent.runtimeTarget?.agentId, title: thinkReadiness.selectedAgent.title }
+                : adapter.config.agent.agentSource === 'agent'
                 ? { kind: 'agent', agentId: adapter.config.agent.agentId, title: agentTitle(adapter.config.agent.agentId) }
                 : { kind: 'agent', title: t('settingsVoice.pages.pipeline.voiceAgentFollowsSession') },
             placement: onMachine(machine),
@@ -133,6 +135,7 @@ export function buildRealtimeServiceStep(input: Readonly<{
  * single step carries it.
  */
 export function buildVoiceConversationsPipeline(input: Readonly<{
+    credentialResolving?: boolean;
     voice: VoiceSettings;
     serviceTitle: string | null;
     readiness: VoiceRoleReadiness | null;
@@ -149,6 +152,7 @@ export function buildVoiceConversationsPipeline(input: Readonly<{
         const ready = input.readiness?.status === 'ready';
         return {
             pipeline: projectVoiceSettingsPipeline({
+                credentialResolving: input.credentialResolving,
                 mode: 'conversations',
                 providerId,
                 steps: ready ? steps.map((step) => ({
@@ -169,6 +173,7 @@ export function buildVoiceConversationsPipeline(input: Readonly<{
         : false;
     return {
         pipeline: projectVoiceSettingsPipeline({
+            credentialResolving: input.credentialResolving,
             mode: 'conversations',
             providerId,
             steps: [buildRealtimeServiceStep({

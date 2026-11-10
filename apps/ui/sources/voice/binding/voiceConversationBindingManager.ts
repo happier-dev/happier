@@ -1,3 +1,4 @@
+import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversationBindingTypes';
 import type { StoreApi } from 'zustand/vanilla';
 
 import { voiceSessionBindingStore } from './voiceConversationBindingStore';
@@ -54,6 +55,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         controlSessionId: string;
         conversationSelection?: VoiceConversationSelection;
         onConversationSelection?: (selection: VoiceConversationSelection) => void;
+        onAgentSelection?: VoiceAgentSelectionObserver;
         requestedTargetSessionId?: string | null;
         requestedTargetServerId?: string | null;
         signal?: AbortSignal;
@@ -85,6 +87,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         controlSessionId: string;
         conversationSelection?: VoiceConversationSelection;
         onConversationSelection?: (selection: VoiceConversationSelection) => void;
+        onAgentSelection?: VoiceAgentSelectionObserver;
         requestedTargetSessionId?: string | null;
         requestedTargetServerId?: string | null;
         signal?: AbortSignal;
@@ -103,6 +106,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
             signal: params.signal,
             conversationSelection: params.conversationSelection,
             onConversationSelection: params.onConversationSelection,
+            onAgentSelection: params.onAgentSelection,
         });
         params.signal?.throwIfAborted();
         if (!resolution) return null;

@@ -23,6 +23,28 @@ const blocked: VoiceRoleReadiness = {
 };
 
 describe('local Voice pipeline', () => {
+    it('names the admitted default Agent and retains its exact setup destination', async () => {
+        const cfg = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults, providerId: 'local_conversation' }, {
+            ...cfg, conversationMode: 'agent', agent: { ...cfg.agent, agentSource: 'session' },
+        });
+        const selectedAgent = { title: 'Claude Code', needsSignIn: true, runtimeTarget: {
+            agentId: 'claude', pluginId: 'happier.agent.claude', machineId: 'machine-a', serverIdentityId: 'home-a',
+        } };
+        const fact = { ...blocked, code: 'agent_signed_out', recoveryAction: 'open_provider_settings' as const, selectedAgent };
+        const built = buildVoiceConversationsPipeline({ voice, machine, serviceTitle: 'Local', readiness: fact, localThinkReadiness: fact });
+        expect(built?.pipeline.steps[1]?.engine.title).toBe('Claude Code');
+        const { presentVoicePipeline } = await import('./presentVoicePipeline');
+        const { translateVoiceReadiness } = await import('../panels/voiceProviderReadinessPresentation');
+        const presented = presentVoicePipeline(built!.pipeline, translateVoiceReadiness);
+        expect(presented.steps[1]?.readiness?.message).toContain('Claude Code');
+        const { recoverVoiceSettingsReadiness } = await import('../voiceSettingsRecovery');
+        const navigate = vi.fn();
+        recoverVoiceSettingsReadiness(fact.recoveryAction, undefined, { selectedAgent, navigate });
+        await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/agents/[agentId]', params: selectedAgent.runtimeTarget,
+        }));
+    });
     it('projects speech engine labels in the current locale after module initialization', async () => {
         const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
         const original = getPreferredLanguage();

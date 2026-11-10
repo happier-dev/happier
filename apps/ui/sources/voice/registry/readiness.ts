@@ -6,6 +6,7 @@ import type {
 
 import { resolveVoiceDeviceSpeechRolePath } from '@/voice/settings/resolveVoiceProviderAvailability';
 import type { VoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
+import type { VoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
 
 import {
   type VoiceProviderRegistry,
@@ -37,6 +38,8 @@ export type VoiceRoleReadinessFacts = Readonly<{
 }>;
 
 export type VoiceRoleReadiness = Readonly<{
+  /** The same selected Agent and Machine used by Start; observation never acquires its runtime. */
+  selectedAgent?: Readonly<{ title: string; needsSignIn: boolean; runtimeTarget: VoiceAttemptRecoveryRuntimeTarget | null }>;
   role: VoiceReadinessRole;
   providerId: string | null;
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';

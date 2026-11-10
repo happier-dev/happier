@@ -1141,7 +1141,7 @@ describe('VoiceProviderSection', () => {
 
         await freshCheckEntered.promise;
         expect(passiveSetupBoundary.invoke).toHaveBeenCalled();
-        expect(checkedReadinessRow(screen.tree)?.props.announcement).toBe(tLoose('settings.updates.checking'));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toBe(t('requirements.checking'));
         expect(checkedReadinessRow(screen.tree)?.props.announcement).not.toContain(tLoose('voice.readiness.ready'));
         await act(async () => {
             freshCheck.resolve({ ok: true, result: { v: 1, status: 'unavailable' } });
@@ -1218,7 +1218,7 @@ describe('VoiceProviderSection', () => {
             await Promise.resolve();
         });
 
-        expect(checkedReadinessRow(screen.tree)?.props.announcement).toBe(tLoose('settings.updates.checking'));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toBe(t('requirements.checking'));
         expect(checkedReadinessRow(screen.tree)?.props.announcement).not.toContain(tLoose('voice.readiness.ready'));
         await act(async () => {
             freshCheck.resolve({ ok: true, result: { v: 1, status: 'unavailable' } });
@@ -1353,12 +1353,12 @@ describe('VoiceProviderSection', () => {
 
         await act(async () => {});
 
-        expect(screen.getTextContent()).toContain(tLoose('settings.updates.checking'));
+        expect(screen.getTextContent()).toContain(t('requirements.checking'));
         const checkingAnnouncers = tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         });
         expect(checkingAnnouncers).toHaveLength(1);
-        expect(checkingAnnouncers[0]?.props.announcement).toBe(tLoose('settings.updates.checking'));
+        expect(checkingAnnouncers[0]?.props.announcement).toBe(t('requirements.checking'));
 
         // A re-render while the check is pending shares the one in flight.
         await act(async () => {
@@ -1385,7 +1385,7 @@ describe('VoiceProviderSection', () => {
             await screen.update(render());
         });
 
-        expect(screen.getTextContent()).toContain(tLoose('settings.updates.checking'));
+        expect(screen.getTextContent()).toContain(t('requirements.checking'));
 
         await act(async () => {
             settlePassiveCheck?.({
@@ -2085,6 +2085,40 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.actions.configure_credential'));
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.credential_approval_required'));
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.actions.review_credential_access'));
+
+        // A bound key being reacquired is checking, not an unchecked or ready key.
+        // Hold only the Home HTTP boundary; catalog publication and mounted readers stay real.
+        const { invalidateSavedSecretCatalog } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        const reached = createDeferred<void>();
+        const release = createDeferred<void>();
+        const request = accountFixture.request.getMockImplementation()!;
+        let failCatalog = false;
+        accountFixture.request.mockImplementation(async (url, init) => {
+            if (new URL(String(url)).pathname.startsWith('/v1/account/saved-secrets/resources')) {
+                reached.resolve();
+                await release.promise;
+                if (failCatalog) return Response.json({ error: 'unavailable' }, { status: 503 });
+            }
+            return request(url, init);
+        });
+        await act(async () => { invalidateSavedSecretCatalog(accountFixture.scope); });
+        const pending = refreshSavedSecretCatalog(accountFixture.scope);
+        await act(async () => { await reached.promise; });
+        expect(checkedReadinessRow(tree)?.props.announcement).toContain(t('requirements.checking'));
+        const { VoicePipelineCard } = await import('@/voice/settings/pipeline/VoicePipelineCard');
+        expect(tree.findAllByType(VoicePipelineCard)[0]?.props.status.text).toContain(t('requirements.checking'));
+        expect(providerChoiceDetail(findProviderChoiceRow(tree, { testID: `settings.voice.provider.${encodeURIComponent(XAI_PROVIDER_ID)}.byo` })))
+            .toContain(t('requirements.checking'));
+        await act(async () => { release.resolve(); await pending; });
+        expect(checkedReadinessRow(tree)?.props.announcement).toContain(tLoose('voice.readiness.ready'));
+        failCatalog = true;
+        await act(async () => {
+            invalidateSavedSecretCatalog(accountFixture.scope);
+            await expect(refreshSavedSecretCatalog(accountFixture.scope)).rejects.toBeInstanceOf(Error);
+        });
+        expect(checkedReadinessRow(tree)?.props.announcement).toContain(tLoose('voice.readiness.credential_unknown'));
+        expect(checkedReadinessRow(tree)?.props.announcement).not.toContain(t('requirements.checking'));
+        expect(tree.findAllByType(VoicePipelineCard)[0]?.props.status.text).not.toContain(t('requirements.checking'));
     }, 120_000);
 
     it('does not report ElevenLabs ready when its credential is approved but its BYO agent is missing', async () => {
@@ -2130,7 +2164,7 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.credential_missing'));
     }, 120_000);
 
-    it('makes a bundled fixed Agent ready on cold Home without demanding ACP, enabling Try', async () => {
+    it('keeps bundled fixed Agent authentication unknown on cold Home without demanding ACP', async () => {
         const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
         const { deriveVoiceSetupFacts } = await import('../setup/voiceSetupFacts');
         const { VoiceSetupPanel } = await import('../setup/VoiceSetupPanel');
@@ -2169,8 +2203,7 @@ describe('VoiceProviderSection', () => {
         }
         const screen = await renderScreen(<ColdHome />);
         const projected = screen.tree.root.findByType('ColdHome').props;
-        expect(projected, JSON.stringify(projected)).toMatchObject({ readiness: { status: 'ready' }, canTry: true });
-        expect(screen.tree.root.findByProps({ title: t('voiceMoments.setupTryAction') }).props.disabled === true).toBe(false);
+        expect(projected, JSON.stringify(projected)).toMatchObject({ readiness: { status: 'unavailable', code: 'runtime_unknown' }, canTry: false });
         expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
     });
 
@@ -3213,7 +3246,7 @@ describe('VoiceProviderSection', () => {
             .map((call) => (call as unknown as [{ localId: string }])[0].localId);
         await waitForTestEvent(subscribeRawReadiness, checkedContributions, checked => checked.includes('google-cloud-tts'));
         await waitForTestEvent(screen.subscribe, () => checkedReadinessRow(screen.tree)?.props.announcement,
-            announcement => typeof announcement === 'string' && announcement !== tLoose('settings.updates.checking'));
+            announcement => typeof announcement === 'string' && announcement !== t('requirements.checking'));
         // The hub's observer-free interval requires fresh catalog authority.
         // Each readiness invalidation may recheck speech; an unchanged render
         // after those real transitions must share the established result.

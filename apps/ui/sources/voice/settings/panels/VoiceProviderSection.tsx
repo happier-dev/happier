@@ -1,3 +1,7 @@
+import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { useLastUsedBackendSelectionForScope } from '@/sync/domains/state/newSessionTargetUiState';
+import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import * as React from 'react';
 import { projectVoiceExecutionMachineReadiness, type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -400,7 +404,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const agentProjection = useDaemonMergedProjectionInputs({
     machineId: props.executionMachineId,
     serverId: settingsScope?.serverId,
-    enabled: configuredAgent !== null,
+    enabled: localAdapterSettings.adapterId === 'local_conversation' && localAdapterSettings.config.conversationMode === 'agent',
     load: false,
     sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
@@ -417,6 +421,19 @@ export function useVoiceConversationsReadinessModel(props: {
     }),
     mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
   }) : null;
+  const rememberedAgent = useLastUsedBackendSelectionForScope(settingsScope);
+  const observedAgents = useObservedMachineAgents({ serverId: settingsScope?.serverId, machineId: props.executionMachineId });
+  const selectedAgent = configuredAgent
+    ? configuredAgentTarget?.ok ? resolveAgentExecutionTargetForBackendTarget({
+      backendTarget: configuredAgentTarget.backendTarget, daemonMergedProjectionInputs: agentProjection.inputs,
+    }) : null
+    : projectVoiceDefaultAgentSelection({ ...rememberedAgent,
+      backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
+      acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
+      daemonMergedProjectionInputs: agentProjection.inputs,
+    }).agentTarget;
+  const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
+    { serverId: settingsScope?.serverId, machineId: props.executionMachineId });
   const selectedSpeechProviderIds = [
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,
@@ -434,8 +451,8 @@ export function useVoiceConversationsReadinessModel(props: {
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
     voiceAgentAvailability,
-    voiceAgentRuntime: configuredAgentTarget === null
-      ? 'unknown' : configuredAgentTarget.ok ? 'ready' : 'incompatible',
+    voiceAgentRuntime: configuredAgentTarget?.ok === false ? 'incompatible' : selectedAgentReadiness.runtime,
+    selectedAgent: selectedAgentReadiness.selectedAgent,
     rawCredentialAuthorizationByContribution:
       checkedReadiness?.rawCredentialAuthorizationByContribution,
     resolveSavedSecret: savedSecretReferences.resolve,
@@ -445,7 +462,7 @@ export function useVoiceConversationsReadinessModel(props: {
     const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
     const credentialDeclaration = row.entry.kind === 'voice.conversation-provider.v1'
       ? row.entry.declaration?.credentials ?? null : null;
-    const { credential: credentialFact, sourceSelection, projectedCredential, accountCredentialReference } = projectVoiceCredentialReadiness({
+    const { credential: credentialFact, sourceSelection, projectedCredential, accountCredentialReference, credentialResolving } = projectVoiceCredentialReadiness({
       entry: row.entry, envelope: row.envelope, settings: accountSettings, connectedPurposes,
       resolveSavedSecret: savedSecretReferences.resolve,
       resolveConnectedAccountEligibility: (selection, declaredServices) => resolveVoiceConnectedAccountTargetEligibility({
@@ -535,14 +552,17 @@ export function useVoiceConversationsReadinessModel(props: {
       credentialConfigurationAvailable,
       passiveRuntimeCheckAvailable: declaredPassiveSetup !== null,
     });
-    const readinessPresentation = resolveVoiceProviderReadinessPresentation(readiness, translateVoiceReadiness, resolveVoiceServiceTitle(row.entry, tLoose, localizePluginText));
+    const readinessPresentation = resolveVoiceProviderReadinessPresentation(readiness, translateVoiceReadiness,
+      resolveVoiceServiceTitle(row.entry, tLoose, localizePluginText), { resolving: credentialResolving });
     const projectedCredentialGuidance = row.entry.source.kind === 'bundled'
       && row.entry.requirements.includes('credential')
       && projectedCredential?.status === 'unknown'
+      && !credentialResolving
       ? tLoose(projectedCredential.detailKey)
       : null;
     const credentialDetail = row.entry.source.kind === 'external'
       && row.entry.requirements.includes('credential')
+      && !credentialResolving
       ? projectedCredential
         ? tLoose(projectedCredential.detailKey)
         : row.entry.accountCredentialSlot
@@ -568,6 +588,7 @@ export function useVoiceConversationsReadinessModel(props: {
       readinessFacts,
       sourceSelection,
       credentialSourceKind,
+      credentialResolving,
     };
   });
   const selectedUnavailableProvider = projectSelectedUnavailableVoiceProvider(voice, registry);
@@ -704,7 +725,9 @@ export function useVoiceConversationsReadinessModel(props: {
   const selectedProviderReadiness = selectedProviderRow?.readiness
     ?? selectedUnavailableReadiness;
   const checkedProviderReadinessPresentation = checkedProviderReadiness
-    ? resolveVoiceProviderReadinessPresentation(checkedProviderReadiness, translateVoiceReadiness, selectedProviderRow ? resolveVoiceServiceTitle(selectedProviderRow.entry, tLoose, localizePluginText) : undefined)
+    ? resolveVoiceProviderReadinessPresentation(checkedProviderReadiness, translateVoiceReadiness,
+      selectedProviderRow ? resolveVoiceServiceTitle(selectedProviderRow.entry, tLoose, localizePluginText) : undefined,
+      { resolving: selectedProviderRow?.credentialResolving === true })
     : null;
   const checkedProviderReadinessDetail = selectedProviderRow?.projectedCredentialGuidance
     ?? (checkedProviderReadinessPresentation ? [
@@ -717,7 +740,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const checkedProviderResult: CheckedVoiceProviderReadinessResult | null = isCheckingPassiveSetup
     ? {
         kind: 'checking',
-        detail: tLoose('settings.updates.checking'),
+        detail: t('requirements.checking'),
         recoveryAction: 'none',
       }
     : checkedProviderReadiness
@@ -973,6 +996,7 @@ export function useVoiceConversationsReadinessModel(props: {
   // The selected Service, its card and the passive hub consume the same pipeline facts and
   // presenter. Configuration-only row readiness cannot establish that every role is ready.
   const selectedPipeline = buildVoiceConversationsPipeline({
+    credentialResolving: selectedProviderRow?.credentialResolving,
     voice, serviceTitle: selectedServiceTitle, readiness: effectiveSelectedProviderReadiness,
     localSpeechReadiness: selectedLocalSpeechReadiness,
     localThinkReadiness: localConversationReadinessFacts.thinkReadiness,
@@ -1041,6 +1065,7 @@ export function useVoiceConversationsReadinessModel(props: {
   return {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows,
     selectedProviderReadiness: effectiveSelectedProviderReadiness,
+    selectedProviderCredentialResolving: selectedProviderRow?.credentialResolving === true,
     isCheckingPassiveSetup, checkProviderReadiness, showCheckedReadiness, checkedReadinessRecoveryHandler,
     checkedProviderResult, checkedReadinessRecoveryAction, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
@@ -1108,7 +1133,7 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
   const router = useRouter();
   const {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows, selectedProviderReadiness,
-    selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedReadinessCheckKey,
+    selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedReadinessCheckKey, selectedProviderCredentialResolving,
     checkProviderReadiness, showCheckedReadiness,
     checkedProviderResult, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
@@ -1128,13 +1153,14 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
   const executionMachine = useVoiceExecutionMachinePresentation();
   const selectedServiceTitle = serviceTiles.find((tile) => tile.selected)?.title ?? null;
   const conversationsPipeline = React.useMemo(() => buildVoiceConversationsPipeline({
+    credentialResolving: selectedProviderCredentialResolving,
     voice,
     serviceTitle: selectedServiceTitle,
     readiness: selectedProviderReadiness ?? null,
     localSpeechReadiness: selectedLocalSpeechReadiness,
     localThinkReadiness: selectedLocalThinkReadiness,
     machine: { machineId: executionMachine.selectedMachineId, machineLabel: executionMachine.machineLabel },
-  }), [executionMachine.machineLabel, executionMachine.selectedMachineId, selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedProviderReadiness, selectedServiceTitle, voice]);
+  }), [executionMachine.machineLabel, executionMachine.selectedMachineId, selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedProviderCredentialResolving, selectedProviderReadiness, selectedServiceTitle, voice]);
 
   const payWith = selectedServiceBillingRows.length > 1 ? (
       <SegmentedChoiceItem<string>

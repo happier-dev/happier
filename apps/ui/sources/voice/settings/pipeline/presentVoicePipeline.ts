@@ -24,6 +24,7 @@ export type VoicePipelineStepPresentation = Readonly<{
         recoveryAction: VoiceRoleReadiness['recoveryAction'] | null;
         actionLabel: string | null;
         progress: number | null;
+        selectedAgent?: VoiceRoleReadiness['selectedAgent'];
     }> | null;
 }>;
 
@@ -122,6 +123,7 @@ function presentReadiness(readiness: VoiceRoleReadiness, translate: Translate, p
         recoveryAction: readiness.recoveryAction === 'none' ? null : readiness.recoveryAction,
         actionLabel: copy.action,
         progress: tone === 'working' ? progress : null,
+        selectedAgent: readiness.code === 'agent_signed_out' || readiness.code.startsWith('runtime_') ? readiness.selectedAgent : undefined,
     };
 }
 
@@ -153,10 +155,13 @@ export function presentVoicePipeline(
         && step.readiness.recoveryAction === serviceFact.recoveryAction) ? null : serviceFact;
     const needYou = steps.filter((step) => step.readiness?.tone === 'blocked').length;
     const toSetUp = steps.some((step) => step.readiness?.tone === 'needs_setup');
-    const overall = resolveVoiceReadinessTone(cardReadiness ?? pipeline.readiness);
-    const tone: VoiceReadinessTone = needYou > 0 || overall === 'blocked'
+    const overallReadiness = cardReadiness ?? pipeline.readiness;
+    const overall = resolveVoiceReadinessTone(overallReadiness);
+    const activity = overallReadiness ? resolveVoiceProviderReadinessPresentation(overallReadiness, translate,
+        serviceTitle, { resolving: pipeline.credentialResolving === true }) : null;
+    const tone: VoiceReadinessTone = activity?.checking ? 'working' : needYou > 0 || overall === 'blocked'
         ? 'blocked' : toSetUp ? 'needs_setup' : overall ?? 'unknown';
-    const statusWord = serviceFact
+    const statusWord = activity?.checking ? activity.summary : serviceFact
         ? serviceFact.tone === 'blocked'
             ? t('settingsVoice.pages.pipeline.needsYou')
             : serviceFact.tone === 'needs_setup'

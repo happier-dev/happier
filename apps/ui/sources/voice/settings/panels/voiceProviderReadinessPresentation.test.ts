@@ -5,6 +5,16 @@ import { resolveVoiceProviderReadinessPresentation } from './voiceProviderReadin
 describe('resolveVoiceProviderReadinessPresentation', () => {
   const translate = (key: string) => key;
 
+  it('shows the catalog acquisition in progress without making an unknown credential ready', () => {
+    const readiness = { status: 'unavailable' as const, code: 'credential_unknown',
+      reasonKey: 'voice.readiness.credential_unknown', recoveryAction: 'retry' as const };
+    expect(resolveVoiceProviderReadinessPresentation(readiness, translate, undefined, { resolving: true }))
+      .toEqual({ checking: true, summary: 'requirements.checking', reason: 'requirements.checking',
+        action: null, short: 'requirements.checking' });
+    expect(resolveVoiceProviderReadinessPresentation(readiness, translate).short)
+      .toBe('voice.readiness.short.cantCheck');
+  });
+
   it('names the selected service when setup is incomplete, without referring to another page location', () => {
     const translateWithService = (key: string, params?: { service: string }) =>
       key === 'voice.readiness.settings_missing_required_setting' ? `Finish setting up ${params?.service} to start.` : key;

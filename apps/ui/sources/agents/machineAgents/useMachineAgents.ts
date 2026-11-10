@@ -48,6 +48,19 @@ export function readMachineAgentsForScope(lifetime: ServerAccountScopeLifetime, 
         return saved ? { ...saved, status: 'offline' } : null;
     }) : EMPTY_MACHINE_AGENTS;
 }
+
+/** Observe already-produced readiness without acquiring catalogs, probes, or executable runtimes. */
+export function useObservedMachineAgents(target: Pick<MachineAgentsTarget, 'serverId' | 'machineId'>): MachineAgentsSnapshot {
+    const { binding } = useServerCredentialAccountScopeBinding(target.serverId ?? '');
+    const machineId = target.machineId?.trim() ?? '';
+    const lifetime = binding?.isCurrent() ? binding : null;
+    const key = lifetime && machineId ? scopeKey(lifetime, machineId) : null;
+    const subscribe = React.useCallback((listener: () => void) => key
+        ? machineAgentInventoryStore.subscribe(key, listener) : () => {}, [key]);
+    const read = React.useCallback(() => lifetime && key
+        ? readMachineAgentsForScope(lifetime, machineId) : EMPTY_MACHINE_AGENTS, [key, lifetime, machineId]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
 const capabilitySalt = (lifetime: ServerAccountScopeLifetime, revision: number) => serverAccountScopedResourceKey(lifetime.scope, 'machine-agents-capabilities', String(revision));
 
 function useInventoryProjectionReaders(serverId: string, machineIds: readonly string[]) {
