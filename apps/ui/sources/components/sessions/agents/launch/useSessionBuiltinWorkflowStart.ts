@@ -4,7 +4,7 @@ import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/bui
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { createWorkflowStartDetailsTab, type WorkflowStartSource } from '@/components/workflows/run/workflowStartDetailsModel';
-import type { WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
+import type { WorkflowStartPlacement, WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 import { tLoose } from '@/text';
 import { useSessionAgentStartOpener } from './useSessionAgentStartOpener';
 import { useSessionAddressForSessionId } from '@/components/sessions/plugins/useSessionPluginRuntime';
@@ -17,7 +17,7 @@ export function useSessionBuiltinWorkflowStart(params: Readonly<{ sessionId: str
     const address = useSessionAddressForSessionId(params.sessionId, params.serverId);
     const destinationScopeId = useDestinationPaneScopeId(createSessionPaneScopeId(params.sessionId, address?.serverId));
     const scopeId = params.scopeId ?? destinationScopeId;
-    return React.useCallback((workflow: string | WorkflowPluginSourceV1 | WorkflowStartReference | WorkflowStartSource) => {
+    return React.useCallback((workflow: string | WorkflowPluginSourceV1 | WorkflowStartReference | WorkflowStartSource, placement?: WorkflowStartPlacement) => {
         let source: WorkflowStartSource;
         let title: string | undefined;
         if (typeof workflow === 'string') {
@@ -34,6 +34,6 @@ export function useSessionBuiltinWorkflowStart(params: Readonly<{ sessionId: str
             source = { kind: 'catalog', workflow: workflow.workflow, pluginVersion: workflow.version };
             title = workflow.title;
         }
-        openStart(scopeId, createWorkflowStartDetailsTab(source, title));
+        openStart(scopeId, createWorkflowStartDetailsTab(source, title), placement);
     }, [openStart, scopeId]);
 }

@@ -41,7 +41,9 @@ import { TranscriptMessageSelectionBoundary } from '@/components/sessions/transc
 import { TranscriptSelectionToolbar, type TranscriptSelectionToolbarAction, type TranscriptSelectionToolbarMessage } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar';
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScroll';
-import { TranscriptListShell } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import { TranscriptListShell, type TranscriptListShellRef } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
+import type { TranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
 import { resolveConversationTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { DiscussionMessageContent } from './DiscussionMessageContent';
@@ -439,6 +441,12 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
             </>}
         />
     </View>;
+}
+
+/** The thread's visual top and bottom slots, placed for the list's data order by the transcript's edge-slot owner. */
+function transcriptEdgeSlotProps(frame: TranscriptListShellFrame, visualTop: React.ReactNode, visualBottom: React.ReactNode) {
+    const slots = resolveTranscriptListShellEdgeSlots({ frame, visualTopNode: visualTop, visualBottomNode: visualBottom });
+    return { header: slots.listHeaderNode, footer: slots.listFooterNode };
 }
 
 type DiscussionProps = Readonly<{ target: Extract<DiscussionDetailsTarget, { kind: 'discussion' }>; scope: ServerAccountScope; accountLifetime: ServerAccountScopeLifetime; active: boolean; standaloneSurface: boolean; hostSessionAddress?: SessionAddress; onClose?: () => void; onOpened?: (discussion: DiscussionOpenedSummaryV1) => void }>;
@@ -881,6 +889,10 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         run, messages: displayMessages, invocations: workflowInvocations.byRunId.get(run.id) ?? [],
     })), [displayMessages, managedRuns.runs, workflowInvocations.byRunId]);
     const dataKey = React.useMemo(() => `discussion:${JSON.stringify([props.scope.serverId, props.scope.accountId, props.target.discussionId])}`, [props.scope.accountId, props.scope.serverId, props.target.discussionId]);
+    // As a Session's transcript does: when the composer's inset under the thread changes (it measures after the
+    // thread first settles on a phone), the list re-holds its end, so the last message clears the composer.
+    const transcriptListRef = React.useRef<TranscriptListShellRef<DiscussionTimelineItem<DiscussionDisplayMessage>> | null>(null);
+    const composerInsetChanged = React.useCallback(() => { transcriptListRef.current?.notifyViewportGeometryChanged?.(); }, []);
     const previousTimelineItems = React.useRef<Readonly<{ dataKey: string; items: readonly DiscussionTimelineItem<DiscussionDisplayMessage>[] }> | null>(null);
     const items = React.useMemo(() => {
         const previous = previousTimelineItems.current?.dataKey === dataKey ? previousTimelineItems.current.items : [];
@@ -1371,6 +1383,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                 {threadReadFailed ? <View style={[styles.stateLine, threadColumn, styles.readFailure]}>
                     <SurfaceStateCard testID="session-discussion-thread-state" {...threadReadFailureCard(thread, retryAction)} />
                 </View> : <TranscriptListShell<DiscussionTimelineItem<DiscussionDisplayMessage>>
+                    ref={transcriptListRef}
                     key={dataKey}
                     dataKey={dataKey}
                     viewportRetention={repository}
@@ -1383,20 +1396,23 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                     viewabilityConfig={VIEWABILITY}
                     onStartReached={thread.hasMoreOlder ? () => void repository.loadOlderMessages(props.target.discussionId) : undefined}
                     onStartReachedThreshold={0.2}
-                    header={thread.hasMoreOlder || managedRuns.phase === 'failed' ? <>{thread.hasMoreOlder ? <HappierPressable style={styles.retry} accessibilityRole="button" accessibilityLabel={t('session.collaboration.discussion.loadOlder')} onPress={() => void repository.loadOlderMessages(props.target.discussionId)}><Text style={styles.retryText}>{t('session.collaboration.discussion.loadOlder')}</Text></HappierPressable> : null}
+                    // On a phone the list runs newest-first: the edge-slot owner puts the composer's clearance
+                    // at the visual bottom and Load older at the top, as a Session's transcript does.
+                    {...transcriptEdgeSlotProps(frame,
+                        thread.hasMoreOlder || managedRuns.phase === 'failed' ? <>{thread.hasMoreOlder ? <HappierPressable style={styles.retry} accessibilityRole="button" accessibilityLabel={t('session.collaboration.discussion.loadOlder')} onPress={() => void repository.loadOlderMessages(props.target.discussionId)}><Text style={styles.retryText}>{t('session.collaboration.discussion.loadOlder')}</Text></HappierPressable> : null}
                         {managedRuns.phase === 'failed' ? <View style={threadColumn}><SurfaceStateCard
                             testID="session-discussion-workflow-runs-state" size="line" kind="unavailable"
                             title={t('workflows.destination.history.loadFailedTitle')}
                             reason={t('workflows.destination.history.loadFailedBody')}
                             action={{ label: t('session.collaboration.discussion.retry'), onPress: managedRuns.retry }}
-                        /></View> : null}</> : null}
+                        /></View> : null}</> : null,
                     // While the messages are still on their way the header and composer stay and the thread shows
                     // its loading rows (lab T2-ST "Loading"), never an empty claim it hasn't checked.
-                    footer={<>{waitingApprovalCard}{items.length === 0 ? thread.status === 'loading'
+                        <>{waitingApprovalCard}{items.length === 0 ? thread.status === 'loading'
                         ? <View testID="session-discussion-loading" style={[styles.loadingRows, threadColumn]}><SkeletonRows rows={4} /></View>
                         : <SurfaceStateCard testID="session-discussion-empty" kind="empty" title={t('session.collaboration.discussion.emptyActive')} /> : null}
                         {/* The composer floats over the thread on a phone; the last message scrolls clear of it. */}
-                        <ComposerKeyboardScrollInset /></>}
+                        <ComposerKeyboardScrollInset onHeightChange={composerInsetChanged} /></>)}
                     renderItem={({ item }) => {
                         if (item.kind === 'workflow_run' || item.kind === 'workflow_run_end') {
                             // The header under the asking message and, for a finished run with replies, the end row

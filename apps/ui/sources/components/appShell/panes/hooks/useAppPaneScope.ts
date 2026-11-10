@@ -86,7 +86,9 @@ export type AppPaneScopeApi = {
     selectBottomDestination: (destination: SelectedPaneDestinationV1) => void;
     setBottomTabState: (tabId: string, nextState: unknown) => void;
     /** `origin` names the pane column a lent opener came from; it defaults to this caller's own column. */
-    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview'; present?: boolean; origin?: DetailsOpenerRegion; start?: boolean }>) => void;
+    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview'; present?: boolean; origin?: DetailsOpenerRegion; start?: boolean;
+        /** On a phone, where a Start would open the Start sheet, the opener's list shows it as its next step (`DetailsStartStep`). */
+        presentStart?: (scopeId: string) => void }>) => void;
     replaceDetailsTab: (tabKey: string, tab: DetailsTab, options?: Readonly<{
         intent?: 'default' | 'pinned' | 'preview';
         restoreSourceOnRehydrate?: boolean;
@@ -163,7 +165,8 @@ export function useOptionalDetailsRegionTabOpener(): DetailsTabOpenInScope | nul
         lastPreviewOpenRef.current = { scopeId, open: decision.nextLastPreviewOpen };
         dispatchDetailsTabOpen(dispatch, presentPane, snapshot.presentDetailsStart, { scopeId, tab, openAs: decision.openAs, origin: options?.origin ?? paneRegion,
             present: options?.present !== false, held: existingTab !== null, start: options?.start === true,
-            hasDetailsRenderer: Boolean(snapshot.getDriver(scopeId)?.detailsPaneBuiltinAdapter) });
+            hasDetailsRenderer: Boolean(snapshot.getDriver(scopeId)?.detailsPaneBuiltinAdapter),
+            ...(options?.presentStart ? { presentStart: options.presentStart } : {}) });
         return true;
     }, [dispatch, paneRegion, presentPane, subscription]);
     return dispatch ? openDetailsTab : null;
@@ -188,6 +191,7 @@ function dispatchDetailsTabOpen(
         held: boolean;
         start: boolean;
         hasDetailsRenderer: boolean;
+        presentStart?: (scopeId: string) => void;
     }>,
 ): boolean {
     // The layout admits an own-tab page before the pane takes it, including opens from the Session.
@@ -201,7 +205,12 @@ function dispatchDetailsTabOpen(
     if (presentation === 'ownTab') return true;
     dispatch({ type: 'openDetailsTab', scopeId: input.scopeId, tab: input.tab, openAs: input.openAs, origin: input.origin,
         ...(input.present && input.start ? { start: true } : {}) });
-    if (input.present && input.start && (presentation === 'startSheet' || !input.hasDetailsRenderer || getDeviceType() === 'phone')) presentDetailsStart(input.scopeId);
+    const phone = getDeviceType() === 'phone';
+    if (input.present && input.start && (presentation === 'startSheet' || !input.hasDetailsRenderer || phone)) {
+        // On a phone, a Start chosen from a list stays in that list's popover as its next step, never a second surface.
+        if (phone && input.presentStart) input.presentStart(input.scopeId);
+        else presentDetailsStart(input.scopeId);
+    }
     return true;
 }
 

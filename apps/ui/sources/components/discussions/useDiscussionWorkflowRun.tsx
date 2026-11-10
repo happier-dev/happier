@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DiscussionAddressV1 } from '@happier-dev/protocol/discussions';
 import { createWorkflowRunActionChip } from '@/components/sessions/agentInput/sessionActions/createWorkflowRunActionChip';
-import { WorkflowStartPicker, type WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
+import { WorkflowStartPicker, type WorkflowStartPlacement, type WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 import { createWorkflowStartDetailsTab } from '@/components/workflows/run/workflowStartDetailsModel';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -19,10 +19,10 @@ export function useDiscussionWorkflowRun(params: Readonly<{
     const saveAsPattern = useDiscussionWorkflowCapture(params);
     const pane = useAppPaneScope(params.paneScopeId);
     const scoped = areServerProfileIdentifiersEquivalent(params.accountLifetime.scope.serverId, params.discussion.serverId);
-    const select = React.useCallback((selection: WorkflowStartReference) => {
+    const select = React.useCallback((selection: WorkflowStartReference, placement?: WorkflowStartPlacement) => {
         if (!params.accountLifetime.isCurrent() || !scoped || params.disabled) return;
         pane.openDetailsTab(createWorkflowStartDetailsTab(selection.source, selection.name,
-            { kind: 'discussion', discussion: params.discussion }), { intent: 'pinned', start: true });
+            { kind: 'discussion', discussion: params.discussion }), { intent: 'pinned', start: true, ...placement });
     }, [pane, params.accountLifetime, params.disabled, params.discussion, scoped]);
     const chip = React.useMemo(() => createWorkflowRunActionChip({
         label: t('workflows.start.runPattern'), title: t('workflows.start.runPatternTitle'),

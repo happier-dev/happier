@@ -13,7 +13,7 @@ export const en = {
     ...workflowRunRoleTranslations.en,
     ...workflowRunCompositionTranslations.en,
     shortcutStarts: 'starts',
-    runPattern: 'Run…', runPatternTitle: 'Run a pattern', anotherRound: 'Another round',
+    runPattern: 'Run…', runPatternTitle: 'Run a pattern', allPatterns: 'All patterns', anotherRound: 'Another round',
     answerCount: ({ count }: { count: number }) => count === 1 ? '1 answer' : `${count} answers`,
     participantTitle: 'Choose who takes part', participantSearch: 'Find a session or model', participantSession: 'Each answers with its own setup', participantModel: ({ agent, machine }: { agent: string; machine: string }) => `New ${agent} session on ${machine}`, participantDone: 'Done', choicesFailed: 'Couldn’t load the choices', choicesNeedField: ({ field }: { field: string }) => `Choose ${/^[aeiou]/i.test(field) ? 'an' : 'a'} ${field} first`,
     workflow: 'Workflow', inputs: 'Inputs', start: 'Start', starting: 'Starting…', stillStarting: 'Still starting…',

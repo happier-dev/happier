@@ -21,7 +21,7 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { WorkflowStartSource } from '@/components/workflows/run/workflowStartDetailsModel';
-import type { WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
+import type { WorkflowStartPlacement, WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 
 import { useSessionBuiltinWorkflowStart } from './useSessionBuiltinWorkflowStart';
 
@@ -43,7 +43,7 @@ export type SessionAgentLauncher = Readonly<{
     /** Starts a read-only plugin catalog source through that same Session start owner. */
     startPluginWorkflow: (source: WorkflowPluginSourceV1) => void;
     /** Opens the chosen saved or catalog reference in the shared contextual Start body, named after it. */
-    startWorkflow: (reference: WorkflowStartReference | WorkflowStartSource) => void;
+    startWorkflow: (reference: WorkflowStartReference | WorkflowStartSource, placement?: WorkflowStartPlacement) => void;
     /** Shows a Details tab where the person will see it (beside the Session, or the phone's Details). */
     openDetails: (tab: DetailsTab) => void;
     /** Brings an unsent start back in the same contextual Details destination. */

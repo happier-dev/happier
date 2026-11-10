@@ -21,12 +21,15 @@ import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowStartSource } from './workflowStartDetailsModel';
+import { DetailsStartStep } from '@/components/appShell/panes/details/PhoneDetailsStartSheet';
 
 /**
  * Two panes (lab T4-R): the list, and beside it what the highlighted pattern does and asks for. The Run…
  * chip (`createWorkflowRunActionChip`) gives the popover the width; narrower, the list stands alone.
  */
 const PICKER_DETAIL_PANE = Object.freeze({ minListWidthPx: 560, widthPx: 320 });
+/** The list stays mounted under its Start step (query, scroll and library pages come back with Back). */
+const HIDDEN_UNDER_STEP = Object.freeze({ display: 'none' as const });
 
 /** Holds a library read open until the section's next resolver (a library state change) aborts it. */
 function untilAborted(signal: AbortSignal): Promise<SelectionListDynamicSectionResolveResult> {
@@ -82,6 +85,8 @@ export type WorkflowStartSelection = Readonly<{
     source: WorkflowStartSource;
 }>;
 export type WorkflowStartReference = Readonly<{ source: WorkflowStartSource; name: string }>;
+/** How the host opens the chosen Start: passed to its Details opener (`openDetailsTab` options). */
+export type WorkflowStartPlacement = Readonly<{ presentStart?: (scopeId: string) => void }>;
 
 type SavedWorkflowHeader = Extract<WorkflowLibraryDefinition, { contentStatus: 'available' }>;
 type ReadSavedSelection = (header: SavedWorkflowHeader) => Promise<WorkflowStartSelection>;
@@ -114,7 +119,7 @@ type WorkflowStartPickerProps = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
 }> & (
     | Readonly<{ onSelect: (selection: WorkflowStartSelection) => void; onSelectReference?: never }>
-    | Readonly<{ onSelect?: never; onSelectReference: (reference: WorkflowStartReference) => void }>
+    | Readonly<{ onSelect?: never; onSelectReference: (reference: WorkflowStartReference, placement: WorkflowStartPlacement) => void }>
 );
 
 /** Only mounted while the Workflow chip is open; FIN owns the Account library and exact reads. */
@@ -139,6 +144,9 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
         promise: Promise<WorkflowStartSelection>;
     }> | null>(null);
     const readController = React.useRef<AbortController | null>(null);
+    // Where the Start would open as the phone Start sheet, it is this list's next step instead (Back to the list).
+    const [startStepScopeId, setStartStepScopeId] = React.useState<string | null>(null);
+    const closeStartStep = React.useCallback(() => setStartStepScopeId(null), []);
     const mounted = React.useRef(true);
     React.useEffect(() => {
         mounted.current = true;
@@ -247,6 +255,7 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
         ],
     }), [accountLifetime, asks, builtinSelections, library.definitions, libraryPhase, pluginSelections, props.hasOriginSession, readSavedSelection, theme.colors.text.secondary]);
     return <View>
+        <View testID="workflow-start-picker.list" style={startStepScopeId ? HIDDEN_UNDER_STEP : undefined}>
         {/* A fixed viewport: the library landing never moves the popover or its search field (lab T4-R). */}
         <SelectionList rootStep={rootStep} maxHeight={props.maxHeight} heightBehavior="fixedToMaxHeight" autoFocusInputOnWeb
             currentUiContextCommandScope={props.currentUiContextCommandScope}
@@ -266,8 +275,12 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
                         reference = { name: formatWorkflowDefinitionLibraryTitle(header),
                             source: { kind: 'saved', definitionId: header.definitionId, revision: header.revision } };
                     } else return;
-                    props.onSelectReference(reference);
-                    props.onRequestClose();
+                    let stepped = false;
+                    props.onSelectReference(reference, { presentStart: (scopeId) => {
+                        stepped = true;
+                        setStartStepScopeId(scopeId);
+                    } });
+                    if (!stepped) props.onRequestClose();
                     return;
                 }
                 if (!selection) {
@@ -293,5 +306,8 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
         {selectionFailure ? <Text accessibilityRole="alert" style={styles.previewBody}>{selectionFailure}</Text> : null}
         {library.hasMore && libraryShown ? <RoundButton size="small" display="inverted" title={t('workflows.destination.loadMoreWorkflows')}
             loading={library.loadingMore} onPress={library.loadMore} /> : null}
+        </View>
+        {startStepScopeId ? <DetailsStartStep key={startStepScopeId} scopeId={startStepScopeId} height={props.maxHeight}
+            backLabel={t('workflows.start.allPatterns')} onBack={closeStartStep} /> : null}
     </View>;
 }

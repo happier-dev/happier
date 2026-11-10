@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createWorkflowRunActionChip } from '@/components/sessions/agentInput/sessionActions/createWorkflowRunActionChip';
-import { WorkflowStartPicker, type WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
+import { WorkflowStartPicker, type WorkflowStartPlacement, type WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 import { t } from '@/text';
 
 import { useSessionBuiltinWorkflowStart } from './useSessionBuiltinWorkflowStart';
@@ -18,8 +18,8 @@ export function useSessionWorkflowRunChip(params: Readonly<{
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const start = useSessionBuiltinWorkflowStart({ sessionId: params.sessionId, serverId: params.serverId });
-    const select = React.useCallback((selection: WorkflowStartReference) => {
-        start(selection);
+    const select = React.useCallback((selection: WorkflowStartReference, placement: WorkflowStartPlacement) => {
+        start(selection, placement);
     }, [start]);
     return React.useMemo(() => createWorkflowRunActionChip({
         label: t('workflows.start.runPattern'),

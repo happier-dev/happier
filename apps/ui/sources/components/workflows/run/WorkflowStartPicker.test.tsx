@@ -1227,6 +1227,63 @@ describe('WorkflowStartPicker plugin workflows', () => {
     expect(writes()).toEqual([]);
     expect(hook.getCurrent().run.saveAsPattern.state.status).toBe('closed');
   });
+  it('keeps a chosen pattern inside its popover on a phone: its Start is the next step, and Back returns to the list', async () => {
+    const { useDiscussionWorkflowRun } = await import('@/components/discussions/useDiscussionWorkflowRun');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
+    const { Dimensions, Text } = await import('react-native');
+    // A phone: its popovers push in place, and a Start never sits beside the thread.
+    vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('missing_account_scope');
+    const discussion = { serverId: lifetime.scope.serverId, discussionId: 'discussion-phone' };
+    const scopeId = 'discussion-phone-test';
+    const requestClose = vi.fn();
+    // The Discussion's registered Details renderer stands for its Start body: the step shows the chosen tab.
+    function StartBody() {
+      const tab = useAppPaneScope(scopeId).scopeState?.details.tabs.at(-1);
+      return <Text testID="start-body">{tab?.title}</Text>;
+    }
+    const pane: { current?: ReturnType<typeof useAppPaneScope> } = {};
+    function PhoneComposerPopover() {
+      const run = useDiscussionWorkflowRun({ discussion, accountLifetime: lifetime!, paneScopeId: scopeId });
+      pane.current = useAppPaneScope(scopeId);
+      const register = useAppPaneContext(value => value.registerDriver);
+      React.useEffect(() => register({ scopeId, detailsPaneBuiltinAdapter: {
+        destinationIds: ['details'], render: () => <StartBody />,
+      } }), [register]);
+      const render = run.chip.collapsedContentPopover?.renderContent;
+      if (typeof render !== 'function') throw new Error('missing_workflow_picker_renderer');
+      return <>{render({ requestClose, maxHeight: 640, presentation: 'sheet' })}</>;
+    }
+    const screen = await renderScreen(<PhoneComposerPopover />, { wrapper: withPanes });
+    const panel = BUILTIN_WORKFLOW_CATALOG_V1.find(entry => entry.id === 'builtin:plan-with-a-panel')!;
+    const label = screen.findByType(SelectionList).props.rootStep.sections
+      .flatMap((section: { options?: { id: string; label: string }[] }) => section.options ?? [])
+      .find((option: { id: string }) => option.id === panel.id)!.label;
+    await screen.pressByTestIdAsync(`workflow-choice:${panel.id}`);
+    // The press chooses the pattern even though this popover renders outside any command composition
+    // (the native overlay host sits above the app's current-context provider).
+    expect(pane.current?.scopeState?.details.tabs[0]?.resource).toEqual({
+      kind: 'workflowStart', source: { kind: 'catalog', workflow: panel.id },
+      origin: { kind: 'discussion', discussion },
+    });
+    // The popover stays open and shows the chosen pattern's Start in place of the list; no second sheet opens.
+    expect(modals).toEqual([]);
+    expect(requestClose).not.toHaveBeenCalled();
+    expect(screen.findHostByTestId('start-body')?.props.children).toBe(label);
+    expect(screen.findHostByTestId('workflow-start-picker.list')?.props.style).toEqual({ display: 'none' });
+    expect(pane.current?.scopeState?.details.isOpen).toBe(true);
+    // Back returns to the pattern list in the same popover and closes the unstarted Start as the sheet did
+    // (the reviewed tab is retained for the next choice of the same pattern).
+    await screen.pressByTestIdAsync('details-start-step.back');
+    expect(screen.findAllByTestId('start-body')).toHaveLength(0);
+    expect(screen.findHostByTestId('workflow-start-picker.list')?.props.style).toBeUndefined();
+    expect(pane.current?.scopeState?.details.isOpen).toBe(false);
+    expect(requestClose).not.toHaveBeenCalled();
+    expect(starts()).toEqual([]);
+  });
   it('retains edited setup values and raw input when the same workflow is dismissed and selected again', async () => {
     const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
     const hook = await renderHook(() => useWorkflowComposerStart({
@@ -1409,7 +1466,8 @@ describe('WorkflowStartPicker plugin workflows', () => {
     const chooser = await openWorkChooser(screen);
     await chooser.pressByTestIdAsync(`workflow-choice:${plugin.workflow}`);
     expect(launcher.startWorkflow).toHaveBeenCalledWith({ name: plugin.title,
-      source: { kind: 'catalog', workflow: plugin.workflow, pluginVersion: plugin.version } });
+      source: { kind: 'catalog', workflow: plugin.workflow, pluginVersion: plugin.version } },
+      { presentStart: expect.any(Function) });
     expect(routing.push).not.toHaveBeenCalled();
   });
   it('keeps unavailable rows visible and starts a readable saved reference through the Work chooser', async () => {
@@ -1429,7 +1487,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     expect(launcher.startWorkflow).not.toHaveBeenCalled();
     await act(async () => { await chooser.findByType(SelectionList).props.onSelect(ids.readable); });
     expect(launcher.startWorkflow).toHaveBeenCalledWith({ name: 'Readable recipe',
-      source: { kind: 'saved', definitionId: ids.readable, revision: { headerVersion: 1, bodyVersion: 1 } } });
+      source: { kind: 'saved', definitionId: ids.readable, revision: { headerVersion: 1, bodyVersion: 1 } } }, { presentStart: expect.any(Function) });
     expect(routing.push).not.toHaveBeenCalled();
   });
   it('does not retain or select a previous Account catalog while the closed menu changes Account', async () => {

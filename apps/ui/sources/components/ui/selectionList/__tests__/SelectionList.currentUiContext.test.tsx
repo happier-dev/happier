@@ -139,6 +139,25 @@ describe('SelectionList mounted commands', () => {
         expect(selected).toEqual(['main']);
     });
 
+    it('still answers a person whose press its commands cannot carry (a list pushed inside an open menu)', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://selection-pushed.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const selected: string[] = [];
+        // The open + menu owns the foreground; the page-level picker pushed inside it publishes no reachable command.
+        function MenuWithPushedPicker() {
+            useCurrentUiContextLocalCommands([{ key: 'close', title: 'Close menu', description: 'menu.close', invoke: () => {} }],
+                { foregroundOverlay: true });
+            return <SelectionList currentUiContextCommandScope="pushed.list" testID="pushed" disableTransitions
+                rootStep={{ id: 'patterns', sections: [{ kind: 'static', id: 'patterns', options: [{ id: 'panel', label: 'Panel' }] }] }}
+                onSelect={id => selected.push(id)} onRequestClose={() => {}} />;
+        }
+        const screen = await renderMountedCurrentUiContext(<MenuWithPushedPicker />);
+        await screen.pressByTestIdAsync('pushed:patterns:option:panel');
+        await vi.waitFor(() => expect(selected).toEqual(['panel']));
+    });
+
     it('preserves the agent policy through a selection and a nested local command while UI can copy', async () => {
         const writeText = vi.fn(async (_text: string) => {});
         // The browser clipboard is the OS boundary; nested Action admission remains real.
