@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { storeKinds, type InstalledRow, type StoreDemand, type StoreInstalledInput } from '../catalog/storeKinds';
 import { useManagedInventoryAttention } from './useManagedInventoryAttention';
-import { useManagedConfiguredChecks, useManagedSetup, useManagedWatchedServices, type ManagedConfiguredCheckRow, type ManagedSetupRow,
+import { useManagedConfiguredBackups, useManagedConfiguredChecks, useManagedSetup, useManagedWatchedServices, type ManagedConfiguredBackupRow, type ManagedConfiguredCheckRow, type ManagedSetupRow,
     type ManagedWatchedServiceRow } from './managedOperationalInventory';
 import { useInstalledScope } from '../catalog/storeAccountAdmission';
 
-export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow | ManagedSetupRow | ManagedConfiguredCheckRow;
+export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow | ManagedSetupRow | ManagedConfiguredCheckRow | ManagedConfiguredBackupRow;
 
 export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand;
 export type ManagedInventoryFamilies = Readonly<{
@@ -17,6 +17,7 @@ export type ManagedInventoryView = Readonly<{
         watchedService: ReturnType<typeof useManagedWatchedServices>;
         setup: ReturnType<typeof useManagedSetup>;
         configuredCheck: ReturnType<typeof useManagedConfiguredChecks>;
+        configuredBackup: ReturnType<typeof useManagedConfiguredBackups>;
     }>;
     rows: readonly ManagedInventoryRow[];
     coverage: 'complete' | 'partial' | 'unavailable';
@@ -41,6 +42,7 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const demand = React.useMemo(() => ({ presented: query.presented }), [query.presented]);
     const admitted = useInstalledScope(input);
     const app = storeKinds.app.useInstalled(input, demand, admitted);
+    const configuredBackup = useManagedConfiguredBackups(app);
     const browserExtension = storeKinds.browserExtension.useInstalled(input, demand, admitted);
     const mcpServer = storeKinds.mcpServer.useInstalled(input, demand, admitted);
     const skill = storeKinds.skill.useInstalled(input, demand, admitted);
@@ -51,12 +53,12 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const watchedService = useManagedWatchedServices(input, demand, admitted);
     const setup = useManagedSetup(input, demand, admitted);
     const configuredCheck = useManagedConfiguredChecks(input, demand, admitted);
-    const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck }), [watchedService, setup, configuredCheck]);
+    const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck, configuredBackup }), [watchedService, setup, configuredCheck, configuredBackup]);
     const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software }),
         [app, browserExtension, mcpServer, skill, agent, provider, plugin, software]);
     const rows = React.useMemo<readonly ManagedInventoryRow[]>(() => [...app.rows, ...browserExtension.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows,
-        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows],
-        [app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows]);
+        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows, ...configuredBackup.rows],
+        [app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows, configuredBackup.rows]);
     const attentionQuery = React.useMemo(() => ({ ...input, presented: demand.presented }), [input, demand.presented]);
     const attention = useManagedInventoryAttention(attentionQuery, families, rows, admitted.scope);
     return React.useMemo(() => {

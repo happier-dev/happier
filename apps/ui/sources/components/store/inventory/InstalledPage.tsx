@@ -64,7 +64,7 @@ const GROUPS: readonly ManagedInventoryGroupBy[] = [
   'machine',
   'project',
 ];
-const KINDS = new Set<string>([...Object.keys(storeKinds), 'watchedService', 'setup', 'configuredCheck']);
+const KINDS = new Set<string>([...Object.keys(storeKinds), 'watchedService', 'setup', 'configuredCheck', 'configuredBackup']);
 const NO_FILTERS = {};
 
 function readGroupBy(value: unknown): ManagedInventoryGroupBy {

@@ -59,6 +59,7 @@ export function ManagedInventorySections(props: SectionsProps): React.ReactNode 
             setup: { kind: 'setup', result: props.inventory.operationalFamilies.setup },
             watchedService: { kind: 'watchedService', result: props.inventory.operationalFamilies.watchedService },
             configuredCheck: { kind: 'configuredCheck', result: props.inventory.operationalFamilies.configuredCheck },
+            configuredBackup: { kind: 'configuredBackup', result: props.inventory.operationalFamilies.configuredBackup },
             mcpServer: { kind: 'mcpServer', result: native.mcpServer }, agent: { kind: 'agent', result: native.agent },
             skill: { kind: 'skill', result: native.skill }, provider: { kind: 'provider', result: native.provider },
             plugin: { kind: 'plugin', result: native.plugin },

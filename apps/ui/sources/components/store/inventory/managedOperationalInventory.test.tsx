@@ -23,6 +23,110 @@ function watchesField(serviceWatchesV1: unknown) {
 
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
+it('lists configured Backups through the shared App page in Installed and Machine Overview, including never-run configuration', async () => {
+    const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { buildDeploymentEnvironmentHref } = await import('@/components/projects/deployments/deploymentNavigation');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/protocol/deployments/deploymentBackupActionsV1');
+    const home = await account.restore({ serverIdentityId: 'srv_inventory_backups', machines: [] });
+    const scope = storage.getState().settingsScope!;
+    const writer = await captureLazyActionAccountContext(scope.serverId);
+    const details = ['configured', 'unconfigured', 'not-needed'].map(id => createDeploymentEnvironmentDetailV1({
+        environment: createDeploymentEnvironmentHeaderV1({ id, serverId: scope.serverId,
+            owner: { kind: 'account', accountId: scope.accountId }, contentArtifactId: `${id}-content` }),
+    }));
+    const backupConfiguration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'open' },
+        occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
+        sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
+        ownership: { environmentId: 'configured', prefix: 'backups' }, retention: { kind: 'keepEverything' } });
+    details[0]!.content.backup = backupConfiguration;
+    details[2]!.content.backup = { notNeeded: true };
+    for (const detail of details) await writer.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.environment.id }, body: JSON.stringify(detail.content) });
+    writer.dispose();
+    const runtime = createDeploymentTargetLinkHeaderV1({ environmentId: 'configured', machines: ['backup-machine'],
+        members: [{ machineId: 'backup-machine', installationId: 'runtime-installation', state: 'active' }] });
+    account.home.answer(home.serverId, '/v1/deployments/environments', { select: (_input, request) => ({ body: {
+        ok: true, items: new URL(request.url).searchParams.has('machineId') ? [details[0]!.environment] : details.map(detail => detail.environment),
+        runtimeTargetLinks: [runtime], coverage: 'complete', nextCursor: null,
+    } }) });
+    const reads = () => account.home.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments');
+    let query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    const backups = () => hook.getCurrent().rows.filter(row => row.kind === 'configuredBackup');
+    await vi.waitFor(() => expect(hook.getCurrent().families.app.rows).toHaveLength(3));
+    expect(backups()).toHaveLength(1);
+    const row = backups()[0]!;
+    const presentation = presentInventoryRow(row, query);
+    expect(presentation.facts.title).toBe('configured');
+    expect(presentation.machines?.map(machine => machine.machineId)).toEqual(['backup-machine']);
+    expect(presentation.home.href).toBe(buildDeploymentEnvironmentHref({ serverId: scope.serverId,
+        projectSourceId: details[0]!.environment.projectSourceId, environmentId: 'configured', tab: 'settings', section: 'backups' }));
+    expect(reads()).toHaveLength(1);
+    const retained = hook.getCurrent().rows;
+    await hook.rerender();
+    await flushHookEffects();
+    expect(hook.getCurrent().rows).toBe(retained);
+    expect(reads()).toHaveLength(1);
+    query = { ...query, machine: { serverIdentityId: 'srv_inventory_backups', machineId: 'backup-machine' } };
+    await hook.rerender();
+    await vi.waitFor(() => expect(hook.getCurrent().families.app.rows).toHaveLength(1));
+    expect(backups().map(candidate => candidate.key)).toEqual([row.key]);
+    expect(presentInventoryRow(backups()[0]!, query).home).toEqual(presentation.home);
+    expect(reads()).toHaveLength(2);
+    query = { ...query, presented: false };
+    await hook.rerender();
+    expect(backups()).toEqual([]);
+    query = { ...query, presented: true };
+    await hook.rerender();
+    await vi.waitFor(() => expect(backups()).toHaveLength(1));
+    expect(reads()).toHaveLength(2);
+    query = { ...query, machine: null };
+    await hook.rerender();
+    await vi.waitFor(() => expect(hook.getCurrent().families.app.rows).toHaveLength(3));
+    expect(reads()).toHaveLength(2);
+    const beforeChange = backups().find(candidate => candidate.key === row.key);
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { buildDeploymentAccountChangeV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    await act(async () => {
+        for (let index = 0; index < 10; index++) publishHomeAccountChange(scope.serverId, ['unrelated-subject'], { changeKinds: ['account'] });
+    });
+    expect(reads()).toHaveLength(2);
+    const updateConfiguration = async (configured: boolean) => {
+        const detail = details[1]!;
+        detail.content.backup = configured ? { ...backupConfiguration,
+            ownership: { environmentId: detail.environment.id, prefix: 'backups' } } : { notNeeded: true };
+        detail.environment = createDeploymentEnvironmentHeaderV1({ ...detail.environment,
+            revision: detail.environment.revision + 1, contentArtifactId: `${detail.environment.id}-${detail.environment.revision + 1}` });
+        const writer = await captureLazyActionAccountContext(scope.serverId);
+        try {
+            await writer.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.environment.id }, body: JSON.stringify(detail.content) });
+        } finally { writer.dispose(); }
+        const change = buildDeploymentAccountChangeV1({ projectSourceId: detail.environment.projectSourceId,
+            environmentId: detail.environment.id, revision: detail.environment.revision });
+        await act(async () => publishHomeAccountChange(scope.serverId, [change.entityId], { changeKinds: ['account'] }));
+    };
+    await updateConfiguration(true);
+    await vi.waitFor(() => expect(backups()).toHaveLength(2));
+    expect(reads()).toHaveLength(3);
+    expect(backups().find(candidate => candidate.key === row.key)).toBe(beforeChange);
+    query = { ...query, presented: false };
+    await hook.rerender();
+    await updateConfiguration(false);
+    await flushHookEffects();
+    expect(reads()).toHaveLength(3);
+    query = { ...query, presented: true };
+    await hook.rerender();
+    await vi.waitFor(() => expect(hook.getCurrent().families.app.rows[1]?.native.environment.revision).toBe(3));
+    expect(backups()).toHaveLength(1);
+    expect(reads()).toHaveLength(4);
+    expect(account.home.requests.filter(request => request.path.includes('/backups')
+        || request.path.startsWith('/v1/deployments/environments/'))).toEqual([]);
+    await hook.unmount();
+});
+
 it('consumes only recorded watches as configured subjects across both doors without native discovery', async () => {
     const identity = 'srv_inventory_recorded_watches';
     const watches = watchesField({ v: 1, watches: [{ v: 1, watchId: 'adopted-native', name: 'Database watch',

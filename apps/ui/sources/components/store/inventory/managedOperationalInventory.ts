@@ -13,6 +13,34 @@ import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/syn
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
 import { t } from '@/text';
+import type { InstalledAppRow, InstalledAppsResult } from '../catalog/storeApps';
+import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
+
+/** Saved backup configuration, independent of whether a backup has ever run. */
+export type ManagedConfiguredBackupRow = Omit<InstalledAppRow, 'kind'> & Readonly<{ kind: 'configuredBackup' }>;
+const EMPTY_BACKUP_ROWS: readonly ManagedConfiguredBackupRow[] = Object.freeze([]);
+
+/** Project the already acquired App page; deployment owns membership, coverage, paging and invalidation. */
+export function useManagedConfiguredBackups(app: InstalledAppsResult) {
+    const previous = React.useRef(EMPTY_BACKUP_ROWS);
+    const rows = React.useMemo(() => {
+        const retained = new Map(previous.current.map(row => [row.key, row]));
+        const next = app.rows.filter(row => row.native.backupConfigured === true).map((row): ManagedConfiguredBackupRow => {
+            const key = serverAccountScopedResourceKey(row.scope, 'configured-backup', row.native.environment.id);
+            const held = retained.get(key);
+            if (held?.native === row.native && held.scope === row.scope && held.projectKeys === row.projectKeys) return held;
+            return { ...row, kind: 'configuredBackup', key, home: buildDeploymentEnvironmentHref({
+                serverId: row.native.environment.serverId, projectSourceId: row.native.environment.projectSourceId,
+                environmentId: row.native.environment.id, tab: 'settings', section: 'backups',
+            }) };
+        });
+        if (next.length !== previous.current.length || next.some((row, index) => row !== previous.current[index])) {
+            previous.current = next.length === 0 ? EMPTY_BACKUP_ROWS : next;
+        }
+        return previous.current;
+    }, [app.rows]);
+    return React.useMemo(() => ({ ...app, rows }), [app, rows]);
+}
 
 export type ManagedWatchedServiceRow = Readonly<{
     kind: 'watchedService'; key: string; scope: ServerAccountScope; machineId: string;

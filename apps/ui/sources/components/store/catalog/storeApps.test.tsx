@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { StoreInstalledInput } from './storeKinds';
 
@@ -21,7 +21,8 @@ it('preserves native All and exact-Machine pages, runtime membership and explici
     const later = createDeploymentEnvironmentHeaderV1({ ...first, id: 'later-app', contentArtifactId: 'later-label', projectSourceId: 'other-source' });
     const runtime = createDeploymentTargetLinkHeaderV1({ machines: ['runtime'], members: [{ machineId: 'runtime', installationId: 'runtime-installation', state: 'active' }] });
     for (const environment of [first, later]) await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
-        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.id }, body: '{}' });
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.id },
+        body: JSON.stringify(createDeploymentEnvironmentDetailV1({ environment }).content) });
     homes.answer(serverId, '/v1/deployments/environments', { select: (_input, request) => {
         const url = new URL(request.url);
         const machine = url.searchParams.get('machineId');

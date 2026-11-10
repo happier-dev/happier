@@ -20,12 +20,13 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 export const inventoryColumnAdapter = defineSettingsCollectionAdapter(['kind', 'status', 'machine', 'project']);
 export type ManagedInventoryField = typeof inventoryColumnAdapter.fields[number];
-type OperationalKind = 'watchedService' | 'setup' | 'configuredCheck';
+type OperationalKind = 'watchedService' | 'setup' | 'configuredCheck' | 'configuredBackup';
 function operationalKindWord(kind: InstalledRow['kind']): string | null {
     switch (kind) {
         case 'watchedService': return t('machineServices.groups.watched');
         case 'setup': return t('capabilities.store.setupFamilyTitle');
         case 'configuredCheck': return t('capabilities.store.checksFamilyTitle');
+        case 'configuredBackup': return t('projects.deployments.sectionBackups');
         default: return null;
     }
 }
@@ -145,7 +146,7 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
     let included = false;
     let machines: readonly MachineAdministrationTargetV1[] | null = input.machine ? [input.machine] : null;
     // A scoped row was admitted by the native Project/reach owner. All does not infer Projects from checkouts.
-    const projects = row.kind === 'app' ? row.projectKeys : input.projectKey ? [input.projectKey] : row.kind === 'provider' || row.kind === 'plugin'
+    const projects = row.kind === 'app' || row.kind === 'configuredBackup' ? row.projectKeys : input.projectKey ? [input.projectKey] : row.kind === 'provider' || row.kind === 'plugin'
         || row.kind === 'agent' && row.subject === 'definition' ? [] : null;
     switch (row.kind) {
         case 'browserExtension':
@@ -158,6 +159,7 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
             machines = portable(row.machineId) ? [portable(row.machineId)!] : null;
             break;
         case 'app':
+        case 'configuredBackup':
             title = row.native.title;
             href = row.home;
             if (!input.machine) machines = serverIdentityId && row.native.runtimeTargetLink

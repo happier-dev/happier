@@ -318,6 +318,8 @@ export function RowMark(
       return <Icon name="stack" size={GLYPH_PX} color={theme.colors.text.secondary} />;
     case 'configuredCheck':
       return <Icon name="pulse" size={GLYPH_PX} color={theme.colors.text.secondary} />;
+    case 'configuredBackup':
+      return <Icon name="archive" size={GLYPH_PX} color={theme.colors.text.secondary} />;
     default:
       // The same mark Discover and Search draw: its artwork, otherwise its kind's glyph, never a letter.
       return <StoreItemMark facts={{ kind: row.kind, title: props.title }} size={MARK_PX} />;

@@ -29,7 +29,7 @@ export function ManagedInventoryCoverage(props: Readonly<{
     for (const { kind, result } of props.families) {
         const coverage = result.coverage;
         if (typeof coverage !== 'object') continue;
-        const entry = { kind: t(`capabilities.store.kindSentenceNames.${kind}`),
+        const entry = { kind: kind === 'configuredBackup' ? t('projects.deployments.sectionBackups') : t(`capabilities.store.kindSentenceNames.${kind}`),
             retry: typeof result.continuation === 'function' ? result.continuation as () => unknown : undefined };
         if (!('unavailable' in coverage)) { partial.push(entry); continue; }
         failed.push({ ...entry, code: inventoryFamilyDiagnosticCode(coverage) });
@@ -41,9 +41,9 @@ export function ManagedInventoryCoverage(props: Readonly<{
         } } : undefined;
     };
     const lines = [
+        // Still arriving is not an outage: the pending glyph, and nothing to retry yet.
         partial.length > 0 ? <SurfaceStateCard key="partial" testID={`${props.testIDPrefix}.coverage.partial`} size="line"
-            kind="unavailable" title={lineTitle(partial)} reason={t('storeInstalled.sectionPartial')}
-            action={retryAction(partial, 'partial')} /> : null,
+            kind="loading" title={lineTitle(partial)} reason={t('storeInstalled.sectionPartial')} /> : null,
         failed.length > 0 ? <SurfaceStateCard key="unavailable" testID={`${props.testIDPrefix}.coverage.unavailable`} size="line"
             kind="unavailable" title={lineTitle(failed)}
             reason={t('storeInstalled.sectionUnavailable')}

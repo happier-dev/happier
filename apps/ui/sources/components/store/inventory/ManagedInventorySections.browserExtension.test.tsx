@@ -63,7 +63,7 @@ it('gives Installed browser extensions their own section, with refusing Machines
       plugin: empty,
       software: empty,
     },
-    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty },
+    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: empty },
     rows: [row],
     coverage: 'partial',
     loading: false,
@@ -106,7 +106,7 @@ it('says an empty browser-extensions section holds nothing yet and leads to the 
   };
   const inventory = {
     families: { app: empty, browserExtension, mcpServer: empty, skill: empty, agent: empty, provider: empty, plugin: empty, software: empty },
-    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty },
+    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: empty },
     rows: [], coverage: 'partial', loading: false, attention: [], noticeSource: null,
   } as unknown as ManagedInventoryView; // Shape-only fixture, as above.
   const input = { scope, machine: null, projectKey: null };
