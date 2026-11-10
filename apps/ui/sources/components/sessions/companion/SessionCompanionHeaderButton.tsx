@@ -1,10 +1,7 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
-import { SessionHeaderActionButton } from '@/components/sessions/actions/SessionHeaderActionButton';
-import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
-import { Icon } from '@/components/ui/icons/Icon';
+import { SessionHeaderActionButton, SessionHeaderGlyph } from '@/components/sessions/actions/SessionHeaderActionButton';
 
 import {
     resolveSessionCompanionHeaderAccessibilityLabel,
@@ -20,7 +17,6 @@ export const SessionCompanionHeaderButton = React.memo((props: Readonly<{
     intent: SessionCompanionHeaderIntent;
     onPress: () => void;
 }>) => {
-    const { theme } = useUnistyles();
     const { intent } = props;
 
     return (
@@ -31,7 +27,7 @@ export const SessionCompanionHeaderButton = React.memo((props: Readonly<{
             accessibilityLabel={resolveSessionCompanionHeaderAccessibilityLabel(intent)}
         >
             <SessionHeaderIconWithCount count={intent.itemCount}>
-                <Icon name="stack-simple" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
+                <SessionHeaderGlyph name="stack-simple" />
             </SessionHeaderIconWithCount>
         </SessionHeaderActionButton>
     );

@@ -14,7 +14,8 @@ import { APP_RAIL_BADGE, APP_RAIL_BADGE_OVERLAP_PX } from './appRailMetrics';
 
 /**
  * `attention`: something needs the person's action (the attention amber). `accent`: news worth a look
- * (strong ink). `neutral`: a quiet fact (muted ink). Blue is reserved for focus and links, rose for failure.
+ * (strong ink). `neutral`: a quiet fact (muted ink), the default. Blue is reserved for focus and links,
+ * rose for failure.
  */
 export type AppRailBadgeTone = 'attention' | 'accent' | 'neutral';
 
@@ -40,7 +41,6 @@ export type RailBadgeSignalRenderer = (signal: AppRailBadgeSignal | null) => Rea
 /** The one tone mapping for rail badges: amber only for what needs action. */
 export function resolveAppRailBadgeTone(
     source:
-        | Readonly<{ source: 'inbox' }>
         /** Connected accounts that need a new sign-in (never low limits). */
         | Readonly<{ source: 'signIn' }>
         | Readonly<{ source: 'updates'; failed: boolean }>
@@ -49,19 +49,30 @@ export function resolveAppRailBadgeTone(
         | Readonly<{ source: 'machines'; level: 'needs_you' | 'look' | 'guard' }>,
 ): AppRailBadgeTone {
     switch (source.source) {
-        case 'inbox':
         case 'signIn':
             return 'attention';
         case 'updates':
             return source.failed ? 'attention' : 'accent';
         case 'plugin':
-            return source.tone === 'danger' || source.tone === 'warning'
-                ? 'attention'
-                : source.tone === 'neutral' ? 'neutral' : 'accent';
+            // A plugin's static label ("Beta") asks for nothing, so it never pulls the eye.
+            return source.tone === 'danger' || source.tone === 'warning' ? 'attention' : 'neutral';
         case 'machines':
             return source.level === 'guard' ? 'neutral' : 'attention';
     }
 }
+
+/**
+ * The Inbox's rail signal (owner 2026-11-10): an amber count of what needs the person (the Inbox's own
+ * "Needs you" share), else a quiet dot that the Inbox has something to read. Unknown keeps the quiet dot.
+ */
+export function resolveAppRailInboxBadge(summary: Readonly<{ count: number | null; needsYouCount: number | null }>): AppRailBadgeSignal | null {
+    if (summary.needsYouCount !== null && summary.needsYouCount > 0) {
+        return { kind: 'count', value: summary.needsYouCount, tone: 'attention' };
+    }
+    return summary.count === null || summary.count > 0 ? QUIET_DOT : null;
+}
+
+const QUIET_DOT: AppRailBadgeSignal = Object.freeze({ kind: 'dot', tone: 'neutral' });
 
 /**
  * The rail's one badge: a count or a dot at the glyph box's top-right (`APP_RAIL_BADGE`), one size and

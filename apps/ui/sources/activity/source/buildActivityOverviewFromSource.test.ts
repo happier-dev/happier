@@ -394,7 +394,7 @@ describe('buildActivityOverviewFromSource', () => {
         expect(overview.candidates.map(candidate => candidate.sessionId)).toEqual(['rule-only']);
         expect(overview.candidates[0]?.reasons.hasPendingUserActionRequests).toBe(true);
         expect(buildActivityOverviewSummaryFromSource({ source, nowMs: 1_000 }))
-            .toMatchObject({ inboxContentCount: 1, totalAttentionCount: 1, needsYouCount: 1 });
+            .toMatchObject({ inboxContentCount: 1, inboxNeedsYouCount: 1, totalAttentionCount: 1, needsYouCount: 1 });
         for (const unavailable of [
             { ...session, encryptedContentAvailability: 'encrypted_content_unavailable' as const },
             { ...session, projectKey: 'design', metadata: { ...session.metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'design' } },
@@ -503,6 +503,8 @@ describe('buildActivityOverviewFromSource', () => {
             isDataReady: true,
             totalAttentionCount: 1,
             inboxContentCount: 1,
+            // A finished turn to read is an Inbox update, not the Inbox's "Needs you".
+            inboxNeedsYouCount: 0,
             nextAttentionBoundaryMs: null,
             workingCount: 0,
             needsYouCount: 0,
@@ -557,6 +559,7 @@ describe('buildActivityOverviewFromSource', () => {
             isDataReady: true,
             totalAttentionCount: 0,
             inboxContentCount: 0,
+            inboxNeedsYouCount: 0,
             nextAttentionBoundaryMs: null,
             workingCount: 0,
             needsYouCount: 0,

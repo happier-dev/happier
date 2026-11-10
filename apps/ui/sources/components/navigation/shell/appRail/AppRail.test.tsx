@@ -50,8 +50,13 @@ function entries() {
         placement: {} as PluginPage['placement'], routePath: `/plugins/acme.${id}/${id}`,
     }));
     return buildAppRailEntries(resolveCompactAppDestinations({
-        builtins: { externalSessions: true, inbox: true, workflows: true, friends: true, bots: true }, pages,
+        builtins: { externalSessions: true, search: true, inbox: true, workflows: true, friends: true, bots: true }, pages,
     }));
+}
+
+/** Every destination and footer control pinned: a fresh rail starts with only the work essentials. */
+function pinAll(all: ReturnType<typeof entries>) {
+    return { orderedIds: [], placements: Object.fromEntries(buildAppRailPlacementItems(all, true).map(item => [item.id, 'pinned' as const])) };
 }
 
 const layout = (height: number): LayoutChangeEvent => ({
@@ -106,8 +111,9 @@ describe('AppRail measured room', () => {
     });
 
     it('explains unavailable built-in destinations through the shared accessible button', async () => {
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={entries()} activeId={null} onOpen={() => {}}
-            renderFooter={item => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+        const all = entries();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+            preferences={pinAll(all)} renderFooter={item => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
         const bots = screen.findHostByTestId('app-rail:bots');
         expect(bots?.props['aria-disabled']).toBe(true);
         const descriptionId = bots?.props['aria-describedby'];
@@ -156,7 +162,7 @@ describe('AppRail measured room', () => {
     it('shows every destination in the reported tall rail even if the old plugin area was collapsed', async () => {
         const all = entries();
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
-            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+            preferences={pinAll(all)} renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
         await act(async () => {
             // Layout is the OS boundary. The screenshot's rail has room for all eleven destinations.
             screen.findByTestId('app-rail')?.props.onLayout?.(layout(810));
@@ -169,7 +175,7 @@ describe('AppRail measured room', () => {
     it('separates the same icons into Work, Together, Library and plugin bands (owner Q8)', async () => {
         const all = entries();
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
-            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+            preferences={pinAll(all)} renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
         await act(async () => screen.findByTestId('app-rail')?.props.onLayout?.(layout(1200)));
         const order: string[] = [];
         const walk = (node: unknown) => {
@@ -233,8 +239,9 @@ describe('AppRail measured room', () => {
         expect(feature.getCurrent()).toMatchObject({ state: 'enabled' });
         await feature.unmount();
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={entries()} activeId={null}
-            onOpen={() => {}} preferences={{ orderedIds: [], placements: {
+        const all = entries();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null}
+            onOpen={() => {}} preferences={{ orderedIds: [], placements: { ...pinAll(all).placements,
                 'app-rail-usage': 'overflow', 'app-rail-machines': 'hidden', 'app-rail-account': 'hidden',
             } }} /></InboxSummaryProvider></InjectedAuthProvider>);
         await screen.pressByTestIdAsync('app-rail-more.trigger');

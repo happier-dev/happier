@@ -7,7 +7,7 @@ import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityRe
 import { useInboxActionOperationSummary } from '@/sync/domains/actionOperations/useActionOperations';
 import { useFriendRequestCount } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
-import { countInboxDiscussionItems, countInboxItems } from '@/components/inbox/inboxCounts';
+import { countInboxDiscussionItems, countInboxItems, countInboxNeedsYou } from '@/components/inbox/inboxCounts';
 import { useInboxDiscussionAttention } from './useInboxDiscussionSource';
 import { InboxExecutionRunSourceBoundary, useInboxExecutionRunCount } from './useInboxExecutionRunSource';
 import { InboxArtifactSourceBoundary, useInboxArtifactSource, useInboxArtifactOpenCount } from './useInboxArtifactSource';
@@ -19,8 +19,13 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 
 export type InboxSummary = Readonly<{
     count: number | null;
+    /** The "Needs you" share of `count` (`countInboxNeedsYou`): what the rail counts in amber. */
+    needsYouCount: number | null;
     hasContent: boolean | null;
 }>;
+
+const NO_ROWS: ArrayLike<unknown> = Object.freeze({ length: 0 });
+const UNKNOWN_SUMMARY: InboxSummary = Object.freeze({ count: null, needsYouCount: null, hasContent: null });
 
 export function useInboxSummary(): InboxSummary {
     const activity = useActivityOverviewSummary();
@@ -57,8 +62,17 @@ export function useInboxSummary(): InboxSummary {
         machines: machineDeletionEntries.length + machineReachabilityEntries.length,
     });
 
-    return React.useMemo(() => artifactSource.phase === 'current' ? { count, hasContent: count > 0 }
-        : { count: null, hasContent: null }, [count, artifactSource.phase]);
+    // The same "Needs you" formula the open Inbox uses, fed lengths from the narrow projections.
+    const needsYouCount = countInboxNeedsYou({
+        sessionPresentation: { sessionsNeedingAttention: { length: activity.inboxNeedsYouCount }, readySessions: NO_ROWS },
+        workflowAttention, automationAttention,
+        openApprovals: { length: openApprovalCount }, openUsageNotices: NO_ROWS,
+        actionOperationEntries: { length: actionOperations.count },
+        machineDeletionEntries, friendRequests: NO_ROWS,
+    });
+
+    return React.useMemo(() => artifactSource.phase === 'current' ? { count, needsYouCount, hasContent: count > 0 }
+        : UNKNOWN_SUMMARY, [count, needsYouCount, artifactSource.phase]);
 }
 
 const InboxSummaryContext = React.createContext<InboxSummary | null>(null);

@@ -64,13 +64,22 @@ describe('AppRailBadge', () => {
 
     it('is amber only for what needs action', async () => {
         const { resolveAppRailBadgeTone } = await import('./AppRailBadge');
-        expect(resolveAppRailBadgeTone({ source: 'inbox' })).toBe('attention');
         expect(resolveAppRailBadgeTone({ source: 'updates', failed: true })).toBe('attention');
         expect(resolveAppRailBadgeTone({ source: 'updates', failed: false })).toBe('accent');
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'danger' })).toBe('attention');
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'warning' })).toBe('attention');
-        expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'info' })).toBe('accent');
+        // A static label ("Beta") asks for nothing: it stays quiet.
+        expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'info' })).toBe('neutral');
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'neutral' })).toBe('neutral');
+    });
+
+    it('counts the Inbox in amber only for what needs the person; anything else is a quiet dot (owner 2026-11-10)', async () => {
+        const { resolveAppRailInboxBadge } = await import('./AppRailBadge');
+        expect(resolveAppRailInboxBadge({ count: 0, needsYouCount: 0 })).toBeNull();
+        expect(resolveAppRailInboxBadge({ count: 140, needsYouCount: 0 })).toEqual({ kind: 'dot', tone: 'neutral' });
+        expect(resolveAppRailInboxBadge({ count: 140, needsYouCount: 2 })).toEqual({ kind: 'count', value: 2, tone: 'attention' });
+        // Not yet known: the existing quiet dot stays until the summary settles.
+        expect(resolveAppRailInboxBadge({ count: null, needsYouCount: null })).toEqual({ kind: 'dot', tone: 'neutral' });
     });
 
 });

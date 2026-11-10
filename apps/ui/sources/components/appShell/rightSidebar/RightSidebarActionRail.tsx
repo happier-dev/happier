@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Platform, StyleSheet as NativeStyleSheet, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import Color from 'color';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -10,6 +9,7 @@ import { PANE_ACTION_RAIL_WIDTH, PaneActionRailContext } from '@/components/appS
 import { APP_SHELL_SHEET_RADIUS_PX, AppShellMaterialPlane, AppShellSheetCorners, useAppShellCanvasCoat } from '@/components/navigation/shell/appShellMaterialPlane';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -149,7 +149,7 @@ function pluginCountLabel(action: RightSidebarRailAction, count: number | null, 
 }
 
 type RailButtonProps = Readonly<{ action: RightSidebarRailAction; prefix: string; size: number; mirrored: boolean;
-    panelAttached: boolean; tooltipPlacement: 'left' | 'right'; inactiveGlyphColor: string; customize: () => void }>;
+    panelAttached: boolean; tooltipPlacement: 'left' | 'right'; customize: () => void }>;
 
 function RailActionButton(props: RailButtonProps): React.ReactElement {
     const descriptor = props.action.pluginCount;
@@ -161,7 +161,6 @@ function RailActionButton(props: RailButtonProps): React.ReactElement {
 }
 
 function RailActionButtonView(props: RailButtonProps & Readonly<{ count: number | null; counts?: readonly PluginRightSidebarLabelledCount[] }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const { action, prefix } = props;
     const label = action.pluginCount ? pluginCountLabel(action, props.count, props.counts) : action.label;
     const badge = action.pluginCount ? !props.counts && props.count !== null && props.count > 0
@@ -175,7 +174,7 @@ function RailActionButtonView(props: RailButtonProps & Readonly<{ count: number 
         selectedBackground={false} disabled={action.disabled} onPress={action.onPress} onLongPress={props.customize}
         variant="plain" size={props.size} iconSize={18} interactiveTargetVerticalGapPx={ACTION_GAP} icon={<View pointerEvents="none">
             {action.active && !tab ? <View testID={`${prefix}:${action.id}:marker`} style={[styles.marker, props.mirrored ? { right: -9 } : { left: -9 }]} /> : null}
-            <Icon name={action.icon} size={ICON_SIZE.md} color={action.active ? theme.colors.text.primary : props.inactiveGlyphColor} />
+            <ChromeGlyph name={action.icon} size={ICON_SIZE.md} active={action.active} />
             {badge}
         </View>} />;
 }
@@ -264,7 +263,7 @@ function OverflowTrigger(props: Readonly<{ actions: readonly RightSidebarRailAct
         return <IconButton testID={`${props.prefix}:more`} accessibilityLabel={label} tooltip={label}
             tooltipPlacement={props.tooltipPlacement} expanded={props.open} selected={props.actions.some(action => action.active)}
             selectedBackground={false} onPress={props.toggle} onLongPress={props.customize} variant="plain" size={props.size} interactiveTargetVerticalGapPx={ACTION_GAP}
-            icon={<View pointerEvents="none"><Icon name="dots-three" size={ICON_SIZE.md} />{signal ? signal.kind === 'count'
+            icon={<View pointerEvents="none"><ChromeGlyph name="dots-three" size={ICON_SIZE.md} />{signal ? signal.kind === 'count'
                 ? <TabBadge size="compact" variant="count" value={signal.value} tone={signal.tone === 'attention' ? 'attention' : 'neutral'} testID={`${props.prefix}:more:badge`} />
                 : <TabBadge variant="dot" tone={signal.tone === 'attention' ? 'attention' : 'neutral'} testID={`${props.prefix}:more:badge`} /> : null}</View>} />;
     }}</OverflowBadgeSignals>;
@@ -502,7 +501,6 @@ function useRailCellPresence(catalog: readonly RightSidebarRailAction[], shown: 
 export function RightSidebarActionRailView(props: RightSidebarActionRailProps & Readonly<{
     preferences: NavigationPlacementPreferences; onCustomize: (actions: readonly RightSidebarRailAction[]) => void;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const prefix = props.testIDPrefix ?? 'right-sidebar-action-rail';
     // The rail mirrors with its column (Editor first puts it at the window's left edge).
     const railContext = React.useContext(PaneActionRailContext);
@@ -510,13 +508,6 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
     const onCanvas = railContext?.onCanvas === true;
     const panelAttached = railContext?.panelAttached === true;
     const tooltipPlacement = mirrored ? 'right' : 'left';
-    // Inactive glyphs sit one ink step down so the rail reads as its panel's tab strip and the app
-    // rail stays the primary navigation (lab ade-shell RL decision C): halfway between secondary and
-    // tertiary ink, which keeps non-text contrast where tertiary alone would fail.
-    const inactiveGlyphColor = React.useMemo(
-        () => Color(theme.colors.text.secondary).mix(Color(theme.colors.text.tertiary), 0.5).rgb().string(),
-        [theme.colors.text.secondary, theme.colors.text.tertiary],
-    );
     const [height, setHeight] = React.useState<number | null>(null);
     const [moreOpen, setMoreOpen] = React.useState(false);
     const size = RAIL_ACTION_SIZE_PX;
@@ -600,7 +591,7 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
                     onOffset={leaving ? undefined : (offsetPx) => reportCellOffset(action.id, offsetPx)}
                     onLeft={leaving ? () => presence.removeGhost(action.id) : undefined}>
                     <RailActionButton action={action} prefix={leaving ? `${prefix}:leaving` : prefix} size={size} mirrored={mirrored} panelAttached={panelAttached}
-                        tooltipPlacement={tooltipPlacement} inactiveGlyphColor={inactiveGlyphColor} customize={customize} />
+                        tooltipPlacement={tooltipPlacement} customize={customize} />
                 </RailCellPresence>
                 </React.Fragment>
             ))}

@@ -4,6 +4,7 @@ import { treeRowId } from '@/components/sessions/shell/drop-resolution/treeRowId
 
 import {
     isRailControlDestination,
+    resolveAppRailBand,
     resolveCurrentAppDestination,
     selectAppDestinationsInPlacement,
     type BuiltinAppShellColumnId,
@@ -100,21 +101,28 @@ export type AppRailPlacementItem = Readonly<{
     defaultPlacement: NavigationPlacement;
 }> & (Readonly<{ kind: 'destination'; entry: AppRailEntry }> | Readonly<{ kind: 'footer'; id: AppRailFooterItemId }>);
 
-/** All customizable controls, including the anchored footer's canonical actions. */
+/**
+ * All customizable controls, including the anchored footer's canonical actions. A fresh rail pins only
+ * the work band (owner Q8: Sessions, Search, Inbox, Projects, Workflows), Settings and Account; every
+ * other destination and footer control starts in More (owner 2026-11-10). These are defaults only: the
+ * person's own placements always win (`resolveNavigationPlacements`).
+ */
 export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisible: boolean): readonly AppRailPlacementItem[] {
     const destinations = (items: readonly AppRailEntry[], group: AppRailPlacementItem['group']): AppRailPlacementItem[] =>
         items.map(entry => ({ kind: 'destination', id: entry.id, title: entry.title, icon: entry.icon, group,
             // A contextual page (owner Q3) waits in the customizer until the person pins it.
-            defaultPlacement: entry.visibility === 'hidden' || entry.contextual ? 'hidden' : 'pinned', entry }));
-    const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon']): AppRailPlacementItem =>
-        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement: 'pinned' });
+            defaultPlacement: entry.visibility === 'hidden' || entry.contextual ? 'hidden'
+                : resolveAppRailBand(entry) === 'work' || group === 'account' ? 'pinned' : 'overflow', entry }));
+    const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon'], defaultPlacement: NavigationPlacement): AppRailPlacementItem =>
+        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement });
     return [
         ...destinations(entries.app, 'app'), ...destinations(entries.plugins, 'plugins'),
-        footer('app-rail-usage', t('settings.usage'), 'speedometer'),
-        footer('app-rail-machines', t('settings.machines'), 'desktop'),
-        ...(updatesVisible ? [footer('app-rail-updates', t('updates.title'), 'hard-drive-download')] : []),
+        footer('app-rail-usage', t('settings.usage'), 'speedometer', 'overflow'),
+        footer('app-rail-machines', t('settings.machines'), 'desktop', 'overflow'),
+        // Shown only while an update waits; burying it in More would hide the one thing it says.
+        ...(updatesVisible ? [footer('app-rail-updates', t('updates.title'), 'hard-drive-download', 'pinned')] : []),
         ...destinations(entries.account, 'account'),
-        footer('app-rail-account', t('settings.account'), 'user-circle'),
+        footer('app-rail-account', t('settings.account'), 'user-circle', 'pinned'),
     ];
 }
 

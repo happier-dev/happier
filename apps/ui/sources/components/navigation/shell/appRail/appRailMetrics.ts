@@ -57,7 +57,8 @@ export const APP_RAIL_BADGE = Object.freeze({
     /** A count's pill height (and minimum width) inside its ring. */
     countSizePx: 14,
     countFontSizePx: 9,
-    dotSizePx: 8,
+    /** Small and quiet (owner 2026-11-10): the dot marks "something to read", the count "needs you". */
+    dotSizePx: 6,
     /** The ring in the rail's own colour that lifts the badge off the glyph. */
     ringPx: 2,
 });

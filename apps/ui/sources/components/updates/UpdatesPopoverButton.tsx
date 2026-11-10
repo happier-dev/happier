@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { useAppRailGlyphInk } from '@/components/navigation/shell/appRail/AppRailIcon';
+import { useChromeGlyphInk } from '@/components/ui/icons/chromeGlyphInk';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
@@ -119,10 +119,11 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
     const router = useRouter();
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
-    const railInk = useAppRailGlyphInk(open);
     const markRef = React.useRef<View>(null);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
+    // A raw pressable (not `IconButton`), so it feeds its own engagement into the chrome ink.
+    const railInk = useChromeGlyphInk(open || hovered || focused);
     // The rail button keeps a raw pressable for the tooltip's measured anchor ref; its hit area is still the shared owner's.
     const railHitSize = props.buttonSize ?? 28;
     const railHitArea = useHappierHitArea({ restingStyle: () => ({ width: railHitSize, height: railHitSize }) });

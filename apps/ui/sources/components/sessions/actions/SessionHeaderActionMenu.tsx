@@ -23,7 +23,6 @@ import { writeSessionOrganizationAppearance } from '@/sync/ops/sessionOrganizati
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -116,9 +115,9 @@ import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAtt
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import {
   SESSION_HEADER_ACTION_SIZE_PX,
-  SESSION_HEADER_ICON_SIZE_PX,
 } from '@/components/sessions/actions/sessionHeaderIconMetrics';
-import { SessionHeaderActionButton } from '@/components/sessions/actions/SessionHeaderActionButton';
+import { SessionHeaderActionButton, SessionHeaderGlyph, useSessionHeaderActionHitReach } from '@/components/sessions/actions/SessionHeaderActionButton';
+import { ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk';
 import { useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { buildSessionDebugInformationForSession } from '@/components/sessions/debug/sessionDebugInformation';
@@ -257,7 +256,6 @@ type WebActionMenuTriggerProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   style: React.CSSProperties;
 }>;
 
-const WEB_MENU_TRIGGER_HIT_REACH = { left: 3, right: 3 } as const;
 const WEB_MENU_TRIGGER_STYLE: React.CSSProperties = {
   position: 'relative',
   width: SESSION_HEADER_ACTION_SIZE_PX,
@@ -287,9 +285,10 @@ function SessionHeaderMenuWebTrigger(props: Readonly<{
   triggerRef: { current: View | null };
   children: React.ReactNode;
 }>) {
+  const [engaged, setEngaged] = React.useState(false);
   const hitArea = useHappierHitArea({
     restingStyle: () => WEB_MENU_TRIGGER_RESTING_STYLE,
-    hitReach: WEB_MENU_TRIGGER_HIT_REACH,
+    hitReach: useSessionHeaderActionHitReach(),
   });
   const webTriggerProps: WebActionMenuTriggerProps = {
     type: 'button',
@@ -303,8 +302,14 @@ function SessionHeaderMenuWebTrigger(props: Readonly<{
       props.onToggle();
     },
     style: WEB_MENU_TRIGGER_STYLE,
+    // A raw button has no pressable state: it feeds pointer and keyboard engagement to the chrome ink.
+    onMouseEnter: () => setEngaged(true),
+    onMouseLeave: () => setEngaged(false),
+    onFocus: (event) => setEngaged(event.currentTarget.matches(':focus-visible')),
+    onBlur: () => setEngaged(false),
   };
-  return React.createElement('button', webTriggerProps, hitArea.frame, props.children);
+  return React.createElement('button', webTriggerProps, hitArea.frame,
+    <ChromeGlyphEmphasisContext.Provider value={engaged}>{props.children}</ChromeGlyphEmphasisContext.Provider>);
 }
 
 function areSessionActionMenuMetadataSemanticallyEqual(
@@ -877,11 +882,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           testID={`session-header-plugin-action-${action.menuActionId}`}
           accessibilityLabel={action.title}
         >
-          <Icon
-            name={action.iconName}
-            size={SESSION_HEADER_ICON_SIZE_PX}
-            color={theme.colors.chrome.header.foreground}
-          />
+          <SessionHeaderGlyph name={action.iconName} />
         </SessionHeaderActionButton>
       ))}
       {followEditor.enabled && sessionServerId ? (
@@ -903,8 +904,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       onOpenChange={setOpen}
       items={actions}
       showCategoryTitles
-      // On a phone the menu is the shared bottom sheet, titled by the session it acts on (lab `b-promote Ap`).
-      popoverPhonePresentation="sheet"
+      // On a phone the menu is the anchored panel under its ⋯ (owner R2), named by the session it acts on.
       popoverAccessibilityLabel={readSessionDisplayTitleField(session).value || ownerMetadata?.name || t('session.actionMenu.openA11y')}
       onSelect={(actionId, selection) => {
         if (workspaceOpen.select(actionId)) { setOpen(false); return; }
@@ -1172,9 +1172,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       }}
       trigger={({ toggle }) => {
         const label = t('session.actionMenu.openA11y');
-        const icon = (
-          <Ionicons name="ellipsis-horizontal" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
-        );
+        const icon = <SessionHeaderGlyph name="dots-three" />;
 
         if (Platform.OS === 'web') {
           return (

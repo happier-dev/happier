@@ -13,6 +13,7 @@ import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/naviga
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ChromeGlyph, useChromeGlyphInk } from '@/components/ui/icons/chromeGlyphInk';
 import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
 import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -174,10 +175,12 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
 }>) {
     const { theme } = useUnistyles();
     const { metrics } = props;
+    // The phone bar is shell chrome too: the same quiet ink at rest, the primary ink for the open tab.
+    const restInk = useChromeGlyphInk();
     const anchors = React.useRef(new Map<string, unknown>());
     const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>) => {
         const active = tab.id === props.activeSurface;
-        const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
+        const tintColor = active ? theme.colors.text.primary : restInk.color;
         const hold = props.onTabLongPress && !tab.disabled ? () => props.onTabLongPress?.(tab.id, anchors.current.get(tab.id) ?? null) : undefined;
         return (
             <HappierPressable
@@ -208,11 +211,13 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
             >
                 {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                 <View style={styles.iconContainer}>
-                    {typeof tab.icon === 'string' ? (
-                        <Icon name={tab.icon} size={metrics.iconSize} color={tintColor} />
-                    ) : (
-                        tab.icon.render({ active, size: metrics.iconSize, tintColor })
-                    )}
+                    <View style={active ? null : restInk.style}>
+                        {typeof tab.icon === 'string' ? (
+                            <Icon name={tab.icon} size={metrics.iconSize} color={tintColor} />
+                        ) : (
+                            tab.icon.render({ active, size: metrics.iconSize, tintColor })
+                        )}
+                    </View>
                     {renderTabBadge(tab.badge, `${props.tabTestIdPrefix}${tab.id}-badge`)}
                 </View>
                 {metrics.showLabels || (active && tab.namesItselfWhenSelected === true) ? (
@@ -375,7 +380,7 @@ export const CockpitTabBarActionView = React.forwardRef<View, CockpitTabBarActio
         >
             {props.selected ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
             <View style={styles.iconContainer}>
-                <Icon name={props.icon} size={metrics.iconSize} color={props.selected ? theme.colors.text.primary : theme.colors.text.secondary} />
+                <ChromeGlyph name={props.icon} size={metrics.iconSize} active={props.selected === true} />
             </View>
             {metrics.showLabels ? (
                 <Text style={[styles.label, props.selected ? styles.labelActive : styles.labelInactive]}>{props.label}</Text>

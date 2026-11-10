@@ -243,7 +243,7 @@ describe('useInboxSummary workflow source', () => {
         const request = listRuns.mock.calls[0]![0];
         expect(Buffer.byteLength(JSON.stringify(request))).toBe(106);
         expect(request.request.projection).toBe('membership');
-        expect(latest).toEqual({ count: 2, hasContent: true });
+        expect(latest).toEqual({ count: 2, needsYouCount: 2, hasContent: true });
         const scope = storage.getState().profileScope;
         if (!scope) throw new Error('Expected a bound Home');
         expect(storage.getState().workflowRunListWindows[workflowRunListWindowStoreKey('attention', scope)]?.runIds).toEqual(['run-held', 'run-interrupted']);
@@ -371,7 +371,7 @@ describe('useInboxSummary workflow source', () => {
         await renderSummary();
         expect(listRuns).not.toHaveBeenCalled();
         expect(listAutomationRuns).not.toHaveBeenCalled();
-        expect(latest).toEqual({ count: 0, hasContent: false });
+        expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
     it('lets an answered off-page hold recede on the next Account-change wake', async () => {
@@ -386,7 +386,7 @@ describe('useInboxSummary workflow source', () => {
         await act(async () => {});
 
         expect(listRuns).toHaveBeenCalledTimes(2);
-        expect(latest).toEqual({ count: 0, hasContent: false });
+        expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
     it('reads nothing and counts nothing when the Home does not offer Workflows', async () => {
@@ -398,7 +398,7 @@ describe('useInboxSummary workflow source', () => {
         await renderSummary();
 
         expect(listRuns).not.toHaveBeenCalled();
-        expect(latest).toEqual({ count: 0, hasContent: false });
+        expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
     it('counts unread private plugin notices while leaving read, resolved and foreign notices quiet', async () => {
@@ -410,9 +410,9 @@ describe('useInboxSummary workflow source', () => {
             foreign: createAccountNoticeArtifactFixture({ id: 'foreign', ownerAccountId: 'account-b' }),
         });
         await renderSummary();
-        expect(latest).toEqual({ count: 1, hasContent: true });
+        expect(latest).toEqual({ count: 1, needsYouCount: 1, hasContent: true });
         await act(async () => { seedArtifacts({}); });
-        expect(latest).toEqual({ count: 0, hasContent: false });
+        expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
     it('marks an opened informational plugin notice read through Artifact CAS once without dismissing it', async () => {
@@ -511,11 +511,11 @@ describe('useInboxSummary workflow source', () => {
             closed: createUsageNoticeArtifactFixture({ id: 'closed', header: { ...notice.header!, status: 'dismissed' } }),
         });
         await renderSummary();
-        expect(latest).toEqual({ count: 1, hasContent: true });
+        expect(latest).toEqual({ count: 1, needsYouCount: 1, hasContent: true });
         await act(async () => { storage.setState({ profileScope: {
             serverId: connection!.home.id, accountId: 'account-b',
         } }); });
-        expect(latest).toEqual({ count: 0, hasContent: false });
+        expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
     it('dismisses a usage notice through the Account Artifact CAS preserving its exact body, and refuses changed revisions or privacy', async () => {

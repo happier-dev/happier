@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -59,7 +59,6 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
     trailing?: React.ReactNode;
 }>) {
     const styles = stylesheet;
-    const { theme } = useUnistyles();
     const router = useRouter();
     const presentationActive = useLayoutPresentationActive();
     const presentationActiveRef = React.useRef(presentationActive);
@@ -107,7 +106,6 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
         const next = Math.round(x + width);
         setClusterEndPx((current) => (current === next ? current : next));
     }, []);
-    const glyphColor = theme.colors.chrome.header.foreground;
     const toggleLabel = props.columnVisible ? t('common.collapse') : t('common.expand');
     return (
         <View {...dragProps} testID="app-shell-title-strip" style={styles.strip} onLayout={onStripLayout}>
@@ -130,7 +128,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                     interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                     accessibilityLabel={t('common.previous')}
                     disabled={!(props.navigation?.canGoBack ?? history.canNavigateBack)}
-                    icon={<Icon name="arrow-left" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={glyphColor} />}
+                    icon={<ChromeGlyph name="arrow-left" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
                     onPress={back}
                 />
                 <IconButton
@@ -140,7 +138,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                     interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                     accessibilityLabel={t('common.next')}
                     disabled={!(props.navigation?.canGoForward ?? history.canNavigateForward)}
-                    icon={<Icon name="arrow-right" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={glyphColor} />}
+                    icon={<ChromeGlyph name="arrow-right" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
                     onPress={forward}
                 />
                 {props.columnToggleAvailable ? (
@@ -152,18 +150,19 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                         accessibilityLabel={toggleLabel}
                         tooltip={toggleLabel}
                         tooltipPlacement="bottom"
-                        icon={props.columnVisible
-                            ? <SidebarCollapseIcon size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={glyphColor} />
-                            : <SidebarExpandIcon size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={glyphColor} />}
+                        icon={<ChromeGlyph size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}>{ink => <View style={ink.style}>
+                            {props.columnVisible
+                                ? <SidebarCollapseIcon size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={ink.color} />
+                                : <SidebarExpandIcon size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={ink.color} />}
+                        </View>}</ChromeGlyph>}
                         onPress={props.onToggleColumn}
                     />
                 ) : null}
-                <PaneArrangementToggle glyphColor={glyphColor} />
+                <PaneArrangementToggle />
                 <AppShellThemeToggle
                     buttonSize={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX}
                     interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                     glyphSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
-                    color={glyphColor}
                 />
                 <ActionOperationActivityButton
                     testID="app-shell-action-operations"
@@ -195,7 +194,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
  * right of the column button, because both say how the window is laid out. Shown only where the
  * focused destination follows the arrangement; it is the group's last item, so nothing shifts.
  */
-const PaneArrangementToggle = React.memo(function PaneArrangementToggle(props: Readonly<{ glyphColor: string }>) {
+const PaneArrangementToggle = React.memo(function PaneArrangementToggle() {
     const available = usePaneArrangementAvailable();
     const { arrangement, toggle } = usePaneArrangement();
     const shortcut = useKeyboardShortcutLabel('panes.arrangement.toggle');
@@ -213,7 +212,7 @@ const PaneArrangementToggle = React.memo(function PaneArrangementToggle(props: R
             selected={editorFirst}
             tooltip={shortcut ? `${label} · ${shortcut}` : label}
             tooltipPlacement="bottom"
-            icon={<Icon name="square-split-horizontal" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} color={props.glyphColor} />}
+            icon={<ChromeGlyph name="square-split-horizontal" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} active={editorFirst} />}
             onPress={toggle}
         />
     );

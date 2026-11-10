@@ -1,11 +1,8 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
-import { SessionHeaderActionButton } from '@/components/sessions/actions/SessionHeaderActionButton';
-import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
-import { Icon } from '@/components/ui/icons/Icon';
+import { SessionHeaderActionButton, SessionHeaderGlyph } from '@/components/sessions/actions/SessionHeaderActionButton';
 
 /**
  * Opens the session details page.
@@ -18,7 +15,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 export const SessionHeaderInfoButton = React.memo((props: Readonly<{
     onPress: () => void;
 }>) => {
-    const { theme } = useUnistyles();
     const testId = useOptionalSessionScreenTestId('session-header-info-button');
 
     return (
@@ -27,11 +23,7 @@ export const SessionHeaderInfoButton = React.memo((props: Readonly<{
             onPress={props.onPress}
             accessibilityLabel={t('sessionInfo.title')}
         >
-            <Icon
-                name="info"
-                size={SESSION_HEADER_ICON_SIZE_PX}
-                color={theme.colors.chrome.header.foreground}
-            />
+            <SessionHeaderGlyph name="info" />
         </SessionHeaderActionButton>
     );
 });

@@ -51,7 +51,7 @@ describe('AppRail badge placement', () => {
         }));
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider>
             <AppRailSurface entries={entries} activeId={null} onOpen={() => {}} updatesVisible
-                preferences={{ orderedIds: [], placements: { 'plugin:acme.channels:channels': 'pinned' } }} />
+                preferences={{ orderedIds: [], placements: { 'plugin:acme.channels:channels': 'pinned', 'app-rail-usage': 'pinned' } }} />
         </InboxSummaryProvider></InjectedAuthProvider>);
 
         const badges = screen.findAll(node => typeof node.type === 'string'

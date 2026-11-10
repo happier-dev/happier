@@ -56,6 +56,8 @@ export type ActivityOverviewSummary = Readonly<{
     isDataReady: boolean;
     totalAttentionCount: number;
     inboxContentCount: number;
+    /** The Inbox's "Needs you" sessions (`classifyInboxSessionCandidate` section `needs_attention`). */
+    inboxNeedsYouCount: number;
     nextAttentionBoundaryMs: number | null;
     /** Sessions working right now (the full overview's `thinking`). */
     workingCount: number;
@@ -533,6 +535,7 @@ export function isActivityCandidateAwaitingPerson(candidate: Pick<SessionActivit
 export type ActivitySummaryFacts = Readonly<{
     attention: boolean;
     inbox: boolean;
+    inboxNeedsYou: boolean;
     working: boolean;
     needsYou: boolean;
     /** The soonest future instant this candidate's attention expires on its own. */
@@ -546,9 +549,11 @@ export function readActivitySummaryFacts({ entry, candidate, messages }: Activit
         if (expiresAtMs <= nowMs) continue;
         if (nextAttentionBoundaryMs === null || expiresAtMs < nextAttentionBoundaryMs) nextAttentionBoundaryMs = expiresAtMs;
     }
+    const inboxSection = classifyInboxSessionCandidate(candidate).section;
     return {
         attention: candidate.hasAttention,
-        inbox: classifyInboxSessionCandidate(candidate).section !== null,
+        inbox: inboxSection !== null,
+        inboxNeedsYou: inboxSection === 'needs_attention',
         working: candidate.reasons.isThinking,
         needsYou: isActivityCandidateAwaitingPerson(candidate),
         nextAttentionBoundaryMs,
@@ -556,7 +561,8 @@ export function readActivitySummaryFacts({ entry, candidate, messages }: Activit
 }
 
 export function areActivitySummaryFactsEqual(left: ActivitySummaryFacts, right: ActivitySummaryFacts): boolean {
-    return left.attention === right.attention && left.inbox === right.inbox && left.working === right.working
+    return left.attention === right.attention && left.inbox === right.inbox && left.inboxNeedsYou === right.inboxNeedsYou
+        && left.working === right.working
         && left.needsYou === right.needsYou && left.nextAttentionBoundaryMs === right.nextAttentionBoundaryMs;
 }
 
@@ -575,6 +581,7 @@ export function buildActivityOverviewSummaryFromSource(params: Readonly<{
 }>): ActivityOverviewSummary {
     let totalAttentionCount = 0;
     let inboxContentCount = 0;
+    let inboxNeedsYouCount = 0;
     let workingCount = 0;
     let needsYouCount = 0;
     let nextAttentionBoundaryMs: number | null = null;
@@ -583,6 +590,7 @@ export function buildActivityOverviewSummaryFromSource(params: Readonly<{
         const facts = readActivitySummaryFacts(visited, params.nowMs);
         if (facts.attention) totalAttentionCount += 1;
         if (facts.inbox) inboxContentCount += 1;
+        if (facts.inboxNeedsYou) inboxNeedsYouCount += 1;
         if (facts.working) workingCount += 1;
         if (facts.needsYou) needsYouCount += 1;
         if (facts.nextAttentionBoundaryMs !== null
@@ -591,5 +599,5 @@ export function buildActivityOverviewSummaryFromSource(params: Readonly<{
         }
     });
 
-    return { isDataReady: params.source.isDataReady, totalAttentionCount, inboxContentCount, nextAttentionBoundaryMs, workingCount, needsYouCount };
+    return { isDataReady: params.source.isDataReady, totalAttentionCount, inboxContentCount, inboxNeedsYouCount, nextAttentionBoundaryMs, workingCount, needsYouCount };
 }

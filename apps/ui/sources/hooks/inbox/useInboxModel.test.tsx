@@ -278,33 +278,35 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('keeps one C1 health condition in Updates during its readable operation and restores blocking after settlement', async () => {
+    it.each(['reboot', 'backup'] as const)('keeps one C1 health condition in Updates during its readable %s operation and restores blocking after settlement', async kind => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
         const artifact = createServiceHealthNoticeArtifactFixture(serverId, { header: { type: 'blocked' } });
         seedArtifacts({ [artifact.id]: artifact });
-        const reboot: ActionOperationSnapshotV1 = {
-            version: 1, operationId: 'health-reboot', revision: 1, actionId: 'machines.reboot', state: 'running',
+        const operation: ActionOperationSnapshotV1 = {
+            version: 1, operationId: `health-${kind}`, revision: 1, actionId: kind === 'reboot' ? 'machines.reboot' : 'deployments.backups.run', state: 'running',
             scope: { accountId: 'account-a', machineId: 'machine' }, title: 'Reboot', createdAt: Date.now(),
-            cancellation: 'unsupported', domainRef: { kind: 'machineReboot', serverId, machineId: 'machine',
+            cancellation: 'unsupported', domainRef: kind === 'reboot' ? { kind: 'machineReboot', serverId, machineId: 'machine',
                 installationId: 'installation-a', task: { id: 'task', taskKind: 'machine.reboot.v1' },
-                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: ['instance/web'], expectedRunningServicesKnown: true } },
+                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: ['instance/web'], expectedRunningServicesKnown: true } } : { kind: 'deployment', serverId, environmentId: 'environment', deploymentId: 'deployment',
+                expectedDown: { operation: 'backup', targetLinkId: 'link', machineId: 'machine', installationId: 'installation-a',
+                    serviceIds: ['instance/web'], domains: [] } },
         };
-        actionOperationStore.mergeSnapshots({ serverId, snapshots: [reboot] });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [operation] });
         const screen = await renderModel();
         try {
             const rows = () => model!.items.filter(item => item.source.id === artifact.id);
             expect(rows()).toEqual([expect.objectContaining({ view: 'updates', expectedDuring: {
-                kind: 'reboot', operation: { serverId, machineId: 'machine', operationId: 'health-reboot' },
+                kind, operation: { serverId, machineId: 'machine', operationId: `health-${kind}` },
             } })]);
             expect(await readInbox()).toMatchObject({ ok: true, result: { items: expect.arrayContaining([
-                expect.objectContaining({ expectedDuring: { kind: 'reboot', operation: {
-                    serverId, machineId: 'machine', operationId: 'health-reboot',
+                expect.objectContaining({ expectedDuring: { kind, operation: {
+                    serverId, machineId: 'machine', operationId: `health-${kind}`,
                 } } }),
             ]) } });
             await act(async () => model!.markItemOpened(rows()[0]!));
             expect(model!.accountNotices[0]!.header).toMatchObject({ healthPhase: 'open', resolved: false });
-            await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...reboot,
+            await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operation,
                 revision: 2, state: 'failed', settledAt: Date.now() }] }));
             expect(rows()).toEqual([expect.objectContaining({ view: 'needs_you', type: 'blocked' })]);
             expect(rows()[0]!.expectedDuring).toBeUndefined();
@@ -1479,7 +1481,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         let badge: InboxSummary | null = null;
         function Badge() { badge = useSharedInboxSummary(); return null; }
         const chrome = await renderScreen(<InboxSummaryProvider><Badge /></InboxSummaryProvider>);
-        await vi.waitFor(() => expect(badge).toEqual({ count: 1, hasContent: true }));
+        await vi.waitFor(() => expect(badge).toMatchObject({ count: 1, hasContent: true }));
         const stableBadge = badge;
         await act(async () => { storage.setState({ friends: {} }); });
         expect(badge).toBe(stableBadge);
@@ -1516,7 +1518,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             expect(lastReadSeq).toBe(1);
             expect(model!.items.find(item => item.source.kind === 'discussion')).toMatchObject({ read: true, view: 'needs_you' });
             expect(countInboxNeedsYou(model!)).toBe(1);
-            expect(badge).toEqual({ count: 1, hasContent: true });
+            expect(badge).toMatchObject({ count: 1, hasContent: true });
             proposalOpen = false;
             await act(async () => { await repository!.refreshAttention(); });
             expect(resolution.getCurrent()).toBe(false);
@@ -1527,7 +1529,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } else expect(lastReadSeq).toBe(1);
         expect(model!.items.filter(item => item.source.kind === 'discussion')).toEqual([]);
         expect(countInbox(model!)).toBe(0);
-        expect(badge).toEqual({ count: 0, hasContent: false });
+        expect(badge).toMatchObject({ count: 0, hasContent: false });
         expect(executed.filter(item => item.actionId === 'session.read_state.set')).toEqual([]);
         await resolution.unmount();
         await screen.unmount();
@@ -1651,6 +1653,22 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         vi.mocked(router.push).mockClear();
         await screen.pressByTestIdAsync('plugin-app-page-unavailable-action');
         expect(router.push).toHaveBeenCalledWith(buildPluginDetailRoute('settings', 'acme.review'));
+        await screen.unmount();
+    });
+
+    it.each([undefined, 'Design review'])('keeps serialized Artifact content out of notice details (%s)', async body => {
+        const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
+        const fixture = createAccountNoticeArtifactFixture({ header: { page: undefined, body } });
+        const header = { ...fixture.header, excerpt: typeof fixture.body === 'string' ? fixture.body : undefined };
+        delete header.page;
+        if (body === undefined) delete header.body;
+        const artifact = { ...fixture, header, rawHeader: header };
+        seedArtifacts({ [artifact.id]: artifact });
+        const focus: InboxItemFocus = { kind: 'notice', id: artifact.id, serverId: appliedSnapshot().serverId };
+        const screen = await renderScreen(<InboxModelProvider><InboxItemDetail focus={focus} onClose={() => {}} /></InboxModelProvider>);
+        await vi.waitFor(() => expect(screen.findByTestId('inbox.notice.detail')).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain('"v":1');
+        if (body) expect(screen.getTextContent()).toContain(body);
         await screen.unmount();
     });
 

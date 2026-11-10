@@ -78,9 +78,9 @@ const layout = (height: number): LayoutChangeEvent =>
     nativeEvent: { layout: { x: 0, y: 0, width: 56, height } },
   }) as LayoutChangeEvent;
 
-function railWithPinnedBot() {
-  const serverId = 'home-a';
-  const bot = createSessionFixture({
+function railWithPinnedBot(pinned?: Readonly<{ serverId: string; bot: ReturnType<typeof createSessionFixture> }>) {
+  const serverId = pinned?.serverId ?? 'home-a';
+  const bot = pinned?.bot ?? createSessionFixture({
     id: 'release-captain',
     metadata: { path: '/repo', host: 'host', bot: { kind: 'bot' } },
   });
@@ -151,6 +151,15 @@ function railTestIds(
     .filter((id, index, all) => all.indexOf(id) === index);
 }
 
+/** The pinned Bot face's resting opacity (owner 2026-11-10: idle Bots rest muted, active ones in full). */
+function railBotFaceOpacity(screen: Awaited<ReturnType<typeof renderScreen>>): number | undefined {
+  const face = screen.findAll((node) => typeof node.type === 'string'
+    && typeof node.props.testID === 'string' && /^app-rail:bot:.*-face$/.test(node.props.testID))[0];
+  if (!face) return undefined;
+  const styles = [face.props.style].flat(Infinity) as ({ opacity?: number } | null | undefined | false)[];
+  return styles.reduce<number>((opacity, style) => (style && typeof style.opacity === 'number' ? style.opacity : opacity), 1);
+}
+
 describe('AppRail Bots', () => {
   it('selects the pinned Bot from the workspace before Expo mirrors navigation and clears it on Search return', async () => {
     const entries = railWithPinnedBot();
@@ -209,7 +218,8 @@ describe('AppRail Bots', () => {
       <BotsRosterRuntimeProvider>
         <InjectedAuthProvider credentials={connection.credentials}>
           <InboxSummaryProvider>
-            <AppRailSurface entries={railWithPinnedBot()} activeId={null} onOpen={() => {}}
+            <AppRailSurface entries={railWithPinnedBot({ serverId, bot: bot as unknown as ReturnType<typeof createSessionFixture> })} activeId={null} onOpen={() => {}}
+              preferences={{ orderedIds: [], placements: { bots: 'pinned' } }}
               renderFooter={(item) => <View testID={item.id} />} />
           </InboxSummaryProvider>
         </InjectedAuthProvider>
@@ -220,6 +230,8 @@ describe('AppRail Bots', () => {
     expect(badge).not.toBeNull();
     expect(badge!.findAll((node) => typeof node.type === 'string' && node.props.children === '1')).toHaveLength(0);
     expect(screen.findHostByTestId('app-rail:bots')?.props.accessibilityLabel).toContain('bots.roster.needsYou');
+    // A Bot that needs the person keeps its full colour on the rail.
+    expect(railBotFaceOpacity(screen)).toBe(1);
   });
 
   it('stands each explicitly rail-pinned Bot right under the one Bots entry, which opens the roster from anywhere', async () => {
@@ -238,6 +250,7 @@ describe('AppRail Bots', () => {
             entries={entries}
             activeId={null}
             onOpen={() => {}}
+            preferences={{ orderedIds: [], placements: { bots: 'pinned' } }}
             renderFooter={(item) => <View testID={item.id} />}
           />
         </InboxSummaryProvider>
@@ -252,6 +265,8 @@ describe('AppRail Bots', () => {
     const itemIds = new Set([...entries.app.map((entry) => `app-rail:${entry.id}`), pinId]);
     const order = railTestIds(screen).filter((id) => itemIds.has(id));
     expect(order.slice(order.indexOf('app-rail:bots'))).toEqual(['app-rail:bots', pinId]);
+    // An idle Bot keeps its colour but rests muted, so it does not pull the eye from the page.
+    expect(railBotFaceOpacity(screen)).toBeLessThan(1);
     expect(
       screen.findHostByTestId('app-rail:bots')?.props['aria-disabled'],
     ).not.toBe(true);

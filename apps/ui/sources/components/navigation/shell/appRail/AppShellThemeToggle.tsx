@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveThemeMode, useApplyThemeSelection, useToggleThemeMode } from '@/components/settings/appearance/useApplyThemeSelection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useChromeGlyphInk } from '@/components/ui/icons/chromeGlyphInk';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -27,7 +28,8 @@ import { readHappierPointerModifiers, resolveHappierPointerPlatform } from '@hap
 export const AppShellThemeToggle = React.memo(function AppShellThemeToggle(props: Readonly<{
     buttonSize: number;
     glyphSize: number;
-    color: string;
+    /** A header's own ink; omitted, the glyph is shell chrome (`useChromeGlyphInk`). */
+    color?: string;
     interactiveTargetGapPx?: number;
 }>) {
     const [visible, setVisible] = useLocalSettingMutable('titleStripThemeToggleVisible');
@@ -38,7 +40,7 @@ export const AppShellThemeToggle = React.memo(function AppShellThemeToggle(props
 function ThemeToggleButton(props: Readonly<{
     buttonSize: number;
     glyphSize: number;
-    color: string;
+    color?: string;
     interactiveTargetGapPx?: number;
     onHide: () => void;
 }>) {
@@ -128,8 +130,9 @@ function AppearancePopoverContent(props: Readonly<{ onClose: () => void; onHide:
 }
 
 /** The half-filled circle turns half a turn between the modes; it starts settled (nothing animates on arrival). */
-function ThemeToggleGlyph(props: Readonly<{ dark: boolean; size: number; color: string }>) {
+function ThemeToggleGlyph(props: Readonly<{ dark: boolean; size: number; color?: string }>) {
     const styles = stylesheet;
+    const chromeInk = useChromeGlyphInk();
     const reducedMotion = useReducedMotionPreference();
     const progress = React.useRef(new Animated.Value(props.dark ? 1 : 0)).current;
     React.useEffect(() => {
@@ -146,7 +149,8 @@ function ThemeToggleGlyph(props: Readonly<{ dark: boolean; size: number; color: 
     return (
         <View style={[styles.glyph, { width: props.size, height: props.size }]}>
             <Animated.View style={[styles.layer, turn]}>
-                <Icon name="circle-half" weight="fill" size={props.size} color={props.color} />
+                <Icon name="circle-half" weight="fill" size={props.size} color={props.color ?? chromeInk.color}
+                    style={props.color ? undefined : chromeInk.style} />
             </Animated.View>
         </View>
     );

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ChromeGlyph, ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 import { SESSION_HEADER_ACTION_SIZE_PX, useSessionHeaderActionMetrics } from './sessionHeaderIconMetrics';
@@ -13,9 +14,15 @@ export function useSessionHeaderActionHitReach(): Readonly<{ left: number; right
     return React.useMemo(() => ({ left: gapPx / 2, right: gapPx / 2 }), [gapPx]);
 }
 
-/** A session-header action's glyph at the header's size for the current pointer. */
-export function SessionHeaderGlyph(props: Readonly<{ name: IconName; color: string }>) {
-    return <Icon name={props.name} size={useSessionHeaderActionMetrics().glyphPx} color={props.color} />;
+/**
+ * A session-header action's glyph at the header's size for the current pointer: shell chrome ink
+ * (`useChromeGlyphInk`), or `color` when the glyph speaks for a state (a warning).
+ */
+export function SessionHeaderGlyph(props: Readonly<{ name: IconName; color?: string }>) {
+    const size = useSessionHeaderActionMetrics().glyphPx;
+    return props.color
+        ? <Icon name={props.name} size={size} color={props.color} />
+        : <ChromeGlyph name={props.name} size={size} />;
 }
 
 /** The session header's trailing actions in one row, one gap apart (`useSessionHeaderActionMetrics`). */
@@ -55,7 +62,11 @@ export const SessionHeaderActionButton = React.memo(function SessionHeaderAction
                 opacity: props.disabled === true ? 0.45 : state.pressed ? motionTokens.press.opacity : 1,
             })}
         >
-            {props.children}
+            {(state) => (
+                <ChromeGlyphEmphasisContext.Provider value={state.hovered || state.pressed || state.focused || props.expanded === true}>
+                    {props.children}
+                </ChromeGlyphEmphasisContext.Provider>
+            )}
         </HappierPressable>
     );
 });

@@ -54,7 +54,7 @@ const SESSIONS_COLUMN = { kind: 'column', column: 'sessions' } as const;
 
 function catalog(pages: readonly PluginPage[], externalSessions = true) {
     return resolveCompactAppDestinations({
-        builtins: { externalSessions, inbox: true, workflows: true, friends: false, bots: true },
+        builtins: { externalSessions, search: true, inbox: true, workflows: true, friends: false, bots: true },
         pages,
     });
 }
@@ -79,10 +79,24 @@ describe('app rail model', () => {
         const items = buildAppRailPlacementItems(entries, false);
         const placementOf = (id: string) => items.find(item => item.id === id)?.defaultPlacement;
         expect(placementOf('plugin:acme.review:review')).toBe('hidden');
-        expect(placementOf('plugin:acme.board:board')).toBe('pinned');
+        expect(placementOf('plugin:acme.board:board')).toBe('overflow');
         expect(ids(resolveNavigationPlacements(items).pinned)).not.toContain('plugin:acme.review:review');
         const pinned = resolveNavigationPlacements(items, { orderedIds: [], placements: { 'plugin:acme.review:review': 'pinned' } });
         expect(ids(pinned.pinned)).toContain('plugin:acme.review:review');
+    });
+
+    it('pins only the work essentials, Settings and Account on a fresh rail; the rest waits in More (owner 2026-11-10)', () => {
+        const entries = buildAppRailEntries(catalog([page('board', { kind: 'rail' })]), { includeHidden: true });
+        const items = buildAppRailPlacementItems(entries, true);
+        const fresh = resolveNavigationPlacements(items);
+        expect(ids(fresh.pinned)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows',
+            'app-rail-updates', 'settings', 'app-rail-account']);
+        expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['bots', 'boards', 'artifacts', 'plugins',
+            'plugin:acme.board:board', 'app-rail-usage', 'app-rail-machines']));
+        // Only defaults change: the person's own choice still wins.
+        const customized = resolveNavigationPlacements(items, { orderedIds: [], placements: { bots: 'pinned', inbox: 'overflow' } });
+        expect(ids(customized.pinned)).toContain('bots');
+        expect(ids(customized.pinned)).not.toContain('inbox');
     });
 
     it('lists Machines once on the rail and in its customizer (its footer control), while the palette can open it', () => {

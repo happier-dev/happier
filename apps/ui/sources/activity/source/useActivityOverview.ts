@@ -136,6 +136,7 @@ export function useActivitySourceProjection<T extends Readonly<{ nextAttentionBo
 function createActivityOverviewSummaryProjector(): ActivitySourceProjector<ActivityOverviewSummary> {
     let totalAttentionCount = 0;
     let inboxContentCount = 0;
+    let inboxNeedsYouCount = 0;
     let workingCount = 0;
     let needsYouCount = 0;
     // Entries holding the current soonest boundary; only losing one of them needs a rescan.
@@ -144,6 +145,7 @@ function createActivityOverviewSummaryProjector(): ActivitySourceProjector<Activ
     const count = (facts: ActivitySummaryFacts, sign: 1 | -1) => {
         if (facts.attention) totalAttentionCount += sign;
         if (facts.inbox) inboxContentCount += sign;
+        if (facts.inboxNeedsYou) inboxNeedsYouCount += sign;
         if (facts.working) workingCount += sign;
         if (facts.needsYou) needsYouCount += sign;
     };
@@ -192,7 +194,7 @@ function createActivityOverviewSummaryProjector(): ActivitySourceProjector<Activ
                 }
             }
             if (published && !changed && published.isDataReady === source.isDataReady) return published;
-            published = { isDataReady: source.isDataReady, totalAttentionCount, inboxContentCount,
+            published = { isDataReady: source.isDataReady, totalAttentionCount, inboxContentCount, inboxNeedsYouCount,
                 nextAttentionBoundaryMs: boundary.ms, workingCount, needsYouCount };
             return published;
         },

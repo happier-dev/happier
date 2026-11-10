@@ -31,6 +31,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
+import { ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk';
 import { motionTokens } from '@/components/ui/motion';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -332,13 +333,15 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
           icon={
             <View style={styles.pin}>
               <View ref={landing.avatarRef} collapsable={false} onLayout={landing.onAvatarLayout}>
-                <BotFaceMarker
-                  facts={bot.face}
-                  size={PIN_AVATAR_SIZE_PX}
-                  activity={activity}
-                  motion
-                  dotTestID={`app-rail:${bot.id}-badge`}
-                />
+                <AppRailBotFace testID={`app-rail:${bot.id}-face`} resting={activity === 'quiet' && !active}>
+                  <BotFaceMarker
+                    facts={bot.face}
+                    size={PIN_AVATAR_SIZE_PX}
+                    activity={activity}
+                    motion
+                    dotTestID={`app-rail:${bot.id}-badge`}
+                  />
+                </AppRailBotFace>
               </View>
             </View>
           }
@@ -352,6 +355,19 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
     </Animated.View>
   );
 });
+
+/**
+ * A pinned Bot keeps its colour (it is the Bot's identity), but calms by state (owner 2026-11-10): full
+ * while it works or needs the person, while it is open, and under the pointer or keyboard focus; muted
+ * while it is idle, so a row of idle faces does not pull the eye from the page.
+ */
+const BOT_FACE_IDLE_OPACITY = 0.55;
+const BOT_FACE_IDLE_STYLE = Object.freeze({ opacity: BOT_FACE_IDLE_OPACITY });
+
+function AppRailBotFace(props: Readonly<{ resting: boolean; testID: string; children: React.ReactNode }>) {
+  const engaged = React.useContext(ChromeGlyphEmphasisContext);
+  return <View testID={props.testID} style={props.resting && !engaged ? BOT_FACE_IDLE_STYLE : null}>{props.children}</View>;
+}
 
 /** The More menu row of a pin that did not fit on the rail: the same avatar, the Bot's name. */
 export function AppRailBotMenuIcon(

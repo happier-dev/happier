@@ -15,6 +15,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk';
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 
@@ -371,6 +372,8 @@ export function IconButton(props: Readonly<{
                         importantForAccessibility="no-hide-descendants"
                         style={styles.iconWrap}
                     >
+                        {/* A chrome glyph (`useChromeGlyphInk`) comes up to full ink while its control is engaged. */}
+                        <ChromeGlyphEmphasisContext.Provider value={state.hovered || state.pressed || state.focused || state.selected}>
                         {state.busy ? (
                             <ActivitySpinner
                                 testID={props.testID ? `${props.testID}-spinner` : undefined}
@@ -381,6 +384,7 @@ export function IconButton(props: Readonly<{
                         ) : (
                             props.icon ?? <Icon name={props.iconName!} size={iconSize} color={tint} />
                         )}
+                        </ChromeGlyphEmphasisContext.Provider>
                     </View>
                 </View>
             )}

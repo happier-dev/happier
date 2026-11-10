@@ -8,6 +8,7 @@ import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/deta
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { DocumentTabStrip, DOCUMENT_TAB_BAR_METRICS as B, type DocumentTabItem } from '@/components/ui/navigation/DocumentTabStrip';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolvePointerMenuAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
@@ -130,9 +131,8 @@ export function WorkspaceGroupTabs(props: Readonly<{
     const stripTabs = React.useMemo(() => group.tabIds.flatMap((id) => tabs.get(id) ?? []), [group.tabIds, tabs]);
     const livePresentations = useDestinationInstanceTabPresentations(titleEntries);
     const renderLeadingIcon = React.useCallback((tab: WorkspaceDocumentTab, emphasized: boolean) => (
-        <Icon name={tab.icon} size={M.tabGlyphPx}
-            color={emphasized ? theme.colors.text.primary : theme.colors.text.secondary} />
-    ), [theme.colors.text.primary, theme.colors.text.secondary]);
+        <ChromeGlyph name={tab.icon} size={M.tabGlyphPx} active={emphasized} />
+    ), []);
 
     const execute = React.useCallback((request: Parameters<typeof executeWorkspaceUiAction>[0]) => {
         fireAndForget(executeWorkspaceUiAction(request, href => {
@@ -301,8 +301,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 testID={`workspace-new-tab-${safeGroup}`}
                 variant="plain"
                 size={actionSize}
-                iconSize={M.actionGlyphPx}
-                iconName="plus"
+                icon={<ChromeGlyph name="plus" size={M.actionGlyphPx} />}
                 accessibilityLabel={t('workspaceBar.newTab')}
                 tooltip={t('workspaceBar.newTab')}
                 tooltipPlacement="bottom"
@@ -332,8 +331,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                         testID={`workspace-overflow-${safeGroup}`}
                         variant="plain"
                         size={actionSize}
-                        iconSize={M.actionGlyphPx}
-                        iconName="caret-down"
+                        icon={<ChromeGlyph name="caret-down" size={M.actionGlyphPx} active={overflowOpen} />}
                         accessibilityLabel={t('workspaceBar.allTabs')}
                         tooltip={t('workspaceBar.allTabs')}
                         tooltipPlacement="bottom"

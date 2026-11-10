@@ -42,7 +42,7 @@ import {
     APP_RAIL_PADDING_TOP_PX,
     APP_RAIL_WIDTH_PX,
 } from './appRailMetrics';
-import { AppRailBadge, AppRailMenuCount, resolveAppRailBadgeTone } from './AppRailBadge';
+import { AppRailBadge, AppRailMenuCount, resolveAppRailBadgeTone, resolveAppRailInboxBadge } from './AppRailBadge';
 import { AppRailIcon } from './AppRailIcon';
 import { AppRailSlot } from './AppRailSlot';
 import { useConnectedAccountsNeedingSignInCount } from './useConnectedAccountsNeedingSignInCount';
@@ -327,14 +327,8 @@ const AppRailInbox = React.memo(function AppRailInbox(props: Readonly<{
 /** The Inbox count: read only by this leaf, so a new item re-renders the badge and nothing else. */
 const AppRailInboxBadge = React.memo(function AppRailInboxBadge(props: Readonly<{ testID: string }>) {
     const summary = useSharedInboxSummary();
-    if (summary.count !== null && summary.count <= 0) return null;
-    return (
-        <AppRailBadge
-            testID={props.testID}
-            signal={summary.count === null ? { kind: 'dot', tone: resolveAppRailBadgeTone({ source: 'inbox' }) }
-                : { kind: 'count', value: summary.count, tone: resolveAppRailBadgeTone({ source: 'inbox' }) }}
-        />
-    );
+    const signal = resolveAppRailInboxBadge(summary);
+    return signal ? <AppRailBadge testID={props.testID} signal={signal} /> : null;
 });
 
 const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
