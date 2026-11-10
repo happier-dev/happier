@@ -8,6 +8,7 @@ import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifact
 import { DeploymentEnvironmentCopySourceV1Schema } from './deploymentEnvironmentCopyV1.js';
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupPlanInputV1Schema } from '../machines/managed/actionsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
 
 export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
@@ -17,7 +18,7 @@ export function deploymentPreparationOperationForActionV1(value: string): 'prepa
     : value === 'deployments.templates.instantiate' ? 'template'
       : value === 'machines.setup.plan' || value === 'machines.setup.apply' ? 'setup' : undefined;
 }
-/** These deployment roots require preparation; setup only carries optional app reads. */
+/** These deployment roots require preparation; setup carries optional reviewed operands. */
 export function isDeploymentPreparationActionIdV1(value: string): value is 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.publish.prepare' {
   const operation = deploymentPreparationOperationForActionV1(value);
   return operation !== undefined && operation !== 'setup' && operation !== 'create';
@@ -37,7 +38,8 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ operation: z.literal('setup'), deployments: z.array(z.strictObject({ machineId: id,
     environment: z.strictObject({ id, revision }), target: z.strictObject({ id, revision }),
     candidate: DeploymentArtifactContentReferenceV1Schema,
-  })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))) }),
+  })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))),
+    connectorGrants: z.optional(z.array(z.strictObject({ machineId: id, grantRef: id })).check(z.minLength(1))) }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
   z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
@@ -55,8 +57,9 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
       z.strictObject({ kind: z.literal('new'), installationId: id }),
     ]),
   }),
-]).check(z.refine(value => value.operation !== 'setup' || value.deployments.length > 0 || (value.catalogSources?.length ?? 0) > 0,
-  { message: 'Setup preparation names a reviewed app operand.' }),
+]).check(z.refine(value => value.operation !== 'setup' || value.deployments.length > 0 || (value.catalogSources?.length ?? 0) > 0
+  || (value.connectorGrants?.length ?? 0) > 0,
+  { message: 'Setup preparation names a reviewed operand.' }),
 z.refine(value => value.operation !== 'create' && value.operation !== 'catalog' && value.operation !== 'template'
   || hasOneDeploymentProjectV1(value.source, value.newProject), { message: 'Preparation names one Project authority.' })));
 export type DeploymentPreparationAdmissionV1 = z.infer<typeof DeploymentPreparationAdmissionV1Schema>;
@@ -84,15 +87,22 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId, revision: value.sourceRevision } }),
     machineId: value.machineId, installationId: value.installationId });
   if (operation === 'setup') {
-    // The existing target schemas own both literal catalog children and stored
-    // candidates. No-app setup keeps its unchanged admission.
+    // The target schema owns app operands and exact credential references in
+    // reviewed native plans; neither authored configuration nor secrets leave it.
     const candidates = Array.isArray(value.targets) ? value.targets : [input];
     if (!candidates.some(target => {
-      const children = readRecord(target).appChildren;
-      return Array.isArray(children) && children.some(child => readRecord(child).actionId === 'deployments.deploy'
-        || readRecord(child).actionId === 'deployments.templates.instantiate');
+      const candidate = readRecord(target);
+      const children = candidate.appChildren;
+      if (Array.isArray(children) && children.some(child => readRecord(child).actionId === 'deployments.deploy'
+        || readRecord(child).actionId === 'deployments.templates.instantiate')) return true;
+      return actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && Array.isArray(candidate.recipePlans)
+        && candidate.recipePlans.some(entry => {
+          const steps = readRecord(readRecord(entry).plan).steps;
+          return Array.isArray(steps) && steps.some(step => readRecord(step).kind === 'file'
+            && readRecord(readRecord(step).content).kind === 'secretGrant');
+        });
     })) return undefined;
-    const root = actionId === 'machines.setup.apply' ? MachineSetupApplyInputV1Schema.parse(input)
+    const root = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 ? MachineSetupApplyInputV1Schema.parse(input)
       : Array.isArray(value.targets) ? MachineSetupCombinedPlanInputV1Schema.parse(input) : MachineSetupPlanInputV1Schema.parse(input);
     const targets = 'targets' in root ? root.targets : [root];
     const deployments = targets.flatMap(target => {
@@ -112,9 +122,13 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       if (child.input.serverId !== root.homeId) throw new TypeError('Setup app preparation Home mismatch');
       return [{ machineId: target.machineId, source: { id: child.input.projectSourceId } }];
     }));
-    if (deployments.length === 0 && catalogSources.length === 0) return undefined;
+    const connectorGrants = targets.flatMap(target => ('recipePlans' in target ? target.recipePlans : []).flatMap(({ plan }) =>
+      plan.steps.flatMap(step => step.kind === 'file' && step.content?.kind === 'secretGrant'
+        ? [{ machineId: target.machineId, grantRef: step.content.grantRef }] : [])));
+    if (deployments.length === 0 && catalogSources.length === 0 && connectorGrants.length === 0) return undefined;
     return DeploymentPreparationAdmissionV1Schema.parse({ operation, deployments,
-      ...(catalogSources.length ? { catalogSources } : {}) });
+      ...(catalogSources.length ? { catalogSources } : {}),
+      ...(connectorGrants.length ? { connectorGrants } : {}) });
   }
   if (actionId === 'deployments.templates.instantiate') {
     const environment = readRecord(value.environment);

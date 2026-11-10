@@ -3464,8 +3464,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (!request.success || request.data.homeId !== verified.binding.serverIdentityId
             || request.data.managedId !== verified.binding.managedContinuation.managedId) return null;
     } else if (!managedRoot.success && isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) {
-        // Spend the same signed configure root for its exact installation grant.
-        // The route keeps installed proof and target access; setup stays read-only.
+        // The signed setup scope names reviewed grants; configure retains its
+        // exact-installation scope. The route owns proof and target access.
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();

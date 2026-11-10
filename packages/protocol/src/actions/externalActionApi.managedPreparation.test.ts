@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import * as api from './externalActionApi.js';
+import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema,
+  MachineSetupPlanInputV1Schema } from '../machines/managed/actionsV1.js';
 
 describe('managed continuation and sealed deployment preparation', () => {
+  it('keeps scalar Plan, combined Plan and Apply without reviewed operands free of preparation authority', () => {
+    const target = { homeId: 'home', machineId: 'machine' };
+    for (const input of [MachineSetupPlanInputV1Schema.parse(target),
+      MachineSetupCombinedPlanInputV1Schema.parse({ ...target, targets: [target] })]) {
+      expect(api.projectDeploymentPreparationAdmissionV1('machines.setup.plan', input)).toBeUndefined();
+    }
+    const input = MachineSetupApplyInputV1Schema.parse({ ...target, targets: [{ ...target,
+      sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, recipePlans: [],
+    }] });
+    expect(api.projectDeploymentPreparationAdmissionV1('machines.setup.apply', input)).toBeUndefined();
+  });
+
   it('accepts a controllerless continuation while validating supplied controller identity', () => {
     const continuation = { managedId: 'managed', creationRequestId: 'acquire', expectedIntentRevision: 0,
       acquireRequestEnvelopeDigest: 'a'.repeat(43) };

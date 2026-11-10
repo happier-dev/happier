@@ -448,6 +448,38 @@ describe('whole external Action encryption', () => {
     expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: missing, binding: prepareBinding, material })).toBeNull();
   });
 
+  it('binds reviewed setup connector references while keeping recipe operands encrypted', () => {
+    const root = { homeId: binding.serverIdentityId, machineId: binding.target.machineId };
+    const grantRef = '[1,"connectorToken","machine","installation",{"kind":"builtin","id":"tailscale"},"reviewed-config-digest"]';
+    const selection = { ref: { pluginId: 'example.network', recipeId: 'connector-join', revision: '1' },
+      inputs: { privateJoinCredential: 'saved-secret-reference' } };
+    const input = MachineSetupApplyInputV1Schema.parse({ ...root, targets: [{ ...root, desiredRevision: 0,
+      sources: [{ kind: 'direct', setup: { items: [{ kind: 'setupRecipe', selection }] } }],
+      recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: { v: 1,
+        basis: { kind: 'setup', machineId: root.machineId, desiredRevision: 0, selection },
+        steps: [{ id: 'key', kind: 'file', path: '/private/invocation/connector-key', owner: 'root', group: 'root',
+          mode: 0o600, lifetime: 'invocation', content: { kind: 'secretGrant', grantRef } }],
+        nativeFacts: [{ stepId: 'key', status: 'drifted', facts: { present: false } }], planDigest: 'a'.repeat(64),
+      } }],
+    }] });
+    const setupBinding = { ...binding, actionId: 'machines.setup.apply' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: setupBinding, input, material, randomBytes });
+    const admission = { operation: 'setup' as const, deployments: [], connectorGrants: [{ machineId: root.machineId, grantRef }] };
+    expect(request.deploymentPreparationAdmission).toEqual(admission);
+    expect(JSON.stringify(request)).not.toContain('/private/invocation/connector-key');
+    expect(JSON.stringify(request)).not.toContain('saved-secret-reference');
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: setupBinding, material });
+    expect(open(request)).toEqual({ input });
+    for (const changed of [{ machineId: 'another-machine', grantRef },
+      { machineId: root.machineId, grantRef: 'unreviewed-connector' }]) {
+      expect(open({ ...request, deploymentPreparationAdmission: { ...admission, connectorGrants: [changed] } })).toBeNull();
+    }
+    const { deploymentPreparationAdmission: _admission, ...missing } = request;
+    expect(open(missing)).toBeNull();
+  });
+
   it.each(['machines.setup.plan', 'machines.setup.apply'] as const)(
     'binds only the prepared app references of %s without changing ordinary setup admission', actionId => {
       const child = { sourceIndex: 0, itemIndex: 0, actionId: 'deployments.deploy', input: {

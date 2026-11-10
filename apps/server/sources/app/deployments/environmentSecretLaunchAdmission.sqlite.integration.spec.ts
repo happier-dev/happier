@@ -6,12 +6,13 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePl
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { prepareEnvironmentSecretBindingsV1 } from '@happier-dev/deployments';
+import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { getActionSpec } from '@happier-dev/protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
 import { DeploymentEnvironmentContentV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema,
-    type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+    machineSecretGrantSubjectKey, type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
@@ -31,6 +32,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
     signExternalActionMachineRequestV1, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions';
+import { projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { createDeploymentInTx } from './deploymentService';
@@ -654,13 +656,13 @@ describe('private installed Environment secret launch transport', () => {
             // proof and the exact repository read; no fixture bearer shortcut.
             await withAuthenticatedTestApp(registerDeploymentRoutes, async authenticated => {
                 const signedRead = signed({ ...common, operation: 'read' });
-                const sendRoot = (body: object) => authenticated.inject({ method: 'POST', url, payload: body, headers: {
-                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                const sendRoot = (body: object, admitted = authorization) => authenticated.inject({ method: 'POST', url, payload: body, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: admitted.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.setup.apply',
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: 'machines.setup.apply', target,
-                        installationId, requestId: authorization.binding.requestId, method: 'POST', path: url, body,
+                        authorizationToken: admitted.token, effectActionId: 'machines.setup.apply', target,
+                        installationId, requestId: admitted.binding.requestId, method: 'POST', path: url, body,
                         privateKey: keys.secretKey }),
                 } });
                 const read = await sendRoot(signedRead);
@@ -668,8 +670,47 @@ describe('private installed Environment secret launch transport', () => {
                 expect(read.json()).toEqual({ ok: true, grant: rotated });
                 const wrongProof = signed({ ...common, operation: 'read' }, controllerKeys);
                 expect((await sendRoot(wrongProof)).statusCode).toBe(403);
+                expect((await sendRoot(signed({ ...common, operation: 'set', grant: rotated }))).statusCode).toBe(401);
                 expect((await sendRoot(signed({ ...common, operation: 'remove' }))).statusCode).toBe(401);
                 expect(await db.machineSecretGrant.count({ where: { machineId } })).toBe(1);
+
+                const selection = { ref: { pluginId: 'example.network', recipeId: 'connector-join', revision: '1' }, inputs: {} };
+                const plan = createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId, desiredRevision: 0, selection },
+                    steps: [{ id: 'connector-key', kind: 'file', path: '/run/happier/connector-key',
+                        owner: 'root', group: 'root', mode: 0o600, lifetime: 'invocation',
+                        content: { kind: 'secretGrant', grantRef: machineSecretGrantSubjectKey(subject) } }],
+                    nativeFacts: [{ stepId: 'connector-key', status: 'drifted', facts: { present: false } }] });
+                const reviewedInput = MachineSetupApplyInputV1Schema.parse({ ...setupInput, targets: [{
+                    ...setupInput.targets[0], sources: [{ kind: 'direct', setup: {
+                        items: [{ kind: 'setupRecipe', selection }],
+                    } }], recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }],
+                }] });
+                const reviewedEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: reviewedInput };
+                const reviewedAuthorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                    accountId: owner.id, authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch },
+                    actionId: 'machines.setup.apply', machineId, target, requestId: reviewedEnvelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(reviewedEnvelope),
+                    deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', reviewedInput),
+                }, { input: reviewedInput });
+                const stored = await sendRoot(signed({ ...common, operation: 'set', grant: rotated }), reviewedAuthorization);
+                expect(stored.statusCode, stored.body).toBe(200);
+                expect(stored.json()).toEqual({ ok: true, grant: rotated });
+                for (const unreviewed of [{ ...subject, connectorId: 'unreviewed-connector' },
+                    { ...subject, provider: { kind: 'builtin' as const, id: 'unreviewed-provider' } }]) {
+                    for (const operation of ['set', 'remove'] as const) {
+                        const body = operation === 'set'
+                            ? { ...common, subject: unreviewed, operation, grant: { ...rotated, ...unreviewed } }
+                            : { ...common, subject: unreviewed, operation };
+                        const refused = await sendRoot(signed(body), reviewedAuthorization);
+                        expect(refused.statusCode, refused.body).toBe(401);
+                        expect(refused.body).not.toContain(rotated.sealedContent);
+                    }
+                }
+                expect(await db.machineSecretGrant.count({ where: { machineId } })).toBe(1);
+                const removed = await sendRoot(signed({ ...common, operation: 'remove' }), reviewedAuthorization);
+                expect(removed.statusCode, removed.body).toBe(200);
+                expect(removed.json()).toEqual({ ok: true });
+                expect(await db.machineSecretGrant.count({ where: { machineId } })).toBe(0);
             }, { authentication: 'real' });
             response = await send(signed({ ...common, operation: 'remove' }));
             expect(response.json()).toEqual({ ok: true });

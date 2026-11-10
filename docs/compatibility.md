@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Machine Setup connector grant scope (unreleased 0.3)
+
+The existing Setup preparation admission optionally carries `connectorGrants`
+from the exact secret-grant references in reviewed native Apply plans. Home
+signs those references with the original request and admits their Machines once;
+Setup may set or remove only those connector grants. Setup without a reviewed
+connector operand retains its installed read access. Recipe inputs and native
+paths remain encrypted for E2EE Accounts.
+
+Matching Protocol, CLI and Home readers consume this closed development
+projection together; older strict development readers reject the added field.
+No persisted format, storage owner, wire epoch or compatibility adapter changes.
+The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contracts.
+
 ## Platform upload provenance (unreleased 0.3)
 
 `DeploymentTargetRoleResultV1` adds optional `uploadProvenance` to the existing provider observation. Existing receipts without upload evidence remain valid. New upload results record a source manifest fingerprint and a discriminated build location: `provider`, or `controller` with image, toolchain name/version and output manifest fingerprint. Later observations may omit it; the receipt writer retains the original upload evidence.
