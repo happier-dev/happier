@@ -158,7 +158,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         if (content.t !== 'plain') throw new Error('Expected plain Environment fixture');
         const artifact = await createArtifact({ actorUserId: account.id, artifactId: crypto.randomUUID(),
             header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'CI app' }), 'base64'),
-            body: decodeBase64(encodePlainArtifactStoredContent(content.v), 'base64'),
+            body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content.v) }), 'base64'),
             dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') });
         if (!artifact.ok) throw new Error(artifact.error);
         const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, account.id, { serverId,
