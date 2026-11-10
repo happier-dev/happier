@@ -2271,6 +2271,12 @@ leased Agent requirements and uses the same paginated Session catalog transport
 as launch normalization. The composed recipient Pool → Action/CLI spawn →
 native-turn journey and loaded-runtime replay still require integrated validation.
 
+Managed Team credential use identifies its known source through the existing
+spawn/admission presentation: “uses <Team>’s shared <account>”. The grant supplies
+those source facts at admission. The adapter selected afterwards is an internal
+runtime detail and adds no separate disclosure or approval. The generic credential
+warning and a direct plugin's declared operation disclosure remain in place.
+
 #### Vendor-native Team delivery (development contract)
 
 The unreleased 0.3 delivery contract adds `vendor-native` alongside brokered and

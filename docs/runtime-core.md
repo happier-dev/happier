@@ -27,6 +27,14 @@ plugin producers own offered choices. Ask captures the selected occurrence's saf
 label and scope through the existing Session status read, without retaining its
 executable response payload as presentation data.
 
+An offered choice may include one producer-owned `followUp: { actionId, input }`
+for an existing Action. The choice submitter captures it from the stored offer
+and executes it only after the native decision succeeds. A catalog save failure
+uses the existing `save_failed` recovery; retry applies only that Action and never
+repeats the native decision. Claude MCP catalog-saving choices use this carrier,
+and all live permission producers publish offered choices; the frozen reader
+serves old stored occurrences only.
+
 Session sends, Session runtime events and finite Run events preserve complete
 valid text and strict JSON without an aggregate candidate byte ceiling. Their
 schemas retain the closed event grammar and identity bounds; transport,

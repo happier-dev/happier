@@ -7697,7 +7697,10 @@ changes. This adds no released predecessor adapter, wire epoch or storage owner.
 
 Unreleased 0.3 permission occurrences add closed optional `nativeChoices`, with
 canonical offered response payloads, and answer carriers add `nativeChoice`.
-The latter may carry an answer without a legacy `approved` alias. Current
+An offered choice may also carry one optional `followUp: { actionId, input }`
+for an existing Action. Current submitters read it from the stored offer, run it
+after native success and preserve catalog-only retry after a save failure.
+The `nativeChoice` field may carry an answer without a legacy `approved` alias. Current
 responses resolve the stored choice before deriving decision and grant fields;
 an answer without a valid selection cannot approve a native-choice occurrence.
 Matching Protocol, SDK, daemon and UI readers reload together. Stored occurrences
