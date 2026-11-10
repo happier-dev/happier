@@ -1,3 +1,4 @@
+import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 import * as React from 'react';
 import { Animated, Easing, Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -53,6 +54,8 @@ export const PileBar = React.memo(function PileBar(
   >,
 ) {
   const { theme } = useUnistyles();
+  // Docked on a phone page, the pile stands above the floating tab bar, as every pinned page bar does.
+  const chromeClearance = useFloatingChromeClearance();
   const motion = useMotionPreferences();
   const visible = props.bar.kind !== 'hidden' || props.recovery != null;
   // The first item rises from the bottom edge (12 px + opacity, 240 ms); the last leaves faster (160 ms).
@@ -239,7 +242,7 @@ export const PileBar = React.memo(function PileBar(
   // Docked, the bar is the page column's width (lab `rs` dock): the sticky layer spans the pane, the bar sits
   // in the column like every section above it.
   return (
-    <Animated.View style={[dockStyle, motionStyle]}>
+    <Animated.View style={[dockStyle, Platform.OS === 'web' ? { bottom: theme.space.s12 + chromeClearance } : null, motionStyle]}>
       <ItemGroup surface="none" header="none">
         <View testID={props.testID ?? 'machine-storage-pile'} style={[styles.bar, props.compact ? styles.compact : null]} {...a11y}>
           {body}
@@ -252,7 +255,7 @@ export const PileBar = React.memo(function PileBar(
 /** The pile docks at the bottom of the page on the web, over the rows (the list keeps room for it). */
 const dockStyle: ViewStyle =
   Platform.OS === 'web'
-    ? { position: 'sticky' as 'relative', bottom: 12, zIndex: 3 }
+    ? { position: 'sticky' as 'relative', zIndex: 3 }
     : {};
 
 const styles = StyleSheet.create((theme) => ({

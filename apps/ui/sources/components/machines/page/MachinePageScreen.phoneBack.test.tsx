@@ -57,3 +57,12 @@ it('a wide Machine page beside its list draws no Back of its own', async () => {
     const screen = await mountMachinePage();
     expect(screen.findByTestId('machine-page-back')).toBeNull();
 });
+
+it('a phone Machine page hides the navigation header it replaces, so one way back remains', async () => {
+    probe.width = 390;
+    const screen = await mountMachinePage();
+    const declared = screen.tree.findAll(node => node.props.options && typeof node.props.options === 'object'
+        && 'headerShown' in node.props.options).map(node => node.props.options.headerShown);
+    expect(declared).toContain(false);
+    expect(declared).not.toContain(true);
+});

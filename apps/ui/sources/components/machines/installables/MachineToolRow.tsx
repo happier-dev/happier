@@ -25,6 +25,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useInstallableDepInstall } from './useInstallableDepInstall';
 
 export type MachineToolCapabilitiesStatus =
@@ -118,6 +119,7 @@ export const MachineToolRow = React.memo(function MachineToolRow(
   props: MachineToolRowProps,
 ) {
   const { theme } = useUnistyles();
+  const compact = useViewportClass() === 'compact';
   const { entry, status, policy, onPolicyChange } = props;
   const [expanded, setExpanded] = React.useState(false);
   const { isInstalling, run } = useInstallableDepInstall({
@@ -160,7 +162,10 @@ export const MachineToolRow = React.memo(function MachineToolRow(
         ) : undefined
       }
       subtitle={describeToolState(entry, status, props.capabilitiesStatus)}
+      subtitleLines={0}
       rightElementOutsidePressable
+      // A phone keeps only the disclosure beside the label; Install or Update moves beneath the description.
+      accessoryLayout={compact && action ? 'stacked' : undefined}
       showChevron={false}
       rightElement={
         <View style={styles.tail}>

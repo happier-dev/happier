@@ -167,10 +167,11 @@ export function MachinePageScreen() {
         disabled: Boolean(item.disabledReason), unavailableReason: item.disabledReason ?? undefined });
     const headerBackTitle = t('machine.back');
     const screenOptions = React.useMemo(() => ({
-        headerShown: !hostedInCollection,
+        // A phone draws its own way back on its line above the header (R2), so it hides the header it replaces.
+        headerShown: !hostedInCollection && !phone,
         headerTitle: '',
         headerBackTitle,
-    } as const), [headerBackTitle, hostedInCollection]);
+    } as const), [headerBackTitle, hostedInCollection, phone]);
 
     const pageState = React.useMemo((): MachinePageState => ({ target, managedEnrolled, refreshKey, reload }), [managedEnrolled, refreshKey, reload, target]);
     // One scroller for every tab and every page a tab pushes: a pushed page opens at its top (FA1 #9).
