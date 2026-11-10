@@ -19,6 +19,7 @@ import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { useOpenResource } from '@/utils/url/openResource';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { openMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
+import { useMarkdownAppLinkOpener } from './enriched/useMarkdownAppLinkOpener';
 
 export type { Option };
 export type { OptionLongPressHandler };
@@ -103,11 +104,11 @@ export const MarkdownView = React.memo((props: {
     const { openResourceUrl } = useOpenResource({ sessionId: transcript?.sessionId,
         serverId: transcript?.serverId ?? undefined, chatLink: transcript !== null });
     const onLinkPress = props.onLinkPress;
+    const openAppHref = useMarkdownAppLinkOpener();
     const handleLinkPress = React.useCallback((url: string) => {
-        if (onLinkPress?.(url) === true) return true;
-        void openMarkdownLinkUrl(url, openResourceUrl);
+        void openMarkdownLinkUrl(url, openResourceUrl, { openAppHref, onLinkPress });
         return true;
-    }, [onLinkPress, openResourceUrl]);
+    }, [onLinkPress, openResourceUrl, openAppHref]);
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
         variant: props.variant,

@@ -32,6 +32,7 @@ import {
 } from '../streaming/streamingTextRevealConfig';
 import { useWebRevealStyleInsertion } from '../streaming/useWebRevealStyleInsertion';
 import { MarkdownWorkspaceFileLinksContext } from '../rendering/MarkdownLinkPolicyContext';
+import { useMarkdownAppLinkOpener } from './useMarkdownAppLinkOpener';
 
 const ENRICHED_REVEAL_STYLE_ID = 'happier-streaming-enriched-markdown-reveal-style';
 const ENRICHED_REVEAL_DURATION_VAR = '--happier-streaming-enriched-markdown-duration';
@@ -185,6 +186,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     });
 
     const inlineReferences = props.inlineReferences;
+    const openAppHref = useMarkdownAppLinkOpener();
     const handleLinkPress = React.useCallback((event: { url: string }) => {
         // A cited reference belongs to its owner; it is never opened as a URL.
         if (event.url.startsWith(INLINE_REFERENCE_HREF_PREFIX_V1)) {
@@ -194,9 +196,8 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         }
         const normalizedUrl = normalizeMarkdownLinkUrl(event.url, { workspaceFileLinks });
         if (!normalizedUrl) return;
-        if (props.onLinkPress?.(normalizedUrl) === true) return;
-        void openMarkdownLinkUrl(normalizedUrl);
-    }, [inlineReferences, props.onLinkPress, workspaceFileLinks]);
+        void openMarkdownLinkUrl(normalizedUrl, undefined, { openAppHref, onLinkPress: props.onLinkPress });
+    }, [inlineReferences, props.onLinkPress, workspaceFileLinks, openAppHref]);
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.streamingAnimated,
         preset: props.streamingRevealPreset,

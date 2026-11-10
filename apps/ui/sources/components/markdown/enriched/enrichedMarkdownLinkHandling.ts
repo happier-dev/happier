@@ -1,4 +1,5 @@
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { isAcceptedHappierUrlProtocol } from '@/utils/url/appScheme';
 import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { parseMarkdownSyntax, splitMarkdownIntoBlockSources } from '../streaming/splitMarkdownIntoBlockSources';
@@ -40,6 +41,11 @@ function isExternallyOpenableMarkdownLink(value: string): boolean {
     return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:');
 }
 
+export function isMarkdownAppLinkUrl(value: string): boolean {
+    const protocol = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(value.trim())?.[1];
+    return protocol !== undefined && isAcceptedHappierUrlProtocol(protocol);
+}
+
 export function normalizeMarkdownLinkUrl(raw: string, options: MarkdownLinkNormalizationOptions = {}): string | null {
     const trimmed = String(raw ?? '').trim();
     if (!trimmed) return null;
@@ -53,6 +59,8 @@ export function normalizeMarkdownLinkUrl(raw: string, options: MarkdownLinkNorma
 
     if (lower.startsWith(INLINE_REFERENCE_HREF_PREFIX_V1)) return null;
     if (lower.startsWith('javascript:') || lower.startsWith('data:')) return null;
+    // Keep even malformed app targets pressable so the shared dispatcher can explain the refusal.
+    if (isMarkdownAppLinkUrl(candidate)) return candidate;
     if (/\s|[\u0000-\u001F\u007F]/.test(candidate)) return null;
     if (isExternallyOpenableMarkdownLink(candidate) || lower.startsWith('file://')) return candidate;
     if (hasMarkdownPathCharacterReference(candidate)) return null;
@@ -353,8 +361,24 @@ export function sanitizeEnrichedMarkdownWithInlineReferences(markdown: string, r
     return { markdown: normalizeMarkdownAutolinks(normalizeExplicitMarkdownLinks(normalizedReferences, references, resolved, options), options), references: resolved };
 }
 
-export async function openMarkdownLinkUrl(raw: string, openUrl: (url: string) => Promise<unknown> = openExternalUrl): Promise<void> {
+export async function openMarkdownLinkUrl(raw: string, openUrl: (url: string) => Promise<unknown> = openExternalUrl, options: Readonly<{
+    openAppHref?: (href: string) => boolean;
+    onLinkPress?: (url: string) => boolean | void;
+    unavailable?: () => void | Promise<void>;
+}> = {}): Promise<void> {
     const normalized = normalizeMarkdownLinkUrl(raw);
+    if (isMarkdownAppLinkUrl(raw)) {
+        const { resolveNativeAppLinkHref } = await import('@/utils/url/nativeAppLink');
+        const href = normalized ? resolveNativeAppLinkHref(normalized) : null;
+        if (href && options.openAppHref?.(href)) return;
+        if (options.unavailable) await options.unavailable();
+        else {
+            const [{ Modal }, { t }] = await Promise.all([import('@/modal'), import('@/text')]);
+            Modal.alert(t('common.error'), t('entityDragDrop.organize.cantOpenHere'));
+        }
+        return;
+    }
+    if (options.onLinkPress?.(raw) === true) return;
     if (!normalized || !isExternallyOpenableMarkdownLink(normalized)) return;
     await openUrl(normalized);
 }

@@ -10,7 +10,8 @@ import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindH
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { MarkdownFindDecorationContext, MarkdownSourceMarkKindContext } from './rendering/MarkdownFindDecorationContext';
 import { MarkdownWorkspaceFileLinksContext } from './rendering/MarkdownLinkPolicyContext';
-import { normalizeMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
+import { isMarkdownAppLinkUrl, normalizeMarkdownLinkUrl, openMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
+import { useMarkdownAppLinkOpener } from './enriched/useMarkdownAppLinkOpener';
 
 export type MarkdownSpansViewProps = {
     spans: MarkdownSpan[];
@@ -30,6 +31,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
     const findDecoration = React.useContext(MarkdownFindDecorationContext);
     const markKind = React.useContext(MarkdownSourceMarkKindContext);
     const workspaceFileLinks = React.useContext(MarkdownWorkspaceFileLinksContext);
+    const openAppHref = useMarkdownAppLinkOpener();
     let offset = 0;
 
     return (
@@ -58,12 +60,14 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                             </Text>
                         );
                     }
-                    if (props.onLinkPress) {
+                    if (props.onLinkPress || isMarkdownAppLinkUrl(url!)) {
                         return (
                             <Text
                                 key={index}
                                 accessibilityRole="link"
-                                onPress={() => props.onLinkPress?.(url!)}
+                                onPress={() => {
+                                    void openMarkdownLinkUrl(url!, undefined, { openAppHref, onLinkPress: props.onLinkPress });
+                                }}
                                 selectable={inlineTextSelectable}
                                 style={linkStyle}
                             >

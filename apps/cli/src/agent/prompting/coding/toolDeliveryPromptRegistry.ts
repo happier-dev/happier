@@ -24,7 +24,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
   const scmGuidance: PromptBlockV1 = {
     id: 'tool_delivery.scm',
     scope: 'tool_delivery',
-    text: 'For repository pushes and pull requests, use the Happier Actions `scm.remote.push` and `scm.pullRequest.openOrReuse` through `action_execute`. Happier keeps Git and hosting credentials in the host; do not copy them into the Agent home or request them for shell Git/gh commands.',
+    text: 'For repository pushes and pull requests, use the Happier Actions `scm.remote.push` and `scm.pullRequest.openOrReuse` through `action_execute`. Happier keeps Git and hosting credentials in the host; do not copy them into the Agent home or request them for shell Git/gh commands.\nYou can post [Add machine](happier://settings/machines/add?path=anotherComputer) for the person to tap, or call `workspace.tabs.open` to open a screen directly.',
   };
   if (args.delivery !== 'shell_bridge') return [scmGuidance, {
     id: 'tool_delivery.visual_actions',
