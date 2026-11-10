@@ -139,6 +139,9 @@ export async function assembleAutomationRuntime(input: Readonly<{
         });
     };
     return Object.freeze({
+        invalidateSourceDefinitions() {
+            for (const { owner } of adoptedOwners) owner.invalidate();
+        },
         refreshActivatedPlugin,
         resolveAdoptedDefinitionSet,
         resolveHistoryGapSource,

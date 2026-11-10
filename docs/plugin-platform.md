@@ -301,6 +301,16 @@ changed source configuration) admits the next attempt. A removed source requires
 its enrollment owner to replace or retire it; a wake cannot restore an absent
 adapter.
 
+In development source, adopted Event catalogs refresh on initial need or the
+existing Event-source invalidation/reconnect push. Provider observation deadlines
+reuse the adopted catalog. After a catalog failure, observers pass their existing
+provider retry deadline to the occurrence-local adopted owner; subscribers share
+one pending retry and its result. A relevant push expedites that wait. No observer
+adds its own catalog retry timer. Healthy empty scans publish source status only
+when its acknowledged semantic state changes; successful probe deadlines are
+liveness rather than durable retry state. Failed status reports remain eligible
+for publication on the next natural provider cycle.
+
 An unsettled admission carries its safe failure code and known retryability in
 the SDK disposition. A nonretryable refusal parks the source even when its
 provider supplied a later observation time; it neither advances the checkpoint
@@ -3320,7 +3330,14 @@ the bound Action retains its own danger level and approval default. A role
 expecting a remote write can therefore use a safe Account-data implementation
 without converting that Action into an outward write or an Ask default.
 
-For an optional Account operand without `nativeServicePath`, omission or null
+In 0.3 development source, one purpose binding can declare `alternativePaths`
+when different input arms carry the same Account selection at different paths.
+The declaration validator preserves nested union correlation and requires
+exactly one qualified Account or native-service operand in each arm. The shared
+Account and daemon extractor refuses missing or multiple selections; the
+existing purpose port still authorizes the selected service before acquisition.
+
+For an optional Account operand without `nativeServicePath` or `alternativePaths`, omission or null
 keeps the incumbent Session/global purpose selection. The operation binder
 creates exact custody only when a ref is supplied; an empty operation subject
 must not hide the incumbent binding. A declaration with `nativeServicePath`
@@ -11711,8 +11728,14 @@ Its setup and settled-change reads use the machine-placed native
 `deployments.observation.get` Action. The deployment owner admits the exact
 Environment, target Link and optional receipt from Account-authorized metadata
 before opening private content, and returns the recorded credential principal
-reference and optional receipt provider deployment id. No credential material,
-Artifact body, provider request or settlement effect is exposed by this read.
+reference and optional receipt provider deployment id. Its ordinary metadata
+read exposes no credential material or Artifact body and performs no provider
+request or settlement effect.
+In development source, an explicit `variables: true` read on the selected
+platform Link spends the existing reviewed `variables.read` child once and
+returns `providerVariables` metadata: presence, ownership, secrecy and drift,
+without values. It does not settle a receipt or synchronize variables. Ordinary
+observation reads retain their zero-provider-request behavior.
 Original callers retain installed requester custody through Home admission;
 native metadata reads spend the signed Environment scope, and private storage
 reads retain the requester's Account and Artifact authorization.
@@ -11767,16 +11790,6 @@ Upload mode and own-server Compose still require a registered local Workspace.
 These are unreleased 0.3 preparation semantics; the deployment Source intent
 continues to store an immutable SHA.
 
-The unreleased 0.3 hosting-provider descriptor also accepts
-`projectReadinessAction`, a safe, read-only Account Action accepting
-`{repository}` and returning that repository with independent `ci` and
-`security` facts (`status` and `reason`). These facts describe current source
-presence, rather than successful CI runs or an absence of security findings.
-The provider owns its private source configuration and credential access.
-GitHub reads workflow presence through its existing CI reader and security
-coverage through Triage's caller-scoped configured-source reader. Retired or
-other-repository sources do not establish coverage; an All-repositories source
-must be able to read this repository through its own configured credential.
 Its Inspect form submits `providerAccountId`, native `projectId`, and
 `providerEnvironment`; the plugin constructs the normalized comparison identity
 in its provider preparation. Complete `providerIdentity` inputs remain supported
@@ -11784,6 +11797,19 @@ for existing CLI/reinspection callers. The options Resource and Inspect share
 the plugin's coordinate reader, so choice admission supports both forms.
 Hosts do not synthesize that tuple from
 the environment selector, and stored link identity requirements are unchanged.
+
+The unreleased 0.3 hosting-provider descriptor also accepts
+`projectReadinessAction`, a safe, read-only Account Action accepting
+`{repository}` and returning that repository with independent `ci` and
+`security` facts (`status` and `reason`). These facts describe current source
+presence, rather than successful CI runs or an absence of security findings.
+An optional `setupSurface` is the provider's existing native destination;
+GitHub offers its Project Actions page and its Triage source-settings page.
+The provider owns its private source configuration and credential access.
+GitHub reads workflow presence through its existing CI reader and security
+coverage through Triage's caller-scoped configured-source reader. Retired or
+other-repository sources do not establish coverage; an All-repositories source
+must be able to read this repository through its own configured credential.
 
 The Vercel target also declares a controller-daemon `uploadDeploy` Action. It
 acquires the approved receipt's source through `services.deploymentSource`,

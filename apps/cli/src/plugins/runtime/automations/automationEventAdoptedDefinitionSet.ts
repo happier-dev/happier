@@ -114,7 +114,7 @@ export type AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1 = Readonly<{
 }>;
 
 export type AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 =
-  AutomationEventAdoptedDefinitionSetV1 & AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1;
+  AutomationEventAdoptedDefinitionSetV1 & AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1 & Readonly<{ invalidate(): void }>;
 
 type AdoptedSnapshot = Readonly<{
   revision: string;
@@ -141,6 +141,7 @@ type AdoptedSnapshotRefresh = {
   controller: AbortController;
   promise: Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1>;
   waiters: number;
+  expedite(): void;
 };
 
 function createEmptySignal(): AbortSignal {
@@ -442,6 +443,8 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   // Joins only same-cycle currentness reads; `adopted` remains the one
   // retained definition snapshot.
   let adoptedSnapshotRefresh: AdoptedSnapshotRefresh | null = null;
+  let catalogInvalidated = true;
+  let catalogRefreshFailed = false;
 
   function isOccurrenceCurrent(signal: AbortSignal): boolean {
     return !signal.aborted && !params.occurrenceSignal.aborted && params.isOccurrenceCurrent();
@@ -554,11 +557,14 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     };
   }
 
-  async function refresh(
+  async function readSnapshot(
     callerSignal = createEmptySignal(),
   ): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1> {
     const signal = AbortSignal.any([params.occurrenceSignal, callerSignal]);
     if (!await isCallerCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
+    // Consume the pending push at read admission. A push during the read stays
+    // dirty for the next consumer instead of being erased by its completion.
+    catalogInvalidated = false;
     // Resolve material only when changed rows need opening. One immutable
     // snapshot covers every page; nothing becomes observable before the final
     // fresh Account check admits the complete candidate.
@@ -641,6 +647,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         if (!await isCurrent(signal, adopted.accountCurrentness)) {
           return { kind: 'discarded', reason: 'notCurrent' };
         }
+        catalogRefreshFailed = false;
         return { kind: 'unchanged', revision: result.revision };
       }
       if (!isCanonicalUnsignedRevision(result.revision)
@@ -748,6 +755,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           return { kind: 'discarded', reason: 'cursorStale' };
         }
         adopted = snapshot;
+        catalogRefreshFailed = false;
         params.onAdopted?.();
         return { kind: 'adopted', revision: expectedRevision };
       }
@@ -844,16 +852,45 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     };
   }
 
-  function acquireAdoptedSnapshotRefresh(): AdoptedSnapshotRefresh {
-    if (adoptedSnapshotRefresh !== null) {
+  async function refresh(signal = createEmptySignal()): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1> {
+    const result = await readSnapshot(signal);
+    catalogRefreshFailed = result.kind === 'discarded' && result.reason !== 'notCurrent';
+    return result;
+  }
+
+  function acquireAdoptedSnapshotRefresh(intent?: AutomationEventSourcesListInputV1['catalogRefresh']): AdoptedSnapshotRefresh {
+    if (adoptedSnapshotRefresh !== null && !adoptedSnapshotRefresh.controller.signal.aborted) {
+      if (intent === undefined) adoptedSnapshotRefresh.expedite();
       adoptedSnapshotRefresh.waiters += 1;
       return adoptedSnapshotRefresh;
     }
     const controller = new AbortController();
+    const signal = AbortSignal.any([params.occurrenceSignal, controller.signal]);
+    let retryAt = intent?.kind === 'retry' && !catalogInvalidated ? intent.retryAt : undefined;
+    let releaseWait: (() => void) | undefined;
+    const execute = async () => {
+      while (retryAt !== undefined && retryAt > Date.now() && !signal.aborted) {
+        const delay = Math.min(retryAt - Date.now(), 2_147_483_647);
+        await new Promise<void>(resolve => {
+          const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', done);
+            releaseWait = undefined;
+            resolve();
+          };
+          const timer = setTimeout(done, delay);
+          releaseWait = done;
+          signal.addEventListener('abort', done, { once: true });
+          if (signal.aborted) done();
+        });
+      }
+      return refresh(signal);
+    };
     const inFlight: AdoptedSnapshotRefresh = {
       controller,
-      promise: refresh(controller.signal),
+      promise: execute(),
       waiters: 1,
+      expedite() { retryAt = undefined; releaseWait?.(); },
     };
     adoptedSnapshotRefresh = inFlight;
     void inFlight.promise.then(
@@ -873,9 +910,14 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
 
   async function joinAdoptedSnapshotRefresh(
     signal: AbortSignal,
+    intent?: AutomationEventSourcesListInputV1['catalogRefresh'],
   ): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1> {
     if (signal.aborted) return { kind: 'discarded', reason: 'notCurrent' };
-    const inFlight = acquireAdoptedSnapshotRefresh();
+    if (intent !== undefined && adoptedSnapshotRefresh === null) {
+      if (!catalogInvalidated && !catalogRefreshFailed && adopted !== null) return { kind: 'unchanged', revision: adopted.revision };
+      if (intent.kind === 'refresh' && catalogRefreshFailed && !catalogInvalidated) return { kind: 'discarded', reason: 'unavailable' };
+    }
+    const inFlight = acquireAdoptedSnapshotRefresh(intent);
     try {
       return await new Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1>((resolve) => {
         let settled = false;
@@ -919,6 +961,11 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   }
 
   const definitionSet: AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 = {
+    invalidate() {
+      catalogInvalidated = true;
+      catalogRefreshFailed = false;
+      adoptedSnapshotRefresh?.expedite();
+    },
     refresh,
     readPublicProjection() {
       if (
@@ -970,7 +1017,8 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       let snapshot: AdoptedSnapshot | null;
       let sourceSetReadopted = false;
       if (
-        (params.transport.kind === 'checkpointedPull'
+        request.input.catalogRefresh !== undefined
+        || (params.transport.kind === 'checkpointedPull'
           && request.input.cursor === undefined
           && request.input.knownRevision !== undefined)
         || (params.transport.kind === 'durablePush' && request.webhookInvocationReference === undefined)
@@ -978,7 +1026,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         // Pull revision confirmation and every background durable disclosure
         // use the same adopted owner. Endpoint target moves can change durable
         // membership without a catalog revision, including between cursor pages.
-        const refreshed = await joinAdoptedSnapshotRefresh(signal);
+        const refreshed = await joinAdoptedSnapshotRefresh(signal, request.input.catalogRefresh);
         if (refreshed.kind === 'discarded' || !await isCallerCurrent(signal)) {
           return { kind: 'unavailable' };
         }

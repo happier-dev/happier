@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { HostEventEnvelope } from '@happier-dev/plugin-sdk/events';
+import { AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import {
   AutomationSourceSelectorIdV1Schema,
   AutomationTriggerIdSchema,
@@ -386,6 +389,129 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       revision: '8',
       definitions: [{ automationId: currentDefinition.automationId }],
     });
+  });
+
+  it.each(['deadline', 'invalidation', 'long deadline'] as const)('shares one failed-catalog retry across five subscribers until %s', async recovery => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const retryAt = recovery === 'long deadline' ? 2_147_486_000 : 2000;
+    const readStoredDefinitions = vi.fn(async (_request: { input: AutomationEventSourcesListInputV1 }): Promise<AutomationEventStoredDefinitionsReadResultV1> => {
+      if (readStoredDefinitions.mock.calls.length === 1) throw new Error('DB unavailable');
+      return page('7', [storedDefinition(1)], null);
+    });
+    const controller = new AbortController();
+    const owner = createAutomationEventAdoptedDefinitionSetV1({ caller, transport: { kind: 'checkpointedPull' },
+      occurrenceSignal: controller.signal, isOccurrenceCurrent: () => true,
+      revalidateCallerMaterialization: async () => true, resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions, projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored) });
+    const read = (catalogRefresh: NonNullable<AutomationEventSourcesListInputV1['catalogRefresh']> = { kind: 'refresh' }) => owner.listPublicProjection({
+      accountId: 'account-1', input: { transport: { kind: 'checkpointedPull' }, pageSize: 500, ...(catalogRefresh ? { catalogRefresh } : {}) },
+    });
+    const pending: ReturnType<typeof read>[] = [];
+    try {
+      expect(await Promise.all(Array.from({ length: 5 }, () => read()))).toEqual(Array.from({ length: 5 }, () => ({ kind: 'unavailable' })));
+      expect(readStoredDefinitions).toHaveBeenCalledOnce();
+      for (let n = 0; n < 5; n += 1) {
+        pending.push(read({ kind: 'retry', retryAt: retryAt + n * 100 }));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      await vi.advanceTimersByTimeAsync(999);
+      expect(readStoredDefinitions).toHaveBeenCalledOnce();
+      if (recovery === 'invalidation') {
+        owner.invalidate();
+        for (let n = 0; n < 5; n += 1) pending.push(read({ kind: 'refresh' }));
+      } else {
+        await vi.advanceTimersByTimeAsync(retryAt - Date.now() - 1);
+        expect(readStoredDefinitions).toHaveBeenCalledOnce();
+      }
+      await vi.advanceTimersByTimeAsync(recovery === 'invalidation' ? 0 : 1);
+      const results = await Promise.all(pending);
+      expect(results.every(result => result.kind === 'page' && result.revision === '7')).toBe(true);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(2);
+      // A late subscriber consumes the settled shared result, even if its
+      // own provider selected a later deadline from the original failure.
+      await expect(read({ kind: 'retry', retryAt: Date.now() + 500 })).resolves.toMatchObject({ kind: 'page', revision: '7' });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(2);
+      expect(readStoredDefinitions.mock.calls[1]?.[0]).not.toHaveProperty('input.catalogRefresh');
+      // A real same-revision membership change reaches every subscriber, even
+      // when each prior request has already settled before the next arrives.
+      readStoredDefinitions.mockImplementation(async () => page('7', [storedDefinition(2)], null));
+      owner.invalidate();
+      for (let n = 0; n < 5; n += 1) await expect(read({ kind: 'refresh' })).resolves.toMatchObject({
+        kind: 'page', definitions: [{ automationId: storedDefinition(2).automationId }],
+      });
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(3);
+    } finally {
+      controller.abort();
+      await Promise.all(pending);
+      vi.useRealTimers();
+    }
+  });
+
+  it('composes five real SDK observers with one host retry through repeated failure, reconnect and changed membership', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const controller = new AbortController();
+    let definitions = [storedDefinition(1)];
+    const readStoredDefinitions = vi.fn(async (): Promise<AutomationEventStoredDefinitionsReadResultV1> => {
+      if (readStoredDefinitions.mock.calls.length <= 2) throw new Error('DB unavailable');
+      return page('7', definitions, null);
+    });
+    const owner = createAutomationEventAdoptedDefinitionSetV1({ caller, transport: { kind: 'checkpointedPull' },
+      occurrenceSignal: controller.signal, isOccurrenceCurrent: () => true,
+      revalidateCallerMaterialization: async () => true, resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions, projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored) });
+    type Invalidation = HostEventEnvelope<'@happier/automation/event-sources-invalidated'>;
+    const listeners = new Set<(event: Invalidation) => void>();
+    const observed: string[] = [];
+    // Actions, authenticated Host Events and stored HTTP are real boundaries;
+    // SDK orchestration, paging, adoption and retry ownership remain real.
+    const running = Array.from({ length: 5 }, (_, index) => {
+      const context = { plugin: { id: caller.pluginId, version: '1.0.0' },
+        contribution: { id: `service-${index}`, qualifiedId: `${caller.pluginId}/backgroundServices/service-${index}` },
+        surface: 'background', invokedAtMs: 1000, materialization: caller, signal: controller.signal,
+        services: { actions: { async execute(id: string, input: unknown, options?: { signal?: AbortSignal }) {
+          if (id !== 'automation.event.sources.list') return {};
+          const result = await owner.listPublicProjection({ accountId: 'account-1',
+            input: AutomationEventSourcesListInputV1Schema.parse(input), signal: options?.signal });
+          if (result.kind === 'unavailable') throw new Error('Catalog unavailable');
+          return result;
+        } }, events: { host: { subscribe(_target: unknown, listener: (event: Invalidation) => void) {
+          listeners.add(listener); return { dispose() { listeners.delete(listener); } };
+        } } } } } as unknown as BackgroundServiceContext;
+      return runCheckpointedPluginEventObserverV1({ context, source: { decode: definition => definition.sourceInstanceId,
+        async observe({ source }) { observed.push(source); return { observations: [], complete: true, nextEligibleAt: null }; },
+        async save() {}, retryAt: ({ now }) => now + 1000 } });
+    });
+    const invalidate = () => {
+      owner.invalidate();
+      for (const listener of listeners) listener({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload: { reason: 'reconnect' } });
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readStoredDefinitions).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(2);
+      expect(observed).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(2);
+      invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(3);
+      expect(observed).toEqual(Array.from({ length: 5 }, () => 'repository-1'));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(3);
+      definitions = [storedDefinition(2)];
+      invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readStoredDefinitions).toHaveBeenCalledTimes(4);
+      expect(observed.slice(5)).toEqual(Array.from({ length: 5 }, () => 'repository-2'));
+    } finally {
+      controller.abort();
+      await Promise.all(running);
+      vi.useRealTimers();
+    }
   });
 
   it('re-adopts a same-revision snapshot when the Event payload-validator release changes', async () => {

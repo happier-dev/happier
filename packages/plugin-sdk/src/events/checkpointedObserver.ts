@@ -198,11 +198,22 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     }>();
     let changed = false;
     let definitionsInvalidated = true;
+    let catalogRefresh: PluginActionInputById['automation.event.sources.list']['catalogRefresh'] = { kind: 'refresh' };
+    let catalogReadController: AbortController | undefined;
+    // Only acknowledged zero-delta status is retained. Provider polling is
+    // liveness; equal successful scans are not durable status changes.
+    const reportedStatuses = new Map<string, string>();
+    const statusKey = (definition: PluginCheckpointedEventSourceDefinitionV1) =>
+        createCanonicalJsonSigningInput({ automationId: definition.automationId, triggerId: definition.triggerId });
     let wake: (() => void) | undefined;
     let pendingWake: Readonly<{ promise: Promise<void>; resolve(): void; reject(error: unknown): void }> | undefined;
     const wokenSources = new Set<string | undefined>();
     const invalidated = (event: HostEventEnvelope<'@happier/automation/event-sources-invalidated'>) => {
-        if (event.payload.definitionsChanged !== false) definitionsInvalidated = true;
+        if (event.payload.definitionsChanged !== false) {
+            definitionsInvalidated = true;
+            catalogRefresh = { kind: 'refresh' };
+            catalogReadController?.abort();
+        }
         changed = true;
         // Credential/endpoint changes can unpark an unavailable source. They
         // do not shorten an unchanged source's numeric provider deadline;
@@ -234,6 +245,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
             wokenSources.clear();
             const cycleContext = context;
             let wakeAt: number | null = null;
+            let catalogFailed = false;
             try {
                 let revision: string | undefined;
                 const definitions: PluginCheckpointedEventSourceDefinitionV1[] = [];
@@ -253,12 +265,14 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     });
                 };
                 try {
+                    catalogReadController = new AbortController();
+                    const readContext = { ...cycleContext, signal: AbortSignal.any([cycleContext.signal, catalogReadController.signal]) };
                     for (const kind of transports) {
                         const adopted = state.catalogs.get(kind);
                         const catalog = refreshDefinitions || adopted === undefined
-                            ? await readCurrentSourceDefinitions(cycleContext, { kind }, adopted, async (observedRevision, pageDefinitions) => {
+                            ? await readCurrentSourceDefinitions(readContext, { kind }, adopted, async (observedRevision, pageDefinitions) => {
                                 if (state.retiredRevision !== observedRevision) await reportCatalog(observedRevision, pageDefinitions, false);
-                            })
+                            }, catalogRefresh)
                             : adopted;
                         if (catalog === null || (revision !== undefined && catalog.revision !== revision)) throw new Error('Event source catalog is not current');
                         revision = catalog.revision;
@@ -267,11 +281,18 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     }
                 } catch (error) {
                     definitionsInvalidated = true;
+                    catalogFailed = true;
                     throw error;
+                } finally {
+                    catalogReadController = undefined;
                 }
                 const currentRevision = revision;
                 if (currentRevision === undefined) throw new Error('Event observer requires a source transport');
                 state.adoptedRevision = currentRevision;
+                if (refreshDefinitions) {
+                    const currentStatusKeys = new Set(definitions.map(statusKey));
+                    for (const key of reportedStatuses.keys()) if (!currentStatusKeys.has(key)) reportedStatuses.delete(key);
+                }
                 const isCurrent = async () => !cycleContext.signal.aborted;
                 const own = context.materialization;
                 const groups = new Map<string, PluginCheckpointedEventSourceDefinitionV1[]>();
@@ -308,12 +329,18 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     const definition = group[0]!;
                     const requested = requestedSources.has(undefined) || requestedSources.has(definition.sourceInstanceId);
                     const reportSource = async (status: NonNullable<PluginCheckpointedEventAttemptResultV1<TCheckpoint>['status']>, nextRetryAt: number | null) => {
-                        for (const member of group) await reportPluginEventSourceStatus(cycleContext, {
-                            kind: 'source', automationId: member.automationId, triggerId: member.triggerId, triggerRevision: member.triggerRevision,
-                            eventRef: member.eventRef, sourceSelectorId: member.sourceSelectorId, ...status,
-                            nextRetryAt,
-                            observedDelta: 0, admittedDelta: 0, skippedDelta: 0,
-                        });
+                        for (const member of group) {
+                            const report = {
+                                kind: 'source', automationId: member.automationId, triggerId: member.triggerId, triggerRevision: member.triggerRevision,
+                                eventRef: member.eventRef, sourceSelectorId: member.sourceSelectorId, ...status,
+                                nextRetryAt: status.state === 'observing' ? null : nextRetryAt,
+                                observedDelta: 0, admittedDelta: 0, skippedDelta: 0,
+                            } satisfies PluginActionInputById['automation.event.source.status.report'];
+                            const key = statusKey(member);
+                            const signature = createCanonicalJsonSigningInput(report);
+                            if (reportedStatuses.get(key) === signature) continue;
+                            if (await reportPluginEventSourceStatus(cycleContext, report)) reportedStatuses.set(key, signature);
+                        }
                     };
                     const finish = async (result: PluginCheckpointedEventAttemptResultV1<TCheckpoint>, disposition: PluginEventDispositionV1,
                         reportedEligibleAt: number | null) => {
@@ -355,6 +382,9 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         const startedAt = now();
                         const result = await source.observe(attemptContext);
                         cycleContext.signal.throwIfAborted();
+                        // Admission publishes its own observation/counter status. The
+                        // next empty scan must reconcile against that publication.
+                        if (result.observations.length > 0) for (const member of group) reportedStatuses.delete(statusKey(member));
                         const retained = admitting.get(key);
                         if (retained !== undefined) {
                             retained.nextEligibleAt = eligibility(result.nextEligibleAt);
@@ -403,7 +433,16 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     if (input.mode === 'once') context.signal.throwIfAborted();
                     return;
                 }
-                wakeAt = eligibility(source.retryAt({ error, now: now() }));
+                if (!changed) {
+                    const retryAt = eligibility(source.retryAt({ error, now: now() }));
+                    if (catalogFailed && retryAt !== null && input.mode !== 'once') {
+                        // The adopted host owner holds the one catalog retry for
+                        // all subscribers; provider observation waits stay local.
+                        catalogRefresh = { kind: 'retry', retryAt };
+                        continue;
+                    }
+                    wakeAt = retryAt;
+                }
             }
             if (input.mode === 'once' || context.signal.aborted) return;
             if (changed || pendingWake !== undefined) continue;

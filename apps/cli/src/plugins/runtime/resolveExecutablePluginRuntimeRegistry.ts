@@ -539,6 +539,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Existing daemon Machine/Account attribution owner; no requester fallback. */
         readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
         ensureEnvironmentServices?(): Promise<void>;
+        acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
         executeClientAction?: ClientContributedActionExecutor;
         /** Existing authenticated Machine admission authority for protected Session input. */
         machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
@@ -3896,6 +3897,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         managedServices: invocationManagedServicesOwner,
     });
+    // Subscribe before service consumers: one host push dirties each shared
+    // adopted catalog once, irrespective of its number of observers.
+    const automationCatalogSubscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
+        target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
+        listener(event) {
+            if (event.payload.definitionsChanged !== false) automationAssembly.invalidateSourceDefinitions();
+        },
+        isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
+    });
+    consumerAssembly.allRetirementSignal.addEventListener('abort', () => { void automationCatalogSubscription.dispose(); }, { once: true });
     if (!params?.accountExecution) {
         reconcileAdoptedHealthChecks = () => {
             currentDomainEdgeObservation.reconcile(entry => {
@@ -3917,6 +3928,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         reconcileAdoptedHealthChecks();
     }
     disposeInvocationServiceOwners = async () => {
+        await automationCatalogSubscription.dispose();
         // A composite can own no new activation components. Its local services
         // may settle while a successor retains its peers, so only dispose local
         // consumers here. Explicit occurrence retirement still fences services.
@@ -4353,6 +4365,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ...(physical ? { hostExecutionTarget: { machineId: physical.machineId, installationId: physical.installationId } } : {}) });
             },
             ...(accountExecution ? { accountExecution: { ...accountExecution, isCurrent: async () => accountExecution.isCurrent() } } : {}),
+            ...(params?.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
             readCurrentMachineId: () => machineId,
         });
     };

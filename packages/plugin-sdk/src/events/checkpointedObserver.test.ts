@@ -31,7 +31,21 @@ function fixture() {
     const skippedAdmissions = new Map<string, Extract<AutomationEventAdmitItemResultV1, { kind: 'skipped' }>['reason']>();
     const runs = new Set<string>();
     const executions: string[] = [];
-    const execute = vi.fn(async (id: string, input: Record<string, unknown>): Promise<unknown> => {
+    const execute = vi.fn(async (id: string, input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<unknown> => {
+        // Model the host scheduling boundary, not an SDK-side retry timer.
+        const refresh = input.catalogRefresh;
+        if (id === 'automation.event.sources.list' && typeof refresh === 'object' && refresh !== null
+            && 'kind' in refresh && refresh.kind === 'retry' && 'retryAt' in refresh && typeof refresh.retryAt === 'number'
+            && refresh.retryAt > Date.now()) {
+            const retryAt = refresh.retryAt;
+            await new Promise<void>((resolve, reject) => {
+                const done = () => { options?.signal?.removeEventListener('abort', aborted); resolve(); };
+                const timer = setTimeout(done, retryAt - Date.now());
+                const aborted = () => { clearTimeout(timer); reject(new Error('Catalog wait cancelled')); };
+                options?.signal?.addEventListener('abort', aborted, { once: true });
+                if (options?.signal?.aborted) aborted();
+            });
+        }
         executions.push(id);
         if (id === 'automation.event.sources.list' && failCurrentRead) {
             failCurrentRead = false;
@@ -52,7 +66,7 @@ function fixture() {
                 ? { kind: 'unchanged', revision }
                 : { kind: 'page', revision, definitions: definitions.filter(member => member.observationTransport.kind === kind), nextCursor: null };
         }
-        if (id === 'automation.event.source.status.report') return { kind: 'reported' };
+        if (id === 'automation.event.source.status.report') return {};
         if (id === 'automation.event.admit') {
             if (admissionFailure !== undefined) throw admissionFailure;
             if (admissionResult !== undefined) return admissionResult;
@@ -651,27 +665,69 @@ describe('checkpointed observer ownership', () => {
         } finally { f.controller.abort(); await running; }
     });
 
-    it('backs off after unavailable catalog admission instead of hot retrying', async () => {
+    it.each(['deadline', 'invalidation'] as const)('keeps one failed-catalog retry and no idle reads after recovery by %s', async recovery => {
         const f = fixture();
-        let clock = 1000;
-        const resume: (() => void)[] = [];
-        const sleep = vi.fn((_delay: number, signal: AbortSignal) => new Promise<void>(resolve => {
-            resume.push(resolve);
-            signal.addEventListener('abort', () => resolve(), { once: true });
-        }));
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
         f.failBoundary('current read');
-        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, sleep, now: () => clock });
+        f.observe.mockResolvedValue({ observations: [], complete: true, nextEligibleAt: null });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source });
+        const catalogReads = () => f.executions.filter(id => id === 'automation.event.sources.list').length;
         try {
-            await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(1));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(catalogReads()).toBe(1);
             expect(f.observe).not.toHaveBeenCalled();
-            expect(sleep.mock.calls[0]?.[0]).toBe(1000);
-            clock = 2000;
-            resume.shift()?.();
-            await vi.waitFor(() => expect(f.observe).toHaveBeenCalledOnce());
+            expect(f.execute.mock.calls.filter(([id]) => id === 'automation.event.sources.list').at(-1)?.[1])
+                .toMatchObject({ catalogRefresh: { kind: 'retry', retryAt: 2000 } });
+            await vi.advanceTimersByTimeAsync(999);
+            expect(catalogReads()).toBe(1);
+            expect(f.observe).not.toHaveBeenCalled();
+            if (recovery === 'invalidation') for (let n = 0; n < 10; n += 1) f.invalidate({ reason: 'reconnect' });
+            await vi.advanceTimersByTimeAsync(recovery === 'deadline' ? 1 : 0);
+            expect(catalogReads()).toBe(2);
+            expect(f.observe).toHaveBeenCalledOnce();
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(catalogReads()).toBe(2);
+            expect(f.observe).toHaveBeenCalledOnce();
         } finally {
             f.controller.abort();
             await running;
+            vi.useRealTimers();
         }
+    });
+
+    it.each([false, true])('publishes empty-source status once per transition across a minute of provider polls (first report fails: %s)', async firstReportFails => {
+        const f = fixture();
+        if (firstReportFails) f.failBoundary('source status');
+        let clock = 1000;
+        f.observe.mockImplementation(async () => ({ observations: [], complete: true, nextEligibleAt: clock + 1000,
+            ...(clock >= 2000 ? { status: { state: 'observing' as const, code: 'none' as const } } : {}) }));
+        let minuteFinished!: () => void;
+        const minute = new Promise<void>(resolve => { minuteFinished = resolve; });
+        let resume!: () => void;
+        const sleep = async (delay: number, signal: AbortSignal) => {
+            clock += delay;
+            if (clock < 61_000) return;
+            await new Promise<void>(resolve => {
+                resume = resolve;
+                signal.addEventListener('abort', () => resolve(), { once: true });
+                minuteFinished();
+            });
+        };
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, now: () => clock, sleep });
+        try {
+            await minute;
+            expect(f.observe).toHaveBeenCalledTimes(60);
+            expect(f.executions.filter(id => id === 'automation.event.sources.list')).toHaveLength(1);
+            const reports = () => f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source');
+            expect(reports()).toHaveLength(firstReportFails ? 2 : 1);
+            expect(reports()[0]?.[1]).toMatchObject({ state: 'observing', code: 'none', nextRetryAt: null, observedDelta: 0 });
+            f.observe.mockResolvedValueOnce({ observations: [], complete: true, nextEligibleAt: null,
+                status: { state: 'attention', code: 'credentialRevoked' } });
+            resume();
+            await vi.waitFor(() => expect(reports().at(-1)?.[1]).toMatchObject({ state: 'attention', code: 'credentialRevoked' }));
+            expect(reports()).toHaveLength(firstReportFails ? 3 : 2);
+        } finally { f.controller.abort(); await running; }
     });
 
     it('retries an unsettled admission on the source backoff even when its replay deadline is already due', async () => {

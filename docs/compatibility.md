@@ -467,14 +467,21 @@ Home storage rejects it and accepts only the rewritten Artifact reference plus
 the remaining metadata patch. Own-server template selections optionally retain
 `copyFrom` source capture coordinates and explicit `destinationBackup` authoring
 inputs. Child preparation owns fresh generated bindings; source credentials and
-grants are not copied. Repository Compose remains the sole content owner: the
-selected PostgreSQL service must already be declared by the repository, and
-template preparation supplies bindings and metadata without an overlay. The
+grants are not copied. Repository Compose remains the sole repository content
+owner: declared PostgreSQL services receive fresh bindings and metadata without
+an overlay. Other selections use a catalog-derived standard companion, with a
+nullable unique `previewCompanionOfEnvironmentId` foreign key to the main preview.
+It persists no second four-part preview identity. Header and approval readers
+derive its template id through the main preview; list and close use the named
+relation. Create captures carry the required-companion marker and ordinary
+variable/Secret references for the main preview's binding update. The
 unpublished augmentation field has been removed rather than retained as a
 compatibility path. Older selections without these optional operands remain
 readable; native copying requires the explicit source and destination choices.
 The reviewed Create child uses the canonical backup Configure Action and its
 actual configured revision; generic Environment updates do not configure backups.
+Saved managed parent references may carry a display name for reload presentation;
+the Workflow removes that metadata before invoking strict provider Actions.
 These are unreleased 0.3 fields consumed by matching development readers.
 
 Matching development Protocol, Home, daemon/CLI, SDK, UI and GitHub plugin must
@@ -7832,6 +7839,16 @@ paths, has neither this native launcher schema nor the Move contract; no
 predecessor adapter is introduced.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 `automation.event.sources.list` accepts optional closed
+`catalogRefresh` intent (`refresh`, or `retry` with the provider's
+absolute `retryAt`). The existing daemon adopted-catalog owner consumes it to
+share one retry across observers. It is omitted from stored-definition HTTP
+requests and grants no authority. Matching SDK, Protocol and CLI host reload
+together; older strict development Action readers reject the added field.
+The inspected `../0.2` frontier `7b37d65ca7` has no
+`automations/automationActionSpecsV1.ts`. No released predecessor adapter,
+persistence format, wire epoch or capability gate changes.
 
 Unreleased 0.3 GitHub PR Preview child results accept optional `controller`,
 using the canonical Deployment controller availability schema exposed through the

@@ -98,6 +98,7 @@ export async function readCurrentSourceDefinitions(
     scope: Readonly<{ kind: 'checkpointedPull' | 'socket' | 'durablePush' }>,
     knownCatalog?: CurrentSourceCatalog,
     onObservedRevision?: (revision: string, definitions: readonly SourceDefinition[]) => Promise<void>,
+    catalogRefresh?: PluginActionInputById['automation.event.sources.list']['catalogRefresh'],
 ): Promise<CurrentSourceCatalog | null> {
     const definitions: SourceDefinition[] = [];
     const seenCursors = new Set<string>();
@@ -107,6 +108,7 @@ export async function readCurrentSourceDefinitions(
         context.signal.throwIfAborted();
         const request: PluginActionInputById['automation.event.sources.list'] = {
             transport: { kind: scope.kind },
+            ...(cursor === undefined && catalogRefresh !== undefined ? { catalogRefresh } : {}),
             ...(cursor === undefined ? knownCatalog === undefined ? {} : { knownRevision: knownCatalog.revision } : { cursor }),
         };
         let result: unknown;
@@ -153,12 +155,14 @@ export async function readCurrentSourceDefinitions(
 export async function reportPluginEventSourceStatus(
     context: PluginInvocationContext,
     input: PluginActionInputById['automation.event.source.status.report'],
-): Promise<void> {
+): Promise<boolean> {
     try {
         await context.services.actions.execute('automation.event.source.status.report', input, { signal: context.signal });
         context.signal.throwIfAborted();
+        return true;
     } catch (error) {
         if (context.signal.aborted) throw error;
+        return false;
     }
 }
 

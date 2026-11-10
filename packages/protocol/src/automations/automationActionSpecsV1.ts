@@ -200,6 +200,12 @@ export const AutomationEventSourcesListInputV1Schema = lazyZodSchema(() => z.str
   pageSize: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE)), MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE),
   cursor: z.optional(OPAQUE_CURSOR_SCHEMA),
   knownRevision: zMini.optional(UNSIGNED_DECIMAL_BIGINT_SCHEMA),
+  // Host-local observer scheduling; the adopted owner never forwards this to
+  // the stored-definition HTTP reader.
+  catalogRefresh: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('refresh') }),
+    z.strictObject({ kind: z.literal('retry'), retryAt: z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)) }),
+  ])),
   checkpointRetirementCandidates: z.optional(z.array(AutomationEventCheckpointRetirementCandidateV1Schema).check(z.minLength(1), z.maxLength(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE), z.superRefine(addDuplicateCheckpointRetirementCandidateIssues))),
 }).check(z.superRefine((value, context) => {
   if (value.cursor !== undefined && value.knownRevision !== undefined) {
