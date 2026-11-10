@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "工作階段開啟或連結 PR 後，可以繼續關注它並處理 CI 和審查。",
   "plugins.channels.prWatch.settings.fixAttempts": "修復次數",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "在一個提取要求上修復達到這麼多輪後，代理會停止修復並詢問你。留空則永不停止。",
-  "plugins.channels.prWatch.settings.title": "提取要求"
+  "plugins.channels.prWatch.settings.title": "提取要求",
+  "plugins.channels.surface.bindingCreateSessionFallback": "工作階段",
+  "plugins.channels.page.linkDescriptionForSession": "選擇要與 {session} 對話的聊天。",
+  "plugins.channels.page.linkConnectBotDescription": "先連接一個機器人：選擇它的提供者，再選擇保存其憑證的已連結帳戶。",
+  "plugins.channels.page.firstMessageTitle": "傳送第一則訊息",
+  "plugins.channels.page.firstMessageDone": "完成",
+  "plugins.channels.page.firstMessageBotFallback": "機器人",
+  "plugins.channels.page.firstMessageDirect": "傳一則訊息給 {bot}，確認它能送達。",
+  "plugins.channels.page.firstMessageMention": "在 {conversation} 中提及 {bot}，確認訊息能送達。",
+  "plugins.channels.page.firstMessageAddressed": "在 {conversation} 中提及或回覆 {bot}，確認訊息能送達。",
+  "plugins.channels.page.firstMessageAll": "在 {conversation} 中傳一則訊息，確認它能送達。"
 }

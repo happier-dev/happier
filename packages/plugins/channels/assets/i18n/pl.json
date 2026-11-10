@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "Gdy sesja otwiera lub powiązuje PR, może go dalej obserwować i reagować na CI i recenzje.",
   "plugins.channels.prWatch.settings.fixAttempts": "Próby poprawek",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "Po tylu rundach poprawek w jednym pull requeście agent przestaje go poprawiać i pyta ciebie. Zostaw puste, aby nigdy nie przestawać.",
-  "plugins.channels.prWatch.settings.title": "Pull requesty"
+  "plugins.channels.prWatch.settings.title": "Pull requesty",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Sesja",
+  "plugins.channels.page.linkDescriptionForSession": "Wybierz czat, który ma rozmawiać z {session}.",
+  "plugins.channels.page.linkConnectBotDescription": "Najpierw połącz bota: wybierz jego dostawcę, a potem połączone konto z jego danymi logowania.",
+  "plugins.channels.page.firstMessageTitle": "Wyślij pierwszą wiadomość",
+  "plugins.channels.page.firstMessageDone": "Gotowe",
+  "plugins.channels.page.firstMessageBotFallback": "bota",
+  "plugins.channels.page.firstMessageDirect": "Wyślij wiadomość do {bot}, aby sprawdzić, czy dociera.",
+  "plugins.channels.page.firstMessageMention": "Wspomnij {bot} w {conversation}, aby sprawdzić, czy wiadomość dociera.",
+  "plugins.channels.page.firstMessageAddressed": "Wspomnij {bot} lub odpowiedz mu w {conversation}, aby sprawdzić, czy wiadomość dociera.",
+  "plugins.channels.page.firstMessageAll": "Napisz w {conversation}, aby sprawdzić, czy wiadomość dociera."
 }

@@ -3809,10 +3809,11 @@ describe('Channels mounted binding creation', () => {
 
       // Reviewing continues in the existing binding editor on the Channels
       // page — the single owner of reviewing and enabling a saved binding —
-      // opened for the exact binding id the finalize Action returned.
+      // opened for the exact binding id the finalize Action returned, and
+      // marked just linked so the page then ends on its first message.
       await fixture.press(await fixture.getByRole('button', { name: reviewLabel }));
       await vi.waitFor(() => {
-        expect(openedSurfaces).toEqual([['conversations', 'binding-pairing/edit']]);
+        expect(openedSurfaces).toEqual([['conversations', 'binding-pairing/edit/new']]);
       });
       expect(bindingReadIds).toEqual([]);
     } finally {
@@ -9873,7 +9874,8 @@ describe('Channels Session tab (round 2)', () => {
     const fixture = await mountSessionTab({ conversations: threeConversations, opened });
     try {
       await fixture.press(await fixture.findByRole('button', { name: 'Link a conversation' }));
-      await vi.waitFor(() => expect(opened).toContainEqual(['conversations', 'link/connection-1']));
+      // The Session the "+" was pressed in travels with the journey, so it is not chosen twice.
+      await vi.waitFor(() => expect(opened).toContainEqual(['conversations', 'link/connection-1/session/session-under-test']));
     } finally {
       await fixture.dispose();
     }
@@ -9888,7 +9890,7 @@ describe('Channels Session tab (round 2)', () => {
       // The header "+" and the empty state's primary: the add sits in the same place before and after the first link.
       expect(links.length).toBe(2);
       await fixture.press(links[links.length - 1]!);
-      await vi.waitFor(() => expect(opened).toContainEqual(['conversations', 'link/connection-1']));
+      await vi.waitFor(() => expect(opened).toContainEqual(['conversations', 'link/connection-1/session/session-under-test']));
     } finally {
       await fixture.dispose();
     }
@@ -10942,6 +10944,145 @@ describe('Channels page (the one owner of linked conversations)', () => {
     });
     try {
       await vi.waitFor(() => { expect(readIds).toEqual(['binding-1']); });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('connects a bot inside the link journey, keeps the Session it started from, and ends on the first message (CH-FIRST-CONTACT)', async () => {
+    const sessionId = 'session-chantier-morges';
+    const submittedProviderSetup = {
+      kind: 'submitted' as const,
+      action: providerSetupOperation.action,
+      input: { repository: 'happier-dev/happier' },
+      selection: {
+        target: {
+          pluginId: 'happier.channels',
+          sourceCustody: { kind: 'development', registeredRootId: 'channels-target-root-a' } as const,
+        },
+        point: providerSetupOperation.point,
+        contributor: providerPortableContributor(),
+      },
+      connectedAccount: { kind: 'none' as const },
+      presentation: { connectedAccountLabel: null, machineDisplayName: null },
+    };
+    const endpointCandidate = { kind: 'direct' as const, audience: 'direct' as const, id: 'direct-ada', label: 'Ada direct' };
+    const principalSelection = { query: 'ada', selected: [{ id: 'principal-ada', kind: 'human' as const }] };
+    const createdBinding = {
+      v: 1, id: 'binding-created', connectionId: 'connection-1', endpoint: endpointCandidate,
+      target: { kind: 'session' as const, sessionId, policy: {
+        deliveryMode: 'mirrorSession' as const, permissionCeiling: 'read-only',
+        approvals: { kind: 'off' as const }, newSession: { kind: 'off' as const },
+      } },
+      allowedPrincipalIds: ['principal-ada'], allowBotSenders: false, inputMode: 'allAllowedMessages' as const,
+      inboundDebounceMs: 750, linkPreviewPolicy: 'suppress' as const, senderFeedback: 'off' as const,
+      authorityEpoch: 2, enabled: true, deletionState: 'none' as const, createdAt: 1, updatedAt: 1,
+    };
+    const createdBindingsResource = jsonResource({
+      bindings: [{
+        bindingId: 'binding-created', revision: 1, connectionId: 'connection-1',
+        endpoint: { audience: 'direct', label: 'Ada direct' },
+        target: { kind: 'session', summary: 'Chantier Morges', sessionId },
+        inputMode: 'allAllowedMessages', deliveryMode: 'mirrorSession', approval: { kind: 'off' },
+        enabled: true, deletionState: 'none',
+      }],
+    }, 'e');
+    let connectionCreated = false;
+    let bindingCreated = false;
+    const replaced: string[] = [];
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
+        return {
+          kind: 'ready', supportedTransports: ['checkpointedPull'], recommendedTransport: 'checkpointedPull',
+          overlapSafety: 'safe', replayContinuity: 'none', outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate) {
+        connectionCreated = true;
+        return { kind: 'created', connectionId: 'connection-1' };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as { kind?: unknown }).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [endpointCandidate] }
+          : { kind: 'principalCandidates', candidates: [{ id: 'principal-ada', kind: 'human', label: 'Ada' }] };
+      }
+      if (action === 'session.list') {
+        return createSessionCandidatePageFixture({ sessions: [{ id: 'session-other', title: 'Other work' }], nextCursor: null });
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate) {
+        bindingCreated = true;
+        return { kind: 'created', binding: createdBinding };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-first-contact', mountNonce: 'fixture-first-contact' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsPageSurfaceContext(),
+      subPath: `link/session/${sessionId}`,
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => submittedProviderSetup,
+        executeAction,
+        readResource: readerForCreated(),
+        readSession: ({ sessionId: requested }) => (requested === sessionId
+          ? { sessionId, title: 'Chantier Morges', lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
+            workStatus: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' } }
+          : null),
+        replacePageLocation: ({ subPath }) => {
+          replaced.push(subPath);
+          return subPath;
+        },
+      },
+    });
+    function readerForCreated(): NonNullable<PluginUiTestkitHostHandlers['readResource']> {
+      return async (request) => readerFor(
+        bindingCreated ? createdBindingsResource : noBindingsResource,
+        connectionCreated ? connectionsResource : noConnectionsResource,
+      )(request);
+    }
+    try {
+      // No bot yet: the link journey itself connects one rather than ending on a sentence.
+      await vi.waitFor(async () => { await fixture.getByText('Choose the chat that should talk to Chantier Morges.'); });
+      await expect(fixture.queryByText('Create an active conversation connection before adding a binding.')).resolves.toBeUndefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Set up Integration provider' }));
+      await fixture.press(await fixture.findByRole('button', { name: 'Create connection' }));
+
+      // The new bot continues straight into choosing the chat, without a second press.
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-binding-create-endpoint-query"]')).not.toBeNull();
+      });
+      await enterTextByTestId('channels-binding-create-endpoint-query', 'ada-direct');
+      await fixture.press(await fixture.getByRole('button', { name: 'Search endpoints' }));
+      await fixture.press(await fixture.findByRole('button', { name: 'Ada direct' }));
+      await enterTextByTestId('channels-binding-create-principal-query', principalSelection.query);
+      await fixture.press(await fixture.getByRole('button', { name: 'Search people' }));
+      await fixture.press(await fixture.findByRole('checkbox', { name: 'Ada: principal-ada', state: { checked: false } }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Continue' }));
+
+      // The Session is kept: the target step is not asked again.
+      await fixture.press(await fixture.findByRole('button', { name: 'Review binding' }));
+      const summary = document.querySelector<HTMLElement>('[data-testid="channels-binding-create-summary"]');
+      expect(summary?.textContent).toContain('Chantier Morges');
+      await fixture.press(await fixture.getByRole('button', { name: 'Link conversation' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate,
+          input: expect.objectContaining({ connectionId: 'connection-1', target: expect.objectContaining({ kind: 'session', sessionId }) }),
+        }));
+      });
+      await vi.waitFor(() => { expect(replaced).toContain('binding-created/new'); });
+
+      // The page ends on the one remaining step: a first message, said where it is sent.
+      await fixture.updatePageLocation('binding-created/new');
+      await vi.waitFor(async () => { await fixture.getByText('Send a first message'); });
+      expect(document.body.textContent).toContain('Send Example conversation a message to check that it arrives.');
+      await fixture.press(await fixture.getByRole('button', { name: 'Done' }));
+      expect(replaced[replaced.length - 1]).toBe('binding-created');
+      expect(executeAction.mock.calls.filter(([request]) => (
+        request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate
+      ))).toHaveLength(1);
     } finally {
       await fixture.dispose();
     }

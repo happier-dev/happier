@@ -214,6 +214,8 @@ import {
   formatConversationTime,
   useConversationSessionStates,
   readChannelsPageLocation,
+  channelsJustLinkedSubPath,
+  channelsLinkSubPath,
   resolveChannelsConversationReadState,
   type ChannelsConversationActivity,
   type ChannelsConversationIndexRow,
@@ -1603,6 +1605,8 @@ function connectionContinuityDescriptions(connection: ChannelsConnection, t: Tra
  * disclosure stays a plain explanation.
  */
 function ConnectedAccountsHandoffAction(props: Readonly<{
+  variant?: 'secondary' | 'plain';
+  testID?: string;
   t: Translate;
 }>): React.ReactElement | null {
   const hostApi = usePluginHostApi();
@@ -1615,7 +1619,8 @@ function ConnectedAccountsHandoffAction(props: Readonly<{
   return (
     <Stack gap="small">
       <Button
-        testID="channels-provider-credential-invalid-open-connected-accounts"
+        testID={props.testID ?? 'channels-provider-credential-invalid-open-connected-accounts'}
+        {...(props.variant === undefined ? {} : { variant: props.variant })}
         title={props.t(
           'plugins.channels.surface.providerCredentialInvalidOpenConnectedAccounts',
           'Open Connected Services',
@@ -1903,6 +1908,24 @@ function bindingApprovalSummary(binding: ChannelsBinding, t: Translate): string 
   return binding.approval.maximumScope === 'request'
     ? t('plugins.channels.page.approvalsRequest', 'One request at a time')
     : t('plugins.channels.page.approvalsSession', 'Up to the whole session');
+}
+
+/** Where and how to write the first message, from what the conversation listens to. */
+function firstMessageInstruction(binding: ChannelsBinding, connection: ChannelsConnection | undefined, t: Translate): string {
+  const bot = connection === undefined
+    ? t('plugins.channels.page.firstMessageBotFallback', 'the bot')
+    : connectionLabel(connection);
+  const conversation = bindingEndpointLabel(binding, t);
+  if (binding.endpoint.audience === 'direct') {
+    return t('plugins.channels.page.firstMessageDirect', 'Send {bot} a message to check that it arrives.', { bot });
+  }
+  if (binding.inputMode === 'directMentionsOnly') {
+    return t('plugins.channels.page.firstMessageMention', 'Mention {bot} in {conversation} to check that it arrives.', { bot, conversation });
+  }
+  if (binding.inputMode === 'addressedMessages') {
+    return t('plugins.channels.page.firstMessageAddressed', 'Mention or reply to {bot} in {conversation} to check that it arrives.', { bot, conversation });
+  }
+  return t('plugins.channels.page.firstMessageAll', 'Write in {conversation} to check that it arrives.', { conversation });
 }
 
 /** Where this conversation's messages go and what comes back, in one line. */
@@ -2710,6 +2733,8 @@ function ConversationDetail(props: Readonly<{
   onUnknownOutcomeRefresh: () => void;
   onUnknownDeleteOutcomeRefresh: () => void;
   connectionTest?: Readonly<{ resource: ResourcePresentation; onRefresh: () => void }>;
+  /** The link journey just made this conversation: once it is on, the page ends on its first message. */
+  justLinked?: boolean;
   t: Translate;
 }>): React.ReactElement {
   const { binding, connection } = props.presentation;
@@ -2812,6 +2837,23 @@ function ConversationDetail(props: Readonly<{
               busy={enablementBusy}
               disabled={enablementUnavailable}
               onPress={() => { void props.onSetEnabled(binding, true); }}
+            />
+          )}
+        />
+      ) : props.justLinked === true ? (
+        // The journey's last step sits where "Turn on" stood: say where to
+        // write and let the person finish. Where it arrives is the note below.
+        <Banner
+          testID={`channels-binding-first-message-${binding.bindingId}`}
+          tone="neutral"
+          title={t('plugins.channels.page.firstMessageTitle', 'Send a first message')}
+          description={firstMessageInstruction(binding, connection, t)}
+          action={(
+            <Button
+              testID={`channels-binding-first-message-done-${binding.bindingId}`}
+              variant="secondary"
+              title={t('plugins.channels.page.firstMessageDone', 'Done')}
+              onPress={() => navigation.showConversation(binding.bindingId)}
             />
           )}
         />
@@ -5504,11 +5546,20 @@ function BindingCreateJourney(props: Readonly<{
   onCreated?: (bindingId: string) => void;
   /** Offers the new conversation's page beside the "created" confirmation. */
   onOpenCreated?: (bindingId: string) => void;
+  /**
+   * The Session the journey was started for (a session tab's "+"). It is the
+   * target the person already chose, so the target step is not asked again;
+   * Back still offers every other target.
+   */
+  preferredSessionId?: string;
+  /** Shown instead of the no-connection line: connection setup composed into this journey. */
+  connectionSetup?: React.ReactElement;
   t: Translate;
 }>): React.ReactElement {
   const hostApi = usePluginHostApi();
   const surface = useSurfaceContext();
   const summarizeRecipe = useRouterRecipeSummary(props.t);
+  const preferredSessionTitle = useSessionState(props.preferredSessionId ?? null).state?.title;
   const [createdBindingId, setCreatedBindingId] = React.useState<string | undefined>();
   const resolveAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve);
   const createAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate);
@@ -5841,6 +5892,25 @@ function BindingCreateJourney(props: Readonly<{
     setStage('endpoint');
   }, [availableConnections, pairingContext, resetAutomationPages]);
 
+  // The target step, unless the journey was started for a Session: that Session
+  // is the target already chosen, so the journey continues to its policies.
+  // A target picked on an earlier pass (after Back) is kept.
+  const preferredSessionId = props.preferredSessionId;
+  const preferredSessionFallbackLabel = props.t('plugins.channels.surface.bindingCreateSessionFallback', 'Session');
+  const enterTargetStage = React.useCallback(() => {
+    void loadSessions();
+    if (preferredSessionId === undefined) {
+      setStage('target');
+      return;
+    }
+    setTarget((current) => current ?? {
+      kind: 'session',
+      sessionId: preferredSessionId,
+      label: preferredSessionTitle ?? preferredSessionFallbackLabel,
+    });
+    setStage('policies');
+  }, [loadSessions, preferredSessionFallbackLabel, preferredSessionId, preferredSessionTitle]);
+
   const searchEndpoints = React.useCallback(async () => {
     if (currentConnection === undefined || actionLocked || props.signal.aborted) return;
     const parsedInput = ConversationBindingResolveInputV1Schema.safeParse({
@@ -5911,7 +5981,7 @@ function BindingCreateJourney(props: Readonly<{
       // Pairing is a narrowly authorized fallback only for the missing
       // principal-resolution role. All other resolver states stay factual.
       setPairingRequired(true);
-      setStage('target');
+      enterTargetStage();
     } else if (result.data.kind === 'stale') {
       setFeedback('resolverStale');
     } else if (result.data.kind === 'notReady') {
@@ -5919,7 +5989,7 @@ function BindingCreateJourney(props: Readonly<{
     } else {
       setFeedback('resolverUnavailable');
     }
-  }, [actionLocked, currentConnection, endpointSelection, principalQuery, props.signal, resolveAction, showResolverNotReady]);
+  }, [actionLocked, currentConnection, endpointSelection, enterTargetStage, principalQuery, props.signal, resolveAction, showResolverNotReady]);
 
   /**
    * A shared router parent may accept the pairing code in one of its own
@@ -5973,9 +6043,8 @@ function BindingCreateJourney(props: Readonly<{
 
   const continueFromPrincipal = React.useCallback(() => {
     if (principalSelection === undefined || actionLocked) return;
-    setStage('target');
-    void loadSessions();
-  }, [actionLocked, loadSessions, principalSelection]);
+    enterTargetStage();
+  }, [actionLocked, enterTargetStage, principalSelection]);
 
   React.useEffect(() => {
     if (stage === 'target' && pairingRequired && sessionCandidates.length === 0) {
@@ -6306,7 +6375,7 @@ function BindingCreateJourney(props: Readonly<{
           onPress={openJourney}
         />
       )}
-      {availableConnections.length === 0 ? (
+      {availableConnections.length > 0 ? null : props.connectionSetup ?? (
         <Text
           tone="secondary"
           value={props.t(
@@ -6314,7 +6383,7 @@ function BindingCreateJourney(props: Readonly<{
             'Create an active conversation connection before adding a binding.',
           )}
         />
-      ) : null}
+      )}
       {stage === 'closed' ? feedbackContent : (
         <Stack gap="medium" testID="channels-binding-create-flow">
           {/* Each step's heading takes focus when the step opens, which names the step once. */}
@@ -8302,6 +8371,10 @@ type BindingsContentProps = Readonly<{
 function BindingsContent(props: BindingsContentProps): React.ReactElement {
   const theme = usePluginTheme();
   const surface = useSurfaceContext();
+  // A link journey started for a Session names it in the page's purpose.
+  const linkSessionTitle = useSessionState(
+    props.location.step === 'link' ? props.location.sessionId ?? null : null,
+  ).state?.title;
   const { execution, execute, reset } = props.operation;
   const [activeBindingId, setActiveBindingId] = React.useState<string | undefined>();
   const [enablementFailure, setEnablementFailure] = React.useState<BindingEnablementFailure | undefined>();
@@ -8440,7 +8513,11 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
         <Stack gap="large" testID="channels-page-link-flow">
           <PageHeader
             title={props.t('plugins.channels.column.link', 'Link a conversation')}
-            description={props.t('plugins.channels.page.linkDescription', 'Choose a chat and the session it should talk to.')}
+            description={linkSessionTitle === undefined
+              ? props.t('plugins.channels.page.linkDescription', 'Choose a chat and the session it should talk to.')
+              : props.t('plugins.channels.page.linkDescriptionForSession', 'Choose the chat that should talk to {session}.', {
+                session: linkSessionTitle,
+              })}
           />
           {sectionUnavailableContent ?? props.bindingCreateContent}
         </Stack>
@@ -8487,6 +8564,7 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
           onUnknownOutcomeRefresh={requestOutcomeUnknownRefresh}
           onUnknownDeleteOutcomeRefresh={requestUnknownDeleteOutcomeRefresh}
           {...(props.connectionTest === undefined ? {} : { connectionTest: props.connectionTest })}
+          justLinked={props.location.justLinked === true}
           t={props.t}
         />
       );
@@ -8589,6 +8667,8 @@ type OnlineBindingsContentProps = Omit<
   signal: AbortSignal;
   connectionsResource: ResourcePresentation;
   onRefreshConnections: () => void;
+  /** The Channels plugin whose providers set up a bot; present where this mount can create one. */
+  targetPluginId?: string;
 }>;
 
 /**
@@ -8662,6 +8742,7 @@ function OnlineBindingsContent({
   signal,
   connectionsResource,
   onRefreshConnections,
+  targetPluginId,
   ...bindingsProps
 }: OnlineBindingsContentProps): React.ReactElement {
   const action = useExecutePluginAction(
@@ -8694,22 +8775,60 @@ function OnlineBindingsContent({
   // The link flow ends on the conversation it made: a pairing continues into
   // review (the editor is the one owner of reviewing and turning on a saved
   // binding), a direct link simply shows its page.
+  // Both end on the conversation's first message (`<bindingId>/new`).
   const onPairingCompleted = React.useCallback((bindingId: string) => {
     openEditorFor(bindingId);
-    showConversation(bindingId);
+    showConversation(channelsJustLinkedSubPath(bindingId, false));
   }, [openEditorFor, showConversation]);
+  const onCreated = React.useCallback((bindingId: string) => {
+    showConversation(channelsJustLinkedSubPath(bindingId, false));
+  }, [showConversation]);
   // The link step opens the journey at once: on the bot the location names (a session tab's "+"), else on the
-  // first bot that can link.
+  // first bot that can link, or on the bot just connected inside this step.
   const linkableConnections = bindingsProps.connections.filter((connection) => connection.deletionState === 'none');
   const linkConnectionId = linkableConnections.find((connection) => (
     connection.connectionId === bindingsProps.location.connectionId
   ))?.connectionId ?? linkableConnections[0]?.connectionId;
+  const [connectedLinkRequest, setConnectedLinkRequest] = React.useState<
+    Readonly<{ connectionId: string; requestId: number }> | undefined
+  >();
   const linkRequest = React.useMemo(
-    () => (bindingsProps.location.step === 'link' && linkConnectionId !== undefined
-      ? { connectionId: linkConnectionId, requestId: 1 }
-      : undefined),
-    [bindingsProps.location.step, linkConnectionId],
+    () => (bindingsProps.location.step !== 'link'
+      ? undefined
+      : connectedLinkRequest ?? (linkConnectionId === undefined ? undefined : { connectionId: linkConnectionId, requestId: 1 })),
+    [bindingsProps.location.step, connectedLinkRequest, linkConnectionId],
   );
+  // No bot yet: the link step composes the one connection setup owner, then
+  // continues into this journey with the new bot (and any kept Session).
+  const onConnectionCreated = React.useCallback((connectionId: string) => {
+    setConnectedLinkRequest((current) => ({ connectionId, requestId: (current?.requestId ?? 1) + 1 }));
+    onRefreshConnections();
+  }, [onRefreshConnections]);
+  const connectionSetup = bindingsProps.location.step === 'link' && targetPluginId !== undefined ? (
+    <Stack gap="medium" testID="channels-page-link-connect-bot">
+      <Text
+        tone="secondary"
+        value={bindingsProps.t(
+          'plugins.channels.page.linkConnectBotDescription',
+          'First connect a bot: choose its provider, then the Connected Account that holds its credential.',
+        )}
+      />
+      <ProviderSetupPicker
+        signal={signal}
+        targetPluginId={targetPluginId}
+        resource={connectionsResource}
+        onRefresh={onRefreshConnections}
+        onConnectionCreated={onConnectionCreated}
+        t={bindingsProps.t}
+      />
+      <ConnectedAccountsHandoffAction
+        variant="plain"
+        testID="channels-page-link-open-connected-accounts"
+        t={bindingsProps.t}
+      />
+    </Stack>
+  ) : undefined;
+  const preferredSessionId = bindingsProps.location.step === 'link' ? bindingsProps.location.sessionId : undefined;
   const editingPresentation = editor.editing === undefined
     ? undefined
     : bindingsProps.presentations.find((presentation) => (
@@ -8732,8 +8851,10 @@ function OnlineBindingsContent({
           signal={signal}
           onRefresh={bindingsProps.onRefresh}
           onPairingCompleted={onPairingCompleted}
-          onCreated={showConversation}
+          onCreated={onCreated}
           {...(linkRequest === undefined ? {} : { openRequest: linkRequest })}
+          {...(preferredSessionId === undefined ? {} : { preferredSessionId })}
+          {...(connectionSetup === undefined ? {} : { connectionSetup })}
           t={bindingsProps.t}
         />
       )}
@@ -13623,7 +13744,10 @@ function DaemonChannelsSurface(props: Readonly<{
   // A finished pairing continues into review on the conversation's page, the
   // one owner of reviewing and turning on a saved binding.
   const onPairingCompleted = React.useCallback((bindingId: string) => {
-    openConversation(`${bindingId}/edit`);
+    openConversation(channelsJustLinkedSubPath(bindingId, true));
+  }, [openConversation]);
+  const openCreatedConversation = React.useCallback((bindingId: string) => {
+    openConversation(channelsJustLinkedSubPath(bindingId, false));
   }, [openConversation]);
   // A router's threads are part of its one linked conversation, not more of them.
   const bindingCount = channels.presentations.filter((presentation) => presentation.binding.parentBindingId === undefined).length;
@@ -13689,7 +13813,7 @@ function DaemonChannelsSurface(props: Readonly<{
                 signal={props.signal}
                 onRefresh={channels.refreshBindings}
                 onPairingCompleted={onPairingCompleted}
-                onOpenCreated={openConversation}
+                onOpenCreated={openCreatedConversation}
                 openRequest={bindingCreateRequest}
                 onOpenConsumed={onBindingCreateOpened}
                 t={t}
@@ -13713,6 +13837,7 @@ function DaemonChannelsSurface(props: Readonly<{
 function DaemonChannelsPageSurface(props: Readonly<{
   signal: AbortSignal;
   subPath: string | undefined;
+  targetPluginId: string;
 }>): React.ReactElement {
   const t = usePluginTranslation();
   const channels = useDaemonChannelsResources(t);
@@ -13733,6 +13858,7 @@ function DaemonChannelsPageSurface(props: Readonly<{
       connectionsState={channels.connectionState}
       connectionsResource={channels.connectionsResource}
       onRefreshConnections={channels.refreshConnections}
+      targetPluginId={props.targetPluginId}
       signal={props.signal}
       t={t}
     />
@@ -14127,17 +14253,21 @@ function SessionConversationRow(props: Readonly<{
 
 /** The header "+": Channels' own link journey, on the bot the person picks (skipped when there is one). */
 function SessionConversationLinkControl(props: Readonly<{
+  sessionId: string;
   connections: readonly ChannelsConnection[] | null;
   t: Translate;
 }>): React.ReactElement {
-  const { t } = props;
+  const { t, sessionId } = props;
   const page = useOpenChannelsPage();
   const [open, setOpen] = React.useState(false);
   const resolveProviderDisplayName = useConversationProviderDisplayNameResolver();
   const bots = (props.connections ?? []).filter((connection) => connection.deletionState === 'none');
   const label = t('plugins.channels.session.link', 'Link a conversation');
   if (props.connections === null || bots.length <= 1) {
-    const subPath = bots.length === 1 ? `link/${bots[0]!.connectionId}` : 'link';
+    const subPath = channelsLinkSubPath({
+      ...(bots.length === 1 ? { connectionId: bots[0]!.connectionId } : {}),
+      sessionId,
+    });
     return (
       <IconButton
         testID="channels-session-conversations-link"
@@ -14165,7 +14295,9 @@ function SessionConversationLinkControl(props: Readonly<{
       ]}
       onSelect={(id) => {
         setOpen(false);
-        void page.open(id.startsWith('bot:') ? `link/${id.slice('bot:'.length)}` : '');
+        void page.open(id.startsWith('bot:')
+          ? channelsLinkSubPath({ connectionId: id.slice('bot:'.length), sessionId })
+          : '');
       }}
     />
   );
@@ -14220,6 +14352,7 @@ function SessionConversationsFreshness(props: Readonly<{
 }
 
 function SessionConversationsEmpty(props: Readonly<{
+  sessionId: string;
   connections: readonly ChannelsConnection[] | null;
   t: Translate;
 }>): React.ReactElement {
@@ -14245,7 +14378,12 @@ function SessionConversationsEmpty(props: Readonly<{
           testID="channels-session-conversations-empty-link"
           variant="primary"
           title={t('plugins.channels.session.link', 'Link a conversation')}
-          onPress={() => { void page.open(bots.length === 1 ? `link/${bots[0]!.connectionId}` : 'link'); }}
+          onPress={() => {
+            void page.open(channelsLinkSubPath({
+              ...(bots.length === 1 ? { connectionId: bots[0]!.connectionId } : {}),
+              sessionId: props.sessionId,
+            }));
+          }}
         />
       )}
     />
@@ -14254,6 +14392,8 @@ function SessionConversationsEmpty(props: Readonly<{
 
 /** The tab itself: one composition for the daemon read and the Account-local read. */
 function SessionConversationsTab(props: Readonly<{
+  /** The Session this tab belongs to; linking from here keeps it. */
+  sessionId: string;
   presentations: readonly BindingPresentation[];
   attentionByBindingId: ReadonlyMap<string, ConversationSessionBindingAttentionV1>;
   lastDeliveries: ReadonlyMap<string, ConversationSessionLastDeliveryV1>;
@@ -14276,8 +14416,8 @@ function SessionConversationsTab(props: Readonly<{
   );
   const needsYou = sections.find((section) => section.key === 'need')?.count ?? 0;
   const headerActions = React.useMemo(
-    () => <SessionConversationLinkControl connections={props.connections} t={t} />,
-    [props.connections, t],
+    () => <SessionConversationLinkControl sessionId={props.sessionId} connections={props.connections} t={t} />,
+    [props.connections, props.sessionId, t],
   );
   const header = (
     <PaneHeaderContent
@@ -14289,7 +14429,7 @@ function SessionConversationsTab(props: Readonly<{
     return (
       <Screen testID="channels-session-conversations" safeArea style={bodyHeight === undefined ? undefined : { height: bodyHeight }}>
         {header}
-        <SessionConversationsEmpty connections={props.connections} t={t} />
+        <SessionConversationsEmpty sessionId={props.sessionId} connections={props.connections} t={t} />
       </Screen>
     );
   }
@@ -14376,6 +14516,7 @@ function SessionConversationsSurface(props: Readonly<{
   }
   return (
     <SessionConversationsTab
+      sessionId={props.sessionId}
       presentations={presentations}
       attentionByBindingId={attentionByBindingId}
       lastDeliveries={sessionConversations?.lastDeliveries ?? NO_LAST_DELIVERIES}
@@ -14417,6 +14558,7 @@ function AccountLocalSessionConversationsSurface(props: Readonly<{
   }
   return (
     <SessionConversationsTab
+      sessionId={props.sessionId}
       presentations={presentations}
       attentionByBindingId={NO_ATTENTION}
       lastDeliveries={NO_LAST_DELIVERIES}
@@ -14478,11 +14620,12 @@ function ChannelsAccountSettingsSurface(props: Readonly<{
 function ChannelsPageAvailabilitySurface(props: Readonly<{
   signal: AbortSignal;
   subPath: string | undefined;
+  targetPluginId: string;
 }>): React.ReactElement {
   const { resource } = useLivePluginResource(CHANNELS_BINDINGS_RESOURCE);
   return isHostMethodCurrentlyUnavailable(resource.error)
     ? <AccountLocalChannelsPageSurface signal={props.signal} subPath={props.subPath} machineUnavailableReason={resource.error?.message} />
-    : <DaemonChannelsPageSurface signal={props.signal} subPath={props.subPath} />;
+    : <DaemonChannelsPageSurface signal={props.signal} subPath={props.subPath} targetPluginId={props.targetPluginId} />;
 }
 
 export function ChannelsSurface(context: RenderContext): React.ReactElement {
@@ -14492,7 +14635,7 @@ export function ChannelsSurface(context: RenderContext): React.ReactElement {
     && context.surface.mount.destination.localId === CHANNELS_PAGE_VIEW_ID
   ) {
     return context.hostApi.version().methods.includes('readResource')
-      ? <ChannelsPageAvailabilitySurface signal={context.signal} subPath={context.subPath} />
+      ? <ChannelsPageAvailabilitySurface signal={context.signal} subPath={context.subPath} targetPluginId={context.plugin.id} />
       : <AccountLocalChannelsPageSurface signal={context.signal} subPath={context.subPath} />;
   }
   const isSessionConversationsMount = context.surface.mount.kind === 'destination'

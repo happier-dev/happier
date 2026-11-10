@@ -3,6 +3,8 @@ import { recommendConversationConnectionRecovery } from '../recoveryRecommendati
 
 import {
   buildChannelsConversationIndex,
+  channelsJustLinkedSubPath,
+  channelsLinkSubPath,
   channelsStatusNeedsYou,
   connectionStatus,
   readChannelsPageLocation,
@@ -17,6 +19,20 @@ describe('readChannelsPageLocation', () => {
     expect(readChannelsPageLocation('link/connection-1')).toEqual({ step: 'link', connectionId: 'connection-1' });
     expect(readChannelsPageLocation('binding-1/edit')).toEqual({ bindingId: 'binding-1', step: 'edit' });
     expect(readChannelsPageLocation('binding-1')).toEqual({ bindingId: 'binding-1' });
+  });
+
+  it('keeps the Session a link journey started from, and marks a conversation the journey just made', () => {
+    expect(readChannelsPageLocation('link/session/session-7')).toEqual({ step: 'link', sessionId: 'session-7' });
+    expect(readChannelsPageLocation('link/connection-1/session/session-7'))
+      .toEqual({ step: 'link', connectionId: 'connection-1', sessionId: 'session-7' });
+    expect(readChannelsPageLocation('binding-1/new')).toEqual({ bindingId: 'binding-1', justLinked: true });
+    expect(readChannelsPageLocation('binding-1/edit/new')).toEqual({ bindingId: 'binding-1', step: 'edit', justLinked: true });
+    // Each builder is the parser's exact reverse.
+    for (const input of [{}, { connectionId: 'connection-1' }, { sessionId: 'session-7' }, { connectionId: 'connection-1', sessionId: 'session-7' }]) {
+      expect(readChannelsPageLocation(channelsLinkSubPath(input))).toEqual({ step: 'link', ...input });
+    }
+    expect(readChannelsPageLocation(channelsJustLinkedSubPath('binding-1', true)))
+      .toEqual({ bindingId: 'binding-1', step: 'edit', justLinked: true });
   });
 });
 

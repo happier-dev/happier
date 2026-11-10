@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "Wenn eine Sitzung einen PR öffnet oder verknüpft, kann sie ihn weiter beobachten und auf CI und Reviews reagieren.",
   "plugins.channels.prWatch.settings.fixAttempts": "Korrekturversuche",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "Nach so vielen Korrekturrunden an einem Pull Request hört der Agent auf und fragt dich. Leer lassen, um nie aufzuhören.",
-  "plugins.channels.prWatch.settings.title": "Pull Requests"
+  "plugins.channels.prWatch.settings.title": "Pull Requests",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Sitzung",
+  "plugins.channels.page.linkDescriptionForSession": "Wähle den Chat, der mit {session} sprechen soll.",
+  "plugins.channels.page.linkConnectBotDescription": "Verbinde zuerst einen Bot: Wähle seinen Anbieter und dann das verbundene Konto mit seinen Zugangsdaten.",
+  "plugins.channels.page.firstMessageTitle": "Erste Nachricht senden",
+  "plugins.channels.page.firstMessageDone": "Fertig",
+  "plugins.channels.page.firstMessageBotFallback": "den Bot",
+  "plugins.channels.page.firstMessageDirect": "Schick {bot} eine Nachricht, um zu prüfen, ob sie ankommt.",
+  "plugins.channels.page.firstMessageMention": "Erwähne {bot} in {conversation}, um zu prüfen, ob die Nachricht ankommt.",
+  "plugins.channels.page.firstMessageAddressed": "Erwähne {bot} in {conversation} oder antworte ihm, um zu prüfen, ob die Nachricht ankommt.",
+  "plugins.channels.page.firstMessageAll": "Schreib in {conversation}, um zu prüfen, ob die Nachricht ankommt."
 }

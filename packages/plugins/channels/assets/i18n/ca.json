@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "Quan una sessió obre o vincula una PR, pot continuar vigilant-la i actuar sobre la CI i les revisions.",
   "plugins.channels.prWatch.settings.fixAttempts": "Intents de correcció",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "Després d’aquest nombre de rondes de correcció en una pull request, l’agent deixa de corregir-la i et pregunta. Deixa-ho buit per no aturar-se mai.",
-  "plugins.channels.prWatch.settings.title": "Pull requests"
+  "plugins.channels.prWatch.settings.title": "Pull requests",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Sessió",
+  "plugins.channels.page.linkDescriptionForSession": "Tria el xat que ha de parlar amb {session}.",
+  "plugins.channels.page.linkConnectBotDescription": "Primer connecta un bot: tria’n el proveïdor i després el compte connectat que en guarda la credencial.",
+  "plugins.channels.page.firstMessageTitle": "Envia un primer missatge",
+  "plugins.channels.page.firstMessageDone": "Fet",
+  "plugins.channels.page.firstMessageBotFallback": "el bot",
+  "plugins.channels.page.firstMessageDirect": "Envia un missatge a {bot} per comprovar que arriba.",
+  "plugins.channels.page.firstMessageMention": "Menciona {bot} a {conversation} per comprovar que el missatge arriba.",
+  "plugins.channels.page.firstMessageAddressed": "Menciona o respon {bot} a {conversation} per comprovar que el missatge arriba.",
+  "plugins.channels.page.firstMessageAll": "Escriu a {conversation} per comprovar que el missatge arriba."
 }

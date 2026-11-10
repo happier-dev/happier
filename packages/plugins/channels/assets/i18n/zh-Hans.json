@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "会话打开或关联 PR 后，可以继续关注它并处理 CI 和审查。",
   "plugins.channels.prWatch.settings.fixAttempts": "修复次数",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "在一个拉取请求上修复达到这么多轮后，代理会停止修复并询问你。留空则永不停止。",
-  "plugins.channels.prWatch.settings.title": "拉取请求"
+  "plugins.channels.prWatch.settings.title": "拉取请求",
+  "plugins.channels.surface.bindingCreateSessionFallback": "会话",
+  "plugins.channels.page.linkDescriptionForSession": "选择要与 {session} 对话的聊天。",
+  "plugins.channels.page.linkConnectBotDescription": "先连接一个机器人：选择它的提供方，再选择保存其凭据的已连接账户。",
+  "plugins.channels.page.firstMessageTitle": "发送第一条消息",
+  "plugins.channels.page.firstMessageDone": "完成",
+  "plugins.channels.page.firstMessageBotFallback": "机器人",
+  "plugins.channels.page.firstMessageDirect": "给 {bot} 发一条消息，确认它能送达。",
+  "plugins.channels.page.firstMessageMention": "在 {conversation} 中提及 {bot}，确认消息能送达。",
+  "plugins.channels.page.firstMessageAddressed": "在 {conversation} 中提及或回复 {bot}，确认消息能送达。",
+  "plugins.channels.page.firstMessageAll": "在 {conversation} 中发一条消息，确认它能送达。"
 }

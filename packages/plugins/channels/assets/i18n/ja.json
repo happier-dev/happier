@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "セッションが PR を開くかリンクすると、監視を続けて CI やレビューに対応できます。",
   "plugins.channels.prWatch.settings.fixAttempts": "修正の試行回数",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "1 つのプルリクエストでこの回数の修正ラウンドを行うと、エージェントは修正をやめてあなたに確認します。空欄にすると停止しません。",
-  "plugins.channels.prWatch.settings.title": "プルリクエスト"
+  "plugins.channels.prWatch.settings.title": "プルリクエスト",
+  "plugins.channels.surface.bindingCreateSessionFallback": "セッション",
+  "plugins.channels.page.linkDescriptionForSession": "{session} と話すチャットを選んでください。",
+  "plugins.channels.page.linkConnectBotDescription": "まずボットを接続します。プロバイダーを選び、次に認証情報を保持する接続済みアカウントを選んでください。",
+  "plugins.channels.page.firstMessageTitle": "最初のメッセージを送る",
+  "plugins.channels.page.firstMessageDone": "完了",
+  "plugins.channels.page.firstMessageBotFallback": "ボット",
+  "plugins.channels.page.firstMessageDirect": "{bot} にメッセージを送り、届くことを確認してください。",
+  "plugins.channels.page.firstMessageMention": "{conversation} で {bot} にメンションして、メッセージが届くことを確認してください。",
+  "plugins.channels.page.firstMessageAddressed": "{conversation} で {bot} にメンションするか返信して、メッセージが届くことを確認してください。",
+  "plugins.channels.page.firstMessageAll": "{conversation} に書き込んで、メッセージが届くことを確認してください。"
 }

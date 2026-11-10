@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "When a session opens or links a PR, it can keep watching it and act on CI and reviews.",
   "plugins.channels.prWatch.settings.fixAttempts": "Fix attempts",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "After this many fixing rounds on one pull request, the agent stops fixing it and asks you. Leave it empty to never stop.",
-  "plugins.channels.prWatch.settings.title": "Pull requests"
+  "plugins.channels.prWatch.settings.title": "Pull requests",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Session",
+  "plugins.channels.page.linkDescriptionForSession": "Choose the chat that should talk to {session}.",
+  "plugins.channels.page.linkConnectBotDescription": "First connect a bot: choose its provider, then the Connected Account that holds its credential.",
+  "plugins.channels.page.firstMessageTitle": "Send a first message",
+  "plugins.channels.page.firstMessageDone": "Done",
+  "plugins.channels.page.firstMessageBotFallback": "the bot",
+  "plugins.channels.page.firstMessageDirect": "Send {bot} a message to check that it arrives.",
+  "plugins.channels.page.firstMessageMention": "Mention {bot} in {conversation} to check that it arrives.",
+  "plugins.channels.page.firstMessageAddressed": "Mention or reply to {bot} in {conversation} to check that it arrives.",
+  "plugins.channels.page.firstMessageAll": "Write in {conversation} to check that it arrives."
 }

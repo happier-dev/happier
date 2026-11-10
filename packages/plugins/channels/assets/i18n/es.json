@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "Cuando una sesión abre o vincula una PR, puede seguir vigilándola y actuar sobre la CI y las revisiones.",
   "plugins.channels.prWatch.settings.fixAttempts": "Intentos de corrección",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "Tras este número de rondas de corrección en una pull request, el agente deja de corregirla y te pregunta. Déjalo vacío para no parar nunca.",
-  "plugins.channels.prWatch.settings.title": "Pull requests"
+  "plugins.channels.prWatch.settings.title": "Pull requests",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Sesión",
+  "plugins.channels.page.linkDescriptionForSession": "Elige el chat que debe hablar con {session}.",
+  "plugins.channels.page.linkConnectBotDescription": "Primero conecta un bot: elige su proveedor y luego la cuenta conectada que guarda su credencial.",
+  "plugins.channels.page.firstMessageTitle": "Envía un primer mensaje",
+  "plugins.channels.page.firstMessageDone": "Listo",
+  "plugins.channels.page.firstMessageBotFallback": "el bot",
+  "plugins.channels.page.firstMessageDirect": "Envía un mensaje a {bot} para comprobar que llega.",
+  "plugins.channels.page.firstMessageMention": "Menciona a {bot} en {conversation} para comprobar que el mensaje llega.",
+  "plugins.channels.page.firstMessageAddressed": "Menciona o responde a {bot} en {conversation} para comprobar que el mensaje llega.",
+  "plugins.channels.page.firstMessageAll": "Escribe en {conversation} para comprobar que el mensaje llega."
 }

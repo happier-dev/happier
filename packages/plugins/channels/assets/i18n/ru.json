@@ -842,5 +842,15 @@
   "plugins.channels.prWatch.settings.description": "Когда сессия открывает или связывает PR, она может продолжать отслеживать его и реагировать на CI и ревью.",
   "plugins.channels.prWatch.settings.fixAttempts": "Попытки исправления",
   "plugins.channels.prWatch.settings.fixAttemptsDescription": "После стольких раундов исправлений одного pull request’а агент прекращает исправлять и спрашивает вас. Оставьте пустым, чтобы никогда не останавливаться.",
-  "plugins.channels.prWatch.settings.title": "Pull request’ы"
+  "plugins.channels.prWatch.settings.title": "Pull request’ы",
+  "plugins.channels.surface.bindingCreateSessionFallback": "Сессия",
+  "plugins.channels.page.linkDescriptionForSession": "Выберите чат, который будет общаться с {session}.",
+  "plugins.channels.page.linkConnectBotDescription": "Сначала подключите бота: выберите его провайдера, затем подключённый аккаунт с его учётными данными.",
+  "plugins.channels.page.firstMessageTitle": "Отправьте первое сообщение",
+  "plugins.channels.page.firstMessageDone": "Готово",
+  "plugins.channels.page.firstMessageBotFallback": "бот",
+  "plugins.channels.page.firstMessageDirect": "Отправьте {bot} сообщение, чтобы проверить, что оно доходит.",
+  "plugins.channels.page.firstMessageMention": "Упомяните {bot} в {conversation}, чтобы проверить, что сообщение доходит.",
+  "plugins.channels.page.firstMessageAddressed": "Упомяните {bot} или ответьте ему в {conversation}, чтобы проверить, что сообщение доходит.",
+  "plugins.channels.page.firstMessageAll": "Напишите в {conversation}, чтобы проверить, что сообщение доходит."
 }

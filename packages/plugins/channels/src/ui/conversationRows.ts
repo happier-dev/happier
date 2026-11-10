@@ -973,24 +973,50 @@ export function buildChannelsConversationIndex(input: Readonly<{
 
 /**
  * The binding a Channels page location names. The location is the binding id,
- * optionally followed by one page-internal step (`<bindingId>/edit`), or the
- * link journey, optionally on one bot (`link/<connectionId>`: a session tab's
- * "+" lets the person pick the bot before the page opens).
+ * optionally followed by one page-internal step (`<bindingId>/edit`) and a
+ * just-linked mark (`<bindingId>/new`, `<bindingId>/edit/new`: the link journey
+ * made it, so the page ends on its first message). Or it is the link journey,
+ * optionally on one bot and for one Session (`link/<connectionId>`,
+ * `link/session/<sessionId>`, `link/<connectionId>/session/<sessionId>`: a
+ * session tab's "+" keeps the Session it was pressed in).
  */
 export function readChannelsPageLocation(subPath: string | undefined): Readonly<{
   bindingId?: string;
   step?: 'edit' | 'link';
   connectionId?: string;
+  sessionId?: string;
+  justLinked?: true;
 }> {
   if (subPath === undefined || subPath === '') return {};
-  if (subPath === 'link') return { step: 'link' };
-  if (subPath.startsWith('link/')) {
-    const connectionId = subPath.slice('link/'.length);
-    return connectionId === '' || connectionId.includes('/') ? { step: 'link' } : { step: 'link', connectionId };
+  const segments = subPath.split('/');
+  if (segments[0] === 'link') {
+    const rest = segments.slice(1);
+    const sessionAt = rest.indexOf('session');
+    const sessionId = sessionAt >= 0 && sessionAt === rest.length - 2 && rest[sessionAt + 1] !== '' ? rest[sessionAt + 1] : undefined;
+    const bot = sessionId === undefined ? rest : rest.slice(0, sessionAt);
+    const connectionId = bot.length === 1 && bot[0] !== '' ? bot[0] : undefined;
+    return {
+      step: 'link',
+      ...(connectionId === undefined ? {} : { connectionId }),
+      ...(sessionId === undefined ? {} : { sessionId }),
+    };
   }
-  const [bindingId, step] = subPath.split('/');
+  const [bindingId, ...steps] = segments;
   if (bindingId === undefined || bindingId === '') return {};
-  return step === 'edit' ? { bindingId, step: 'edit' } : { bindingId };
+  const justLinked = steps[steps.length - 1] === 'new' ? { justLinked: true as const } : {};
+  return steps[0] === 'edit' ? { bindingId, step: 'edit', ...justLinked } : { bindingId, ...justLinked };
+}
+
+/** The link journey's location: the reverse of {@link readChannelsPageLocation}. */
+export function channelsLinkSubPath(input: Readonly<{ connectionId?: string; sessionId?: string }> = {}): string {
+  return ['link', input.connectionId, ...(input.sessionId === undefined ? [] : ['session', input.sessionId])]
+    .filter((segment): segment is string => segment !== undefined)
+    .join('/');
+}
+
+/** A conversation the link journey just made: review first when it asks for one, then its first message. */
+export function channelsJustLinkedSubPath(bindingId: string, review: boolean): string {
+  return review ? `${bindingId}/edit/new` : `${bindingId}/new`;
 }
 
 /** Conversation and bot metadata; each surface demands Session state only after selecting its rows. */
