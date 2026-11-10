@@ -61,6 +61,20 @@ describe('the one precedence between an action requirement and a profile prefere
 });
 
 describe('where a pressed action runs', () => {
+    it.each([true, false])('admits an exact non-SCM Project using its existing reachability fact (%s)', reachable => {
+        const selected = project({ projectId: 'selected', forge: undefined, reachable });
+        const placement = resolveTriageActionPlacementV1({ workspaceMode: 'reference_only',
+            workspace: { serverId: selected.serverId, machineId: selected.machineId,
+                workspaceId: 'selected', rootPath: selected.rootPath },
+            projects: [selected, project({ projectId: 'other', forge: undefined })] });
+        expect(placement).toMatchObject(reachable
+            ? { kind: 'launch', candidate: { projectKey: { id: 'selected' } } }
+            : { kind: 'prefill', reason: 'unreachable' });
+        expect(readTriageActionExecutionPlacementV1(placement)).toEqual(reachable
+            ? { executionTarget: { serverId: selected.serverId, machineId: selected.machineId }, directory: selected.rootPath }
+            : null);
+    });
+
     it.each(['repository', 'pull_request'] as const)('refuses %s checkout requirements against a fixed no-folder preference', workspaceMode => {
         const profile = { placement: { fixed: { serverId: 'server-9', machineId: 'machine-9' },
             directoryIntent: { kind: 'managed' as const } } };

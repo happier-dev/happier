@@ -1,3 +1,4 @@
+import type { TriageSelectedWorkspaceScopeV1 } from '@happier-dev/triage-protocol/v1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1 } from '@happier-dev/triage-protocol/v1';
 import { resolveLaunchProfilePlacementDirectoryIntentV1, type LaunchProfilePlacementPreferenceV1, type LaunchProfileCheckoutPreferenceV1, type SessionDirectoryIntentV1 } from '@happier-dev/plugin-sdk/protocol';
@@ -132,6 +133,8 @@ export function resolveTriageActionPlacementV1(input: Readonly<{
     profile?: TriageActionProfilePreferencesV1;
     /** The entry's own repository, when its source declared one. */
     forge?: TriageForgeIdentityV1;
+    /** Exact accepted Source workspace; its Project owns reachability. */
+    workspace?: TriageSelectedWorkspaceScopeV1;
     projects: readonly TriageProjectCandidateV1[];
     /**
      * Whether `projects` is the whole registry, as its reader reported
@@ -164,6 +167,7 @@ export function resolveTriageActionPlacementV1(input: Readonly<{
 
     const placement = resolveTriageLaunchPlacementV1({
         ...(input.forge === undefined ? {} : { forge: input.forge }),
+        ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
         projects: input.projects,
         ...(input.registryComplete === undefined ? {} : { registryComplete: input.registryComplete }),
     });

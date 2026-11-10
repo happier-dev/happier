@@ -86,11 +86,10 @@ function projectOperation(sourceWorkspace = acceptedWorkspace.checkout) {
 
 describe('configured action execution through the shared Session owner', () => {
     it.each([
-        { code: 'machine_offline', composer: true }, { code: 'target_unavailable', composer: true },
-        { code: 'incompatible_target', composer: true }, { code: 'machine_offline', composer: false },
-        { code: 'target_unavailable', composer: false }, { code: 'incompatible_target', composer: false },
-        { code: 'agent_cli_missing', composer: true },
-    ] as const)('authors the builtin reference-only investigation after Session admission refuses its target ($code, composer=$composer)', async ({ code, composer }) => {
+        { composer: true, preference: 'unresolved' }, { composer: false, preference: 'unresolved' },
+        { composer: true, preference: 'ask' }, { composer: true, preference: 'fixed' },
+        { composer: true, preference: 'project' },
+    ] as const)('admits builtin reference-only investigation placement before invoking ($preference, composer=$composer)', async ({ composer, preference }) => {
         const kv = createTestkitAccountKv();
         const builtinCatalog = await readTriageActionsForSurface({ v: 1 }, { catalog: kv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
         const controllerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
@@ -114,7 +113,10 @@ describe('configured action execution through the shared Session owner', () => {
         } } as const;
         const notice = { kind: 'host', artifactId: 'failed-deployment-notice', source } as const;
         const content = { v: 1, source, page, type: 'blocked', healthPhase: 'open', resolved: false };
-        const invoker = createTestkitActionInvoker({ spawn: [{ type: 'error', code, retryable: true }] });
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'admitted-investigation' })],
+            send: [{ status: 'accepted', localId: 'investigation-input' }] });
+        const starts = preference === 'fixed' || preference === 'project';
+        const spawnAttempts: JsonValue[] = [];
         const seeds: PluginUiNewSessionSeedV1[] = [];
         // Only host Action RPC and UI navigation are substituted. The builtin catalog,
         // evidence admission, configured handoff and Session start owners stay real.
@@ -123,16 +125,31 @@ describe('configured action execution through the shared Session owner', () => {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             ...(composer ? { openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); } } : {}),
             executeAction: async (id: string, value: JsonValue) => {
-                if (triageBoundaryActionId(id) === 'actions/read-v1') return builtinCatalog;
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return preference === 'ask' || preference === 'fixed'
+                    ? { ...builtinCatalog, actions: builtinCatalog.actions.map(action => action.actionId === 'investigate'
+                        ? { ...action, profileId: 'diagnosis' } : action) } : builtinCatalog;
+                if (triageBoundaryActionId(id) === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
+                if (id === 'sessions.spawn.profiles.list') return { items: [{ id: 'diagnosis', name: 'Diagnosis',
+                    preferredAgentTargetKey: targetKey, placement: preference === 'ask' ? 'ask'
+                        : { fixed: { serverId: 'server-a', machineId: 'chosen-by-profile' }, directoryIntent: { kind: 'managed' } } }], coverage: 'complete' };
                 if (id === 'artifact.get') return { artifact: { artifactId: notice.artifactId, ownerAccountId: 'account-a',
                     access: 'owner', publicAudience: 'none', header: { ...content, kind: 'account_notice.v1',
                         title: 'odeploy-qa-env-1030: deployment failed', status: 'open' }, body: JSON.stringify(content),
                     revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } };
                 if (id === 'deployments.environments.get') return environment;
-                // An empty Project registry is valid for a managed reference-only start;
-                // only Session admission establishes that this controller is unavailable.
-                if (id === 'projects.list') return { items: [], truncated: false };
+                // This Account has no chosen execution placement. The deployment controller
+                // is evidence identity, not a saved Profile preference or admitted Project.
+                if (id === 'projects.list') return { items: preference === 'project' ? [{
+                    projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: controllerMachineId,
+                    rootPath: '/accepted/non-scm-project', sourceId: 'project', reachable: true, worktrees: [],
+                }] : [], truncated: false };
                 if (id === 'agents.backends.list') return agents;
+                if (id === 'session.spawn_new') {
+                    spawnAttempts.push(value);
+                    // Actual UI SDK behavior captured in inbox-repaired-live-result.json:
+                    // Action refusal throws PluginError rather than returning a spawn DTO.
+                    if (!starts) throw new PluginError({ code: 'target_unavailable' });
+                }
                 return invoker.execute(id as Parameters<typeof invoker.execute>[0], value as Parameters<typeof invoker.execute>[1]);
             },
         };
@@ -141,29 +158,29 @@ describe('configured action execution through the shared Session owner', () => {
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } });
         const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
             input.handoff, { entries: [], signal: new AbortController().signal });
-        expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
-        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
-            executionTarget: { serverId: 'server-a', machineId: controllerMachineId }, directory: { kind: 'managed' }, agentTarget,
-        });
+        if (starts) {
+            expect(result.handoff).toMatchObject({ kind: 'sendResult', session: { sessionId: 'admitted-investigation' } });
+            expect(spawnAttempts).toEqual([expect.objectContaining({ executionTarget: { serverId: 'server-a',
+                machineId: preference === 'fixed' ? 'chosen-by-profile' : controllerMachineId },
+                directory: preference === 'fixed' ? { kind: 'managed' } : { kind: 'path', path: '/accepted/non-scm-project' } })]);
+            expect(invoker.callsFor('session.message.send')).toHaveLength(1);
+            expect(seeds).toEqual([]);
+            return;
+        }
+        expect(spawnAttempts).toEqual([]);
         expect(invoker.callsFor('session.message.send')).toHaveLength(0);
         if (composer) {
             expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
             expect(result).not.toHaveProperty('recovery');
             expect(seeds).toEqual([expect.objectContaining({ prompt: expect.any(String),
                 actionDefault: expect.objectContaining({ configuredActionId: 'investigate' }),
-                attachments: [expect.anything()], directoryIntent: { kind: 'managed' },
+                attachments: [expect.anything()],
             })]);
-            if (code === 'agent_cli_missing') {
-                expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: controllerMachineId } });
-                expect(seeds[0]).not.toHaveProperty('agentTarget');
-            } else {
-                expect(seeds[0]).not.toHaveProperty('placement');
-                expect(seeds[0]).toMatchObject({ agentTarget });
-            }
+            expect(seeds[0]).not.toHaveProperty('placement');
+            expect(seeds[0]).toMatchObject({ agentTarget });
             expect(JSON.stringify(seeds[0])).toContain(notice.artifactId);
         } else {
-            expect(result.handoff).toMatchObject({ kind: 'placement_choice_required', reason: 'machine_unreachable',
-                candidates: [{ machine: { serverId: 'server-a', machineId: controllerMachineId }, reachable: false }] });
+            expect(result.handoff).toEqual({ kind: 'selectionRequired', fields: ['sessionChoice'] });
             expect(seeds).toEqual([]);
         }
     });
@@ -276,36 +293,23 @@ describe('configured action execution through the shared Session owner', () => {
         } else if (state === 'spawnDenied') {
             expect(result.handoff).toEqual({ kind: 'unavailable', reason: 'targetUnavailable',
                 detail: { reason: 'session_start_refused', cause: 'permission_denied' } });
-        } else if (state === 'ambiguous' || state === 'offline' || state === 'noController' || state === 'noAgent' || state === 'spawnUnavailable' || state === 'spawnAgentTransport') {
+        } else if (state === 'spawnUnavailable' || state === 'spawnAgentTransport') {
+            expect(result.handoff).toEqual({ kind: 'unavailable', reason: 'targetUnavailable',
+                detail: { reason: 'session_start_refused', cause: state === 'spawnUnavailable'
+                    ? 'target_unavailable' : 'agent_startup_transport_failed' } });
+            expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
+            expect(invoker.callsFor('session.message.send')).toHaveLength(0);
+        } else if (state === 'managed') {
+            // A controller without an accepted Project or saved preference is evidence, not a launch choice.
+            expect(result.handoff).toEqual({ kind: 'selectionRequired', fields: ['sessionChoice'] });
+            expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
+        } else if (state === 'ambiguous' || state === 'offline' || state === 'noController' || state === 'noAgent') {
             expect(result.handoff).toMatchObject({ kind: 'placement_choice_required',
-                reason: state === 'ambiguous' ? 'ambiguous_workspace' : state === 'offline' || state === 'spawnUnavailable' ? 'machine_unreachable'
+                reason: state === 'ambiguous' ? 'ambiguous_workspace' : state === 'offline' ? 'machine_unreachable'
                     : state === 'noController' ? 'controller_required' : 'agent_required',
                 candidates: state === 'ambiguous' ? [expect.objectContaining({ workspace: { serverId: 'server-a', machineId: controllerMachineId, workspaceId: 'workspace-a', rootPath: '/repos/app' } }),
                     expect.objectContaining({ workspace: { serverId: 'server-a', machineId: controllerMachineId, workspaceId: 'workspace-b', rootPath: '/repos/other-app' } })] : expect.any(Array) });
-            if (state === 'spawnUnavailable') expect(result.handoff).toMatchObject({ candidates: expect.arrayContaining([
-                expect.objectContaining({ machine: { serverId: 'server-a', machineId: controllerMachineId }, reachable: false }),
-                expect.objectContaining({ machine: { serverId: 'server-a', machineId: 'alternative-controller' }, reachable: true }),
-            ]) });
-            else if (state === 'spawnAgentTransport') {
-                expect(result.handoff).toMatchObject({
-                    candidates: [{ machine: { serverId: 'server-a', machineId: controllerMachineId }, reachable: true,
-                        workspace: { serverId: 'server-a', machineId: controllerMachineId, workspaceId: 'workspace-a', rootPath: '/repos/app' } }],
-                    agents: [{ targetKey }],
-                });
-                expect(invoker.callsFor('session.message.send')).toHaveLength(0);
-                const chosen = parseHandoffInput({ v: 1, handoff: { ...input.handoff,
-                    agentChoice: { kind: 'target', targetKey } } });
-                const started = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
-                    chosen.handoff, { entries: [], signal: new AbortController().signal });
-                expect(started.handoff).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'receipt-investigation' } });
-                expect(invoker.callsFor('session.spawn_new')).toHaveLength(2);
-                const sends = invoker.callsFor('session.message.send');
-                expect(sends).toHaveLength(1);
-                expect(sends[0]?.input).toMatchObject({ sessionId: 'receipt-investigation', idempotencyKey: expect.any(String) });
-                expect(JSON.stringify(sends[0]?.input)).toContain(subject.deploymentId);
-                expect(JSON.stringify(sends[0]?.input)).toContain(subject.environmentId);
-            }
-            else expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
+            expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
         } else {
             expect(result.handoff).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'receipt-investigation' } });
             expect(nativeLinks).toEqual([expect.objectContaining({ entryRef: {
@@ -438,8 +442,7 @@ describe('configured action execution through the shared Session owner', () => {
             expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
             const seed = seeds.at(-1);
             expect(seed).toMatchObject({ prompt: expect.any(String) });
-            if (placement === 'noController') expect(seed).not.toHaveProperty('placement');
-            else expect(seed).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'chosen' } });
+            expect(seed).not.toHaveProperty('placement');
             expect(seed).not.toHaveProperty('directoryIntent');
             const serialized = JSON.stringify(seed);
             expect(serialized).toContain(kind === 'deploymentEnvironment' ? 'deployments.environments.get' : 'deployments.receipts.get');
@@ -594,8 +597,9 @@ describe('configured action execution through the shared Session owner', () => {
         } else {
             expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
             expect(seeds).toHaveLength(1);
-            expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a',
-                machineId: state === 'alternate' ? 'machine-c' : 'machine-a' }, directoryIntent: { kind: 'managed' } });
+            if (state === 'alternate') expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget',
+                serverId: 'server-a', machineId: 'machine-c' } });
+            else expect(seeds[0]).not.toHaveProperty('placement');
             expect(JSON.stringify(seeds[0])).toContain('resource-notice');
             expect(JSON.stringify(seeds[0])).not.toContain('cpu_busy');
         }
@@ -604,7 +608,7 @@ describe('configured action execution through the shared Session owner', () => {
         expect(calls.some(call => /artifact\.(?:update|create)|spawn|restart|rollback/.test(call.id))).toBe(false);
     });
     it.each(['current', 'foreignAccount', 'shared', 'alternate', 'injectedPage', 'arbitraryPath', 'ambiguousMachine'] as const)(
-        're-admits host health evidence and pins the configured investigation to its Machine (%s)', async state => {
+        're-admits host health evidence without making its Machine an execution preference (%s)', async state => {
         const service = { kind: 'deployment', machineId: 'machine-a', environmentId: 'environment',
             environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' } as const;
         const source = { kind: 'host', topic: 'service_health', subject: service } as const;
@@ -655,8 +659,9 @@ describe('configured action execution through the shared Session owner', () => {
         }
         expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
         expect(seeds).toHaveLength(1);
-        expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: alternate ? 'machine-b' : 'machine-a' },
-            checkoutIntent: 'none', directoryIntent: { kind: 'managed' },
+        if (alternate) expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-b' } });
+        else expect(seeds[0]).not.toHaveProperty('placement');
+        expect(seeds[0]).toMatchObject({ checkoutIntent: 'none',
             attachments: [expect.objectContaining({ value: expect.anything() })] });
         expect(calls).toContainEqual({ id: 'artifact.get', input: { artifactId: notice.artifactId } });
         expect(calls.some(call => call.id === 'localServices.launcher.snapshot')).toBe(false);

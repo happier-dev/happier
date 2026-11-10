@@ -398,15 +398,18 @@ managed setup and other failure pages do not mount the Inbox model. Inbox consum
 the same owner. Mounting the provider issues no reads; surfaces rendering
 configured agent-action buttons read their choices through its shared catalog
 reader. Pages do not create investigators or select replacement Machines.
-For receipts, Environment health and Domain attention, the handoff derives the
-controller from the exact receipt/current Environment. It matches accepted
-workspace `sourceId` on that controller to the Environment's Project Source;
-one match supplies the folder, and no match uses the Machine's managed default
-workspace. The existing New Session preference owner projects its exact default
-Agent key through `agents.backends.list.defaultTargetKey`; Triage consumes it.
-An unambiguous press starts the Session without opening settings.
-Session creation owns current launch admission. Investigate does not wait for
-managed-service inventory or unrelated service establishment before starting it.
+For receipts, Environment health and Domain attention, the handoff reads the
+controller and accepted Source workspace from the exact receipt/current Environment
+as evidence. The controller alone never becomes a fixed execution preference.
+The shared action-placement owner applies the saved Profile's fixed/ask preference,
+then the exact accepted Project or repository candidates, using the Project owner's
+reachability fact. A valid non-SCM Project can identify its exact workspace without
+a forge identity. An unresolved placement opens the seeded New Session composer
+before `session.spawn_new`; no Session start or message is attempted.
+The existing New Session preference owner projects its exact default Agent key
+through `agents.backends.list.defaultTargetKey`; Triage consumes it. A complete
+admitted placement and Agent can start directly. Investigate does not wait for
+managed-service inventory or unrelated service establishment.
 
 Workflow Run failures reach this same handoff from the invocation recovery card
 in both Activity and Flow views. The Workflows owner declares its configurable
@@ -426,16 +429,11 @@ any known Machine; that composer owns the remaining folder and Agent choices.
 An unavailable composer returns an explicit `composerUnavailable` outcome.
 Headless callers and existing Sessions retain the typed placement choice. A
 caller supplying a workspace or Agent key uses the same placement and Agent owners.
-If the Session creator subsequently refuses that target, its terminal target or
-Agent error opens the same seeded New Session composer on the UI; headless
-callers retain the typed choice. No second start is attempted. The refused
-Machine is marked unreachable
-alongside the already-read alternative Project placements; an Agent installation
-or sign-in refusal instead keeps the Machine and asks for an Agent. A native ACP
+A terminal Session creation refusal remains a refusal; it does not mark a Machine
+unreachable or trigger a second start. A native ACP
 transport that closes before startup completes retains the existing
 `agent_startup_transport_failed` cause through the public ACP startup diagnostic,
-host failure publication and Session creation; this also asks
-for an Agent without marking the reachable controller offline. An arbitrary
+host failure publication and Session creation without marking the controller offline. An arbitrary
 `spawn_failed` or authorization refusal is not reclassified. Unknown
 creation outcomes retain the existing same-key recovery and never offer a new start.
 

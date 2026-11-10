@@ -100,7 +100,6 @@ export async function readTriageHealthAlertHandoffV1(
         ...(placement?.kind === 'ready' ? { registry: placement.registry } : {}), evidence };
 }
 
-
 /** The configured handoff owns placement for notices and native failure records alike. */
 async function readFailureSubject(
     host: Parameters<typeof readTriageHealthAlertHandoffV1>[0],
@@ -264,17 +263,4 @@ function projectInvestigationPlacementCandidate(project: TriageProjectCandidateV
     return { machine: { serverId: project.serverId, machineId: project.machineId },
         ...('id' in project.projectKey ? { workspace: { serverId: project.serverId, machineId: project.machineId,
             workspaceId: project.projectKey.id, rootPath: project.rootPath } } : {}), reachable: project.reachable };
-}
-
-function unreachablePlacement(machine: Machine, workspace?: Workspace, projects: readonly TriageProjectCandidateV1[] = []): PlacementChoice {
-    return { kind: 'placement_choice_required', reason: 'machine_unreachable', candidates: [
-        { machine, ...(workspace ? { workspace } : {}), reachable: false },
-        ...projects.filter(project => project.machineId !== machine.machineId).map(projectInvestigationPlacementCandidate),
-    ], agents: [] };
-}
-
-/** Session creation owns current launch availability. Reuse the admitted placement candidates. */
-export function projectTriageUnavailableInvestigationPlacementV1(health: Extract<InvestigationRead, { kind: 'ready' }>): PlacementChoice {
-    const projects = health.registry?.status === 'read' ? health.registry.projects.filter(project => project.serverId === health.machine.serverId) : [];
-    return unreachablePlacement(health.machine, health.workspace, projects);
 }

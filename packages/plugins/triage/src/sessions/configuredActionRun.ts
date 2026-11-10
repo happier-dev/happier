@@ -33,7 +33,7 @@ import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageHandoffRunConfiguredActionResultV1, TriageHandoffStartRecoveryV1, TriageConfiguredStartRecoveryV1 } from '../actions/configuredActionRunProtocol.js';
 import { readTriageProjectRegistryV1 } from './projectCandidates.js';
 import { TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1, TriageVerifyExistingReviewWorkspaceResultV1Schema } from '../actions/entrySessionProtocol.js';
-import { readTriageHealthAlertHandoffV1, projectTriageUnavailableInvestigationPlacementV1 } from './healthAlertHandoff.js';
+import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
 
 type HandoffHost = Omit<TriageConfiguredActionRunHostV1, 'context' | 'selectActionInput'>
     & Pick<PluginClientActionUi, 'context' | 'selectActionInput'>
@@ -89,7 +89,7 @@ export async function runTriageConfiguredHandoffV1(
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     if (healthRead === null || input.context.kind !== 'healthAlert' && input.context.kind !== 'failure' && input.evidence.some(evidence => evidence.kind === 'alert' || evidence.kind === 'failure')) return unavailable('evidenceInvalid');
     const health = healthRead?.kind === 'ready' ? healthRead : undefined;
-    const nativeSubject = health === undefined ? undefined : input.context.kind === 'failure'
+    const nativeSubject = healthRead === undefined ? undefined : input.context.kind === 'failure'
         ? triageFailureSubjectEntryV1(input.context.subject) : input.context.kind === 'healthAlert'
             ? triageHealthAlertEntryV1(input.context) : undefined;
     const selected = input.context.kind === 'entry' ? input.context.entry : undefined;
@@ -179,20 +179,23 @@ export async function runTriageConfiguredHandoffV1(
     const agent = investigationAgent?.selection ?? (preferredKey === undefined ? undefined : await readTriageAgentExecutionTargetV1(host, preferredKey, cancellation));
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     if (!investigationAgent && preferredKey !== undefined && agent?.status !== 'resolved') return finish({ kind: 'selectionRequired', fields: ['agentChoice'] }, options.resumeStart);
+    // Evidence identifies the failure, not an execution preference. The same Profile/Project
+    // owner admits health starts and entry starts; a controller alone is never a fixed choice.
+    const healthPlacement = healthRead ? resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode,
+        profile: references.profile?.preferences, forge: repository,
+        ...(health?.workspace ? { workspace: health.workspace } : {}),
+        projects: registry?.status === 'read' ? registry.projects : [],
+        registryComplete: registry?.status === 'read' && registry.complete }) : undefined;
+    const healthExecution = healthPlacement === undefined ? null : readTriageActionExecutionPlacementV1(healthPlacement);
     // A subject whose folder or Agent is still open is not a complete start. The person settles it in the
     // prefilled composer (owner ruling 16:50Z); only a caller with no composer receives this typed choice.
-    const unresolvedChoice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> | undefined = healthRead?.kind === 'placement_choice_required'
+    const unresolvedChoice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> | undefined = healthRead?.kind === 'placement_choice_required' && healthExecution === null
         ? { kind: healthRead.kind, reason: healthRead.reason, candidates: healthRead.candidates, agents: investigationAgent?.candidates ?? [] }
-        : !health
-        ? undefined
-        : action.workspaceMode !== 'reference_only' && !health.workspace
-            ? { kind: 'placement_choice_required', reason: 'ambiguous_workspace',
-                candidates: [{ machine: health.machine, reachable: true }], agents: investigationAgent?.candidates ?? [] }
-            : investigationAgent && agent?.status !== 'resolved'
-                ? { kind: 'placement_choice_required', reason: 'agent_required',
-                    candidates: [{ machine: health.machine, ...(health.workspace ? { workspace: health.workspace } : {}), reachable: true }],
-                    agents: investigationAgent.candidates }
-                : undefined;
+        : health && investigationAgent && agent?.status !== 'resolved'
+            ? { kind: 'placement_choice_required', reason: 'agent_required',
+                candidates: [{ machine: health.machine, ...(health.workspace ? { workspace: health.workspace } : {}), reachable: true }],
+                agents: investigationAgent.candidates }
+            : undefined;
     // An existing Session is not authored again; its handoff keeps the typed choice.
     if (unresolvedChoice !== undefined && input.sessionChoice.kind === 'existing') return finish(unresolvedChoice, options.resumeStart);
 
@@ -248,9 +251,6 @@ export async function runTriageConfiguredHandoffV1(
     if (input.sessionChoice.kind === 'existing' && existing === undefined) return unavailable('sessionUnavailable');
     if (options.resumeStart !== undefined && options.resumeStart.state.kind !== 'handoff') return unavailable('scopeMismatch');
     const retained = options.resumeStart as TriageHandoffStartRecoveryV1 | undefined;
-    if (health && retained?.state.input.destination.kind === 'new'
-        && (retained.state.input.destination.spawn.executionTarget.serverId !== health.machine.serverId
-            || retained.state.input.destination.spawn.executionTarget.machineId !== health.machine.machineId)) return unavailable('scopeMismatch');
     if (retained !== undefined && (retained.state.handoff.configuredActionId !== input.configuredActionId
         || JSON.stringify(retained.state.handoff) !== JSON.stringify(input)
         || retained.state.input.workspaceMode !== action.workspaceMode
@@ -264,8 +264,8 @@ export async function runTriageConfiguredHandoffV1(
                 agentTarget: status.agentTarget, acceptedWorkspace: status.acceptedWorkspace,
                 workspace: status.session.machineId ? { machineId: status.session.machineId } : undefined } : null;
         if (state == null || state.serverId !== existing.serverId || state.sessionId !== existing.sessionId) return unavailable('sessionUnavailable');
-        if (health && (state.serverId !== health.machine.serverId || state.workspace?.machineId !== health.machine.machineId)) return unavailable('scopeMismatch');
-        if (health?.workspace && (!state.acceptedWorkspace || !sameWorkspace(health.workspace, state.acceptedWorkspace.checkout))) return unavailable('scopeMismatch');
+        if (action.workspaceMode !== 'reference_only' && health && (state.serverId !== health.machine.serverId || state.workspace?.machineId !== health.machine.machineId)) return unavailable('scopeMismatch');
+        if (action.workspaceMode !== 'reference_only' && health?.workspace && (!state.acceptedWorkspace || !sameWorkspace(health.workspace, state.acceptedWorkspace.checkout))) return unavailable('scopeMismatch');
         if (action.workspaceMode !== 'reference_only') {
             const accepted = state.acceptedWorkspace;
             if (accepted === undefined) return targetUnavailable('existing_session_workspace_missing');
@@ -308,25 +308,6 @@ export async function runTriageConfiguredHandoffV1(
         }
     }
 
-    const healthPlacement = healthRead ? resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode,
-        ...(healthRead.machine ? { profile: { placement: { fixed: healthRead.machine,
-            ...(health?.workspace ? { directory: health.workspace.rootPath }
-                : health && action.workspaceMode === 'reference_only' ? { directoryIntent: { kind: 'managed' as const } } : {}) } } } : {}),
-        projects: [], registryComplete: true }) : undefined;
-    const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
-    const authorNewSession = async (
-        selection: Pick<Parameters<typeof requestTriageNewSessionAuthoringV1>[1], 'placement' | 'candidates' | 'agentTarget' | 'directoryIntent'>,
-        unsupported: TriageSessionHandoffResultV1,
-    ) => {
-        const composed = await requestTriageNewSessionAuthoringV1(host, {
-            entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
-            actionDefault: triageActionDefaultSeedV1(action), checkoutIntent: checkout, signal: options.signal, ...selection,
-        });
-        return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
-            : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })
-            : composed.status === 'unsupported' ? finish(unsupported)
-            : unavailable('composerUnavailable');
-    };
     let custody: TriageHandoffStartRecoveryV1;
     if (retained !== undefined) custody = retained;
     else {
@@ -343,6 +324,7 @@ export async function runTriageConfiguredHandoffV1(
         const candidates = projectTriageActionPlacementCandidatesV1({ ...placement,
             ...(registry?.status === 'read' ? { availableCandidates: registry.projects } : {}),
         });
+        const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
         const profile = action.profileId === null ? {} : { profileId: action.profileId };
         const launchDirectory = readTriageActionLaunchDirectoryV1(execution, checkout);
         const directSettlement: unknown = existing !== undefined || delivery === 'compose' || unresolvedChoice !== undefined ? undefined
@@ -354,14 +336,20 @@ export async function runTriageConfiguredHandoffV1(
         // prefilled New Session composer owns every remaining choice.
         if (existing === undefined && (delivery === 'compose'
             || (directSettlement === undefined && action.workspaceMode !== 'pull_request'))) {
-            return authorNewSession({
+            const composed = await requestTriageNewSessionAuthoringV1(host, {
+                entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
+                actionDefault: triageActionDefaultSeedV1(action), checkoutIntent: checkout, signal: options.signal,
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
-                placement: execution, candidates,
-            },
+                placement: execution ?? ((input.context.kind === 'healthAlert' || input.context.kind === 'failure') && input.context.machine
+                    ? { executionTarget: input.context.machine } : null), candidates,
+            });
+            return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
+                : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })
                 // A caller with no composer (agent, MCP, CLI) keeps its typed choice request.
-                unresolvedChoice ?? (delivery !== 'compose'
-                    ? { kind: 'selectionRequired', fields: [preferredKey === undefined ? 'agentChoice' : 'sessionChoice'] }
-                    : { kind: 'unavailable', reason: 'composerUnavailable' }));
+                : composed.status === 'unsupported' && unresolvedChoice !== undefined ? finish(unresolvedChoice, options.resumeStart)
+                : composed.status === 'unsupported' && delivery !== 'compose'
+                    ? finish({ kind: 'selectionRequired', fields: [agent?.status === 'resolved' ? 'sessionChoice' : 'agentChoice'] })
+                    : unavailable('composerUnavailable');
         }
         if (existing === undefined && action.workspaceMode === 'pull_request') return targetUnavailable('subject_review_workspace_missing');
         let destination: TriageHandoffStartRecoveryV1['state']['input']['destination'];
@@ -372,8 +360,6 @@ export async function runTriageConfiguredHandoffV1(
                 ...(action.profileId === null ? {} : { profileId: action.profileId }), placementCandidates: candidates });
             if (projected.status !== 'settled') return targetUnavailable('new_session_destination_refused', projected.reason);
             destination = projected.destination;
-            if (health && (destination.kind !== 'new' || destination.spawn.executionTarget.serverId !== health.machine.serverId
-                || destination.spawn.executionTarget.machineId !== health.machine.machineId)) return unavailable('scopeMismatch');
         }
         custody = { entries: options.entries.map((entry) => ({ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId })),
             state: { kind: 'handoff', handoff: input,
@@ -464,32 +450,6 @@ export async function runTriageConfiguredHandoffV1(
     }
     if (result.type === 'creationPending') return finish({ kind: 'uncertain', phase: 'create', session: null }, {
         ...custody, state: { ...custody.state, pending: { phase: 'creationPending' }, uncertainPhase: 'create' } });
-    if (health && healthPlacement && result.type === 'creationFailed' && (result.failureCode === 'target_unavailable'
-        || result.failureCode === 'machine_offline' || result.failureCode === 'incompatible_target'
-        || result.failureCode === 'agent_cli_missing' || result.failureCode === 'agent_signed_out'
-        || result.failureCause === 'agent_startup_transport_failed')) {
-        const agentRequired = result.failureCode === 'agent_cli_missing' || result.failureCode === 'agent_signed_out'
-            || result.failureCause === 'agent_startup_transport_failed';
-        const choice: Extract<TriageSessionHandoffResultV1, { kind: 'placement_choice_required' }> = !agentRequired
-            ? { ...projectTriageUnavailableInvestigationPlacementV1(health), agents: investigationAgent?.candidates ?? [] }
-            : { kind: 'placement_choice_required', reason: 'agent_required',
-            candidates: [{ machine: health.machine, ...(health.workspace ? { workspace: health.workspace } : {}), reachable: agentRequired }],
-            agents: investigationAgent?.candidates ?? [] };
-        // Session admission owns this refusal. Author the remaining choice with
-        // the already-read facts rather than retrying or pinning the refused target.
-        const refusedTarget = choice.candidates.find(candidate => candidate.machine.serverId === health.machine.serverId
-            && candidate.machine.machineId === health.machine.machineId);
-        const candidates = projectTriageActionPlacementCandidatesV1({ ...healthPlacement,
-            ...(registry?.status === 'read' ? { availableCandidates: registry.projects.map(project =>
-                refusedTarget && project.serverId === refusedTarget.machine.serverId && project.machineId === refusedTarget.machine.machineId
-                    ? { ...project, reachable: refusedTarget.reachable } : project) } : {}),
-        });
-        const execution = readTriageActionExecutionPlacementV1(healthPlacement);
-        return authorNewSession({ placement: agentRequired ? execution : null, candidates,
-            ...(execution?.directoryIntent === undefined ? {} : { directoryIntent: execution.directoryIntent }),
-            ...(!agentRequired && agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
-        }, choice);
-    }
     if (result.type === 'creationFailed' || result.type === 'rejected' || result.type === 'workspacePreparationFailed') return targetUnavailable('session_start_refused', result.type === 'creationFailed' ? result.failureCause ?? result.failureCode : result.reason);
     const session = { serverId: custody.state.serverId, sessionId: result.sessionId };
     if (result.type === 'linkPending' || result.delivery === 'outcomeUnknown') return finish({ kind: 'uncertain',

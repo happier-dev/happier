@@ -1,4 +1,4 @@
-import type { TriageEntryRepositoryRefV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryRepositoryRefV1, TriageSelectedWorkspaceScopeV1 } from '@happier-dev/triage-protocol/v1';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import type { ProjectKeyV1 } from '@happier-dev/plugin-sdk/sessions';
 
@@ -66,8 +66,8 @@ export type TriageProjectWorktreeV1 = Readonly<{
  *
  * `forge` is absent when no snapshot has resolved one for this project — an
  * unopened project, a non-SCM directory, or a repository with no recognized
- * hosting provider. Such a project is not a candidate for anything; it is
- * silently not matched rather than probed.
+ * hosting provider. Such a Project cannot match a repository join, but an exact
+ * accepted workspace can still identify it. Neither path probes its directory.
  */
 export type TriageProjectCandidateV1 = Readonly<{
     sourceId?: string;
@@ -208,14 +208,20 @@ function byReachableThenRootPath(
     return left.rootPath < right.rootPath ? -1 : 1;
 }
 
-/** All saved-project evidence for a repository, independent of the placement preference. */
+/** Saved Projects matching an exact accepted workspace or repository, before placement preferences. */
 export function resolveTriageLaunchCandidatesV1(input: Readonly<{
     forge?: TriageForgeIdentityV1;
+    /** An accepted Source workspace also identifies a non-SCM Project exactly. */
+    workspace?: TriageSelectedWorkspaceScopeV1;
     projects: readonly TriageProjectCandidateV1[];
 }>): readonly TriageLaunchCandidateV1[] {
-    if (input.forge === undefined) return [];
+    if (input.forge === undefined && input.workspace === undefined) return [];
     return input.projects
-        .filter((project) => sameScmHostingRepositoryIdentity(project.forge, input.forge))
+        .filter((project) => input.workspace !== undefined
+            ? 'id' in project.projectKey && project.projectKey.id === input.workspace.workspaceId
+                && project.serverId === input.workspace.serverId && project.machineId === input.workspace.machineId
+                && project.rootPath === input.workspace.rootPath
+            : sameScmHostingRepositoryIdentity(project.forge, input.forge))
         .map(candidateFor)
         .sort(byReachableThenRootPath);
 }
@@ -238,6 +244,7 @@ function prefill(
 export function resolveTriageLaunchPlacementV1(input: Readonly<{
     /** The entry's declared repository. Absent for every non-forge entry. */
     forge?: TriageForgeIdentityV1;
+    workspace?: TriageSelectedWorkspaceScopeV1;
     projects: readonly TriageProjectCandidateV1[];
     /**
      * Whether `projects` is the WHOLE registry rather than a page of it.
@@ -251,9 +258,9 @@ export function resolveTriageLaunchPlacementV1(input: Readonly<{
     registryComplete?: boolean;
 }>): TriageLaunchPlacementV1 {
     const forge = input.forge;
-    // An entry with no repository resolves no candidate whatever the registry
-    // holds, so a partial read cannot change this answer.
-    if (forge === undefined) return prefill('noForgeIdentity', []);
+    // With neither repository nor accepted workspace identity, the registry cannot
+    // establish a placement. A controller identifier alone is not a Project choice.
+    if (forge === undefined && input.workspace === undefined) return prefill('noForgeIdentity', []);
 
     const matched = resolveTriageLaunchCandidatesV1(input);
 
