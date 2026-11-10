@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSoftware';
+import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
+import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -67,17 +68,17 @@ function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalIn
     };
     const setupFacts = describeMachineSetup(props.setup).filter(fact => fact.id !== 'setup-items');
     const recipesOf = (kind: 'setupRecipe' | 'softwareRecipe') => recipes.filter(item => item.kind === kind).length;
-    const summary = joinHappierFacts(...([
+    // The headline counts read as quiet facts above the sections (lab `q/review` Summary), not as a row of their own.
+    const summary: FactStripFact[] = ([
         ['machinePresets.setup.tab.recipesSetup', recipesOf('setupRecipe') + setupFacts.length],
         ['machinePresets.setup.tab.recipesSoftware', recipesOf('softwareRecipe')],
         ['machinePresets.setup.tab.recipesApps', apps.length],
-    ] as const).flatMap(([label, count]) => count > 0 ? [`${t(label)} ${count}`] : []));
+    ] as const).flatMap(([label, count]) => count > 0 ? [{ key: label, label: t(label), value: String(count) }] : []);
     return (
         <ItemList presentation="page" keyboardShouldPersistTaps="handled" testID="managed-config.review">
-            <ItemGroup>
-                <Item testID="managed-config.review.summary" title={t('managedMachines.creationReview.summary')} subtitleLines={0} mode="info" showChevron={false}
-                    subtitle={summary} />
-            </ItemGroup>
+            {summary.length ? <ItemGroup title={t('managedMachines.creationReview.summary')} surface="none">
+                <BareSectionContent><FactStrip testID="managed-config.review.summary" facts={summary} /></BareSectionContent>
+            </ItemGroup> : null}
             {!inputsValid ? <ItemGroup description={t('managedMachines.creationReview.inputsHelp')}>
                 <Item testID="managed-config.review.edit-inputs" title={t('machinePresets.editSetup')}
                     onPress={() => { onClose(); props.onEditSetup(); }} />
