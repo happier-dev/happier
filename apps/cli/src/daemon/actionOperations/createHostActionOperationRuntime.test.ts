@@ -45,6 +45,57 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation';
 
 describe('finite host operation custody', () => {
+  it.each(['immediate', 'deferred', 'cancelled'] as const)('retains only public contributed refusal facts after %s settlement', async settlement => {
+    const { PluginError } = await import('@happier-dev/plugin-sdk');
+    const { contributedActionFailureResult, projectStructuredMessageActionFailure } = await import('@/plugins/runtime/invocation/actions/contributedActionFailure');
+    const { DaemonPluginStructuredMessageActionExecuteResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const error = new PluginError({ code: settlement === 'cancelled' ? 'cancelled' : 'channels_connection_required',
+      message: 'Set up Channels first', retryable: false,
+      details: { privateProviderFact: 'must-not-cross' },
+      remediation: { kind: 'openSettings', path: '/settings/plugins/happier.channels/connections' } });
+    const failure = { ok: false as const, errorCode: error.code, error: error.message,
+      retryable: error.retryable, data: error.data };
+    const direct = projectStructuredMessageActionFailure(failure);
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'contributed-refusal' });
+    let release!: () => void;
+    const boundary = new Promise<void>(resolve => { release = resolve; });
+    const request = { actionId: 'acme.review/prepare', title: 'Prepare review', requestId: 'source-request', input: {},
+      operation: { version: 1 as const, visibility: 'activity' as const, progress: 'indeterminate' as const,
+        presentation: { onStart: 'activity' as const } },
+      failureResult: contributedActionFailureResult,
+      execute: async (context: Parameters<Parameters<typeof runtime.observePluginExecution>[0]['execute']>[0]) => {
+        if (settlement !== 'immediate') {
+          context.operationAcceptance?.accept({ kind: 'approval_request_created', artifactId: 'native-approval', actionId: 'workspace.materialize' });
+          await boundary;
+        }
+        return failure;
+      } };
+    try {
+      const result = await runtime.observePluginExecution(request);
+      if (settlement !== 'immediate') {
+        expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        release();
+      } else {
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(projectStructuredMessageActionFailure(result)).toEqual(direct);
+      }
+      const receipt = await runtime.handlers.getV2({ operationId: 'contributed-refusal', waitForTerminal: true });
+      expect(receipt.kind).toBe('found');
+      if (receipt.kind !== 'found') throw new Error('Expected contributed operation');
+      expect(receipt.operation.state).toBe(settlement === 'cancelled' ? 'cancelled' : 'failed');
+      if (settlement === 'cancelled') expect(receipt.operation).not.toHaveProperty('result');
+      else {
+        expect(DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(receipt.operation.result)).toEqual(direct);
+        const replay = await runtime.observePluginExecution(request);
+        expect(replay.ok).toBe(false);
+        if (!replay.ok) expect(projectStructuredMessageActionFailure(replay)).toEqual(direct);
+      }
+      expect(direct).toMatchObject({ retryable: false, remediation: { kind: 'openSettings' } });
+      expect(JSON.stringify(receipt.operation)).not.toContain('must-not-cross');
+    } finally { release(); }
+  });
+
   it.each([
     { actionId: 'deployments.backups.restore', errorCode: 'backup_failed', facts: { steps: [
       { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
@@ -96,21 +147,27 @@ describe('finite host operation custody', () => {
       errorCode: 'outcome_unknown', details: { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } } } });
   });
 
-  it('retries a no-effect deployment with a regenerated candidate, preserving authored-input conflicts and settled effects', async () => {
+  it.each([false, true, undefined] as const)('retries a no-effect deployment with a regenerated candidate, preserving authored-input conflicts and settled effects (%s)', async effectAttempted => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home', resolveAccountId: async () => 'owner' });
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 2,
       expectedTargetLinkRevision: 1, requestKey: 'retry-deploy', contentArtifactId: 'first-candidate',
       contentHeaderVersion: 3, contentBodyVersion: 3 };
     const request = { actionId: 'deployments.deploy', input, context: { actionRequestId: 'first-request' },
       execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
-        error: 'database_transaction_conflict_exhausted', effectAttempted: false }) };
-    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, effectAttempted: false });
+        error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) };
+    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });
     let effects = 0;
-    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate' },
+    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate', contentHeaderVersion: 4, contentBodyVersion: 4 },
       context: { actionRequestId: 'newly-approved-request' },
       execute: async () => { effects++; return { ok: true as const, result: { deploymentId: 'receipt' } }; } };
-    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, whenBusy: 'supersede' } }))
+    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, expectedRevision: input.expectedRevision + 1 } }))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    if (effectAttempted !== false) {
+      expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+      expect(await runtime.runActionOperation({ ...retry, input })).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });
+      expect(effects).toBe(0);
+      return;
+    }
     expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
     expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
     expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, contentArtifactId: 'third-candidate' } }))

@@ -5,7 +5,9 @@ import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPlugin
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import { readActionOperationTerminalResultV1, type ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { buildMachinePluginActionExecuteRequest, isMachinePluginActionScopeCurrent } from './machinePluginActionRequest';
 import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
@@ -937,7 +939,9 @@ export async function machinePluginStructuredMessageActionExecute(
         accountLifetime?: ServerAccountScopeLifetime | null;
         isCurrent?: () => boolean;
         /** The mounted host presents and observes the existing durable approval. */
-        onApprovalPending?: (registration: ActionApprovalContinuation) => void;
+        onApprovalPending?: (registration: ActionApprovalRegistration) => void;
+        /** Host-owned declaration; never part of the plugin invocation DTO. */
+        operation?: ActionOperationDeclarationV1;
     }>,
 ): Promise<MachinePluginStructuredMessageActionResult> {
     let issued = false;
@@ -1008,9 +1012,31 @@ export async function machinePluginStructuredMessageActionExecute(
         });
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(response);
-        return parsed.success
-            ? { supported: true, result: parsed.data }
-            : { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
+        if (!parsed.success) return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
+        const approval = parsed.data.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(parsed.data.result) : null;
+        if (!opts.operation || !approval?.success) return { supported: true, result: parsed.data };
+        const scope = opts.accountLifetime?.scope;
+        if (!scope || !payload.requestId) return { supported: false, reason: 'outcomeUnknown' };
+        // The native child remains held by the parent runner. Its Artifact is
+        // presentation only; the source Action's terminal result owns completion.
+        opts.onApprovalPending?.(approval.data.artifactId);
+        const operation = await observeActionOperationByRequestId({
+            serverId: scope.serverId, accountId: scope.accountId, machineId,
+            requestIdentity: { actionId: payload.qualifiedActionId, requestId: payload.requestId },
+            signal: opts.signal,
+            onUpdate: snapshot => {
+                if (snapshot.state === 'running' && snapshot.progress?.kind === 'phase'
+                    && snapshot.progress.approval) opts.onApprovalPending?.(snapshot.progress.approval.artifactId);
+            },
+        });
+        const terminal = operation ? readActionOperationTerminalResultV1(operation) : null;
+        if (!terminal) return { supported: false, reason: 'outcomeUnknown' };
+        if (!terminal.ok) {
+            const refusal = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(operation?.result);
+            if (refusal.success && !refusal.data.ok) return { supported: true, result: refusal.data };
+        }
+        return { supported: true, result: DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(terminal.ok
+            ? { ok: true, result: terminal.result } : { ok: false, code: terminal.errorCode, message: terminal.error }) };
     } catch {
         return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
     }

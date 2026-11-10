@@ -19,6 +19,7 @@ import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/ac
 import {
   TriageSourceDescriptorV1Schema,
   TriageSourcesContributionProtocolV1,
+  TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
   TriageSourceConnectedAccountInputsV1,
   type TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -290,6 +291,7 @@ type TriageActionDeclaration = Readonly<{
   ];
   execution: typeof GITLAB_ACCOUNT_EXECUTION | Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe' | 'writesLocal';
+  operation?: typeof TRIAGE_REVIEW_WORKSPACE_OPERATION_V1;
   confirmation?: Readonly<{ title: string; confirmLabel: string }>;
   confirmationWhen?: Readonly<{ presentUserUi: false }>;
   inputSchema: PluginJsonSchema;
@@ -348,6 +350,8 @@ function declareOperationAction(input: Readonly<{
       ? GITLAB_REVIEW_WORKSPACE_EXECUTION
       : GITLAB_ACCOUNT_EXECUTION,
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
+    ...(input.role === 'prepareReviewWorkspace' || input.role === 'verifyReviewWorkspace'
+      ? { operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 } : {}),
     ...(input.role === 'prepareReviewWorkspace' ? {
       confirmation: { title: 'Prepare GitLab review workspace', confirmLabel: 'Prepare workspace' },
       confirmationWhen: { presentUserUi: false as const },

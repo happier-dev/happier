@@ -18,6 +18,7 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
+import { hasEquivalentDeploymentOperationRetryInput } from '@/deployments/deploymentOperationRetry';
 import type { ManagedNativeOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
 import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
   readDeploymentActionOperationRequestIdV1, isDeploymentTemplatePreviewInputV1,
@@ -27,7 +28,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } 
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 
@@ -350,8 +351,15 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
-      ...(request.operation ? { action: { actionId: spec.id,
-        title: spec.title, operation: request.operation } } : {}),
+      ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { action: { actionId: spec.id,
+        title: spec.title, operation: request.operation ?? spec.operation,
+        ...(request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? {
+          operationReentry: (snapshot: ActionOperationSnapshotV1, input?: unknown) => snapshot.state === 'failed'
+            && snapshot.error?.effectAttempted === false
+            && hasEquivalentDeploymentOperationRetryInput(store.readDeploymentInvocationInput(scope, snapshot.operationId), input)
+              ? 'freshEquivalentInput' as const : 'replay' as const,
+        } : {}),
+      } } : {}),
       scope,
       ...(restoredDeploymentOperationId ? { restoredDeploymentOperationId } : {}),
       ...(request.existingDeploymentOperationId ? { existingDeploymentOperationId: request.existingDeploymentOperationId } : {}),
@@ -503,6 +511,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     title: string;
     operation: ActionOperationDeclarationV1;
     input: unknown;
+    failureResult?: Parameters<typeof runner.observe>[0]['failureResult'];
     requestId?: string;
     sessionId?: string;
     rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
@@ -532,6 +541,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
       ...(request.requestId ? { requestId: request.requestId } : {}),
       input: request.input,
+      ...(request.failureResult ? { failureResult: request.failureResult } : {}),
       execute: async ({ signal, updateProgress, operationAcceptance, publishOwnerUpdate }) => await request.execute({
         signal,
         operationProgress: { update: updateProgress },

@@ -38,6 +38,22 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains only the matching public contributed refusal and omits it for predecessor readers', () => {
+    const result = { ok: false, code: 'connection_required', retryable: false,
+      remediation: { kind: 'openSettings', path: '/settings/plugins/acme.review/connections' } };
+    const raw = { ...baseSnapshot, actionId: 'acme.review/prepare', state: 'failed', startedAt: 110, settledAt: 120,
+      error: { errorCode: result.code, error: result.code }, result };
+    const snapshot = ActionOperationSnapshotV1Schema.parse(raw);
+    expect(snapshot.result).toEqual(result);
+    expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('result');
+    for (const invalid of [
+      { ...raw, actionId: 'session.spawn_new' },
+      { ...raw, result: { ...result, code: 'other_failure' } },
+      { ...raw, result: { ok: true, result: { kind: 'prepared' } } },
+      { ...raw, result: { ...result, privateDetails: 'must-not-cross' } },
+    ]) expect(ActionOperationSnapshotV1Schema.safeParse(invalid).success).toBe(false);
+  });
+
   it.each(['failed', 'cancelled'] as const)('retains completed backup native failure evidence through the %s operation writer and serialized terminal reader', state => {
     const errorCode = state === 'failed' ? 'backup_failed' : 'cancelled';
     const nativeFailure = { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true };
@@ -62,7 +78,8 @@ describe('Action operation v1 contract', () => {
     expect(projectActionOperationListSnapshotV1(active)).toBe(active);
   });
   it('recovers failed and cancelled restore steps from the retained terminal receipt', () => {
-    const result = { steps: [{ id: 'restore', status: 'failed' }] };
+    const result = { steps: [{ id: 'restore', status: 'failed' }],
+      nativeFailure: { exitCode: 1, stderr: 'pg_restore: import failed [REDACTED]', stderrTruncated: false } };
     const failed = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'deployments.backups.restore',
       state: 'failed', startedAt: 110, settledAt: 120, result,
       error: { errorCode: 'restore_failed', error: 'restore_failed' } });
@@ -71,6 +88,8 @@ describe('Action operation v1 contract', () => {
     const cancelled = ActionOperationSnapshotV1Schema.parse({ ...failed, state: 'cancelled', error: undefined });
     expect(readActionOperationTerminalResultV1(cancelled)).toEqual({ ok: false,
       errorCode: 'cancelled', error: 'cancelled', details: result });
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...failed,
+      result: { ...result, nativeFailure: { ...result.nativeFailure, argv: 'PRIVATE_NATIVE_ARGV' } } }).success).toBe(false);
     expect(readActionOperationTerminalResultV1(ActionOperationSnapshotV1Schema.parse(baseSnapshot))).toBeNull();
   });
   it('retains current setup step facts and omits the setup reference for released V1 readers', () => {

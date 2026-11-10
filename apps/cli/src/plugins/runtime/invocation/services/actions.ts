@@ -26,7 +26,7 @@ import type {
     PluginInvocationSurface,
 } from '@happier-dev/plugin-sdk/interactions';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
 import { arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -75,6 +75,7 @@ export type PluginActionsServiceSeed = Readonly<{
     resolveAccountSourceMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     /** The canonical admitted parent, projected once by the target invocation owner. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    finiteOperation?: PluginInvocationServicesSeed['finiteOperation'];
     /** Host-only finite invocation cause; never a fallback for an active-turn reader. */
     actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
     /** Host-private lookup of this invocation's current plugin materialization. */
@@ -403,8 +404,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const executionRunWorkflowRunId = readWorkflowRunId();
         const approvalProfileId = params.seed.readApprovalProfileId
             ? params.seed.readApprovalProfileId() : params.seed.approvalContext?.approvalProfileId;
-        return executionRunWorkflowRunId || approvalProfileId !== undefined
+        return executionRunWorkflowRunId || approvalProfileId !== undefined || params.seed.finiteOperation
             ? { ...params.seed.approvalContext,
+                ...params.seed.finiteOperation,
                 ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
                 ...(approvalProfileId !== undefined ? { approvalProfileId } : {}) }
             : params.seed.approvalContext;
@@ -706,9 +708,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
         // local upload sources. Returning only an approval receipt makes a
         // retained ingress or checkpointed observer create another Ask on every
         // retry instead of waiting for that one consent and its result.
-        const retainsInput = actionId === 'automation.event.source.status.report'
-            || actionId === 'discussion.post' || actionId === 'discussion.reply'
-            || actionId === 'automation.event.admit';
+        const workspaceOperation = isScmReviewWorkspaceMaterializationActionIdV1(actionId)
+            ? params.seed.finiteOperation : undefined;
+        const retainsInput = workspaceOperation !== undefined || isPluginRetainedInputActionIdV1(actionId);
         const invocationRetirement = retainsInput ? new AbortController() : null;
         const executionSignal = invocationRetirement ? AbortSignal.any([signal, invocationRetirement.signal]) : signal;
         const invocationExecutor = retainsInput
@@ -724,6 +726,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
             : actionExecutor;
         const executionRunWorkflowRunId = readWorkflowRunId();
         const executionContext = {
+            ...(workspaceOperation ? { operationOwnerUpdate: { update: update => {
+                workspaceOperation.operationOwnerUpdate.update(update);
+                if (update.progress?.approval) workspaceOperation.operationAcceptance.accept(update.progress.approval);
+            } } satisfies NonNullable<ActionExecutorContext['operationOwnerUpdate']> } : {}),
             ...(executionOriginRequest ? { contributedActionExecutionOrigin: executionOriginRequest } : {}),
             // Preserve original execution/signing custody without inheriting
             // present-person authority or a bypass from the initiating call.

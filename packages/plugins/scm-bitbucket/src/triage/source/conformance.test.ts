@@ -32,6 +32,13 @@ function serializedManifest(): unknown {
  * so a contract change fails here instead of drifting into a second admission opinion.
  */
 describe('Bitbucket Triage source contribution conformance', () => {
+  it.each([BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace, BITBUCKET_TRIAGE_ACTION_IDS.verifyReviewWorkspace])(
+    'keeps workspace source %s observable until its typed result settles', id => {
+      const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+      expect(action).toMatchObject({ execution: { target: 'daemon' },
+        operation: { version: 1, visibility: 'activity', progress: 'reported' } });
+    },
+  );
   it('declares the descriptor, protocol identity and all three required role Actions', () => {
     const result = checkTriageSourceContributionV1(serializedManifest());
 

@@ -2655,6 +2655,130 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await parent.composition.unload(); accountLifetime.retire(); }
     });
 
+    it.each([
+        { capability: 'services', confirmed: true },
+        { capability: 'ui', confirmed: true },
+        { capability: 'services', confirmed: false },
+        { capability: 'ui', confirmed: false },
+    ] as const)('carries native Account review to nested Profile writes through $capability: confirmed=$confirmed', async ({ capability, confirmed }) => {
+        const [{ createProfileOperations }, { createProfileActionExecuteV1 }, { LaunchProfileV2Schema }] = await Promise.all([
+            import('@happier-dev/protocol/profiles/profileOperations'),
+            import('@happier-dev/protocol/profiles/profileActionsV1'),
+            import('@happier-dev/protocol/profiles/v2/schema'),
+        ]);
+        const accountLifetime = clientAccountLifetime();
+        const profiles: import('@happier-dev/protocol/profiles/profileRecordV1').ProfileRecordV1[] = [];
+        const contexts: ActionExecutorContext[] = [];
+        let confirmations = 0;
+        let approvals = 0;
+        const actionsSettings = normalizeActionsSettingsV1({ v: 1,
+            actions: { 'launch_profiles.create': { approvalRequiredSurfaces: ['plugin'] },
+                [formatQualifiedPluginActionId({ pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' })]: { approvalRequiredSurfaces: ['plugin'] } } });
+        // Only persistent Profile/approval storage and the native dialog are
+        // substituted; registration, nested dispatch and Profile policy stay real.
+        const operations = createProfileOperations({
+            readCatalog: () => ({ source: 'destination', authority: 'active', controlRevision: 1,
+                control: { revision: 1, record: { v: 1, phase: 'active', sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory: [] } },
+                status: 'ready', records: profiles.map(record => ({ record, revision: 1 })), diagnostics: [], referenceGuardRevision: 1 }),
+            artifactsById: () => new Map(),
+            writeRecord: async ({ record }) => { profiles.push(record); return { status: 'updated', id: record.id, revision: 1 }; },
+            deleteRecord: async () => { throw new Error('Unexpected Profile deletion'); },
+        });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, actionsSettings, context),
+            profileActionExecute: async (request, context) => {
+                contexts.push(context);
+                return createProfileActionExecuteV1({ operations })(request, context);
+            },
+            approvalsCreate: async () => { approvals++; return { artifactId: 'nested-profile-approval' }; },
+        }));
+        const profileInput = { expectedRevision: 'absent', profile: LaunchProfileV2Schema.parse({ v: 2, id: 'reviewed-default', name: 'Reviewed default',
+            extraEnvironmentVariables: [], defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+            compatibilityByTargetKey: {}, createdAt: 1, updatedAt: 1 }) };
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            dangerLevel: 'writesRemote', surfaces: ['ui', 'plugin'],
+            accountHandler: async (_input, context) => capability === 'services'
+                ? context.services.actions.execute('launch_profiles.create', profileInput)
+                : context.ui!.executeAction('launch_profiles.create', profileInput),
+        });
+        nestedActionConfirmation.onShow = approve => { confirmations++; approve(); };
+        await activation.composition.unload();
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            const outcome = await dispatchPluginSurfaceAction({
+                action: { pluginId: activation.action.pluginId, localId: activation.action.id }, input: {},
+                invocationSurface: confirmed ? 'ui' : 'plugin', clientAction: {},
+                originSurface: confirmed ? 'ui' : 'agent',
+                pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+                hostAction: { execute: executor.execute, context: {
+                    serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId,
+                    actionsSettings,
+                    authority: confirmed ? 'present_user' : 'account_automation',
+                    ...(confirmed ? {} : { interactivePresentation: 'unavailable' as const }),
+                } },
+            });
+            if (confirmed) {
+                expect(outcome, JSON.stringify({ outcome, confirmations, approvals })).toMatchObject({ ok: true, result: { status: 'updated', id: 'reviewed-default' } });
+                expect(profiles.map(record => record.id)).toEqual(['reviewed-default']);
+                expect(contexts).toEqual([expect.objectContaining({ surface: 'plugin', authority: 'account_automation',
+                    actionCaller: expect.objectContaining({ kind: 'plugin', pluginId: activation.action.pluginId,
+                        contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId }) })]);
+            } else {
+                expect(outcome).toMatchObject({ ok: false, reason: 'action_interactive_review_required' });
+                expect(profiles).toEqual([]);
+                expect(contexts).toEqual([]);
+            }
+            expect(confirmations).toBe(confirmed ? 1 : 0);
+            expect(approvals).toBe(0);
+        } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('retains Account Action custody through the real nested host transport', async () => {
+        const [{ captureLazyActionAccountContext }, { resolveOriginalAccountPluginInvocation }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'), import('@/sync/api/externalActionAccountTransport'),
+        ]);
+        const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
+        const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId);
+        const sourceCustody = { kind: 'account_release' as const, pluginId: CALLER_PLUGIN_ID,
+            version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
+        const issued: unknown[] = [];
+        // The real requester/caller transport validates custody before this
+        // daemon HTTP boundary receives the notification effect.
+        const relay = createUiAccountActionTransport({ account,
+            resolveFallbackMachineId: () => 'machine-plugin', transport: async request => {
+                issued.push(request.invocation);
+                return { attemptedChannels: 1, deliveredChannels: 1 };
+            } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            notificationsNotifyMe: async (input, context) => {
+                const caller = resolveOriginalAccountPluginInvocation(context.actionCaller);
+                if (!caller.ok) return caller;
+                const result = await relay({ actionId: 'notifications.notify_me', input, context });
+                const refusal = ActionExecuteFailureSchema.safeParse(result);
+                return refusal.success ? refusal.data : NotificationsNotifyMeResultV1Schema.parse(result);
+            },
+        }));
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            accountSourceCustody: sourceCustody,
+            accountHandler: async (_input, context) => context.ui!.executeAction('notifications.notify_me', { message: 'Review ready' }) });
+        await activation.composition.unload();
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            const outcome = await dispatchPluginSurfaceAction({
+                action: { pluginId: activation.action.pluginId, localId: activation.action.id }, input: {},
+                invocationSurface: 'ui', originSurface: 'ui', clientAction: {},
+                pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+                hostAction: { execute: executor.execute, context: {
+                    serverId: account.serverId, runtimeAccountId: account.accountId, authority: 'present_user',
+                } },
+            });
+            expect(outcome, JSON.stringify(outcome)).toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
+            expect(issued).toEqual([expect.objectContaining({ surface: 'plugin', authority: 'account_automation',
+                caller: expect.objectContaining({ kind: 'plugin', pluginId: CALLER_PLUGIN_ID,
+                    contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId, sourceCustody }) })]);
+        } finally { await activation.composition.unload(); accountLifetime.retire(); account.dispose(); }
+    });
+
     it('keeps Account execution local when an optional Machine transport is present', async () => {
         const accountLifetime = clientAccountLifetime();
         const machine = vi.fn<PluginSurfaceContributedActionTransport>(async () => { throw new Error('Account handler must not be sent to a Machine'); });
@@ -5099,6 +5223,158 @@ describe('plugin-surface action branch selection', () => {
                 expect(newSessionNavigation).not.toHaveBeenCalled();
             } finally {
                 api.dispose?.(); await activation.composition.unload(); accountLifetime.retire();
+            }
+        },
+    );
+
+    it.each([
+        { publication: 'initial snapshot', settlement: 'prepared' },
+        { publication: 'pushed snapshot', settlement: 'prepared' },
+        { publication: 'pushed snapshot', settlement: 'typed refusal' },
+        { publication: 'pushed snapshot', settlement: 'unrelated failed result' },
+    ] as const)(
+        'awaits the prepared parent operation while presenting native approval from its $publication ($settlement)', async ({ publication, settlement }) => {
+            const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+            const { ActionApprovalRequestCreatedResultSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+            const { createActionApprovalContinuationObserver } = await import('@/components/approvals/actionApprovalContinuation');
+            const { consumeActionOperationSnapshotPush } = await import('@/sync/domains/actionOperations/consumeActionOperationSnapshotPush');
+            const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+            const { getActionOperation } = await import('@/sync/ops/actionOperations');
+            const { createPluginOpenNewSessionHostApiHandler } = await import('./pluginOpenNewSessionHostApi');
+            const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+            const { contributedActionFailureResult } = await import('../../../../../cli/src/plugins/runtime/invocation/actions/contributedActionFailure');
+            await prepareSessionDraftPersistenceStorage();
+            actionOperationStore.reset();
+            const accountLifetime = clientAccountLifetime();
+            const scope = { accountId: accountLifetime.scope.accountId, machineId: 'machine-1' };
+            const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'prepare-review-workspace' };
+            const projected = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity), scopes: ['global'],
+                operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } } });
+            const store = createActionOperationStore();
+            const runner = createActionOperationRunner({ store, resolveAction: actionId => ({ actionId,
+                title: 'Prepare review workspace', operation: projected.operation }) });
+            const approvals = ['native-first-ask', 'native-second-ask'].map(artifactId =>
+                ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created', artifactId,
+                    actionId: 'workspace.materialize' }));
+            const refusal = new PluginError({ code: 'channels_connection_required', message: 'Set up Channels first', retryable: false,
+                details: { privateProviderFact: 'must-not-cross' },
+                remediation: { kind: 'openSettings', path: '/settings/plugins/happier.channels/connections' } });
+            const failed = { ok: false as const, errorCode: refusal.code, error: refusal.message,
+                retryable: refusal.retryable, data: refusal.data };
+            let finishPreparation!: () => void;
+            const preparation = new Promise<void>(resolve => { finishPreparation = resolve; });
+            let publishNextApproval!: () => void;
+            let effects = 0;
+            let observedRequestId: string | undefined;
+            let observedActionId: string | undefined;
+            let joinedParent = false;
+            const registered: string[] = [];
+            const approval = createActionApprovalContinuationObserver({ onExecuted() {} });
+            network.setRpcResponder(async request => {
+                if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                    const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
+                    observedRequestId = payload.requestId;
+                    observedActionId = payload.qualifiedActionId;
+                    return await runner.observe({ actionId: payload.qualifiedActionId, requestId: payload.requestId,
+                        failureResult: settlement === 'unrelated failed result'
+                            ? { ...contributedActionFailureResult,
+                                project: () => ({ ok: true, result: { kind: 'prepared', repositoryPath: '/must-not-open' } }) }
+                            : contributedActionFailureResult,
+                        input: payload.input, scope, execute: async context => {
+                            // The fixture plugin's effect stays held by the real finite runner after acceptance.
+                            effects++;
+                            const publish = (receipt: typeof approvals[number]) => context.updateProgress({
+                                phase: 'waiting_for_approval', label: 'Waiting for approval', approval: receipt });
+                            publish(approvals[0]!);
+                            publishNextApproval = () => publish(approvals[1]!);
+                            context.operationAcceptance?.accept(approvals[0]!);
+                            if (publication === 'initial snapshot') publishNextApproval();
+                            await preparation;
+                            return settlement === 'prepared'
+                                ? { ok: true, result: { kind: 'prepared', repositoryPath: '/workspaces/review-final' } } : failed;
+                        } });
+                }
+                if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
+                    return store.list({ ...scope, ...(request.payload as { requestIdentity?: { actionId: string; requestId: string } }) });
+                }
+                if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+                    const payload = request.payload as { operationId: string; waitForTerminal?: boolean };
+                    joinedParent ||= payload.waitForTerminal === true;
+                    const operation = payload.waitForTerminal
+                        ? await runner.waitForTerminal(scope, payload.operationId) : store.get(scope, payload.operationId);
+                    return operation ? { kind: 'found', operation } : { kind: 'not_found' };
+                }
+                return answerActionSchemasRead(request);
+            });
+            const operation = { point: { pointId: 'review', protocol: { id: 'review', version: 1 } },
+                contributor: { pluginId: identity.pluginId, contributionId: 'review-source',
+                    occurrenceId: projected.occurrenceId!, sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY },
+                role: 'prepareReviewWorkspace', action: identity } as const;
+            const selected = { kind: 'submitted' as const, action: identity, input: {},
+                selection: { target: { pluginId: CALLER_PLUGIN_ID, sourceCustody: TARGET_SOURCE_CUSTODY },
+                    point: operation.point, contributor: { pluginId: identity.pluginId, contributionId: 'review-source',
+                        sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY } }, connectedAccount: { kind: 'none' as const },
+                presentation: { connectedAccountLabel: null, machineDisplayName: 'Development Mac' } };
+            const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
+                callerBinding: mountedCallerBinding(), callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                targetSourceCustody: TARGET_SOURCE_CUSTODY, resolveContributedAction: resolveExactClientAction(projected),
+                contributedAction: { ...scope, serverId: accountLifetime.scope.serverId, accountLifetime,
+                    onApprovalPending: registration => {
+                        registered.push(typeof registration === 'string' ? registration : registration.artifactId);
+                        approval.requestApproval(registration);
+                    } },
+                createOpenNewSession: executeSelectedOperation => createPluginOpenNewSessionHostApiHandler({
+                    pluginId: CALLER_PLUGIN_ID, accountLifetime, isCurrent: () => true,
+                    executionTarget: { serverId: accountLifetime.scope.serverId, machineId: scope.machineId }, executeSelectedOperation,
+                }) });
+            newSessionNavigation.mockReset();
+            let settled = false;
+            const request = { ...executeActionRequest({ checkoutIntent: 'preparedReviewWorkspace' }), method: 'openNewSession' as const };
+            const pending = api.handleRequest(request, { targetedOperation: operation, selectedActionInput: selected })
+                .then(result => { settled = true; return result; });
+            try {
+                await vi.waitFor(() => expect(registered).toContain(approvals[0]!.artifactId));
+                expect(settled).toBe(false);
+                expect(approval.getSnapshot().approval?.artifactId).toBe(approvals[0]!.artifactId);
+                await vi.waitFor(() => expect(joinedParent).toBe(true));
+                if (publication === 'pushed snapshot') {
+                    publishNextApproval();
+                    const snapshot = store.list(scope).items[0]!;
+                    await consumeActionOperationSnapshotPush({ accountId: scope.accountId, accountEncryptionMode: 'plain',
+                        sourceServerId: accountLifetime.scope.serverId,
+                        update: { type: 'action-operation-updated', machineId: scope.machineId, content: { t: 'plain', v: snapshot } },
+                        readSnapshot: operationId => getActionOperation({ ...scope, serverId: accountLifetime.scope.serverId, operationId }) });
+                }
+                await vi.waitFor(() => expect(registered).toContain(approvals[1]!.artifactId));
+                expect(settled).toBe(false);
+                expect(newSessionNavigation).not.toHaveBeenCalled();
+                finishPreparation();
+                const result = await pending;
+                expect(observedActionId).toBe(`${identity.pluginId}/${identity.localId}`);
+                expect(observedRequestId).toBeTruthy();
+                expect(network.requests.filter(value => value.method === ACTION_OPERATION_RPC_METHODS_V2.list)
+                    .map(value => value.payload)).toEqual([{ requestIdentity: { actionId: observedActionId, requestId: observedRequestId } }]);
+                expect(effects).toBe(1);
+                if (settlement === 'prepared') {
+                    expect(result).toBeNull();
+                    expect(newSessionNavigation).toHaveBeenCalledTimes(1);
+                    const route = newSessionNavigation.mock.calls[0]![0] as { params: { draftId: string } };
+                    const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+                    expect(readNewSessionDraftFromRepository({ scope: accountLifetime.scope, draftId: route.params.draftId }))
+                        .toMatchObject({ selectedPath: '/workspaces/review-final' });
+                } else {
+                    expect(newSessionNavigation).not.toHaveBeenCalled();
+                    expect(result).toMatchObject(settlement === 'typed refusal'
+                        ? { code: 'unavailable', diagnostics: [refusal.code] }
+                        : { code: 'timeout', diagnostics: ['plugin_ui_action_outcome_unknown'] });
+                    // The host envelope exposes retryability; recovery destinations remain on the
+                    // canonical contributed failure consumed by the dispatch outcome.
+                    if (settlement === 'typed refusal') expect(result).toMatchObject({ retryable: false });
+                    else expect(result).not.toHaveProperty('retryable');
+                    expect(JSON.stringify(result)).not.toContain('must-not-cross');
+                }
+            } finally {
+                finishPreparation(); await pending; api.dispose?.(); approval.dispose(); accountLifetime.retire(); actionOperationStore.reset();
             }
         },
     );

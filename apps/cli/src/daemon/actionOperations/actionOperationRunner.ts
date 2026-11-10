@@ -125,6 +125,11 @@ export function createActionOperationRunner(deps: Readonly<{
     rejoinPendingApproval?: true;
     approvedActionReplay?: import('@happier-dev/protocol/actions').ActionExecutorContext['approvedActionReplay'];
     input?: unknown;
+    /** The admitting owner's public refusal projection also serves retained replies. */
+    failureResult?: Readonly<{
+      project: (failure: Extract<ActionExecuteResult, { ok: false }>) => unknown;
+      read: (result: unknown) => Extract<ActionExecuteResult, { ok: false }> | null;
+    }>;
     deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin;
     domainRef?: import('@happier-dev/protocol/actions').ActionOperationDomainRefV1;
@@ -202,7 +207,7 @@ export function createActionOperationRunner(deps: Readonly<{
     // and only after the owner positively recorded that no effect was attempted.
     const noEffectFreshReentry = existing && hasMatchingOrigin && !hasMatchingInputIdentity
       && existing.state === 'failed' && existing.error?.effectAttempted === false && !active.has(existing.operationId)
-      && action.operationReentry?.(existing, request.input) === 'fresh';
+      && action.operationReentry?.(existing, request.input) === 'freshEquivalentInput';
     if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry && !noEffectFreshReentry)) {
       return await timeWebLatencyPhase('action.operation.input_conflict', () => ({
         ok: false as const, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict',
@@ -435,10 +440,11 @@ export function createActionOperationRunner(deps: Readonly<{
             // Session has started. Its actual owner retains this uncertainty.
             return executionResult;
           }
-          const backupFailure = !executionResult.ok
-            ? projectDeploymentBackupFailureResultV1(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
+          const failureResult = !executionResult.ok
+            ? (executionResult.errorCode === 'cancelled' ? undefined : request.failureResult?.project(executionResult))
+              ?? projectDeploymentBackupFailureResultV1(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
-            deps.store.cancel(operationId, backupFailure);
+            deps.store.cancel(operationId, failureResult);
           } else if (executionResult.ok) {
             terminalSuccess = deps.store.succeed(operationId, executionResult.result);
             settleReviewedIsolationPredecessors({ store: deps.store, scope: request.scope, action, operationId,
@@ -475,7 +481,7 @@ export function createActionOperationRunner(deps: Readonly<{
               || action.actionId === 'deployments.templates.instantiate'
               || isDeploymentDomainChildActionIdV1(action.actionId)
               ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
-            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, backupFailure);
+            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, failureResult);
           }
           return executionResult;
         } catch (error) {
@@ -550,7 +556,10 @@ export function createActionOperationRunner(deps: Readonly<{
       if (!pendingApproval && isFiniteProjectCommand(action.actionId) && existing.domainRef?.kind === 'projectCommand') {
         return { ok: true, result: { operation: existing } };
       }
-      const settled = readActionOperationTerminalResultV1(existing) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
+      const terminal = readActionOperationTerminalResultV1(existing);
+      const refusal = existing.state === 'failed' && terminal && !terminal.ok
+        ? request.failureResult?.read(existing.result) : null;
+      const settled = (refusal && terminal ? { ...terminal, ...refusal } : terminal) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
         ...(existing.operationCredentialUses ? { operationCredentialUses: existing.operationCredentialUses } : {}) } : null);
       const reentry = pendingApproval
         ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
@@ -565,7 +574,8 @@ export function createActionOperationRunner(deps: Readonly<{
         deps.store.updateObservation(existing.operationId, null, undefined);
         return await invoke(existing.operationId, existing.cancellation, true);
       }
-      if (reentry !== 'fresh') {
+      if (reentry !== 'fresh' && !(reentry === 'freshEquivalentInput'
+        && existing.state === 'failed' && existing.error?.effectAttempted === false)) {
         return { ok: false, errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
       }
       // A fresh re-entry starts a new receipt while retaining the prior approval,

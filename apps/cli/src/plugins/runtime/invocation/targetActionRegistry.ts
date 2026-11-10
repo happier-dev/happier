@@ -609,11 +609,16 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     lifetime.settleContext();
                 };
                 const reviewedParent = readHostReviewedParentV1(invocation.approvalContext);
+                const operationAcceptance = invocation.operationAcceptance ?? invocation.approvalContext?.operationAcceptance;
+                const operationOwnerUpdate = invocation.operationOwnerUpdate ?? invocation.approvalContext?.operationOwnerUpdate;
                 const seed = Object.freeze({
                     ...(invocation.machineConnectorSecrets ? { machineConnectorSecrets: invocation.machineConnectorSecrets } : {}),
                     ...(deploymentSource ? { deploymentSource } : {}),
                     ...(managedWorkloads ? { managedWorkloads } : {}),
                     ...(reviewedParent ? { reviewedParent } : {}),
+                    ...(operationAcceptance && operationOwnerUpdate ? { finiteOperation: Object.freeze({
+                        operationAcceptance, operationOwnerUpdate,
+                    }) } : {}),
                     ...(fileDownload ? { fileDownload } : {}),
                     ...(sharedSaveAdmission ? { sharedSaveAdmission } : {}),
                     plugin: Object.freeze({ id: registration.pluginId, version: registration.pluginVersion }),

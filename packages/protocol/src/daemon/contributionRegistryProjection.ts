@@ -3,6 +3,7 @@ export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, 
   type PluginBrowserProjectionEntry, type PluginBrowserTargetProjection, type PluginBrowserActionProjectionEntry,
   type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
 import { z } from 'zod/mini';
 import { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema } from './pluginCatalogPresentation.js';
@@ -88,7 +89,6 @@ import {
   hasValidPluginConnectedAccountPurposeBindingsV2,
 } from '../plugins/actions/v2.js';
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
-import { PluginDiagnosticRemediationV1Schema } from './pluginContributionIntrospection.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { PluginUiHostMethodV1Schema } from '../plugins/ui/hostApiDefinition.js';
 import {
@@ -694,14 +694,7 @@ function isCanonicalBase64(value: string): boolean {
 
 export const DaemonPluginStructuredMessageActionExecuteResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), result: PluginJsonValueV2Schema }),
-  z.strictObject({
-    ok: z.literal(false),
-    code: z.string().check(z.trim(), z.minLength(1)),
-    retryable: z.optional(z.boolean()),
-    actionHandlerInvocation: z.optional(z.literal('notStarted')),
-    message: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    remediation: zMini.optional(PluginDiagnosticRemediationV1Schema),
-  }),
+  PluginActionFailureResponseV1Schema,
 ]));
 export type DaemonPluginStructuredMessageActionExecuteResponse = z.infer<
   typeof DaemonPluginStructuredMessageActionExecuteResponseSchema

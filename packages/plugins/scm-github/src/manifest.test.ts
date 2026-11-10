@@ -44,6 +44,13 @@ const GITHUB_BRAND_ASSET_PROVENANCE = {
 } as const;
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
+it.each([GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace, GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace])(
+  'keeps workspace source %s observable until its typed result settles', id => {
+    const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id);
+    expect(action).toMatchObject({ execution: { target: 'daemon' },
+      operation: { version: 1, visibility: 'activity', progress: 'reported' } });
+  },
+);
 it('asks only for the bound account and leaves review placement to the host without removing the agent workspace input', () => {
   const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace);
   expect(action).toBeDefined();

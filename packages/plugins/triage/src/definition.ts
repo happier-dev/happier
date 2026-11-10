@@ -11,6 +11,7 @@ import { createTriageCompletePullRequestLinkActionHandler,
 import {
   definePlugin,
   type DefinedPlugin,
+  type DefinedPluginActionContracts,
   PluginSearchQueryV1Schema,
   PluginSearchResultV1Schema,
   PluginWorkItemTransitionInputV1Schema,
@@ -22,6 +23,7 @@ import {
   TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
+  TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageReadConfiguredSourceInstancesInputV1Schema,
   TriageReadConfiguredSourceInstancesResultV1Schema,
@@ -218,7 +220,63 @@ export { TRIAGE_DISPLAY_NAME };
  * contribution is declared from a second manifest, package or host branch, and
  * no Triage registration is written by hand.
  */
-function createTriagePlugin() {
+/** Named schema references keep declaration emit from expanding every Action payload. */
+type TriageActionSchemas = {
+  readonly [TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1]: readonly [typeof PluginWorkItemTransitionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
+  readonly 'attention/publish-v1': readonly [typeof TriagePublishAttentionInputV1Schema.jsonSchema, typeof TriagePublishAttentionResultV1Schema.jsonSchema];
+  readonly [TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof SessionPullRequestLinkCompletionInputV1Schema, typeof SessionPullRequestLinkCompletionResultV1Schema];
+  readonly [TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1]: readonly [typeof TriageListEntriesInputV1Schema, typeof TriageListEntriesResultV1Schema];
+  readonly [TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageCreateTaskActionInputV1Schema, typeof TriageCreateTaskActionResultV1Schema];
+  readonly [TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSetTaskOriginErrorInputV1Schema, typeof TriageSetTaskOriginErrorResultV1Schema];
+  readonly [TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadTaskOriginErrorInputV1Schema, typeof TriageReadTaskOriginErrorResultV1Schema];
+  readonly [TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageTaskDraftV1Schema, typeof TriageMountedUiResultV1Schema];
+  readonly [TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageCheckTaskWriteInputV1Schema, typeof TriageMountedUiResultV1Schema];
+  readonly [TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1]: readonly [typeof TriageEditTaskActionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
+  readonly [TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageTransitionTaskActionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
+  readonly [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof TriageLinkEntryToSessionInputV1Schema, typeof TriageLinkEntryToSessionActionResultV1Schema];
+  readonly [TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1]: readonly [typeof TriageMountedSourceRevealInputV1Schema, typeof TriageMountedUiResultV1Schema];
+  readonly [TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1]: readonly [typeof TriageMountedSourceInsertInputV1Schema, typeof TriageMountedUiResultV1Schema];
+  readonly [TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1]: readonly [typeof TriageMountedUiInputV1Schema, typeof TriageMountedUiResultV1Schema];
+  readonly [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: readonly [typeof TriageListEntriesInputV1Schema, typeof TriageListEntriesResultV1Schema];
+  readonly [TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1]: readonly [typeof PluginSearchQueryV1Schema, typeof PluginSearchResultV1Schema];
+  readonly [TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSetEntryPinnedInputV1Schema, typeof TriageSetEntryPinnedResultV1Schema];
+  readonly [TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSetFixPullRequestInputV1Schema, typeof TriageSetFixPullRequestResultV1Schema];
+  readonly [TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadFixPullRequestsInputV1Schema, typeof TriageReadFixPullRequestsResultV1Schema];
+  readonly [TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1]: readonly [typeof TriageListPinnedEntriesInputV1Schema, typeof TriageListPinnedEntriesResultV1Schema];
+  readonly [TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageLinkEntryToSessionInputV1Schema, typeof TriageLinkEntryToSessionActionResultV1Schema];
+  readonly [TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadSourceSessionLinksInputV1Schema, typeof TriageReadSourceSessionLinksActionResultV1Schema];
+  readonly [TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageVerifyExistingReviewWorkspaceInputV1Schema, typeof TriageVerifyExistingReviewWorkspaceResultV1Schema];
+  readonly [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageStartEntrySessionInputV1Schema, typeof TriageStartEntrySessionResultV1Schema];
+  readonly [TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriageStartPullRequestReviewInputV1Schema, typeof TriageStartPullRequestReviewResultV1Schema];
+  readonly [TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1]: readonly [typeof TriageRunConfiguredActionInputV1Schema, typeof TriageRunConfiguredActionResultV1Schema];
+  readonly [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageUnlinkEntryFromSessionActionInputV1Schema, typeof TriageUnlinkEntryFromSessionActionResultV1Schema];
+  readonly [TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1]: readonly [typeof TriageSourceAdministrationActionInputV1Schema, typeof TriageSourceAdministrationActionResultV1Schema];
+  readonly [TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadConfiguredSourceInstancesInputV1Schema, typeof TriageReadConfiguredSourceInstancesResultV1Schema];
+  readonly [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadEntryDetailInputV1Schema, typeof TriageReadEntryDetailResultV1Schema];
+  readonly [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageResolveResourceActionInputV1Schema, typeof TriageResolveResourceActionResultV1Schema];
+  readonly [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReobserveEntryInputV1Schema, typeof TriageReobserveEntryResultV1Schema];
+  readonly [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReobserveEntryInputV1Schema, typeof TriagePullRequestStatusResultV1Schema];
+  readonly [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadSavedViewsInputV1Schema, typeof TriageReadSavedViewsResultV1Schema];
+  readonly [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriageAdministerSavedViewInputV1Schema, typeof TriageAdministerSavedViewResultV1Schema];
+  readonly [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadActionsActionInputV1Schema, typeof TriageReadActionsActionResultV1Schema];
+  readonly [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageAdministerActionInputV1Schema, typeof TriageAdministerActionResultV1Schema];
+};
+
+type TriageActionDeclarations = {
+  readonly [TLocalId in keyof TriageActionSchemas]: {
+    readonly title: string;
+    readonly inputSchema: TriageActionSchemas[TLocalId][0];
+    readonly resultSchema: TriageActionSchemas[TLocalId][1];
+  };
+} & typeof INTERNAL_TASK_ACTIONS_V1;
+
+type TriagePlugin = DefinedPlugin<
+  typeof TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+  DefinedPluginActionContracts<typeof TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageActionDeclarations>,
+  DefinedContributionPointProtocolMap<typeof PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS>
+>;
+
+function createTriagePlugin(): TriagePlugin {
   const plugin = definePlugin({
     id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     version: '0.0.0',
@@ -614,9 +672,9 @@ function createTriagePlugin() {
         // The UI press supplies intent; automated callers keep the shared Ask default.
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
         placementBindings: [],
-        // It writes durable Account state and reaches the generic Session
-        // creator. Nothing outside Happier is touched: the one materialization
-        // that would enter a checkout is not reachable from this wire.
+        // Selected review-workspace preparation remains in this invocation
+        // while its native child waits for approval.
+        operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
         dangerLevel: 'writesLocal',
         confirmationWhen: { presentUserUi: false },
         confirmation: {
@@ -636,6 +694,7 @@ function createTriagePlugin() {
         description: 'Rereads the selected pull request and starts the chosen review engine.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
+        operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
         dangerLevel: 'writesLocal',
         confirmationWhen: { presentUserUi: false },
         confirmation: {
@@ -1131,16 +1190,12 @@ function createTriagePlugin() {
       },
     },
   });
-  const declaredPlugin: DefinedPlugin<
-    typeof TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    typeof plugin.actionContracts,
-    DefinedContributionPointProtocolMap<typeof PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS>
-  > = plugin;
-  return declaredPlugin;
+  const declaredPlugin: TriagePlugin = plugin;
+  return declaredPlugin satisfies typeof plugin;
 }
 
 /** The one Triage plugin value: manifest, activation and contribution points. */
-export const TRIAGE_PLUGIN: ReturnType<typeof createTriagePlugin> = createTriagePlugin();
+export const TRIAGE_PLUGIN: TriagePlugin = createTriagePlugin();
 
 /**
  * The exact target-owned point used to observe admitted V1 source

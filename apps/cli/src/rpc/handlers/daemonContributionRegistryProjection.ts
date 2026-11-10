@@ -32,7 +32,7 @@ import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFram
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readPluginSettingSecretCustody } from '@happier-dev/protocol/plugins/contributions/settings';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { projectStructuredMessageActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     isPluginError,
@@ -194,29 +194,6 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
         'listActionFormConnectedAccountOptions'
     > | null;
 }>;
-
-function projectStructuredMessageActionFailure(result: Readonly<{
-    errorCode: string;
-    error: string;
-    retryable?: boolean;
-    actionHandlerInvocation?: 'notStarted';
-    data?: JsonValue;
-}>) {
-    const authorPayload = readPluginActionFailureAuthorPayload(result.data);
-    // Target invocation already redacts its failures; the same canonical
-    // projection also covers an operation observer's own thrown failure.
-    const message = result.error.trim();
-    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-        ok: false,
-        code: result.errorCode,
-        ...(message && message !== result.errorCode
-            ? { message: projectPluginFailureText(new Error(message)) }
-            : {}),
-        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
-        ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
-        ...(authorPayload.remediation === undefined ? {} : { remediation: authorPayload.remediation }),
-    });
-}
 
 /**
  * One built describe response, keyed by everything the build reads:
@@ -2995,13 +2972,13 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 code: 'plugin_structured_message_action_request_invalid',
             });
         }
+        traceExternalActionStage('action.invoke', request.data.requestId, 'contributed.request',
+            context?.localActionContext?.actionRequestId ?? context?.transportRequestId);
         if (!request.data.invocation) {
             return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
                 ok: false, code: 'plugin_action_unavailable',
             });
         }
-        traceExternalActionStage('action.invoke', request.data.requestId, 'contributed.request',
-            context?.localActionContext?.actionRequestId ?? context?.transportRequestId);
         const traceStage = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
             'action.invoke', context?.localActionContext?.actionRequestId ?? context?.transportRequestId, stage, operation,
         );

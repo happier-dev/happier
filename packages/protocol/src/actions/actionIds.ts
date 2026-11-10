@@ -8,6 +8,18 @@ import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 
+/** Workspace preparation must finish before its containing finite Action can transform its result. */
+export function isScmReviewWorkspaceMaterializationActionIdV1(actionId: string): actionId is 'scm.reviewWorkspace.materializePrepared' {
+  return actionId === 'scm.reviewWorkspace.materializePrepared';
+}
+
+/** Native Actions whose input stays with the plugin invocation through approval and settlement. */
+export function isPluginRetainedInputActionIdV1(actionId: string): boolean {
+  return actionId === 'automation.event.source.status.report'
+    || actionId === 'discussion.post' || actionId === 'discussion.reply'
+    || actionId === 'automation.event.admit';
+}
+
 export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
 export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
 /** A verified new-Session invocation is accepted input before the Session exists. */

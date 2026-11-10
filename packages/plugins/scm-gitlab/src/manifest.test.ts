@@ -38,6 +38,13 @@ function withScanBinding(binding: Readonly<{ path: string; purpose: string }>): 
 }
 
 describe('GitLab plugin manifest', () => {
+  it.each([GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace, GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace])(
+    'keeps workspace source %s observable until its typed result settles', id => {
+      const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+      expect(action).toMatchObject({ execution: { target: 'daemon' },
+        operation: { version: 1, visibility: 'activity', progress: 'reported' } });
+    },
+  );
   it('declares one conforming Triage source contribution with GitLab vocabulary', () => {
     expect(() => assertTriageSourceContributionV1(PLUGIN_MANIFEST)).not.toThrow();
 

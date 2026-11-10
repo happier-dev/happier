@@ -2,6 +2,15 @@ import {
     defineContributionPoint,
     defineContributionProtocol,
 } from '@happier-dev/plugin-sdk/contributions';
+import type { PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
+
+/** A workspace source keeps its typed result alive through native approval. */
+export const TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 = Object.freeze({
+    version: 1,
+    visibility: 'activity',
+    progress: 'reported',
+    presentation: { onStart: 'current' },
+} as const satisfies NonNullable<PluginActionDeclaration['operation']>);
 
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,

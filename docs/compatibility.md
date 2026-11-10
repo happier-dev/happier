@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Contributed Action finite refusals (unreleased 0.3)
+
+Finite contributed Actions retain the same closed public refusal as direct
+execution in the existing operation `result`: code, optional message, retryability,
+handler-start status and remediation. The snapshot accepts it only for a qualified
+contributed Action whose failure code matches the operation error. Author-private
+data is excluded by the shared direct-response projector. Current CLI, Protocol
+and UI reload together; the existing V1 predecessor projection omits this failed
+result while retaining the ordinary operation error. No field, envelope, state or
+wire epoch is added.
+
 ## Public preview exposure invalidation (unreleased 0.3)
 
 The existing ephemeral carrier adds the closed content-free

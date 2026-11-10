@@ -17,7 +17,7 @@ import { AZURE_DEVOPS_ACCOUNT_ACTIONS, sources, READ_HOST_ACCESS, INSTANCE_ACCOU
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1, TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   AZURE_DEVOPS_BASE_CONFIGURATION_FIELD,
@@ -255,6 +255,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Revalidates one selected pull request and materializes its source tip locally.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       confirmation: { title: 'Prepare Azure DevOps review workspace', confirmLabel: 'Prepare workspace' },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
@@ -274,6 +275,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Rereads one pull request and verifies the prepared local HEAD before review.',
       surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       inputSchema: TriageSourceConnectedAccountInputsV1.verifyReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,

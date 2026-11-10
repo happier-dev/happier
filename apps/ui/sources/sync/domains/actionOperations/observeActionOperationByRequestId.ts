@@ -14,6 +14,8 @@ export function observeActionOperationByRequestId(input: Readonly<{
     machineId: string;
     requestIdentity: NonNullable<ActionOperationListV2Request['requestIdentity']>;
     signal?: AbortSignal;
+    /** Present owner progress while this same observer joins the terminal result. */
+    onUpdate?: (operation: ActionOperationSnapshotV1) => void;
 }>): Promise<ActionOperationSnapshotV1 | null> {
     return new Promise(resolve => {
         let finished = false;
@@ -50,6 +52,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
                     if (finished) return;
                     // A push may have located this request while the list was in flight.
                     retained ??= page.items.find(matches) ?? null;
+                    if (retained) input.onUpdate?.(retained);
                     // A request-filtered response naming other work cannot establish this request's outcome.
                     if (!retained && page.items.length > 0) { finish(null); return; }
                 }
@@ -64,6 +67,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
                 }
                 if (!matches(read.operation) || read.operation.operationId !== selected.operationId) { finish(null); return; }
                 if (read.operation.revision < (retained?.revision ?? selected.revision)) return;
+                input.onUpdate?.(read.operation);
                 finish(read.operation);
             } catch (error) {
                 const code = readRpcErrorCode(error);
@@ -85,6 +89,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
                 if (!matches(operation)) return;
                 retained = operation;
                 retainedComplete = complete;
+                input.onUpdate?.(operation);
                 void read();
             } });
         // Subscription immediately publishes a retained result when one exists.

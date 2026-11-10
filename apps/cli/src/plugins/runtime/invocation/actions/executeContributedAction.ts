@@ -30,6 +30,7 @@ import type {
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { contributedActionFailureResult } from './contributedActionFailure';
 import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { ContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
@@ -1071,6 +1072,7 @@ export async function executeContributedAction(params: Readonly<{
       const rawTitle = action.definition.title;
       const observed = await observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
         operation: trackedOperation, input: targetInvocation.input,
+        failureResult: contributedActionFailureResult,
         ...(params.context.operationRpcContext ?? params.approvalContext
           ? { rpcContext: params.context.operationRpcContext ?? params.approvalContext } : {}),
         ...(params.context.operationRequestId ?? params.approvalContext?.actionRequestId

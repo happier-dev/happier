@@ -3154,6 +3154,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 executeHostAction: defaultPluginActionExecute,
             } : {}),
             createMountedHostApiHandlers,
+            onApprovalPending: pluginActionApproval.requestApproval,
         });
     }, [
         baseCreateMountedHostApiHandlers,
@@ -3162,6 +3163,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         currentUiContextMountPublisher,
         accountLifetime,
         defaultPluginActionExecute,
+        pluginActionApproval.requestApproval,
         surfaceTargetKind,
         enclosingDestinationNavigation,
     ]);

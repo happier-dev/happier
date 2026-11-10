@@ -14,6 +14,8 @@ import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/heal
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
+import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
+import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failureResponse.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
@@ -84,9 +86,11 @@ export type ActionOperationDeclarationV1 = Readonly<z.infer<typeof ActionOperati
 
 /** Host-local Action declaration policy for an exact persisted request whose
  * original in-memory invocation is no longer available. This function is not
- * serialized into Action discovery or persisted operation snapshots. */
+ * serialized into Action discovery or persisted operation snapshots. `fresh`
+ * retains exact input identity; `freshEquivalentInput` lets the domain recognize
+ * equivalent prepared input after a confirmed no-effect failure. */
 export const ActionOperationReentryDecisionV1Schema = lazyZodSchema(() => z.enum([
-  'replay', 'reinvoke', 'resume', 'fresh', 'refuse',
+  'replay', 'reinvoke', 'resume', 'fresh', 'freshEquivalentInput', 'refuse',
 ]));
 export type ActionOperationReentryDecisionV1 = z.infer<typeof ActionOperationReentryDecisionV1Schema>;
 export type ActionOperationReentryPolicyV1 = (
@@ -538,9 +542,12 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
       && backup.data.code === (snapshot.state === 'cancelled' ? 'cancelled' : snapshot.error?.errorCode);
     const restore = backupSettlement && snapshot.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
       ? DeploymentRestoreFailureResultV1Schema.safeParse(snapshot.result) : null;
+    const contributed = snapshot.state === 'failed' && parseQualifiedPluginContributionKey(snapshot.actionId)
+      ? PluginActionFailureResponseV1Schema.safeParse(snapshot.result) : null;
+    const contributedRefusal = contributed?.success && contributed.data.code === snapshot.error?.errorCode;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
       && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
-      && !backupFailure && !restore?.success) {
+      && !backupFailure && !restore?.success && !contributedRefusal) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }
@@ -629,8 +636,9 @@ export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperat
     : progress;
   return {
     ...projection,
-    // Released V1 readers forbid a result on a failed Session operation.
-    ...(result !== undefined && !(snapshot.actionId === 'session.spawn_new' && snapshot.state === 'failed') ? { result } : {}),
+    // Released V1 readers forbid failed Session and contributed Action results.
+    ...(result !== undefined && !(snapshot.state === 'failed' && (snapshot.actionId === 'session.spawn_new'
+      || parseQualifiedPluginContributionKey(snapshot.actionId))) ? { result } : {}),
     ...(legacyProgress ? { progress: legacyProgress } : {}),
     ...(legacyDomainRef ? { domainRef: legacyDomainRef } : {}),
     ...(error && snapshot.state === 'failed' ? { error: { errorCode: error.errorCode, error: error.error } } : {}),

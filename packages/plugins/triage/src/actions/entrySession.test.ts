@@ -433,7 +433,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             message: 'Fix the supplied failure.', attachments: [{ value: { value: { forgeEvidence } } }],
         });
     });
-    it.each(['ui', 'voice', 'agent', 'mcp', 'cli'] as const)('carries issue orchestration through the confirmed %s start Action and its same-key recovery', async surface => {
+    it.each(['ui', 'voice', 'agent', 'mcp', 'cli'] as const)('carries issue orchestration through the admitted %s start Action and its same-key recovery', async surface => {
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [
             { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' },
@@ -490,7 +490,9 @@ describe('the Session-start Action a mounted header can actually press', () => {
                     resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
         }), requestCurrentIntent: async ({ fingerprint }) => { confirmed = true; return { status: 'approved', fingerprint }; } });
         expect(await gate.admit({ surface, invocationSurface: surface, input })).toMatchObject({ status: 'admitted' });
-        expect(confirmed).toBe(true);
+        // Local CLI writes use the canonical Direct default; the other
+        // callers still complete their current-intent confirmation here.
+        expect(confirmed).toBe(surface !== 'cli');
         expect(await handler(input, { ...context, surface }))
             .toMatchObject({ type: 'creationPending', outcome: 'accepted' });
         const result = await handler({ ...input, resume: { phase: 'creationPending' } }, { ...context, surface });
@@ -1005,6 +1007,15 @@ describe('the registered formal Review transition', () => {
         expect(action.execution).toEqual({ target: 'daemon' });
         expect(action.dangerLevel).toBe('writesLocal');
     });
+
+    it.each([TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1])(
+        'keeps source workspace preparation observable under the containing %s invocation', (actionId) => {
+            expect(declaredAction(actionId)).toMatchObject({
+                execution: { target: 'daemon' },
+                operation: { version: 1, visibility: 'activity', progress: 'reported' },
+            });
+        },
+    );
 
     it('verifies the provider and prepared local HEAD immediately before one review.start', async () => {
         const events: string[] = [];

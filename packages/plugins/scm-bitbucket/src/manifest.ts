@@ -21,7 +21,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 
 
 
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1, TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { bitbucketConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
@@ -186,6 +186,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reauthorizes and rereads one Bitbucket Cloud pull request before preparing its selected local workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       confirmation: { title: 'Prepare Bitbucket review workspace', confirmLabel: 'Prepare workspace' },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
@@ -205,6 +206,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Rereads one Bitbucket Cloud pull request and verifies the already prepared local workspace before review starts.',
       surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       inputSchema: TriageSourceConnectedAccountInputsV1.verifyReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,

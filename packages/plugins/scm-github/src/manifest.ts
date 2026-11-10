@@ -1,3 +1,5 @@
+import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
+import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { githubAccountCredentialRuntime } from './auth/credentialMaterialization.js';
 import { activate as activateGithubAccountRuntime } from './accountRuntime.js';
 import { GITHUB_ACCOUNT_READ_ACTIONS, GITHUB_NATIVE_READ_ACTIONS, TRIAGE_READ_HOST_ACCESS, TRIAGE_INSTANCE_ACCOUNT_BINDINGS } from './triage/readActions.js';
@@ -10,6 +12,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageSourcesContributionProtocolV1,
+  TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
   TriageSourceCredentialInputsV1,
   TriageTaskWriteResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -414,7 +417,107 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA = {
   required: ['sourceKey', 'nextEligibleAt'],
 } satisfies PluginJsonSchema;
 
-function createGithubPlugin() {
+/** Named schema references retain exact Action payloads in portable declarations. */
+type GithubActionSchemas = {
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: readonly [typeof GithubPullRequestPreviewStatusInputV1Schema.jsonSchema, typeof GithubPullRequestPreviewStatusResultV1Schema.jsonSchema];
+  readonly 'ui/ci-view-v1': readonly [typeof ForgeCiMountedIntentInputV1Schema, typeof ForgeCiMountedIntentResultV1Schema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.linkSession]: readonly [typeof TriageSourceCredentialInputsV1.linkSession.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.linkSession.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace]: readonly [typeof TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace]: readonly [typeof TriageSourceCredentialInputsV1.verifyReviewWorkspace.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissDependabot]: readonly [typeof GithubDependabotDismissInputV1Schema.jsonSchema, typeof GithubSecurityAlertMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenDependabot]: readonly [typeof GithubDependabotReopenInputV1Schema.jsonSchema, typeof GithubSecurityAlertMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissCodeScanning]: readonly [typeof GithubCodeScanningDismissInputV1Schema.jsonSchema, typeof GithubSecurityAlertMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenCodeScanning]: readonly [typeof GithubCodeScanningReopenInputV1Schema.jsonSchema, typeof GithubSecurityAlertMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_FILE_VIEWED_ACTION_IDS_V1.set]: readonly [typeof GithubFileViewedSetInputV1Schema, typeof ScmFileViewedSetResultV1Schema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceAdd]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceRemove]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueAdd]: readonly [typeof GithubSubIssueAddInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueRemove]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueReprioritize]: readonly [typeof GithubSubIssueReprioritizeInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByAdd]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByRemove]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingAdd]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingRemove]: readonly [typeof GithubRelatedEntryInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemAdd]: readonly [typeof GithubProjectItemAddInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemRemove]: readonly [typeof GithubProjectItemRemoveInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldSet]: readonly [typeof GithubProjectFieldSetInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldClear]: readonly [typeof GithubProjectFieldClearInputV1Schema.jsonSchema, typeof GithubRelationshipMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEdit]: readonly [typeof GithubPullRequestEditInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet]: readonly [typeof GithubEntryMilestoneSetInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTypeSet]: readonly [typeof GithubIssueTypeSetInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryLock]: readonly [typeof GithubEntryLockInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnlock]: readonly [typeof GithubEntryUnlockInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestChangeBase]: readonly [typeof GithubPullRequestChangeBaseInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete]: readonly [typeof GithubPullRequestHeadBranchDeleteInputV1Schema.jsonSchema, typeof GithubPullRequestHeadBranchDeleteResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchRestore]: readonly [typeof GithubPullRequestHeadBranchRestoreInputV1Schema.jsonSchema, typeof GithubPullRequestHeadBranchRestoreResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRevert]: readonly [typeof GithubPullRequestRevertInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTransfer]: readonly [typeof GithubIssueTransferInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueDelete]: readonly [typeof GithubEntryAdministrationInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issuePin]: readonly [typeof GithubEntryAdministrationInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueUnpin]: readonly [typeof GithubEntryAdministrationInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entrySubscribe]: readonly [typeof GithubEntryAdministrationInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnsubscribe]: readonly [typeof GithubEntryAdministrationInputV1Schema.jsonSchema, typeof GithubEntryAdministrationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate]: readonly [typeof GithubPullRequestPendingReviewCreateInputV1Schema.jsonSchema, typeof GithubPullRequestReviewMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit]: readonly [typeof GithubPullRequestPendingReviewSubmitInputV1Schema.jsonSchema, typeof GithubPullRequestReviewMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete]: readonly [typeof GithubPullRequestPendingReviewDeleteInputV1Schema.jsonSchema, typeof GithubPullRequestReviewMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss]: readonly [typeof GithubPullRequestReviewDismissInputV1Schema.jsonSchema, typeof GithubPullRequestReviewMutationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestConvertToDraft]: readonly [typeof GithubPullRequestConvertToDraftInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge]: readonly [typeof GithubPullRequestMergeInputV1Schema.jsonSchema, typeof GithubPullRequestMergeActionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEnqueue]: readonly [typeof GithubPullRequestEnqueueInputV1Schema.jsonSchema, typeof GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestDequeue]: readonly [typeof GithubPullRequestDequeueInputV1Schema.jsonSchema, typeof GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAutoMergeSet]: readonly [typeof GithubPullRequestAutoMergeSetInputV1Schema.jsonSchema, typeof GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose]: readonly [typeof GithubPullRequestCloseInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen]: readonly [typeof GithubPullRequestReopenInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady]: readonly [typeof GithubPullRequestMarkReadyInputV1Schema.jsonSchema, typeof GithubPullRequestMarkReadyActionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview]: readonly [typeof GithubPullRequestReviewPublicationInputV1Schema.jsonSchema, typeof GithubPullRequestReviewPublicationResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate]: readonly [typeof GithubPullRequestReviewCommentCreateInputV1Schema.jsonSchema, typeof GithubPullRequestReviewCommentCreateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadReply]: readonly [typeof GithubPullRequestThreadReplyInputV1Schema.jsonSchema, typeof GithubPullRequestThreadReplyResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueComment]: readonly [typeof GithubIssueCommentInputV1Schema.jsonSchema, typeof GithubIssueCommentResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch]: readonly [typeof GithubPullRequestUpdateBranchInputV1Schema.jsonSchema, typeof GithubPullRequestUpdateBranchResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers]: readonly [typeof GithubPullRequestAddReviewersInputV1Schema.jsonSchema, typeof GithubPullRequestReviewersResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers]: readonly [typeof GithubPullRequestRemoveReviewersInputV1Schema.jsonSchema, typeof GithubPullRequestReviewersResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution]: readonly [typeof GithubPullRequestThreadResolutionInputV1Schema.jsonSchema, typeof GithubPullRequestThreadResolutionResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit]: readonly [typeof GithubCommentEditInputV1Schema.jsonSchema, typeof GithubCommentEditResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate]: readonly [typeof GithubCommentCreateInputV1Schema.jsonSchema, typeof GithubCommentCreateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.create]: readonly [typeof TriageSourceCredentialInputsV1.create.jsonSchema, typeof TriageTaskWriteResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.edit]: readonly [typeof TriageSourceCredentialInputsV1.edit.jsonSchema, typeof TriageTaskWriteResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_ACTION_IDS_V1.transition]: readonly [typeof TriageSourceCredentialInputsV1.transition.jsonSchema, typeof TriageTaskWriteResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose]: readonly [typeof GithubIssueCloseInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen]: readonly [typeof GithubIssueReopenInputV1Schema.jsonSchema, typeof GithubPullRequestStateResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd]: readonly [typeof GithubIssueAssigneeAddInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove]: readonly [typeof GithubIssueAssigneeRemoveInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd]: readonly [typeof GithubIssueLabelAddInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove]: readonly [typeof GithubIssueLabelRemoveInputV1Schema.jsonSchema, typeof GithubIssueDeltaResultV1Schema.jsonSchema];
+  readonly [GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID]: readonly [typeof GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_INPUT_SCHEMA, typeof GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA];
+  readonly [GITHUB_WEBHOOK_ACTION_ID]: readonly [typeof GITHUB_WEBHOOK_ACTION_INPUT_SCHEMA, typeof GITHUB_WEBHOOK_ACTION_RESULT_SCHEMA];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.setup]: readonly [PluginJsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.setup.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_CHECKS_WAIT_ACTION_ID]: readonly [typeof GITHUB_CHECKS_WAIT_INPUT_SCHEMA, typeof GITHUB_CHECKS_WAIT_RESULT_SCHEMA];
+  readonly [GITHUB_CHECKS_SETUP_ACTION_ID]: readonly [PluginJsonSchema, ReturnType<typeof createPluginEventAutomationSetupResultV1JsonSchema>];
+  readonly [GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID]: readonly [PluginJsonSchema, typeof GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA];
+  readonly [GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID]: readonly [ReturnType<typeof githubCredentialInputSchema>, ReturnType<typeof createPluginEventAutomationSetupResultV1JsonSchema>];
+  readonly [GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID]: readonly [typeof PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, typeof PluginEventAutomationHistoryGapResetActionResultV1JsonSchema];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.connectionTest]: readonly [typeof ConversationProvidersContributionProtocolV1.operations.connectionTest.declaration.input.schema.jsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.connectionTest.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.endpointResolve]: readonly [typeof ConversationProvidersContributionProtocolV1.operations.endpointResolve.declaration.input.schema.jsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.endpointResolve.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.principalResolve]: readonly [typeof ConversationProvidersContributionProtocolV1.operations.principalResolve.declaration.input.schema.jsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.principalResolve.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.observationsPoll]: readonly [typeof ConversationProvidersContributionProtocolV1.operations.observationsPoll.declaration.input.schema.jsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.observationsPoll.declaration.resultSchema.jsonSchema];
+  readonly [GITHUB_CHANNEL_ACTION_IDS.messageDeliver]: readonly [typeof ConversationProvidersContributionProtocolV1.operations.messageDeliver.declaration.input.schema.jsonSchema, typeof ConversationProvidersContributionProtocolV1.operations.messageDeliver.declaration.resultSchema.jsonSchema];
+};
+
+type GithubActionDeclarations = {
+  readonly [TLocalId in keyof GithubActionSchemas]: {
+    readonly title: string;
+    readonly inputSchema: GithubActionSchemas[TLocalId][0];
+    readonly resultSchema: GithubActionSchemas[TLocalId][1];
+  };
+} & typeof GITHUB_LOCAL_ACT_ACTIONS_V1 & typeof GITHUB_ACCOUNT_READ_ACTIONS & typeof GITHUB_CI_ACTION_BINDINGS_V1 & typeof GITHUB_OVERVIEW_TARGET_ACTIONS_V1 & typeof GITHUB_RELEASE_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_MONITORING_ACTIONS_V1;
+
+type GithubPlugin = DefinedPlugin<
+  typeof GITHUB_PLUGIN_ID,
+  DefinedPluginActionContracts<typeof GITHUB_PLUGIN_ID, GithubActionDeclarations>,
+  DefinedContributionPointProtocolMap<Readonly<Record<string, never>>>
+>;
+
+function createGithubPlugin(): GithubPlugin {
   let activeGithubPluginRuntime: GithubPluginActivationRuntime | null = null;
 
   function requireActiveGithubPluginRuntime(): GithubPluginActivationRuntime {
@@ -466,7 +569,7 @@ function createGithubPlugin() {
       { field: 'failed', label: { key: 'plugins.github.ci.counts.failed', fallback: 'Failed' } },
     ],
   };
-  return definePlugin({
+  const plugin = definePlugin({
   id: GITHUB_PLUGIN_ID,
   version: '0.0.0',
   displayName: 'GitHub SCM hosting provider',
@@ -763,6 +866,7 @@ function createGithubPlugin() {
       description: 'Rereads one GitHub pull request and prepares its source branch in the selected workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       confirmation: { title: 'Prepare GitHub review workspace', confirmLabel: 'Prepare workspace' },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
@@ -782,6 +886,7 @@ function createGithubPlugin() {
       description: 'Rereads one GitHub pull request and verifies the prepared workspace still has its exact head.',
       surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
       inputSchema: TriageSourceCredentialInputsV1.verifyReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -2150,9 +2255,13 @@ function createGithubPlugin() {
   },
   setup: setupGithubPluginGeneration,
   });
+  const declaredPlugin: GithubPlugin = plugin;
+  return declaredPlugin satisfies typeof plugin;
 }
 
-export const GITHUB_PLUGIN = { ...createGithubPlugin(), activateAccount: activateGithubAccountRuntime };
+export const GITHUB_PLUGIN: Omit<ReturnType<typeof createGithubPlugin>, 'activateAccount'> & {
+  activateAccount: typeof activateGithubAccountRuntime;
+} = { ...createGithubPlugin(), activateAccount: activateGithubAccountRuntime };
 
 export const PLUGIN_MANIFEST = GITHUB_PLUGIN.manifest;
 

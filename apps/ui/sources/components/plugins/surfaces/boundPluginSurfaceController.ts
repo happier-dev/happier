@@ -85,6 +85,7 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import type { PluginMachineExecutionOriginStateV1, PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { describePluginCollectionWriterRefusal, describePluginExecutionOriginRefusal, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -423,6 +424,8 @@ export type BoundPluginSurfaceBinding = Readonly<{
     openConnectedAccounts?: PluginOpenConnectedAccountsHandler;
     /** Transport overrides for the daemon boundary (tests). */
     executeContributedAction?: PluginSurfaceContributedActionTransport;
+    /** Existing mounted approval presentation, independent of the parent result. */
+    onApprovalPending?: (registration: ActionApprovalRegistration) => void;
     readResource?: PluginSurfaceResourceReadTransport;
     readStoredImage?: PluginStoredImageReadTransport;
     watchResource?: Partial<PluginSurfaceResourceWatchTransport>;
@@ -1537,6 +1540,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             ...(executionTarget ? { contributedAction: {
                 ...executionTarget,
                 ...(accountLifetime ? { accountLifetime } : {}),
+                ...(binding?.onApprovalPending ? { onApprovalPending: binding.onApprovalPending } : {}),
                 ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
                 ...(binding?.executeContributedAction ? { execute: binding.executeContributedAction } : {}),
             } } : {}),
@@ -1958,6 +1962,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             binding?.resourceNavigation?.targetKind,
             binding?.resourceNavigation?.openSurface,
             binding?.executeContributedAction,
+            binding?.onApprovalPending,
             binding?.readResource,
             binding?.watchResource,
             binding?.openableContent,

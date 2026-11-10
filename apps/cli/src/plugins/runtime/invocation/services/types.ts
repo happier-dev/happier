@@ -124,6 +124,11 @@ export type PluginInvocationServicesSeed = Readonly<{
     resolveAccountSourceMachine?(signal?: AbortSignal): ReturnType<typeof import('../actions/accountMachineActionTransport').resolveAccountMachineSourceActionMachine>;
     /** Existing issuer's admitted whole-operation parent; never public plugin input. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    /** Existing finite operation owns nested effect progress and early transport acceptance. */
+    finiteOperation?: Readonly<{
+        operationAcceptance: NonNullable<ActionExecutorContext['operationAcceptance']>;
+        operationOwnerUpdate: NonNullable<ActionExecutorContext['operationOwnerUpdate']>;
+    }>;
     /** Produced only after the real Action declaration and normalized input were admitted. */
     fileDownload?: Readonly<{ destinationId: string; retirementSignal: AbortSignal;
         operationAcceptance?: ActionExecutorContext['operationAcceptance'];

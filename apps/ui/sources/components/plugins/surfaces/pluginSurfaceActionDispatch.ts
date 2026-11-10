@@ -11,6 +11,7 @@ import { evaluateContributionAvailability, resolveInvocationContributionPolicyFa
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
@@ -82,7 +83,7 @@ import {
 import { observeDaemonActionRead } from './daemonActionRead';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import {
     resolvePluginUiClientActionRegistration,
     resolvePluginUiClientActionRefusal,
@@ -282,7 +283,7 @@ export type PluginSurfaceContributedActionBinding = Readonly<{
     serverId?: string | null;
     /** Borrowed host authority, never part of the plugin invocation DTO. */
     accountLifetime?: ServerAccountScopeLifetime | null;
-    onApprovalPending?: (registration: ActionApprovalContinuation) => void;
+    onApprovalPending?: (registration: ActionApprovalRegistration) => void;
     sessionId?: string;
     /** Opaque server-issued message identity, resolved by the daemon before dispatch. */
     messageActionReference?: MessageActionReferenceV1;
@@ -1574,6 +1575,15 @@ async function executeClientContributedAction(
                 if (current.action.execution.target === 'account' && (!accountOrigin || !accountLifetime)) {
                     throw new PluginError({ code: 'plugin_surface_account_action_unavailable' });
                 }
+                const nestedHostAction = accountOrigin && confirmedInvocation && input.hostAction ? {
+                    ...input.hostAction,
+                    context: { ...input.hostAction.context,
+                        hostReviewedChild: createHostReviewedChildPortV1({
+                            actionId: 'action.invoke', input: confirmedInvocation.input,
+                            context: { ...input.hostAction.context, surface: invocationSurface, authority: invocationAuthority },
+                            reviewAdmitted: true,
+                        }) },
+                } : input.hostAction;
                 const accountCapability = accountOrigin && accountLifetime ? createPluginSurfaceAccountActionServices({
                     pluginId: current.action.pluginId, actionId: current.action.id, occurrenceId: current.registration.occurrenceId,
                     actionInput,
@@ -1595,9 +1605,9 @@ async function executeClientContributedAction(
                             action, input: value,
                             machineAvailability: options.machineAvailability ?? input.machineAvailability,
                             ...(options.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
-                            ...(input.hostAction ? { hostAction: { ...input.hostAction,
-                                context: { ...input.hostAction.context, sessionTargetsV1: undefined,
-                                    ...(options.sessionAddress !== undefined && input.hostAction.context?.expectedAccountId === undefined
+                            ...(nestedHostAction ? { hostAction: { ...nestedHostAction,
+                                context: { ...nestedHostAction.context, sessionTargetsV1: undefined,
+                                    ...(options.sessionAddress !== undefined && nestedHostAction.context?.expectedAccountId === undefined
                                         ? { expectedAccountId: accountLifetime.scope.accountId } : {}),
                                     requestContributedActionCurrentIntent: undefined, contributedActionInvocation: undefined } } } : {}),
                             ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
@@ -1692,7 +1702,7 @@ async function executeClientContributedAction(
                         } finally { cancellation.dispose(); }
                     } : undefined;
                 const clientCapability = accountCapability && input.readObservation ? undefined
-                    : createClientActionUi(input, current, signal, accountUiContext);
+                    : createClientActionUi({ ...input, hostAction: nestedHostAction }, current, signal, accountUiContext);
                 const releaseCapability = () => {
                     try { clientCapability?.dispose(); } finally {
                         if (accountCapability) {
@@ -2100,7 +2110,13 @@ async function executeHostAction(
         context = { ...context, serverId: address.sessionAddress.serverId,
             expectedSessionAddress: address.sessionAddress };
     }
-    const result = await binding.execute(actionId, input.input, context);
+    const reviewedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
+    const result = reviewedParent ? await invokeHostReviewedChildV1({
+        parent: reviewedParent, context,
+        child: { action: actionId, role: 'actions.execute', input: input.input ?? {} },
+        admittedReview: { action: actionId, role: 'actions.execute', surface: 'plugin' },
+        execute: (operand, childContext, childActionId) => binding.execute(childActionId, operand, childContext),
+    }) : await binding.execute(actionId, input.input, context);
     if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
     return failure('unavailable', result.errorCode, result.failureCause ? { details: result.failureCause } : undefined);
 }
@@ -2109,8 +2125,8 @@ async function executeHostAction(
 function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, caller: MountedPluginActionCaller | null,
     clientCaller: Extract<NonNullable<DispatchPluginSurfaceActionInput['invocation']>, { kind: 'clientPluginAction' }>['clientActionBinding'] | null,
     actionId: ActionId): ActionExecutorContext {
-    const sourceCustody = input.callerSourceCustody ?? caller?.mountedBinding.sourceCustody;
     const declarationBinding = caller?.mountedBinding ?? clientCaller;
+    const sourceCustody = input.callerSourceCustody ?? declarationBinding?.sourceCustody;
     const { sessionListAccess, resourceActionInvocation: _resourceActionInvocation, ...hostContext } = input.hostAction?.context ?? {};
     const resourceCaller = input.resourceCaller;
     // A mounted read belongs to one invocation. Re-derive it at each entry;
@@ -2372,6 +2388,7 @@ async function executeContributedAction(
         serverId: binding.serverId ?? null,
         ...(binding.accountLifetime === undefined ? {} : { accountLifetime: binding.accountLifetime }),
         ...(binding.onApprovalPending ? { onApprovalPending: binding.onApprovalPending } : {}),
+        ...(admittedOperation ? { operation: admittedOperation } : {}),
         isCurrent: () => input.isCurrent?.() !== false && input.isContributedActionAvailable?.() !== false,
         expectedContributorOccurrenceId: projectedAction.occurrenceId,
         ...(input.requiredReadOnly ? { requiredReadOnly: true } : {}),

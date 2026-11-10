@@ -1858,6 +1858,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       } : {}),
       ...(replaySessionTargets ? { sessionTargetsV1: replaySessionTargets } : {}),
       actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay ? { kind: 'host' } : replayCaller),
+      // This exact live plugin invocation already holds the receiver's admitted
+      // Machine custody. Consent resumes that invocation rather than borrowing
+      // the deciding person's filesystem identity.
+      ...(retainedPluginContext?.context.machineAdmission
+        ? { machineAdmission: retainedPluginContext.context.machineAdmission } : {}),
+      ...(retainedPluginContext?.context.verifyMachineAdmissionCurrent
+        ? { verifyMachineAdmissionCurrent: retainedPluginContext.context.verifyMachineAdmissionCurrent } : {}),
       ...(!appOwnedContextReplay && replayCaller.kind === 'workflowRun'
         ? { executionRunWorkflowRunId: replayCaller.runId } : {}),
       ...(args.retainedPluginSettingsIntent

@@ -307,6 +307,7 @@ export type {
 
 export {
     TriageSourceConnectedAccountInputsV1,
+    TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
     TriageSourceCredentialInputsV1,
     TriageSourcesContributionPointV1,
     TriageSourcesContributionProtocolV1,

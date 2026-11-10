@@ -49,7 +49,6 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             if (!handler || !occurrence) throw new Error('Expected real authored Action runtime');
             const request = { machineId: 'machine-1', qualifiedActionId: 'acme.composer/install',
                 expectedContributorOccurrenceId: occurrence, executionSurface: 'ui', input: {} };
-            expect(await handler(request)).toMatchObject({ ok: false, code: 'plugin_action_unavailable' });
             const submitted = { ...request, qualifiedActionId: 'acme.composer/submit', sessionId: 'requester-session',
                 invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
                     composer: { kind: 'session', sessionId: 'requester-session' }, revision: 1,
@@ -57,6 +56,22 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             const uiRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
             const transportId = 'fd0b0146-17a5-431c-bc69-3a3fa865b1d7';
             const authorityId = '1137cf2a-27cf-481b-b28f-951fc49f9c65';
+            const refusedContext = { signal: new AbortController().signal, transportRequestId: `rpc_${transportId}` };
+            expect(await handler({ ...request, requestId: uiRequestId, input: { marker: 'PRIVATE_REFUSED_INPUT' } }, refusedContext))
+                .toEqual({ ok: false, code: 'plugin_action_unavailable' });
+            expect(log.mock.calls).toContainEqual(['[external-action-stage]', {
+                actionId: 'action.invoke', rootRequestId: uiRequestId, stage: 'contributed.request', transportRequestId: transportId,
+            }]);
+            expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_');
+            for (const refused of [
+                { input: { ...request, requestId: 'PRIVATE_AUTHORED_REQUEST' }, code: 'plugin_action_unavailable' },
+                { input: { ...request, requestId: uiRequestId, privatePayload: 'PRIVATE_INVALID_PAYLOAD' }, code: 'plugin_structured_message_action_request_invalid' },
+            ]) {
+                log.mockClear();
+                expect(await handler(refused.input, refusedContext)).toEqual({ ok: false, code: refused.code });
+                expect(log.mock.calls.some(([message]) => message === '[external-action-stage]')).toBe(false);
+                expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_');
+            }
             const cases = [
                 { requestId: uiRequestId, actionRequestId: undefined, root: transportId, paired: true },
                 { requestId: uiRequestId, actionRequestId: authorityId, root: authorityId, paired: true },
