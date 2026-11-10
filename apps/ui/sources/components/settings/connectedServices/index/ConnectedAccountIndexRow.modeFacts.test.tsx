@@ -13,7 +13,12 @@ import {
 } from '@/hooks/server/connectedServices/qualifiedConnectedAccountQuotaTestHarness';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
 import { storage } from '@/sync/domains/state/storageStore';
-import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
+import {
+    __resetQualifiedConnectedAccountQuotaSnapshotStore,
+    buildQualifiedQuotaSnapshotScopeKey,
+    getQualifiedQuotaSnapshotEntry,
+    loadQualifiedQuotaSnapshotOnce,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 
 import { ConnectedAccountIndexLiveFacts, ConnectedAccountIndexStatusLines, type ConnectedAccountIndexFacts } from './ConnectedAccountIndexRow';
 
@@ -51,6 +56,10 @@ it.each([true, false])('projects observed subscription facts with explicit API-k
     }
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
+        const context = boundary.context(snapshot.ref);
+        const key = buildQualifiedQuotaSnapshotScopeKey(context);
+        loadQualifiedQuotaSnapshotOnce(key, context);
+        await vi.waitFor(() => expect(getQualifiedQuotaSnapshotEntry(key).read).toBe(true));
         screen = await renderScreen(<InjectedAuthProvider credentials={boundary.account.credentials}><Probe /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(observedSubscription).toMatchObject(subscription));
         await vi.waitFor(() => expect(facts?.fetchedAt).toBe(now));

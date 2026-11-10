@@ -5,6 +5,7 @@ import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
 
@@ -64,6 +65,7 @@ describe('ConnectedAccountDeviceForm', () => {
 
     it('retires the countdown at expiry and restarts it for a new code', async () => {
         vi.useFakeTimers();
+        const census = installTimerCensus();
         try {
             const now = Date.now();
             const props = { userCode: 'ABCD', busy: false, onPoll: vi.fn(), onResume: vi.fn() };
@@ -71,13 +73,16 @@ describe('ConnectedAccountDeviceForm', () => {
             await act(async () => { vi.advanceTimersByTime(2000); });
             expect(screen.findByTestId('connected-account-device:resume')).not.toBeNull();
             expect(vi.getTimerCount()).toBe(0);
+            const firesAtExpiry = census.readFires();
             await act(async () => { vi.advanceTimersByTime(60_000); });
             expect(vi.getTimerCount()).toBe(0);
+            expect(census.readFires()).toEqual(firesAtExpiry);
+            expect(props.onPoll).not.toHaveBeenCalled();
             await screen.update(<ConnectedAccountDeviceForm {...props} expiresAtMs={Date.now() + 2000} />);
             expect(screen.findByTestId('connected-account-device:resume')).toBeNull();
             expect(vi.getTimerCount()).toBe(1);
             await screen.unmount();
-        } finally { vi.useRealTimers(); }
+        } finally { census.stop(); vi.useRealTimers(); }
     });
 
     it('lets the owner cancel an active device sign-in before its code expires', async () => {

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -17,6 +17,7 @@ import { t } from '@/text';
 import { readQualifiedConnectedAccountQuota } from '@/sync/api/account/qualifiedConnectedAccountQuotaTransport';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createLegacyQuotaTestHarness, makeQuotaSnapshot, plainQuotaResponse } from './useConnectedServiceQuotaSnapshots.testkit';
+import { storage } from '@/sync/domains/state/storageStore';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -42,6 +43,54 @@ describe('useQualifiedConnectedAccountQuota', () => {
         __resetQualifiedConnectedAccountQuotaSnapshotStore();
         await boundary?.dispose();
         vi.restoreAllMocks();
+    });
+
+    it('E2 mounts an account row without quota acquisition, consumes detail updates, and keeps explicit Refresh', async () => {
+        const { ConnectedAccountIndexLiveFacts, ConnectedAccountIndexRowView, ConnectedAccountIndexActions } =
+            await import('@/components/settings/connectedServices/index/ConnectedAccountIndexRow');
+        storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
+        const held = { ...snapshot, fetchedAt: Date.now(), planLabel: 'Held plan' };
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(held)));
+        const screen = await renderScreen(<Wrapper>
+            <ConnectedAccountIndexLiveFacts identity={{ kind: 'qualified', account: ref }}
+                status="connected" billedPerUse={false} showsUsage signedOut={false}
+                render={facts => <>
+                    <ConnectedAccountIndexRowView testID="E2-row" title="Work" identityLabel={null}
+                        roles={[]} signedOut={null} legacyServiceId={null} accountId={ref.accountId}
+                        star={null} onOpen={() => {}} facts={facts} now={held.fetchedAt} compact />
+                    <ConnectedAccountIndexActions testID="E2-row" star={null} refresh={facts.refresh} refreshing={facts.refreshing} />
+                </>} />
+        </Wrapper>);
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).not.toHaveBeenCalled();
+        expect(screen.findByTestId('E2-row:meters-loading')).toBeNull();
+
+        const detail = await renderHook(() => useQualifiedConnectedAccountQuota(ref), { wrapper: Wrapper });
+        await vi.waitFor(() => expect(detail.getCurrent().snapshot?.planLabel).toBe('Held plan'));
+        await flushHookEffects();
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+        expect(screen.getTextContent()).toContain('Held plan');
+
+        const changed = { ...held, fetchedAt: held.fetchedAt + 1, planLabel: 'Pushed plan' };
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(changed)));
+        await act(async () => publishHomeAccountChange(boundary.context().serverBasis.serverId,
+            [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await vi.waitFor(() => expect(detail.getCurrent().snapshot?.planLabel).toBe('Pushed plan'));
+        expect(boundary.read).toHaveBeenCalledTimes(2);
+        expect(screen.getTextContent()).toContain('Pushed plan');
+        await detail.unmount();
+
+        await act(async () => publishHomeAccountChange(boundary.context().serverBasis.serverId,
+            [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).toHaveBeenCalledTimes(2);
+        expect(screen.getTextContent()).toContain('Pushed plan');
+
+        await screen.pressByTestIdAsync('E2-row:refresh');
+        await vi.waitFor(() => expect(boundary.refresh).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(boundary.read).toHaveBeenCalledTimes(3));
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('Pushed plan');
     });
 
     it('PC-3 keeps 100 mounted meters quiet through equal background refreshes and delivers a real change', async () => {

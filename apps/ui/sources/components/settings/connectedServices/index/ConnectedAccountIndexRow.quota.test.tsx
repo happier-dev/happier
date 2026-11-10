@@ -5,10 +5,8 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { removeServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
-import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
 import { createQualifiedQuotaTestHarness } from '@/hooks/server/connectedServices/qualifiedConnectedAccountQuotaTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -20,14 +18,8 @@ vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testk
 installDisconnectedServerSocketBoundary();
 
 // Home HTTP is the boundary; the feature decision, hook, store and row remain real.
-const readQuota = vi.hoisted(() => vi.fn(async () => null));
 const legacyFetchedAt = vi.hoisted(() => Date.now() - 1_000);
 const requestLegacyRefresh = vi.hoisted(() => vi.fn(async () => true));
-vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/api/account/apiQualifiedConnectedAccountsV4')>(),
-    getQualifiedConnectedAccountQuotaV4: readQuota,
-}));
-
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
     fetchAccountEncryptionMode: async () => ({ mode: 'plain' }),
@@ -116,36 +108,4 @@ it('gives a failed usage refresh its Retry on the row (QA-CONFIG D3)', async () 
     }} />);
     await screen.pressByTestIdAsync('account:refresh-error-action');
     expect(refresh).toHaveBeenCalledTimes(1);
-});
-
-it('offers an enabled index Refresh after the first quota read has no snapshot', async () => {
-    const previousState = storage.getState();
-    const previousServer = getActiveServerSnapshot();
-    const profile = await upsertAndActivateServer({ serverUrl: 'https://quota-index.test', name: 'Quota index' });
-    const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'new-account' };
-    __resetQualifiedConnectedAccountQuotaSnapshotStore();
-    storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
-    primeServerFeaturesSnapshot({ serverId: profile.id, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
-    let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
-    try {
-        screen = await renderScreen(<InjectedAuthProvider credentials={{ token: 'token' }}>
-            <ConnectedAccountIndexLiveFacts
-                identity={{ kind: 'qualified', account }} status="connected" billedPerUse={false}
-                showsUsage signedOut={false}
-                render={(facts) => <ConnectedAccountIndexActions testID="new-account" star={null} refresh={facts.refresh} refreshing={facts.refreshing} />}
-            />
-        </InjectedAuthProvider>);
-        await flushHookEffects();
-        expect(readQuota).toHaveBeenCalled();
-        const refresh = screen.findByTestId('new-account:refresh');
-        expect(refresh).not.toBeNull();
-        expect(refresh?.props.disabled).toBe(false);
-    } finally {
-        await screen?.unmount();
-        __resetQualifiedConnectedAccountQuotaSnapshotStore();
-        deleteServerFeaturesSnapshot({ serverId: profile.id });
-        storage.setState(previousState);
-        await setActiveServer({ serverId: previousServer.serverId });
-        await removeServerProfile(profile.id);
-    }
 });

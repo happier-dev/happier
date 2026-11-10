@@ -375,7 +375,7 @@ export const ConnectedAccountUsageFreshnessLine = React.memo(function ConnectedA
 
 /** Reads a V4 account's usage record: quota (meters, plan, resets) and its subscription. */
 function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: boolean): ConnectedAccountIndexFacts {
-    const quota = useQualifiedConnectedAccountQuota(account);
+    const quota = useQualifiedConnectedAccountQuota(account, { fetchPolicy: 'cache_only' });
     const pinnedByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const pinnedMeterIds = resolveQualifiedConnectedAccountProfilePreference({
         valuesByKey: pinnedByKey, service: account.service, accountId: account.accountId,

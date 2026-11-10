@@ -785,6 +785,7 @@ const ConnectedAccountServiceController = React.memo(
     ]);
 
     React.useEffect(() => {
+        if (panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent) return;
         if (!machineRequired || description || !machineId
             || accountServiceDescription.current?.machineId !== selectedDescriptionMachineId) return;
         const request = createLinkedAbortController(getLifecycleSignal());
@@ -794,7 +795,7 @@ const ConnectedAccountServiceController = React.memo(
             }
         });
         return () => request.dispose();
-    }, [accountServiceDescription.current, description, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, onDescriptionError, refreshDescription, selectedDescriptionMachineId]);
+    }, [accountServiceDescription.current, description, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, onDescriptionError, panelIntent?.kind, refreshDescription, selectedDescriptionMachineId]);
 
     React.useEffect(() => {
         if (!description) return;

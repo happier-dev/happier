@@ -1757,6 +1757,27 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await screen.unmount();
     });
 
+    it('starts the ranked default device method on its first explicit Ready action', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor,
+            authentication: { defaultModeId: 'device', modes: [
+                { id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }, ...authentication.modes,
+            ] } } });
+        handleAuthentication = () => ({ status: 'awaitingDeviceAuthorization', attemptId: 'first-ready-attempt',
+            verificationUri: 'https://provider.example/device', userCode: 'FIRST-CODE' });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+            <ConnectedAccountSetupController service={service} targetSelection={selection}
+                panel={{ intent: { kind: 'add' }, onConnected, onCancel }} />
+        </InjectedAuthProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:start')).not.toBeNull());
+            expect(controlCommands).toEqual([]);
+            expect(authenticationCommands).toEqual([]);
+            await screen.pressByTestIdAsync('connected-account-device:start');
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:code')).not.toBeNull());
+            expect(authenticationCommands).toEqual([{ operation: 'beginConnect', service, modeId: 'device' }]);
+        } finally { await screen.unmount(); }
+    });
+
     it('R8-9 keeps a device draft Ready without beginning authentication until the explicit action', async () => {
         installDescription({ ...described, descriptor: { ...described.descriptor,
             authentication: { defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }, ...authentication.modes] } } });

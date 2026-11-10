@@ -639,7 +639,7 @@ const RailAccountRow = React.memo(function RailAccountRow(props: Readonly<{
 const QualifiedRailAccountRow = React.memo(function QualifiedRailAccountRow(props: React.ComponentProps<typeof RailAccountRow> & Readonly<{
     account: Extract<ConnectedServicesIndexAccount, { kind: 'qualified' }>;
 }>) {
-    const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref);
+    const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref, { fetchPolicy: 'cache_only' });
     const subscription = useConnectedAccountSubscription(quota.usageRecordId);
     const accessMode = resolveConnectedAccountAccessMode(props.account.profile, subscription);
     const snapshot = quota.snapshot;
@@ -718,7 +718,7 @@ const LiveAccountMeta = React.memo(function LiveAccountMeta(props: Readonly<{
 const QualifiedAccountMeta = React.memo(function QualifiedAccountMeta(props: Readonly<{
     account: Extract<ConnectedServicesIndexAccount, { kind: 'qualified' }>;
 }>) {
-    const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref);
+    const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref, { fetchPolicy: 'cache_only' });
     const snapshot = quota.snapshot;
     const tightest = snapshot ? deriveAccountCapacityPct(snapshot.meters.flatMap((meter) => (
         meter.status === 'unavailable' || meter.remainingPct === null || meter.remainingPct === undefined

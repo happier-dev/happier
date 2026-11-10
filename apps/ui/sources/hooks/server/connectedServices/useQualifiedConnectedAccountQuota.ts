@@ -16,11 +16,13 @@ import {
 import {
     buildQualifiedQuotaSnapshotScopeKey,
     getQualifiedQuotaSnapshotEntry,
+    loadQualifiedQuotaSnapshotOnce,
     refreshQualifiedQuotaSnapshot,
     retainQualifiedQuotaSnapshotPolling,
     subscribeQualifiedQuotaSnapshotEntry,
     type QualifiedQuotaSnapshotStoreContext,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
+import type { ConnectedServiceQuotaSnapshotsFetchPolicy } from './useConnectedServiceQuotaSnapshots';
 
 export type UseQualifiedConnectedAccountQuotaResult = Readonly<{
     supported: boolean | null;
@@ -35,12 +37,13 @@ export type UseQualifiedConnectedAccountQuotaResult = Readonly<{
 
 export function useQualifiedConnectedAccountQuota(
     ref: QualifiedConnectedAccountRef,
-    options: Readonly<{ refreshMachineId?: string | null }> = {},
+    options: Readonly<{ refreshMachineId?: string | null; fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy }> = {},
 ): UseQualifiedConnectedAccountQuotaResult {
     const presented = useLayoutPresentationActive();
     const credentials = useAuth().credentials;
     const activeServer = useActiveServerSnapshot();
     const refreshMachineId = options.refreshMachineId;
+    const fetchPolicy = options.fetchPolicy ?? 'poll';
     const servicePluginId = ref.service.pluginId;
     const serviceLocalId = ref.service.localId;
     const accountId = ref.accountId;
@@ -107,9 +110,11 @@ export function useQualifiedConnectedAccountQuota(
     );
 
     React.useEffect(() => {
-        if (!presented || !key || !context) return;
-        return retainQualifiedQuotaSnapshotPolling(key, context);
-    }, [context, key, presented]);
+        if (!presented || !key || !context || fetchPolicy === 'cache_only') return;
+        return fetchPolicy === 'once'
+            ? loadQualifiedQuotaSnapshotOnce(key, context)
+            : retainQualifiedQuotaSnapshotPolling(key, context);
+    }, [context, fetchPolicy, key, presented]);
 
     const refresh = React.useCallback(async () => {
         if (!key || !context || entry.supported === false) return;
@@ -127,7 +132,7 @@ export function useQualifiedConnectedAccountQuota(
         loading: key
             ? entry.loading
                 || (
-                    !entry.read
+                    fetchPolicy !== 'cache_only' && !entry.read
                     && entry.error === null
                 )
             : false,
