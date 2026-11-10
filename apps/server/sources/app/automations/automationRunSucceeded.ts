@@ -129,6 +129,13 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
         now: params.now,
     });
     await invalidateSessionReviewProjectionForRunInTx(params.tx, run);
+    // Initialized Workflows publish through their transition owner. A refusal
+    // before that handoff still needs to refresh the same canonical History row.
+    if (run.workflowAcceptedSnapshotEnvelope === null) {
+        await markAccountChanged(params.tx, {
+            accountId: params.accountId, kind: "account", entityId: `workflow-run:${run.id}`,
+        });
+    }
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,
         kind: "automation",

@@ -3091,6 +3091,7 @@ describe("automationRunService (integration)", () => {
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
                 executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+                workflowCustodyState: "pending",
             },
             select: { id: true },
         });
@@ -3117,6 +3118,14 @@ describe("automationRunService (integration)", () => {
             where: { id: run.id },
             select: { state: true },
         })).resolves.toEqual({ state: "failed" });
+        await expect(db.accountChange.findMany({
+            where: {
+                accountId: seeded.accountId,
+                kind: "account",
+                entityId: `workflow-run:${run.id}`,
+            },
+            select: { entityId: true },
+        })).resolves.toEqual([{ entityId: `workflow-run:${run.id}` }]);
     });
 
 
