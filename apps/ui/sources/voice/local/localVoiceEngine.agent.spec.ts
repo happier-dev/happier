@@ -786,7 +786,15 @@ describe('local voice engine agent behavior', () => {
             .toBe('happier.voice.openai-compat/stt');
 
         ensureAgentRpc.mockResolvedValueOnce({ ok: true, runId: 'local-agent-run', created: true });
-        welcomeActionRpc.mockResolvedValueOnce(ExecutionRunActionResponseSchema.parse({ ok: true, result: { assistantText: 'Welcome!' } }));
+        welcomeActionRpc.mockImplementationOnce(async request => {
+            const { buildRealtimeConversationRawRecord } = await import('@/voice/transcript/VoiceTranscriptProjector');
+            const { sync } = await import('@/sync/sync');
+            await sync.persistSessionTranscriptMessage({ sessionId: request.sessionId,
+                localId: 'earlier-native-answer', createdAt: Date.now(), messageRole: 'agent',
+                rawRecord: buildRealtimeConversationRawRecord({ id: 'earlier-native-answer',
+                    role: 'assistant', text: 'Earlier native answer.' }) });
+            return ExecutionRunActionResponseSchema.parse({ ok: true, result: { assistantText: 'Welcome!' } });
+        });
 
         const currentUi = await mountCurrentUi({ commands: [] });
         expect(ensureAgentRpc).not.toHaveBeenCalled();
@@ -798,6 +806,14 @@ describe('local voice engine agent behavior', () => {
 
         if (mode === 'immediate') {
             await waitForLocalVoiceBoundaryEvent('speech');
+            const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+            const conversationSessionId = welcomeActionRpc.mock.calls[0]?.[0].sessionId;
+            expect(conversationSessionId).toBeTypeOf('string');
+            const messages = readStoredSessionMessages(storage.getState(), conversationSessionId!);
+            expect(messages.filter(message => message.kind === 'agent-text' && message.text === 'Welcome!'))
+                .toEqual([expect.objectContaining({ seq: expect.any(Number) })]);
+            expect(messages.filter(message => message.kind === 'agent-text' && message.text === 'Earlier native answer.'))
+                .toEqual([expect.objectContaining({ seq: expect.any(Number) })]);
         } else {
             await waitForLocalVoiceBoundaryEvent('agent-start');
         }
