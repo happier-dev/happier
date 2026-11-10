@@ -701,6 +701,17 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.getTextContent()).toContain('teams.credentials.limits.resetsUtc');
     });
 
+    it('retains a retryable administration failure even when discovery includes the resource', async () => {
+        const serverId = await addRecipientHome();
+        harness.answer(serverId, CREDENTIAL_GET_PATH, { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
+
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-resource-retry');
+
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-usage-resource-error');
+    });
+
     it('retains the recipient usage refusal when discovery still includes the resource', async () => {
         const serverId = await addRecipientHome();
         harness.answer(serverId, USAGE_QUERY_PATH, { status: 403, body: { error: 'forbidden' } });

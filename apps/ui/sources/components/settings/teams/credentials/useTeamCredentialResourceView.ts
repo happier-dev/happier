@@ -82,11 +82,15 @@ export function useTeamCredentialResourceView(params: Readonly<{
     const reload = React.useCallback(async () => {
         await Promise.all([exact.reload(), catalog.reload()]);
     }, [catalog.reload, exact.reload]);
-    const error = exact.error?.retryable === true
-        ? exact.error
-        : catalog.error?.retryable === true
-            ? catalog.error
-            : exact.error ?? catalog.error;
+    // A recipient row establishes read-only availability, not administration
+    // access. Its manager-only denial must not become a resource failure.
+    const error = catalogResource !== null && exact.error?.kind === 'forbidden'
+        ? catalog.error
+        : exact.error?.retryable === true
+            ? exact.error
+            : catalog.error?.retryable === true
+                ? catalog.error
+                : exact.error ?? catalog.error;
 
     return React.useMemo(() => Object.freeze({
         featureEnabled,
