@@ -190,12 +190,12 @@ export function useFindSurfaceRegistrationHost(): FindSurfaceRegistrationHost | 
 
 /** Menu intents are independent of keyboard preference disablement. */
 export function useFindSurfaceRuntime(): Readonly<{
-    open(surfaceId?: string): boolean;
+    open(surfaceId?: string, options?: Readonly<{ whenRegistered?: boolean }>): boolean;
     keyboardHandlers: HappierFindBarProps['keyboardHandlers'];
 }> {
     const registration = React.useContext(KeyboardShortcutRegistrationContext);
     return React.useMemo(() => ({
-        open: (surfaceId?: string) => registration?.find.open(surfaceId) ?? false,
+        open: (surfaceId?: string, options?: Readonly<{ whenRegistered?: boolean }>) => registration?.find.open(surfaceId, options) ?? false,
         keyboardHandlers: registration ? {
             // Physical keys belong to the web capture listener or native hardware bridge.
             onKeyPress: () => undefined,

@@ -667,6 +667,54 @@ describe('SessionHeaderActionMenu handoff', () => {
     }
   });
 
+  it('brings the phone cockpit back to the Session tab before opening Find from another tab', async () => {
+    vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const { KeyboardShortcutProvider, useFindSurfaceRegistration } = await import('@/keyboard/KeyboardShortcutProvider');
+    const { SessionCockpitSurfaceNavigationProvider } = await import('@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation');
+    const events: string[] = [];
+    const controller: FindController = {
+      query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+      capabilities: { regex: true, stop: false },
+      setQuery() {}, setOptions() {}, step() {}, stop() {}, close() {},
+    };
+    // The chat transcript stays registered while another cockpit tab (Companion) is in front.
+    function RetainedTranscript() {
+      useFindSurfaceRegistration({
+        surfaceId: 'transcript:server_a:session-find-cockpit',
+        containsFocus: () => false,
+        open: () => { events.push('find.open'); },
+        isOpen: () => false,
+        isInputFocused: () => false,
+        controller,
+      });
+      return null;
+    }
+    const navigation = {
+      switchSurface: (surface: string) => { events.push(`switch:${surface}`); },
+      returnToPreviousSurface: () => {},
+    };
+    const session = {
+      id: 'session-find-cockpit', serverId: 'server_a', active: true, seq: 1,
+      metadataLayoutVersion: 1, metadata: {}, ownerMetadataView: {}, agentState: null, access: null,
+    } as any;
+    const screen = await renderScreen(
+      <KeyboardShortcutProvider handlers={{}}>
+        <RetainedTranscript />
+        <SessionCockpitSurfaceNavigationProvider value={navigation}>
+          <SessionHeaderActionMenu sessionId={session.id} session={session} />
+        </SessionCockpitSurfaceNavigationProvider>
+      </KeyboardShortcutProvider>,
+    );
+    try {
+      await act(async () => { screen.findByType('DropdownMenu' as any).props.onSelect('header.findChat'); });
+      expect(events).toEqual(['switch:chat', 'find.open']);
+    } finally {
+      await act(async () => { screen.unmount(); });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps an untouched empty Companion reachable through the incumbent overflow menu', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
     const { SessionCompanionRevealPortProvider } = await import(
@@ -2679,13 +2727,13 @@ describe('SessionHeaderActionMenu handoff', () => {
       settings: {
         ...storageState.current.settings,
         experiments: false,
-        featureToggles: {},
+        featureToggles: { 'execution.runs': false },
       },
     };
 
     await act(async () => {
       const { storage: canonicalStorage } = await import('@/sync/domains/state/storageStore');
-      canonicalStorage.getState().applySettingsLocal({ experiments: false, featureToggles: {} });
+      canonicalStorage.getState().applySettingsLocal({ experiments: false, featureToggles: { 'execution.runs': false } });
       dropdown.props.onOpenChange(true);
     });
     await flushHookEffects({ cycles: 1 });

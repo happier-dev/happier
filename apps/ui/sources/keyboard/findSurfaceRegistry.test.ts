@@ -72,6 +72,42 @@ describe('mounted Find keyboard resolution', () => {
         expect(find.open('missing')).toBe(false);
     });
 
+    it('opens a surface that registers right after an intent that brought it forward, once', () => {
+        // Phone cockpit: Find from another tab switches to the chat tab, whose transcript registers only
+        // once it is in front (device 11-10: the tab switched but the find field stayed closed).
+        const find = createFindSurfaceRegistry();
+        expect(find.open('chat', { whenRegistered: true })).toBe(false);
+        const chat = surfaceFixture('chat');
+        const release = find.register(chat.surface);
+        expect(chat.state.open).toBe(true);
+        chat.state.open = false;
+        release();
+        find.register(chat.surface);
+        expect(chat.state.open).toBe(false);
+        // The tab switch remounts the chat scene: the mount that opened is replaced while open, and the
+        // replacement opens too, in either order of mount and unmount (device 11-10).
+        const placeholder = surfaceFixture('remount');
+        expect(find.open('remount', { whenRegistered: true })).toBe(false);
+        const releasePlaceholder = find.register(placeholder.surface);
+        expect(placeholder.state.open).toBe(true);
+        const real = surfaceFixture('remount');
+        find.register(real.surface);
+        releasePlaceholder();
+        expect(real.state.open).toBe(true);
+        const again = surfaceFixture('remount2');
+        expect(find.open('remount2', { whenRegistered: true })).toBe(false);
+        const releaseFirst = find.register(again.surface);
+        releaseFirst();
+        const replacement = surfaceFixture('remount2');
+        find.register(replacement.surface);
+        expect(replacement.state.open).toBe(true);
+        // A plain open of a missing surface leaves nothing behind.
+        const other = surfaceFixture('other');
+        expect(find.open('other')).toBe(false);
+        find.register(other.surface);
+        expect(other.state.open).toBe(false);
+    });
+
     it('keeps interaction ownership local to an available mount and gives actual focus precedence', () => {
         const find = createFindSurfaceRegistry();
         const transcript = surfaceFixture('chat'); transcript.state.focused = false;

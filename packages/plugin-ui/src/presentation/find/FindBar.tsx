@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType, type Reac
 import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
-import { HappierSearchFieldBox } from '../form/FieldBox.js';
+import { HappierSearchFieldBox, resolveHappierFieldTextInputMetrics } from '../form/FieldBox.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
@@ -414,7 +414,11 @@ export function HappierFindBar(props: HappierFindBarProps) {
       autoCorrect={false}
       spellCheck={false}
       testID={props.testID ? `${props.testID}.input` : undefined}
-      style={{ flex: 1, minWidth: 0, padding: 0, margin: 0, fontSize: metrics.fontSizePx, color: colors.text }}
+      // Seated on a phone, the field's own text step fills the drawn well, so the placeholder sits on the
+      // field's line instead of the platform default cut at its baseline in a shorter box.
+      style={seated
+        ? { ...resolveHappierFieldTextInputMetrics({}), flex: 1, minWidth: 0, color: colors.text }
+        : { flex: 1, minWidth: 0, padding: 0, margin: 0, fontSize: metrics.fontSizePx, color: colors.text }}
     />
   );
 

@@ -44,6 +44,7 @@ import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/b
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { t } from '@/text';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
+import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -368,6 +369,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const { theme } = useUnistyles();
   const currentUiContextReader = useOptionalCurrentUiContextReader();
   const findSurfaceRuntime = useFindSurfaceRuntime();
+  const cockpitNavigation = useSessionCockpitSurfaceNavigation();
   const router = useRouter();
   const enabledAgentIds = useEnabledAgentIds();
   const settings = useSettingsValues(['actionsSettingsV1', 'experiments', 'featureToggles', 'backendEnabledByTargetKey']);
@@ -948,7 +950,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         if (actionId === 'header.findChat') {
-          findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`);
+          // On a phone cockpit the transcript stays mounted behind other tabs: bring it forward first.
+          cockpitNavigation?.switchSurface('chat');
+          // The transcript registers once its tab is in front; it opens then.
+          findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`, { whenRegistered: cockpitNavigation !== null });
           return;
         }
         if (actionId === 'header.openComputer') {
