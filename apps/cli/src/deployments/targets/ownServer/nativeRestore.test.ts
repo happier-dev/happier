@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFailed } from 'vitest';
 import { readFile, writeFile, access } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +9,8 @@ import { OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Sche
     type EnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
-import { RESTIC_RUNTIME_V1, buildResticRequestV1, type DeploymentRestoreResolvedCaptureV1 } from '@happier-dev/deployments';
+import { RESTIC_RUNTIME_V1, buildResticRequestV1, runDeploymentBackupV1, type DeploymentBackupRunInputV1,
+    type ResticAccessV1, type DeploymentRestoreResolvedCaptureV1 } from '@happier-dev/deployments';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import * as backupEnvironment from '@/deployments/secrets/deploymentExecEnvPort';
 import { createOwnServerDatabaseUsernameReaderForHost } from './backupDestination';
@@ -22,6 +23,11 @@ import { publishOwnServerDeploymentReceiptContentForHost } from './ownServerDepl
 import { DeploymentRollbackActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { archive, database, sourceManifest, installRestoreBoundary } from './nativeRestore.testkit';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createOwnServerExpectedDownPublisher } from './expectedDown';
 
 describe('native restore adapter', () => {
     it('preserves ordinary receipt publication failures outside caller cancellation', async () => {
@@ -33,7 +39,7 @@ describe('native restore adapter', () => {
             { signal: new AbortController().signal }, async () => { throw failure; })).rejects.toBe(failure);
     });
 
-    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'dumpFailure', 'repositoryOnly'] as const)(
+    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreUnknown', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
         'settles the real restore and releases its one backup preparation: %s', async mode => {
             await withFiniteComposeFixture(async ({ project, docker, source, root, exec, io }) => {
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -52,6 +58,16 @@ describe('native restore adapter', () => {
                 const copying = mode === 'copySafety' || mode === 'copySafetyFailure';
                 const boundary = await installRestoreBoundary(root, mode === 'cancelPublication' ? 'healthFailure'
                     : copying ? 'safety' : mode);
+                if (mode === 'volumeRestoreFailure') onTestFailed(async () => {
+                    const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
+                        .map(line => JSON.parse(line)).map(row => ({ kind: row.kind, operation: row.operation,
+                            errorClass: row.errorClass, fixtureCode: row.fixtureCode }));
+                    const invocations = (await docker.readInvocations()).map(row => ({
+                        command: row.args.includes('compose') ? 'compose' : row.args[0],
+                        operation: row.args.includes('compose') ? ['up', 'stop', 'start', 'ps', 'config'].find(value => row.args.includes(value)) : undefined,
+                    }));
+                    console.error('volume-recovery-boundary', JSON.stringify({ events, invocations: invocations.slice(-20) }));
+                });
                 if (mode === 'copySafetyFailure') {
                     const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
                     await writeFile(boundary.stateFile, JSON.stringify({ ...state, mode: 'dumpFailure' }));
@@ -85,6 +101,7 @@ describe('native restore adapter', () => {
                 let pending = 0;
                 const progressPhases: string[] = [];
                 const stoppedServices: string[][] = [];
+                const expectedDownServices: string[][] = [];
                 const observed = createDeploymentReceiptDetailV1();
                 let observedReceipt: OwnServerDeploymentReceipt = { deployment: observed.deployment,
                     content: DeploymentOwnServerContentV1Schema.parse(observed.content) };
@@ -92,14 +109,19 @@ describe('native restore adapter', () => {
                     service: 'worker', database, stagingDatabase: 'restore-stage', recoveryDatabase: 'restore-old',
                     databaseExists: mode === 'safety' || copying, hasMeaningfulData: mode === 'safety' || copying,
                     writerServices: mode === 'healthFailure' || mode === 'cancelPublication' ? ['writer'] : [] };
+                const operationStore = createActionOperationStore();
+                const operationScope = { accountId: 'account', machineId: source.machineId };
+                let publishExpectedDown: ((services: readonly string[]) => Promise<void>) | undefined;
                 try {
+                    const executeNative = async () => {
                     await machineNativeEffectAdmission.run({ operation: { operationId: `restore-${mode}`, kind: 'restore', signal: controller.signal },
                         keys: render.keys, settleNative: project.settleNative }, async context => {
-                        const environment = backupEnvironment.createDeploymentBackupEnvironmentForHost({ repository: 's3:https://fixture.invalid/backup',
+                        const prepareEnvironment = () => backupEnvironment.createDeploymentBackupEnvironmentForHost({ repository: 's3:https://fixture.invalid/backup',
                             signal: context.operation.signal!, isCurrent: () => true, preparation: {
                                 environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
                                 installationPrivateSeed: seed, bindings, backupDestinationUses: bindings, grants,
                                 backupConfigBaseDir: root, assertCurrent: source.assertCurrent } });
+                        const environment = prepareEnvironment();
                         let repositoryOverride: string | undefined;
                         const readAccess = () => {
                             const selected = environment.readAccess();
@@ -117,6 +139,23 @@ describe('native restore adapter', () => {
                                 if (progress.phase) progressPhases.push(progress.phase);
                             } },
                             onStopPending: () => { pending++; },
+                            async onExpectedDownServicesChanged(services: readonly string[]) {
+                                expectedDownServices.push([...services]);
+                                await publishExpectedDown?.(services);
+                                if (publishExpectedDown) {
+                                    const snapshot = ActionOperationSnapshotV1Schema.parse(operationStore.get(operationScope, 'native-backup'));
+                                    expect(snapshot.domainRef).toMatchObject(services.length
+                                        ? { kind: 'deployment', expectedDown: { operation: 'backup',
+                                            serviceIds: services.map(service => `instance/${service}`), domains: [] } }
+                                        : { kind: 'deployment', environmentId: source.environmentId });
+                                    if (!services.length) expect(snapshot.domainRef).not.toHaveProperty('expectedDown');
+                                }
+                                if ((mode === 'volumeBackup' || mode === 'volumeBackupFailure') && services.length) {
+                                    const dockerState = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
+                                    expect(dockerState.containers.find((row: { Config: { Labels: Record<string, string> } }) =>
+                                        row.Config.Labels['com.docker.compose.service'] === 'worker').State.Status).toBe('running');
+                                }
+                            },
                             async onIncumbentServicesChanged(services: readonly string[]) {
                                 stoppedServices.push([...services]);
                                 if (mode !== 'cancelPublication') return;
@@ -133,6 +172,150 @@ describe('native restore adapter', () => {
                                             revision: 1, deploymentRevision: request.expectedRevision + 1, state: request.state };
                                     });
                             } };
+                        if (mode === 'volumeRender') {
+                            const candidate = project.createVolumeRestoreCandidate([{ volume: 'data', physicalName: 'happier-volume-restore-stage' }]);
+                            try { expect((await candidate.render()).namedVolumes).toEqual([{ volume: 'data', physicalName: 'happier-volume-restore-stage' }]); }
+                            finally { await candidate.dispose(); }
+                            return;
+                        }
+                        if (mode === 'sqliteBackup') {
+                            const configuration: DeploymentBackupConfigurationV1 = { configRevision: 1,
+                                destinationRef: { pluginId: 'example.storage', localId: 's3' }, occurrenceId: 'storage', config: { bucket: 'backup' },
+                                credentialBindings: roles.map(role => ({ purpose: 'backupDestination', configKey: 'destination', role })),
+                                sources: [{ kind: 'dump', sourceId: 'database', service: 'worker', consistency: 'logical' }],
+                                ownership: { environmentId: source.environmentId, prefix: source.environmentId }, retention: { kind: 'keepEverything' } };
+                            const backup = await Reflect.apply(adapter.withOwnServerNativeBackup, undefined, [input,
+                                { environmentId: source.environmentId, service: 'worker', adapter: 'sqlite-v1', path: '/data/database.sqlite' },
+                                (native: Readonly<{ access: ResticAccessV1; signal: AbortSignal; executeBackup: DeploymentBackupRunInputV1['execute'] }>) =>
+                                    Reflect.apply(runDeploymentBackupV1, undefined, [{ environmentId: source.environmentId, configuration,
+                                        data: [{ engine: 'sqlite', service: 'worker', logicalBackup: { adapter: 'sqlite-v1', path: '/data/database.sqlite' } }],
+                                        access: native.access, signal: native.signal, execute: native.executeBackup }])]);
+                            expect(backup).toMatchObject({ kind: 'verified', manifests: [{ kind: 'dump',
+                                snapshot: { paths: ['/worker.sqlite'] }, producerChecksumSha256: expect.any(String) }] });
+                            const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+                            expect(events.some(row => row.kind === 'sqlite' && row.operation === 'vacuum')).toBe(true);
+                            expect(events.some(row => row.kind === 'nativeControl' && row.operation === 'stop')).toBe(false);
+                            return;
+                        }
+                        if (mode === 'sqlUploadUnsafe' || mode === 'sqlUploadBinary' || mode === 'sqlUploadCustom' || mode === 'sqlUploadCustomChunks') {
+                            const custom = mode === 'sqlUploadCustom' || mode === 'sqlUploadCustomChunks';
+                            const bytes = custom ? archive : mode === 'sqlUploadBinary' ? Buffer.from('SQLite format 3\0\0\0\0\0')
+                                : Buffer.from('SELECT 1;\n\\! touch /tmp/happier-import-must-not-execute\n');
+                            const { execEnv: _execEnv, readAccess: _readAccess, ...common } = input;
+                            const upload = { kind: 'upload' as const, transferId: 'completed-sql-upload', filePath: join(root, 'private-upload.sql'),
+                                sizeBytes: bytes.length, sha256: (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex'),
+                                readChunk: async ({ offset, length }: { offset: number; length: number }) =>
+                                    bytes.subarray(offset, offset + (mode === 'sqlUploadCustomChunks' ? Math.min(length, 2) : length)) };
+                            const preparation = adapter.prepareOwnServerNativeRestore({ ...common, upload }, {
+                                operationId: 'unsafe-sql-prepare', source: { kind: 'upload', transferId: upload.transferId,
+                                    sizeBytes: upload.sizeBytes, sha256: upload.sha256 }, sourceFormat: 'postgresSql', destination,
+                            });
+                            if (custom) await expect(preparation).resolves.toMatchObject({ kind: 'prepared', sourceFormat: 'postgresCustom' });
+                            else await expect(preparation).rejects.toMatchObject({ code: 'unsupported_action' });
+                            const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+                            expect(events.some(row => row.kind === 'nativeControl' || row.kind === 'imported'
+                                || row.argv?.[0] === 'createdb' && !row.argv.includes('--version')),
+                                JSON.stringify(events.map(row => ({ kind: row.kind, operation: row.operation,
+                                    services: row.services, command: row.argv?.[0] })))).toBe(false);
+                            if (custom) expect(events.some(row => row.argv?.[0] === 'pg_restore' && row.argv.includes('--list'))).toBe(true);
+                            return;
+                        }
+                        if (mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload') {
+                            const volumeSnapshot = { ...sourceManifest, sourceId: 'data', kind: 'volume' as const, producerChecksumSha256: undefined,
+                                snapshot: { ...sourceManifest.snapshot, paths: ['/happier/source'],
+                                    tags: ['happier', `env:${source.environmentId}`, 'kind:volume', 'src:data'] } };
+                            const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                            await writeFile(boundary.stateFile, JSON.stringify({ ...state,
+                                snapshot: { ...state.snapshot, paths: volumeSnapshot.snapshot.paths, tags: volumeSnapshot.snapshot.tags } }));
+                            if (mode === 'volumeRestoreStopped') {
+                                const dockerState = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
+                                dockerState.containers.find((row: { Config: { Labels: Record<string, string> } }) =>
+                                    row.Config.Labels['com.docker.compose.service'] === 'writer').State.Status = 'exited';
+                                await writeFile(`${root}/tools/docker-state.json`, JSON.stringify(dockerState));
+                            }
+                            const capture = { operationId: 'volume-restore-prepare', source: volumeSnapshot, sourceFormat: 'volume',
+                                destination: { environmentId: source.environmentId, revision: 1, adapter: 'volume-v1',
+                                    service: 'worker', volume: 'data', currentVolume: 'fixture-physical-data',
+                                    stagingVolume: 'happier-volume-restore-stage', hasMeaningfulData: false,
+                                    writerServices: ['worker'], runningServices: ['worker'] } };
+                            let nativeInput: adapter.OwnServerNativeRestoreInput | adapter.OwnServerNativeUploadRestoreInput = input;
+                            let admittedCapture: unknown = capture;
+                            if (mode === 'volumeUpload') {
+                                const bytes = Buffer.alloc(2048);
+                                const header = bytes.subarray(0, 512);
+                                header.write('restored.txt'); header.write('0000644\0', 100); header.write('0000000\0', 108);
+                                header.write('0000000\0', 116); header.write('00000000011\0', 124); header.write('00000000000\0', 136);
+                                header.fill(32, 148, 156); header.write('0', 156); header.write('ustar\0', 257); header.write('00', 263);
+                                header.write(header.reduce((sum, value) => sum + value, 0).toString(8).padStart(6, '0') + '\0 ', 148);
+                                bytes.write('restored\n', 512);
+                                const filePath = join(root, 'uploaded.tar');
+                                await writeFile(filePath, bytes);
+                                const upload = { kind: 'upload' as const, transferId: 'completed-volume-upload', filePath,
+                                    sizeBytes: bytes.length, sha256: (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex'),
+                                    readChunk: async ({ offset, length }: { offset: number; length: number }) => bytes.subarray(offset, offset + length) };
+                                const { execEnv: _execEnv, readAccess: _readAccess, ...common } = input;
+                                nativeInput = { ...common, upload };
+                                admittedCapture = { ...capture, sourceFormat: 'volumeTar',
+                                    source: { kind: 'upload', transferId: upload.transferId, sizeBytes: upload.sizeBytes, sha256: upload.sha256 } };
+                            }
+                            const prepared = await Reflect.apply(adapter.prepareOwnServerNativeRestore, undefined, [nativeInput, admittedCapture]);
+                            // Confirmation is a fresh host admission. The first phase's
+                            // retained P42 attachment has already been disposed.
+                            if (!('upload' in nativeInput)) {
+                                const confirmationEnvironment = prepareEnvironment();
+                                nativeInput = { ...nativeInput, ...confirmationEnvironment, readAccess() {
+                                    const access = confirmationEnvironment.readAccess();
+                                    passwordPath = access.credentialFiles[0]?.hostPath;
+                                    return access;
+                                } };
+                            }
+                            const restored = await Reflect.apply(adapter.confirmOwnServerNativeRestore, undefined, [nativeInput,
+                                { ...prepared, prepare: prepared }]);
+                            const nativeOperations = (await docker.readInvocations()).slice(-8).map(row => row.args.slice(0, 3));
+                            expect(restored, JSON.stringify({ restored, nativeOperations, nativeFailures: await docker.readFailures() }))
+                                .toMatchObject(mode === 'volumeRestoreFailure'
+                                    ? { kind: 'rolledBack', verified: false, nextAction: 'checkServiceHealth' }
+                                    : { kind: 'restored', verified: true });
+                            const stateAfter = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
+                            expect(stateAfter.containers.filter((row: { State: { Status: string }; Config: { Labels: Record<string, string> } }) =>
+                                row.State.Status === 'running' && row.Config.Labels['com.docker.compose.service'] === 'worker'))
+                                .toEqual([expect.objectContaining({ Mounts: [expect.objectContaining({ Name: mode === 'volumeRestoreFailure'
+                                    ? capture.destination.currentVolume : capture.destination.stagingVolume })] })]);
+                            if (mode === 'volumeRestoreStopped') expect(stateAfter.containers.filter((row: { Config: { Labels: Record<string, string> } }) =>
+                                row.Config.Labels['com.docker.compose.service'] === 'writer')).toEqual([
+                                expect.objectContaining({ State: expect.objectContaining({ Status: 'created' }) })]);
+                            const requests = (await docker.readInvocations()).filter(row => row.args[0] === 'create' && row.args.includes('restore'));
+                            if (mode === 'volumeUpload') {
+                                expect(await readFile(join(root, 'tools', 'volume-happier-volume-restore-stage', 'restored.txt'), 'utf8')).toBe('restored\n');
+                                const tarRequests = (await docker.readInvocations()).filter(row => row.args[0] === 'create' && row.args.includes('/bin/tar'));
+                                expect(tarRequests).toHaveLength(2);
+                                const extraction = tarRequests.find(row => row.args.includes('-xf'));
+                                expect(extraction?.args).toContain('type=volume,source=happier-volume-restore-stage,target=/happier/staging,volume-nocopy');
+                                expect(extraction?.args).toContain('--read-only');
+                                expect(extraction?.args).toContain('none');
+                                expect(tarRequests.some(row => row.args.includes('--repo') || row.args.includes('RESTIC_PASSWORD_FILE'))).toBe(false);
+                            } else {
+                                expect(requests).toHaveLength(1);
+                                expect(requests[0]?.args).toContain('--verify');
+                                expect(requests[0]?.args).toContain('type=volume,source=happier-volume-restore-stage,target=/happier/staging,volume-nocopy');
+                            }
+                            return;
+                        }
+                        if (mode === 'volumeBackup' || mode === 'volumeBackupFailure') {
+                            const result = await adapter.withOwnServerNativeBackup(input, undefined, native =>
+                                native.executeBackup(buildResticRequestV1({ access: native.access,
+                                    environmentId: source.environmentId, command: { kind: 'backupPaths', sourceId: 'uploads', paths: ['/happier/source'] } }),
+                                { kind: 'volume', sourceId: 'uploads', service: 'worker', volume: 'data', consistency: 'stopDuringCopy' }));
+                            expect(result).toMatchObject({ kind: 'completed', exitCode: mode === 'volumeBackupFailure' ? 7 : 0 });
+                            expect(expectedDownServices).toEqual([['worker'], []]);
+                            const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+                            expect(events.filter(row => row.kind === 'nativeControl').map(row => [row.operation, row.services]))
+                                .toEqual([['stop', ['worker']], ['start', ['worker']]]);
+                            expect(events.some(row => row.kind === 'postgres')).toBe(false);
+                            const create = (await docker.readInvocations()).find(row => row.args[0] === 'create' && row.args.includes('backup'));
+                            expect(create?.args).toContain('type=volume,source=fixture-physical-data,target=/happier/source,readonly,volume-nocopy');
+                            return;
+                        }
                         if (mode === 'repositoryOnly') {
                             const result = await adapter.withOwnServerNativeBackup(input, undefined, native =>
                                 native.executeBackup(buildResticRequestV1({ access: native.access,
@@ -226,7 +409,7 @@ describe('native restore adapter', () => {
                             } };
                             return restoreInput;
                         };
-                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'dumpFailure') {
+                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'dumpFailure') {
                             const seedReceipt = createDeploymentReceiptDetailV1();
                             const approvedInputBasis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1,
                                 environmentId: source.environmentId, environmentRevision: 1, targetLinkId: seedReceipt.deployment.targetLinkId,
@@ -280,7 +463,7 @@ describe('native restore adapter', () => {
                                 receipt: recoveryReceipt, restoreBackupId: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'backup_required' });
                             expect(passwordPath).toBeUndefined();
                         }
-                        if (mode === 'publicRestore') {
+                        if (mode === 'publicRestore' || mode === 'publicRestoreUnknown') {
                             if (!recoveryReceipt) throw new Error('Expected the completed pre-migration receipt');
                             const action = DeploymentRollbackActionInputV1Schema.parse({ serverId: 'home',
                                 environmentId: source.environmentId, deploymentId: 'retained-code', restoreBackupId: 'd'.repeat(64) });
@@ -295,6 +478,16 @@ describe('native restore adapter', () => {
                                     restoreBackupId: scenario === 'unknown' ? 'f'.repeat(64) : action.restoreBackupId!,
                                 })).rejects.toMatchObject({ code: scenario === 'otherEnvironment' ? 'stale_input' : 'backup_required' });
                                 expect(factories).toBe(0);
+                            }
+                            if (mode === 'publicRestoreUnknown') {
+                                // The destination changed after admission. Preserve the restore owner's
+                                // uncertainty rather than reclassifying it as terminal failure.
+                                await boundary.setDatabaseNameObservations([[database, destination.stagingDatabase]]);
+                                await expect(adapter.executeOwnServerNativeRestore(forRecordedCapture, {
+                                    receipt: recoveryReceipt, operationId: 'public-restore-unknown', destination,
+                                    restoreBackupId: action.restoreBackupId!,
+                                })).rejects.toMatchObject({ code: 'outcome_unknown', details: { kind: 'outcome_unknown' } });
+                                return;
                             }
                             const admitted: DeploymentRestoreResolvedCaptureV1[] = [];
                             const beforeRestore = (await docker.readInvocations()).length;
@@ -371,10 +564,28 @@ describe('native restore adapter', () => {
                             if (mode === 'cancel' || mode === 'cancelPublication') expect(context.operation.signal?.aborted).toBe(true);
                         } finally { watcher?.close(); }
                     });
+                    };
+                    if (mode === 'volumeBackup' || mode === 'volumeBackupFailure') {
+                        const spec = getActionSpec('deployments.backups.run');
+                        const runner = createActionOperationRunner({ store: operationStore, generateOperationId: () => 'native-backup',
+                            resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+                        const observed = await runner.observe({ actionId: spec.id, scope: operationScope, input: {},
+                            execute: async ({ publishOwnerUpdate }) => {
+                                publishExpectedDown = createOwnServerExpectedDownPublisher({ serverId: 'home',
+                                    environmentId: source.environmentId, targetLinkId: 'link', deploymentId: 'deployment',
+                                    machineId: source.machineId, installationId: source.installationId,
+                                    environmentInstanceId: 'instance', operation: 'backup',
+                                    context: { operationOwnerUpdate: { update: publishOwnerUpdate } }, readDomains: async () => [] });
+                                await executeNative();
+                                return { ok: true, result: {} };
+                            } });
+                        expect(observed).toMatchObject({ ok: true });
+                    } else await executeNative();
                 } catch (error) {
                     if (mode !== 'missingTool') throw error;
                     expect(error).toMatchObject({ code: 'unsupported_action' });
                 } finally { await activation.dispose(); }
+                if (mode === 'volumeUpload' || mode === 'volumeRender' || mode === 'sqlUploadUnsafe' || mode === 'sqlUploadBinary' || mode === 'sqlUploadCustom' || mode === 'sqlUploadCustomChunks') { expect(passwordPath).toBeUndefined(); return; }
                 if (!passwordPath) throw new Error('Expected an acquired backup environment');
                 if (mode === 'dumpFailure') {
                     // Natural dump exit plus the exact restic helper's proven
@@ -394,15 +605,20 @@ describe('native restore adapter', () => {
                 if (mode !== 'repositoryOnly') {
                     const commands = events.filter(row => row.kind === 'postgres');
                     for (const command of commands) {
-                        if (command.argv.includes('--version') || mode === 'success') expect(command.argv).not.toContain(`--username=${username}`);
+                        if (command.argv.includes('--version') || command.argv.includes('--username=restore-stage') || mode === 'success') expect(command.argv).not.toContain(`--username=${username}`);
                         else expect(command.argv).toContain(`--username=${username}`);
                     }
+                }
+                if (mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped') {
+                    expect(await docker.readOperationContainerIds()).toEqual([]);
+                    return;
                 }
                 if (mode === 'repositoryOnly') {
                     expect(events.filter(row => row.kind === 'restic')).toHaveLength(1);
                     expect(events.some(row => row.kind === 'postgres' || row.kind === 'nativeControl')).toBe(false);
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).safetySnapshot).toBeUndefined();
                 } else if (mode === 'missingTool') expect(events.some(row => row.argv?.[0] === 'createdb')).toBe(false);
+                else if (mode === 'publicRestoreUnknown') expect(events.some(row => row.kind === 'imported')).toBe(false);
                 else if (mode !== 'failure' && mode !== 'dumpFailure') {
                     expect(events.find(row => row.kind === 'imported')).toMatchObject({ bytes: archive.length });
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names)
@@ -432,6 +648,8 @@ describe('native restore adapter', () => {
                     expect(events.some(row => row.kind === 'restic' && row.argv.includes('s3:https://fixture.invalid/changed-destination'))).toBe(false);
                 }
                 expect(await docker.readOperationContainerIds()).toEqual([]);
-            }, { nativeExecutableIo: true, ...(mode === 'healthFailure' || mode === 'cancelPublication' ? { writerService: true } : {}) });
+            }, { nativeExecutableIo: true, ...(mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload' || mode === 'volumeRender' || mode === 'sqliteBackup' ? { namedVolume: true } : {}),
+                ...(mode === 'sqliteBackup' ? { sqliteRuntime: true } : {}),
+                ...(mode === 'healthFailure' || mode === 'cancelPublication' || mode === 'volumeRestoreStopped' ? { writerService: true } : {}) });
         }, 60_000);
 });

@@ -1,8 +1,8 @@
 import { DeploymentBackupSnapshotV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
     type DeploymentBackupConfigurationV1, type DeploymentBackupSourceV1, type DeploymentEnvironmentContentV1,
-    type DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentPreMigrationBackupV1, type DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
 
-import { buildResticRequestV1, type ResticAccessV1, type ResticCommandV1, type ResticRequestV1 } from '../backups/resticExecutor.js';
+import { buildResticRequestV1, RESTIC_VOLUME_SOURCE_PATH_V1, type ResticAccessV1, type ResticCommandV1, type ResticRequestV1 } from '../backups/resticExecutor.js';
 import { readResticBackupManifestV1, readResticBackupSummaryV1,
     readResticRepositoryConfigV1, readResticRepositoryInitializationV1, readResticSnapshotsV1, type BackupManifestV1 } from '../backups/manifestV1.js';
 import { backupOperationStepV1, readBackDeploymentBackupManifestV1 } from '../backups/verificationV1.js';
@@ -16,11 +16,13 @@ export type DeploymentBackupNativeResultV1 = Readonly<{ kind: 'outcome_unknown' 
     stdoutChecksumSha256?: string; stdoutBytes?: number;
 }>;
 export type DeploymentBackupRunResultV1 = Readonly<{ kind: 'verified'; manifests: readonly BackupManifestV1[];
-    restoreCaptures?: readonly DeploymentPreMigrationBackupV1[] }>;
+    restoreCaptures?: readonly DeploymentBackupRestoreCaptureV1[] }>;
 type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number];
 export type DeploymentBackupRunInputV1 = Readonly<{
     environmentId: string; configuration: DeploymentBackupConfigurationV1; data?: CapturedData;
     access: ResticAccessV1; signal: AbortSignal;
+    /** The admitted host publishes this run's outcome, including safety/pre-migration runs. */
+    onSettled?(outcome: 'succeeded' | 'failed' | 'outcome_unknown' | 'cancelled', configRevision: number): Promise<void>;
     /** Exact database resolved by the admitted native producer, never a binding key. */
     restoreTarget?: DeploymentPreMigrationBackupV1['target'];
     /** The pre-migration caller binds this completion to its existing receipt CAS.
@@ -54,6 +56,18 @@ export function deploymentBackupDumpFilenameV1(adapter: NonNullable<CapturedData
  * Native JSON and raw-stream checksum facts are normalized here; verified is returned only after exact payload read-back.
  * Public Action activation additionally requires the real P30/P42 adapter. This function is not a second process runner. */
 export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): Promise<DeploymentBackupRunResultV1> {
+    let result: DeploymentBackupRunResultV1;
+    try { result = await executeDeploymentBackup(input); }
+    catch (error) {
+        const code = failureCode(error);
+        await input.onSettled?.(code === 'outcome_unknown' || code === 'cancelled' ? code : 'failed', input.configuration.configRevision);
+        throw error;
+    }
+    await input.onSettled?.('succeeded', input.configuration.configRevision);
+    return result;
+}
+
+async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promise<DeploymentBackupRunResultV1> {
     const manifests: BackupManifestV1[] = [], snapshots: SnapshotEvidence[] = [];
     const checkCancelled = () => { if (input.signal.aborted) refuse('cancelled', 'backup'); };
     const execute = async (command: ResticCommandV1, source?: DeploymentBackupSourceV1) => {
@@ -73,10 +87,11 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             return refuse('unsupported_action');
         }
         const recipes = input.configuration.sources.map(source => {
+            if (source.kind === 'volume') return { source, filename: undefined };
             const data = input.data;
             if (source.kind !== 'dump' || !data?.logicalBackup || source.service !== data.service) return refuse('unsupported_action');
             const adapter = data.logicalBackup.adapter;
-            // SQLite VACUUM produces an owned file, not stdout. Volume stop-copy also needs its real native producer.
+            // SQLite VACUUM produces an owned file rather than a stdout stream.
             if (adapter === 'sqlite-v1') return refuse('unsupported_action');
             return { source, filename: deploymentBackupDumpFilenameV1(adapter, source.service) };
         });
@@ -91,18 +106,23 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             : await backupOperationStepV1('repository', () =>
                 readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated), configResult);
         for (const { source, filename } of recipes) {
-            const backup = await execute({ kind: 'backupStdin', sourceId: source.sourceId, filename }, source);
-            if (!backup.producer || backup.producer.exitCode !== 0) return backupOperationStepV1('producer', () => refuse('backup_failed', 'producer'), backup);
+            const backup = await execute(source.kind === 'volume'
+                ? { kind: 'backupPaths', sourceId: source.sourceId, paths: [RESTIC_VOLUME_SOURCE_PATH_V1] }
+                : { kind: 'backupStdin', sourceId: source.sourceId, filename: filename! }, source);
+            if (source.kind === 'dump' && (!backup.producer || backup.producer.exitCode !== 0)) {
+                return backupOperationStepV1('producer', () => refuse('backup_failed', 'producer'), backup);
+            }
             const summary = await backupOperationStepV1('backup', () => readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated), backup);
             snapshots.push({ environmentId: input.environmentId, sourceId: source.sourceId,
                 configRevision: input.configuration.configRevision, repositoryId, snapshotId: summary.snapshotId });
-            const producerChecksumSha256 = await backupOperationStepV1('producer', () =>
-                DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(backup.producer!.checksumSha256));
+            const producerChecksumSha256 = source.kind === 'dump' ? await backupOperationStepV1('producer', () =>
+                DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(backup.producer!.checksumSha256)) : undefined;
             const inventory = await execute({ kind: 'snapshots', snapshotId: summary.snapshotId });
             const manifest = await backupOperationStepV1('snapshot', () => readResticBackupManifestV1({ summary,
                 snapshots: readResticSnapshotsV1(inventory.stdout, inventory.exitCode, inventory.stdoutTruncated),
-                environmentId: input.environmentId, sourceId: source.sourceId, kind: 'dump',
-                configRevision: input.configuration.configRevision, repositoryId, producerChecksumSha256 }), inventory);
+                environmentId: input.environmentId, sourceId: source.sourceId,
+                configRevision: input.configuration.configRevision, repositoryId,
+                ...(source.kind === 'dump' ? { kind: 'dump', producerChecksumSha256: producerChecksumSha256! } : { kind: 'volume' }) }), inventory);
             manifests.push(manifest);
             await readBackDeploymentBackupManifestV1({ ...input, manifest });
         }
@@ -115,17 +135,25 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
     }
     const recording = input.preMigrationBackup;
     const target = recording?.target ?? input.restoreTarget;
-    const restoreCaptures: DeploymentPreMigrationBackupV1[] | undefined = target ? manifests.map(source => {
+    const repository = { repository: input.access.repository, ...(input.access.s3 ? { s3: input.access.s3 } : {}) };
+    const restoreCaptures = manifests.flatMap<DeploymentBackupRestoreCaptureV1>(source => {
+        if (source.kind === 'volume') {
+            const selected = input.configuration.sources.find(selected => selected.sourceId === source.sourceId);
+            if (selected?.kind !== 'volume') return refuse('unsupported_action');
+            return [{ source, sourceFormat: 'volume', target: { service: selected.service, adapter: 'volume-v1', volume: selected.volume },
+                configuration: input.configuration, repository }];
+        }
+        if (!target) return [];
         if (input.data?.logicalBackup?.adapter !== 'postgres-v1' || source.kind !== 'dump'
             || input.data.service !== target.service) return refuse('unsupported_action');
-        return { source, sourceFormat: 'postgresCustom',
+        return [{ source, sourceFormat: 'postgresCustom',
             target: { service: target.service, adapter: target.adapter, database: target.database }, configuration: input.configuration,
-            repository: { repository: input.access.repository, ...(input.access.s3 ? { s3: input.access.s3 } : {}) } };
-    }) : undefined;
-    if (recording && restoreCaptures) {
-        const capture = restoreCaptures.find(item => input.configuration.sources.some(source =>
+            repository }];
+    });
+    if (recording) {
+        const capture = restoreCaptures.find((item): item is DeploymentPreMigrationBackupV1 => item.sourceFormat === 'postgresCustom' && input.configuration.sources.some(source =>
             source.sourceId === item.source.sourceId && source.kind === 'dump' && source.service === recording.target.service))!;
         await recording.writeCapture(capture);
     }
-    return { kind: 'verified', manifests, ...(restoreCaptures ? { restoreCaptures } : {}) };
+    return { kind: 'verified', manifests, ...(restoreCaptures.length ? { restoreCaptures } : {}) };
 }

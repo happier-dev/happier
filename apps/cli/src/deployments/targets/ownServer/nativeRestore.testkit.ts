@@ -41,8 +41,15 @@ const eventsPath = path.join(__dirname, 'restore-events.jsonl');
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
 const event = value => fs.appendFileSync(eventsPath, JSON.stringify(value)+'\n');
+// Record fixture failures without command operands, SQL, credentials or stdout.
+process.on('uncaughtExceptionMonitor', error => event({kind:'boundaryFailure',
+    errorClass:error?.name, fixtureCode:/^(?:unexpected|missing)_[a-z_]+$/.test(error?.message) ? error.message : undefined}));
 const command = args.indexOf('exec');
 const native = JSON.parse(fs.readFileSync(path.join(__dirname, 'docker-state.json'),'utf8'));
+if (args.includes('compose') && args.includes('up') && state.failVolumeActivation) {
+    state.failVolumeActivation = false; save();
+    event({kind:'volumeActivationFailure'}); process.exit(1);
+}
 const resticReference = args.find(value => native.images[value]?.image.service === 'restic');
 if (args[0] === 'image' && args[1] === 'inspect' && resticReference && !state.runtimeImageLoaded) {
     process.stdout.write('[]'); process.exit(1);
@@ -51,7 +58,7 @@ if (args[0] === 'pull' && resticReference) {
     if (!resticReference.includes('@sha256:') || !args.includes('--platform')) throw new Error('unexpected_runtime_pull');
     state.runtimeImageLoaded = true; save(); event({kind:'runtimePull',argv:args}); process.exit(0);
 }
-if (args.includes('create') && args.includes('--repo')) {
+if (args.includes('create') && (args.includes('--repo') || args.includes('/bin/tar'))) {
     const name = args[args.indexOf('--name')+1];
     const id = crypto.createHash('sha256').update(name).digest('hex');
     fs.writeFileSync(path.join(__dirname, 'restic-'+id+'.json'), JSON.stringify(args));
@@ -66,6 +73,29 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     event({kind:'nativeControl',operation:args[0],services:selected.map(row=>row.Config.Labels['com.docker.compose.service'])});
 } else if (args[0] === 'start' && args.includes('--attach')) {
     const request = JSON.parse(fs.readFileSync(path.join(__dirname, 'restic-'+args.at(-1)+'.json'), 'utf8'));
+    if (request.includes('/bin/tar')) {
+        const imageIndex = request.findIndex(value => native.images[value]?.image.service === 'restic');
+        const argv = request.slice(imageIndex + 1);
+        const stage = request.find(value => value.includes('target=/happier/staging'));
+        const stagingPath = stage ? path.join(__dirname, 'volume-' + /source=([^,]+)/.exec(stage)[1]) : undefined;
+        if (stagingPath) fs.mkdirSync(stagingPath, {recursive:true});
+        const chunks = [];
+        process.stdin.on('data', bytes => chunks.push(bytes));
+        process.stdin.on('end', () => {
+            const bytes = Buffer.concat(chunks);
+            // Docker is the mocked OS boundary. The actual archive tool reads
+            // admitted bytes and writes the fixture's mapped native volume.
+            const extracted = require('node:child_process').spawnSync('/bin/tar', argv.map(value => value === '/happier/staging' ? stagingPath : value), {input:bytes});
+            if (extracted.error) throw extracted.error;
+            const dockerPath = path.join(__dirname, 'docker-state.json');
+            const docker = JSON.parse(fs.readFileSync(dockerPath, 'utf8'));
+            docker.operationStdoutBase64 = extracted.stdout.toString('base64');
+            docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = extracted.status;
+            fs.writeFileSync(dockerPath, JSON.stringify(docker));
+            event({kind:'archive',operation:argv.includes('-tf') ? 'list' : 'extract',bytes:bytes.length});
+            require('./docker-original.cjs');
+        });
+    } else {
     const offset = request.indexOf('--repo');
     const argv = request.slice(offset);
     const repository = argv[1];
@@ -99,6 +129,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         if (argv[argv.indexOf('--target') + 1] !== '/happier/staging' || !argv.includes('--verify')
             || !argv.some(value => /^[a-f0-9]{64}:\/happier\/source$/.test(value))) throw new Error('unexpected_volume_restore');
         output = JSON.stringify({ message_type: 'summary', files_restored: 1, total_files: 1 });
+        if (state.mode === 'volumeRestoreFailure') { state.failVolumeActivation = true; save(); }
     }
     else if (argv.includes('forget')) {
         if (argv.includes('--dry-run')) output = JSON.stringify([{remove:[state.snapshot]}]);
@@ -148,8 +179,26 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             save(); event({kind:filename === 'destination-probe' ? 'probeBytes' : 'safetyBytes',bytes}); finish();
         });
     } else finish();
+    }
+} else if (args[0] === 'exec' && args[1] === '-i' && args.slice(3).join(' ') === 'sh -s') {
+    // The installed SQL client is the OS boundary. Its rows depend on bytes
+    // imported by the real restore lifecycle, rather than a fixed query reply.
+    let script = '';
+    process.stdin.on('data', bytes => { script += bytes.toString('utf8'); });
+    process.stdin.on('end', () => {
+        if (!native.containers.some(row => row.Id === args[2])
+            || !script.includes('--username=happier_ro') || !script.includes('default_transaction_read_only=on')
+            || !script.includes('BEGIN READ ONLY;\nCOPY (\n')
+            || !script.includes('SELECT COUNT(*) AS restored_rows FROM recovered_fixture')
+            || !script.includes('ROLLBACK;\n')) throw new Error('unexpected_read_only_query');
+        const restored = state.names.length > 0 && state.importedBytes === Buffer.from(state.archive,'base64').length;
+        event({kind:'readOnlyQuery'});
+        process.stdout.write('restored_rows\n' + (restored ? '1' : '0') + '\n');
+    });
 } else if (command >= 0 && args[command+1] === '-T') {
-    const argv = args.slice(command+3);
+    let serviceIndex = command + 2;
+    while (args[serviceIndex] === '--env') serviceIndex += 2;
+    const argv = args.slice(serviceIndex + 1);
     event({kind:'postgres',argv});
     if (argv.includes('--version')) {
         if (state.mode === 'missingTool' && argv[0] === 'pg_amcheck') process.exitCode = 127;
@@ -165,10 +214,28 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         // Custom archives are self-delimiting: pg_restore can finish before
         // the restic/Docker producer closes stdout. It does not await pipe EOF.
         process.stdin.on('data', data => { bytes += data.length;
-            if (bytes >= Buffer.from(state.archive,'base64').length) { event({kind:'imported',bytes}); process.exit(0); }
+            if (bytes >= Buffer.from(state.archive,'base64').length) {
+                if (argv.includes('--list')) event({kind:'archiveListed'});
+                else { state.importedBytes = bytes; save(); event({kind:'imported',bytes}); }
+                process.exit(0);
+            }
         });
     } else if (argv[0] === 'psql') {
+        if (!argv.includes('-c')) {
+            let statement = '';
+            process.stdin.on('data', bytes => { statement += bytes.toString('utf8'); });
+            process.stdin.on('end', () => {
+                if (!statement.startsWith('CREATE ROLE ') && !statement.startsWith('ALTER ROLE ')) throw new Error('unexpected_role_control');
+                // Credentials are deliberately absent from fixture event/log state.
+                event({kind:'roleControl',operation:statement.startsWith('CREATE ROLE ') ? 'create' : 'retire'});
+            });
+        } else {
         const sql = argv.at(-1);
+        if (sql.startsWith('SELECT current_user =')) {
+            if (!argv.some(arg => arg.startsWith('--username=')) || !process.env.PGPASSWORD) throw new Error('missing_import_role_connection');
+            process.stdout.write('t\n');
+        }
+        else
         if (sql.startsWith('SELECT COALESCE')) {
             if (state.nameObservations?.length) { state.names = state.nameObservations.shift(); save(); }
             process.stdout.write(JSON.stringify(state.names));
@@ -192,6 +259,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
                 const watcher = fs.watch(__dirname, () => { if (fs.existsSync(releasePath)) watcher.close(); });
                 if (fs.existsSync(releasePath)) watcher.close();
             }
+        }
         }
     } else throw new Error('unexpected_postgres_command');
 } else require('./docker-original.cjs');

@@ -9,7 +9,7 @@ import { withOwnServerNativeBackup, type OwnServerNativeRestoreInput } from './n
 /** Public Actions project the one backup owner through the existing native runner. */
 export async function executeOwnServerBackupForHost(request: OwnServerBackupRequestForHost,
     input: OwnServerNativeRestoreInput,
-    operands: OwnServerBackupRepositoryOperandsForHost | OwnServerPreMigrationBackupOperandsForHost,
+    operands: Pick<OwnServerBackupRepositoryOperandsForHost, 'configuration'> | OwnServerPreMigrationBackupOperandsForHost,
     operationId: string): Promise<DeploymentBackupActionResultV1> {
     const destination = 'destination' in operands ? operands.destination : undefined;
     return withOwnServerNativeBackup<DeploymentBackupActionResultV1>(input, destination, async native => {
@@ -19,7 +19,7 @@ export async function executeOwnServerBackupForHost(request: OwnServerBackupRequ
             case DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1: return testDeploymentBackupDestinationV1({ ...common, operationId });
             case 'deployments.backups.run': {
                 const result = await runDeploymentBackupV1({ ...common, ...('data' in operands
-                    ? { data: operands.data, restoreTarget: operands.destination } : {}) });
+                    ? { data: operands.data, restoreTarget: operands.destination } : {}), onSettled: input.onBackupSettled });
                 return { kind: 'verified', operationId, manifests: [...result.manifests],
                     ...(result.restoreCaptures ? { restoreCaptures: [...result.restoreCaptures] } : {}) };
             }
