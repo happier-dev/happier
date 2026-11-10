@@ -1,3 +1,7 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { validatePath } from '@/rpc/handlers/pathSecurity';
+
 /** Machine-retained review evidence survives its generator Session, including marks-only recovery.
  * This is placement classification, never authority: the caller must still prove current
  * custodian custody and the native owner must load the exact saved result/capture.
@@ -19,12 +23,19 @@ export function isRetainedScmReviewAction(actionId: string, input: Readonly<Reco
             && !('changeKeys' in input));
 }
 
-/** Session placement replaces authored cwd with the admitted host workspace. */
-export function bindScmActionToSessionWorkspace(actionId: string, input: Readonly<Record<string, unknown>>,
+/** Live reads can select a child worktree within the admitted host workspace.
+ * Writes and retained evidence keep their existing Session placement.
+ * The filesystem owner resolves symlinks; authored paths never expand scope.
+ */
+export function bindScmActionToSessionWorkspace(actionId: ActionId, input: Readonly<Record<string, unknown>>,
     workingDirectory: string, sessionId: string): Readonly<Record<string, unknown>> {
+    const selected = getActionSpec(actionId).sideEffectClass === 'read'
+        && !isRetainedScmReviewAction(actionId, input) && typeof input.cwd === 'string'
+        ? validatePath(input.cwd, workingDirectory) : null;
+    const cwd = selected?.valid ? selected.resolvedPath : workingDirectory;
     return actionId === 'scm.repository.clone' ? input
         : actionId === 'scm.pullRequest.prepareWorktree' ? { ...input, cwd: workingDirectory, sourcePath: workingDirectory }
-            : { ...input, cwd: workingDirectory, ...(actionId === 'scm.diffSummary.capture' ? { sessionId } : {}),
+            : { ...input, cwd, ...(actionId === 'scm.diffSummary.capture' ? { sessionId } : {}),
                 ...(actionId === 'scm.diff.file' && typeof input.captured === 'object' && input.captured !== null
                     ? { captured: { ...input.captured, sessionId } } : {}) };
 }

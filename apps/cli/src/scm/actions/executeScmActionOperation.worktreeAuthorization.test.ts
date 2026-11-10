@@ -9,6 +9,7 @@ import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 import { createEmptyScmHostingProviderRegistry, createScmHostingProviderRuntimeServicesForTest } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
 import { executeScmActionOperation } from './executeScmActionOperation';
+import { bindScmActionToSessionWorkspace } from './placement';
 
 describe('SCM worktree filesystem authority', () => {
   const registration = createGitScmBackendRuntimeRegistration();
@@ -21,6 +22,33 @@ describe('SCM worktree filesystem authority', () => {
 
   afterAll(async () => {
     await Promise.all(repositories.map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it('reads candidate worktrees inside the admitted Session workspace without selecting outside paths', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-workflow-comparison-' });
+    repositories.push(fixture.rootPath);
+    for (const name of ['first', 'second']) {
+      const candidate = join(fixture.rootPath, '.dev', 'worktree', name);
+      runScmExecutable(fixture.rootPath, 'git', ['worktree', 'add', '--detach', candidate]);
+      await writeFile(join(candidate, fixture.trackedPath), `candidate ${name}\n`);
+      const result = await executeScmActionOperation({
+        actionId: 'scm.status.snapshot',
+        input: bindScmActionToSessionWorkspace('scm.status.snapshot', { cwd: candidate }, fixture.rootPath, 'comparison-session'),
+        registry, workingDirectory: fixture.rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] },
+      });
+      expect(result).toMatchObject({ success: true, snapshot: { repo: { rootPath: candidate } } });
+    }
+    const outside = `${fixture.rootPath}-private`;
+    repositories.push(outside);
+    await mkdir(outside);
+    await symlink(outside, join(fixture.rootPath, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    for (const cwd of [outside, join(fixture.rootPath, 'escape')]) {
+      expect(bindScmActionToSessionWorkspace('scm.status.snapshot', { cwd }, fixture.rootPath, 'comparison-session'))
+        .toMatchObject({ cwd: fixture.rootPath });
+    }
+    expect(bindScmActionToSessionWorkspace('scm.change.discard', { cwd: join(fixture.rootPath, '.dev', 'worktree', 'first') },
+      fixture.rootPath, 'comparison-session')).toMatchObject({ cwd: fixture.rootPath });
   });
 
   it('refuses removal outside restricted roots and preserves the dirty linked worktree', async () => {
