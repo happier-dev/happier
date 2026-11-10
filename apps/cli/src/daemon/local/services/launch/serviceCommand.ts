@@ -6,6 +6,8 @@ import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaun
 import { machineNativeEffectAdmission, type MachineNativeEffectContext } from './machineNativeEffectAdmission';
 import { executeServiceCommandStream } from './serviceCommandStream';
 import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
+import { readTransferPayloadChunk, resolveTransferPayloadSizeBytes, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import { configuration } from '@/configuration';
 
 export type ServiceCommandV1 = Readonly<{ mode: 'exec' | 'run'; argv: readonly string[] }>;
 export type ServiceCommandResultV1 = Readonly<{ kind: 'completed'; exitCode: number; stdout: string; stderr: string;
@@ -22,6 +24,8 @@ export type NativeServiceCommandCaptureForHost = Readonly<{ context: MachineNati
     signal?: AbortSignal; assertCurrent(): Promise<void>; launch(): Promise<HostAuthorizedPluginExecLaunch>;
     /** P45's raw read-back/dump output is measured, never diagnostic text. */
     rawStdout?: true;
+    /** Complete input lent by the existing finite byte owner, never a caller path. */
+    stdinSource?: TransferPayloadSource;
     /** Native helper termination precedes Docker-client/pipe teardown. */
     stopNative?(): Promise<void>;
     observeNativeSettlement?(signal?: AbortSignal): Promise<boolean> }>;
@@ -116,6 +120,19 @@ export function admitServiceCommandStreamForHost(input: Readonly<{
     return stream;
 }
 
+/** Lend finite bytes to an already admitted native command without changing its identity. */
+export function admitServiceCommandInputForHost(input: Readonly<{
+    command: AdmittedServiceExecContextV1; source: TransferPayloadSource;
+}>): AdmittedServiceExecContextV1 {
+    const capture = commands.get(input.command);
+    if (!capture || !('context' in capture)) {
+        throw new PluginError({ code: 'service_admission_unavailable', message: 'Service input admission is unavailable' });
+    }
+    const command = Object.freeze({}) as AdmittedServiceExecContextV1;
+    commands.set(command, { ...capture, stdinSource: input.source, get signal() { return capture.signal; } });
+    return command;
+}
+
 /** The existing Action operation owns dispatch and replay. */
 export function executeAdmittedServiceCommand(context: AdmittedServiceExecContextV1): Promise<ServiceCommandResultV1> {
     const capture = commands.get(context);
@@ -170,7 +187,29 @@ async function execute(capture: CommandCapture): Promise<ServiceCommandResultV1>
             }
             return { stdoutBytes: bytes, stdoutChecksumSha256: checksum.digest('hex') };
         })() : undefined;
-        const [result, measurement] = await Promise.all([process.handle.wait(), raw]);
+        const exited = process.handle.wait();
+        const input = capture.stdinSource ? (async () => {
+            const source = capture.stdinSource!;
+            const sizeBytes = await resolveTransferPayloadSizeBytes(source);
+            let offset = 0;
+            while (offset < sizeBytes) {
+                signal?.throwIfAborted();
+                const chunk = await readTransferPayloadChunk({ source, offset,
+                    length: Math.min(configuration.filesTransferChunkBytes, sizeBytes - offset) });
+                if (chunk.length === 0) throw new Error('Finite service input ended before its admitted size');
+                try { await process!.handle.write(chunk); }
+                catch (error) {
+                    const result = await exited;
+                    // Archive readers may reject before consuming all bytes.
+                    if (result.termination.requestedBy.kind === 'none' && result.termination.observed.kind === 'exit') return;
+                    throw error;
+                }
+                offset += chunk.length;
+            }
+            signal?.throwIfAborted();
+            await process!.handle.closeStdin();
+        })() : undefined;
+        const [result, measurement] = await Promise.all([exited, raw, input]);
         await retireHelperFiles();
         // Docker client termination does not prove that an in-container command ended.
         if (result.termination.requestedBy.kind !== 'none' || result.termination.observed.kind !== 'exit') {
@@ -185,6 +224,11 @@ async function execute(capture: CommandCapture): Promise<ServiceCommandResultV1>
         return completed;
     } catch (error) {
         if (dispatched) {
+            // A failed byte source must never turn pipe teardown into a successful
+            // import EOF. Stop the native consumer before closing its transport.
+            if (capture.stdinSource) {
+                try { await capture.stopNative?.(); } catch { /* Existing unknown custody below retains the launch. */ }
+            }
             try { await retireHelperFiles(); }
             catch {
                 // Lost physical settlement or private cleanup retains the same
