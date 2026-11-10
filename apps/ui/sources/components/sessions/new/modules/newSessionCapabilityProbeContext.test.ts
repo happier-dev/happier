@@ -5,6 +5,21 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
 describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
+    it('carries the chosen model and changes the existing probe identity when that choice changes', async () => {
+        const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+        const params = { backendTarget: { kind: 'backend' as const, backendId: 'external.model-agent/reader' },
+            runtimeCarrierAgentId: 'external.model-agent/reader', settings: {}, selectedProfileId: 'work', modelId: 'first-model' };
+        const first = resolveNewSessionCapabilityProbeContext(params);
+        const equivalent = resolveNewSessionCapabilityProbeContext({ ...params });
+        const changed = resolveNewSessionCapabilityProbeContext({ ...params, modelId: 'second-model' });
+        expect(first?.capabilityParams).toMatchObject({ modelId: 'first-model', profileId: 'work' });
+        expect(first).toBe(equivalent);
+        expect(first?.cacheKeySuffixParts).not.toEqual(changed?.cacheKeySuffixParts);
+        expect(resolveNewSessionCapabilityProbeContext({ ...params, selectedProfileId: null })?.capabilityParams)
+            .toEqual({ modelId: 'first-model' });
+        expect(resolveNewSessionCapabilityProbeContext({ ...params, modelId: 'default' })?.capabilityParams)
+            .toEqual({ profileId: 'work' });
+    });
     it('keys dependent catalogs by exact draft config values while retaining the existing probe context', async () => {
         const { withNewSessionConfigOptionOverrides } = await import('./newSessionCapabilityProbeContext');
         const base = { cacheKeySuffixParts: ['acp'], capabilityParams: { profileId: 'work' } };

@@ -16,6 +16,7 @@ import { reloadConfiguration } from '@/configuration';
 import type { ApiClient } from '@/api/api';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { AgentInventoryProbeInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
@@ -117,12 +118,12 @@ describe('native Agent preflight home directory intent', () => {
             const plugins = account.plugins.map(plugin => mode !== 'prepared' ? plugin : {
                 ...plugin, files: { ...plugin.files,
                 'daemon.mjs': String(plugin.files['daemon.mjs']).replace('sessionRunnerFactory:', `preflightSessionControls: {
-                    prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
+                    prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal, modelId }) => {
                         const binding = await connectedAccounts.getBinding('primary', { signal });
                         const materialized = await connectedAccounts.materialize('primary', {
                             kind: 'httpHeaders', origin: 'https://preflight-account.example.test', headerNames: ['authorization'],
                         }, { signal, expectedAccount: binding.account });
-                        return { environment: { ...environment, ACME_TOKEN: materialized.headers.authorization.slice(7) }, commandArgsSuffix: ['--selected-upstream', 'https://native.example.test/v1'], catalogConfidence: 'account_unverified', dispose() {} };
+                        return { environment: { ...environment, ACME_TOKEN: materialized.headers.authorization.slice(7) }, commandArgsSuffix: ['--selected-upstream', 'https://native.example.test/v1', '--model', String(modelId)], catalogConfidence: 'account_unverified', dispose() {} };
                     },
                 }, sessionRunnerFactory:`) },
             });
@@ -148,8 +149,10 @@ describe('native Agent preflight home directory intent', () => {
                     parseOutput: () => ({ commands: [], skills: [] }) } },
                 retirementSignal: new AbortController().signal, isCurrent: () => true,
             });
+            if (mode === 'prepared') expect.soft(AgentInventoryProbeInputSchema.safeParse({ modelId: 'chosen-native-model' }).success).toBe(true);
             const response = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeCatalogs', {
                 cwd: root, bypassCache: true,
+                ...(mode === 'prepared' ? { modelId: 'chosen-native-model' } : {}),
                 ...(mode === 'files_ambient' ? {} : { environmentVariables: { ACME_TOKEN: 'fake-explicit-token' } }),
                 ...(mode === 'native' ? {} : { connectedServices: { v: 2, bindingsByServiceId: {
                     'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
@@ -166,7 +169,7 @@ describe('native Agent preflight home directory intent', () => {
             expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
             const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; args: string[]; auth: number[] | null };
             expect(environment.cwd).toBe(root);
-            expect.soft(environment.args).toEqual(mode === 'prepared' ? ['--selected-upstream', 'https://native.example.test/v1'] : []);
+            expect.soft(environment.args).toEqual(mode === 'prepared' ? ['--selected-upstream', 'https://native.example.test/v1', '--model', 'chosen-native-model'] : []);
             if (mode.startsWith('files_')) {
                 expect(environment.key).toBeNull();
                 expect(environment.home).not.toBe(nativeHome);

@@ -265,6 +265,11 @@ export async function invokeCliPreflightMethod(
         return { ok: false, error: { code: 'invalid_params', message: 'Configuration overrides must contain opaque option ids and scalar values.' } };
     }
     const configOptionOverrides = configOverrides?.success ? configOverrides.data : undefined;
+    const selectedModel = params?.modelId === undefined ? null : NonBlankOpaqueIdentifierSchema.safeParse(params.modelId);
+    if (selectedModel && !selectedModel.success) {
+        return { ok: false, error: { code: 'invalid_params', message: 'The selected model must be a nonblank identifier.' } };
+    }
+    const modelId = selectedModel?.success ? selectedModel.data : undefined;
     const parsedConnectedServices = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
     const connectedServices = parsedConnectedServices.success ? parsedConnectedServices.data : null;
     if (params?.connectedServices != null && !parsedConnectedServices.success) {
@@ -332,6 +337,7 @@ export async function invokeCliPreflightMethod(
             runtimeKindOverride: probeContext.runtimeKindOverride,
             pluginSettings: probeContext.pluginSettings,
             configOptionOverrides,
+            modelId,
             cwd,
             timeoutMs,
             accountSettings: probeContext.accountSettings,
@@ -470,7 +476,7 @@ export async function invokeCliPreflightMethod(
             isOccurrenceCurrent: dependencies.isAgentRegistryCurrent ?? (() => false),
         });
         preparedLaunchEnvironment = await dependencies.agentCatalogEntry.preparePreflightLaunchEnvironment({
-            environment: values, connectedAccounts: services.connectedAccounts, signal: preparationSignal,
+            environment: values, modelId, connectedAccounts: services.connectedAccounts, signal: preparationSignal,
         });
         materializedEnv = { ...preparedLaunchEnvironment.environment };
         for (const key of preparedLaunchEnvironment.unset ?? []) delete materializedEnv[key];
@@ -501,6 +507,7 @@ export async function invokeCliPreflightMethod(
         runtimeKindOverride: probeContext.runtimeKindOverride,
         pluginSettings: probeContext.pluginSettings,
         configOptionOverrides,
+        modelId,
         cwd,
         timeoutMs: requestContext.deadlineAtMs === undefined ? timeoutMs : Math.max(0, requestContext.deadlineAtMs - Date.now()),
         accountSettings: probeContext.accountSettings,

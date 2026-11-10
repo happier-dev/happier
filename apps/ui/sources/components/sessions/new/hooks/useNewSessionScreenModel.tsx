@@ -1947,6 +1947,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         acpConfigOptionsProbeState,
     } = useNewSessionScreenPreflightState({
         backendTarget,
+        modelId: modelMode,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
         selectedProfileId,
         pluginSettings: effectiveAgentPluginSettings,
@@ -2416,6 +2417,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             });
             const probeContext = resolveNewSessionCapabilityProbeContext({
                 backendTarget, runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
+                modelId: modelMode,
                 selectedProfileId: useProfiles ? selectedProfileId : null,
                 settings, pluginSettings: effectiveAgentPluginSettings, machineId: selectedMachineId,
                 runtimeDescriptorV1: extras.runtimeDescriptorV1 === undefined ? undefined : RuntimeDescriptorV1Schema.parse(extras.runtimeDescriptorV1),
@@ -2431,7 +2433,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             };
         };
     }, [agentNewSessionOptions, backendTarget, connectedAccountDefaultsStatus, connectedServicesBindingsPayload, effectiveAgentPluginSettings,
-        effectiveAgentPluginSettingsReadiness?.ready, nativeCatalogAgentId, resumeSessionId, selectedMachineId,
+        effectiveAgentPluginSettingsReadiness?.ready, modelMode, nativeCatalogAgentId, resumeSessionId, selectedMachineId,
         selectedProfileId, selectedRuntimeCarrierAgentId, sessionConfigOptionOverrides, targetServerId, useProfiles]);
     const nativeCatalogProfile = useProfiles ? selectedProfile : null;
     const nativeCatalogSecretChoices = nativeCatalogProfile
@@ -2447,7 +2449,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         accountScope: draftScope,
         launchInputs: { agentNewSessionOptions, backendTarget, connectedAccountDefaultsStatus,
             connectedServicesBindingsPayload, effectiveAgentPluginSettings, ready: effectiveAgentPluginSettingsReadiness?.ready,
-            resumeSessionId, selectedMachineId, selectedProfileId, selectedRuntimeCarrierAgentId,
+            modelMode, resumeSessionId, selectedMachineId, selectedProfileId, selectedRuntimeCarrierAgentId,
             sessionConfigOptionOverrides, targetServerId, useProfiles },
         profile: nativeCatalogProfile, selectedSecrets: nativeCatalogSecretChoices,
         sessionOnlyValues: nativeCatalogSessionOnlyValues, defaultBindings: nativeCatalogDefaultBindings,

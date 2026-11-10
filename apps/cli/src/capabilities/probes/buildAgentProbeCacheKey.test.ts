@@ -27,5 +27,8 @@ describe('buildAgentProbeCacheKey', () => {
     expect(scoped).not.toBe(buildAgentProbeCacheKey({ ...context, configOptionOverrides: { provider: 'codex', region: '' } }));
     expect(scoped).toBe(buildAgentProbeCacheKey({ ...context, configOptionOverrides: { region: '', provider: 'gateway' } }));
     expect(buildAgentProbeCacheKey({ ...context, configOptionOverrides: {} })).toBe(buildAgentProbeCacheKey(context));
+    const selectedModel = buildAgentProbeCacheKey({ ...context, modelId: 'first-model' });
+    expect(selectedModel).not.toBe(buildAgentProbeCacheKey(context));
+    expect(selectedModel).not.toBe(buildAgentProbeCacheKey({ ...context, modelId: 'second-model' }));
   });
 });

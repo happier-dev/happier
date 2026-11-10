@@ -31,6 +31,7 @@ type AcpConfigOptionsProbeState = ReturnType<typeof useNewSessionPreflightConfig
 
 export function useNewSessionScreenPreflightState(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
+    modelId?: string | null;
     runtimeCarrierAgentId?: string | null;
     selectedProfileId?: string | null;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
@@ -84,17 +85,19 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         if (!probesEnabled) return null;
         return resolveNewSessionCapabilityProbeContext({
             backendTarget: params.backendTarget,
+            modelId: params.modelId,
             settings,
             selectedProfileId: params.selectedProfileId,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
             machineId: params.selectedMachineId,
             pluginSettings: effectivePluginSettings,
         });
-    }, [effectivePluginSettings, params.backendTarget, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
+    }, [effectivePluginSettings, params.backendTarget, params.modelId, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
     const modelCapabilityProbeContext = useSettingsSelector(React.useCallback((settings) => {
         if (!probesEnabled) return null;
         return resolveNewSessionModelCapabilityProbeContext({
             backendTarget: params.backendTarget,
+            modelId: params.modelId,
             settings,
             selectedProfileId: params.selectedProfileId,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
@@ -103,7 +106,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             connectedServices: params.connectedServicesBindingsPayload,
             connectedServicesCacheIdentity: params.connectedServicesModelProbeCacheIdentity,
         });
-    }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
+    }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.modelId, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
 
     const { usesNativeCatalog, preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,

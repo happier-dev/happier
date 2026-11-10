@@ -101,6 +101,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
   commandArgsSuffix?: readonly string[];
+  modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
@@ -127,6 +128,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     variant: probeVariant,
     connectedServiceSelection: params.connectedServiceSelectionCacheKey,
     profile: params.profileCacheKey,
+    modelId: params.modelId,
     configOptionOverrides: params.configOptionOverrides,
   });
 

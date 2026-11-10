@@ -48,6 +48,7 @@ export const AgentsBackendsListInputSchema = lazyZodSchema(() => z.looseObject({
 
 export const AgentInventoryProbeInputSchema = lazyZodSchema(() => z.strictObject({
   cwd: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  modelId: z.optional(NonBlankOpaqueIdentifierSchema),
   timeoutMs: z.optional(z.number().check(z.positive())),
   transportTimeoutMs: z.optional(z.number().check(z.positive())),
   bypassCache: z.optional(z.boolean()),

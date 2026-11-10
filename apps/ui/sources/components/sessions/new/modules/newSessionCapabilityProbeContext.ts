@@ -17,6 +17,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 export type NewSessionCapabilityProbeContext = Readonly<{
     cacheKeySuffixParts?: readonly string[] | null;
     capabilityParams?: Readonly<Record<string, unknown> & {
+        modelId?: string;
         connectedServices?: ConnectedServiceBindingsV2;
         configOptionOverrides?: Readonly<Record<string, string>>;
     }> | null;
@@ -132,6 +133,7 @@ export function resolveNewSessionOperationalProviderId(params: Readonly<{
 
 export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
+    modelId?: string | null;
     settings: Readonly<Record<string, unknown>>;
     selectedProfileId?: string | null;
     runtimeCarrierAgentId?: string | null;
@@ -162,19 +164,22 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
         ...(params.machineId?.trim() ? { machineId: params.machineId } : {}),
     });
     const selectedProfileId = params.selectedProfileId?.trim() || null;
+    const modelId = params.modelId === 'default' ? null : params.modelId;
     const parsedBindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params.connectedServices);
     const connectedServices = parsedBindings.success ? parsedBindings.data : null;
-    if (!runtimeKind && !selectedProfileId && !params.runtimeDescriptorV1 && !connectedServices) return null;
+    if (!runtimeKind && !selectedProfileId && !modelId && !params.runtimeDescriptorV1 && !connectedServices) return null;
 
     const cacheKeySuffixParts = [
         ...(params.runtimeDescriptorV1 ? [`runtime:${stableJsonStringify(params.runtimeDescriptorV1)}`] : []),
         ...(runtimeKind ? [runtimeKind] : []),
         ...(selectedProfileId ? [`profile:${selectedProfileId}`] : []),
+        ...(modelId ? [`model:${stableJsonStringify(modelId)}`] : []),
         ...(connectedServices ? [`connected-services:${stableJsonStringify(connectedServices)}`] : []),
         ...(connectedServices && params.connectedServicesCacheIdentity ? [params.connectedServicesCacheIdentity] : []),
     ];
     const capabilityParams = {
         ...(selectedProfileId ? { profileId: selectedProfileId } : {}),
+        ...(modelId ? { modelId } : {}),
         ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
         ...(connectedServices ? { connectedServices } : {}),
     };
@@ -187,6 +192,7 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
 
 export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
+    modelId?: string | null;
     settings: Readonly<Record<string, unknown>>;
     selectedProfileId?: string | null;
     runtimeCarrierAgentId?: string | null;

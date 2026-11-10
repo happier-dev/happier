@@ -101,6 +101,7 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
         : null;
     const capabilityProbeContext = resolveNewSessionModelCapabilityProbeContext({
         backendTarget: params.backendTarget,
+        modelId: params.selection.modelId,
         settings: params.settings,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId ?? null,
         machineId: params.selectedMachineId,

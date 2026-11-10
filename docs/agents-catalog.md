@@ -872,7 +872,8 @@ become an independent environment selection for this probe.
 
 In development source, an Agent's optional `preflightSessionControls.prepareLaunchEnvironment`
 reuses its native account preparation after the host admits the exact selected-account operation.
-It receives only that operation's Connected Accounts service and sanitized launch environment;
+It receives that operation's Connected Accounts service, sanitized launch environment
+and selected model ID when the caller has one;
 ordinary catalog callbacks continue to receive environment presence facts. The host removes
 prepared assets before retiring account materialization. Its complete prepared environment also
 retains explicit key removals; the daemon cannot reintroduce a removed native home.

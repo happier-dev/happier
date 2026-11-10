@@ -448,6 +448,7 @@ async function probeAgentModels(params: {
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
   commandArgsSuffix?: readonly string[];
+  modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
@@ -483,6 +484,7 @@ async function probeAgentModels(params: {
     variant: probeVariant,
     connectedServiceSelection: params.connectedServiceSelectionCacheKey,
     profile: params.profileCacheKey,
+    modelId: params.modelId,
     configOptionOverrides: params.configOptionOverrides,
   });
 

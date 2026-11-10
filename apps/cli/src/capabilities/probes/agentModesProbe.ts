@@ -188,6 +188,7 @@ export async function probeAgentModesBestEffort(params: {
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
   commandArgsSuffix?: readonly string[];
+  modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
   profileCacheKey?: string | null;
 }): Promise<ProbedAgentModesResult> {
@@ -213,6 +214,7 @@ export async function probeAgentModesBestEffort(params: {
     variant: probeVariant,
     connectedServiceSelection: params.connectedServiceSelectionCacheKey,
     profile: params.profileCacheKey,
+    modelId: params.modelId,
   });
 
   const cached = agentModesProbeCache.get(cacheKey);

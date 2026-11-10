@@ -721,6 +721,8 @@ export type AgentPreflightSessionControlsContributionV1 = Readonly<{
    */
   prepareLaunchEnvironment?: (input: Readonly<{
     environment: Readonly<Record<string, string>>;
+    /** The caller's current model selection; omission means no model has been chosen. */
+    modelId?: string;
     connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize' | 'watch'>;
     signal: AbortSignal;
   }>) => Promise<Readonly<{
