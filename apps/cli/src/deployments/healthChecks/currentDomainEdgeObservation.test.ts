@@ -6,6 +6,36 @@ import { finiteHealthCheckResult } from './finiteHealthCheckResult';
 import { createCurrentDomainEdgeObservation } from './currentDomainEdgeObservation';
 
 describe('current saved Domain observations', () => {
+    it('reads only the exact saved source and observer while preserving outside provenance', () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ controllerMachineId: 'outside-observer' });
+        const targetLink = createDeploymentTargetLinkHeaderV1({ environmentId: environment.id,
+            machines: ['runtime'], members: [{ machineId: 'runtime', installationId: 'installation', state: 'active' }] });
+        const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: environment.id,
+            targetLinkId: targetLink.id, revision: 1, state: 'active', contentArtifactId: 'artifact-domain',
+            contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1000, updatedAtMs: 1000 });
+        const current = createCurrentDomainEdgeObservation();
+        const check = HealthCheckDefinitionV1Schema.parse({ checkId: 'http',
+            kind: { pluginId: 'happier.machine.services', localId: 'http' },
+            binding: { kind: 'environmentHealth', domainId: domain.id, targetLinkId: targetLink.id },
+            config: {}, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 });
+        for (const sourceInstanceId of ['selected', 'other']) {
+            const observer = { machineId: 'outside-observer', installationId: 'outside-installation' };
+            current.publish({ sourceInstanceId, sourceRevision: '1', checkId: check.checkId, kind: 'http',
+                caller: { pluginId: 'happier.machine.services', machineId: observer.machineId, materializationId: 'installed' },
+                occurrenceId: 'occurrence', check, environment, targetLink, domain, observer,
+                result: finiteHealthCheckResult({ observer, vantage: 'outside' }, 'http', 123, 123, 'up', { httpStatus: 200 }) });
+        }
+        const selected = { sourceInstanceId: 'selected', observerMachineId: 'outside-observer', checks: [check] };
+        expect(current.readDomainProofs(environment.id, targetLink.id, [domain.id], selected))
+            .toMatchObject([{ sourceInstanceId: 'selected', domainObservation: {
+                observerMachineId: 'outside-observer', vantage: 'outside', result: { observedAt: 123 } } }]);
+        expect(current.readDomainProofs(environment.id, targetLink.id, [domain.id],
+            { ...selected, observerMachineId: 'controller' })).toEqual([]);
+        expect(current.readDomainProofs(environment.id, targetLink.id, [domain.id],
+            { ...selected, checks: [{ ...check, config: { keyword: 'changed-after-observation' } }] })).toEqual([]);
+        current.reconcile(entry => entry.sourceInstanceId !== 'selected');
+        expect(current.readDomainProofs(environment.id, targetLink.id, [domain.id], selected)).toEqual([]);
+    });
     it('retains certificate and same-Machine facts without promoting them to outside edge health', () => {
         const observer = { machineId: 'controller', installationId: 'installation-controller' };
         const environment = createDeploymentEnvironmentHeaderV1({ controllerMachineId: observer.machineId });

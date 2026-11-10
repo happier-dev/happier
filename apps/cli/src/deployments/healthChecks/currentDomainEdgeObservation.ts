@@ -116,9 +116,13 @@ export function createCurrentDomainEdgeObservation() {
                 domainChanged ? [input.domain.id] : []);
         },
         readProof,
-        readDomainProofs(environmentId: string, targetLinkId: string, domainIds?: readonly string[]): readonly Entry[] {
+        readDomainProofs(environmentId: string, targetLinkId: string, domainIds?: readonly string[],
+            source?: Readonly<{ sourceInstanceId: string; observerMachineId: string; checks: readonly HealthCheckDefinitionV1[] }>): readonly Entry[] {
             return [...entries.values()].filter(entry => entry.environmentId === environmentId
-                && entry.targetLinkId === targetLinkId && (!domainIds || domainIds.includes(entry.domainId)));
+                && entry.targetLinkId === targetLinkId && (!domainIds || domainIds.includes(entry.domainId))
+                && (!source || entry.sourceInstanceId === source.sourceInstanceId
+                    && entry.domainObservation.observerMachineId === source.observerMachineId
+                    && source.checks.some(check => check.checkId === entry.checkId && isDeepStrictEqual(check, entry.check))));
         },
         read(environmentId: string, targetLinkId: string): DeploymentHealthObservationV1 | null {
             return readProof(environmentId, targetLinkId)?.observation ?? null;

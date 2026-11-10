@@ -24,6 +24,7 @@ import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymen
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { createDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
+import { readDeploymentEnvironmentInTx } from './deploymentReadService';
 import { createDeploymentAcceptedExecution, deploymentAcceptedExecutionColumns } from './deploymentAcceptedExecution';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
@@ -69,7 +70,8 @@ describe('Environment installation grants and complete resource captures', () =>
         const a = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         const b = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         await db.machine.createMany({ data: [a, b].map(machine => ({ id: machine.machineId,
-            installationId: machine.installationId, accountId: owner.id, ...publishedMachine })) });
+            installationId: machine.installationId, installationPublicKey: privacyKit.encodeBase64(nacl.box.keyPair().publicKey),
+            accountId: owner.id, ...publishedMachine })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Accepted grant custody', audience: [] }));
         if (!source.ok) throw new Error(source.error);
@@ -105,9 +107,24 @@ describe('Environment installation grants and complete resource captures', () =>
         const grant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: environment.environmentId,
             ...a, resourceId, resourceRevision: 1, sealedContent: 'same-original-A-seal' };
         const bindings = { serverId, environmentId: environment.environmentId, expectedRevision: linked.revision,
-            ...reference, grants: [grant], referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] };
+            ...reference, grants: [grant], referencedSavedSecretRevisions: [{ resourceId, revision: 1,
+                requiredBindings: [{ purpose: 'variable' as const, phase: 'runtime' as const },
+                    { purpose: 'variable' as const, phase: 'build' as const }] }] };
         const bound = await withAdmissionCount(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, bindings));
         if (!bound.ok) throw new Error(bound.error);
+        const readScope = () => inTx(tx => readDeploymentEnvironmentInTx(tx, owner.id,
+            { serverId, environmentId: environment.environmentId }));
+        expect(await readScope()).toMatchObject({ ok: true, secretScope: {
+            status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 1, missingGrantCount: 0,
+        } });
+        const stored = await db.machineSecretGrant.findFirstOrThrow({ where: { environmentId: environment.environmentId } });
+        await db.machineSecretGrant.delete({ where: { subjectKey: stored.subjectKey } });
+        const missingScope = await readScope();
+        expect(missingScope).toMatchObject({ ok: true, secretScope: {
+            status: 'actionNeeded', reason: 'secret_scope_grants_required', requiredGrantCount: 1, missingGrantCount: 1,
+        } });
+        expect(JSON.stringify(missingScope)).not.toContain(grant.sealedContent);
+        await db.machineSecretGrant.create({ data: stored });
         // Persisted receipt is the fixture boundary for this mutation-owner test;
         // the capture columns come from D2's sole identity producer.
         await db.deployment.create({ data: { environmentId: environment.environmentId, targetLinkId: linked.targetLinkId,
@@ -140,7 +157,7 @@ describe('Environment installation grants and complete resource captures', () =>
         expect(await snapshot()).toEqual(committed);
     });
 
-    async function roundtrip(variant: 'plain' | 'e2ee' | 'team' | 'operational' | 'rotation' | 'isolation') {
+    async function roundtrip(variant: 'plain' | 'e2ee' | 'team' | 'operational' | 'rotation' | 'isolation' | 'backupBeforePlacement') {
         const mode = variant === 'e2ee' || variant === 'rotation' || variant === 'isolation' ? 'e2ee' : 'plain';
         const recipientKeys = nacl.box.keyPair();
         const recipientBinding = createSignedAccountContentBinding(recipientKeys.publicKey);
@@ -228,7 +245,7 @@ describe('Environment installation grants and complete resource captures', () =>
                 ? [formatSharedSavedSecretRefV1(resourceId)] : []);
             return row.entry.deploymentReferenceState;
         };
-        expect(await census()).toBe('unreferenced');
+        if (variant !== 'backupBeforePlacement') expect(await census()).toBe('unreferenced');
         const deleteResource = async () => {
             const current = await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId } });
             return await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: donor.id, resourceId,
@@ -273,7 +290,28 @@ describe('Environment installation grants and complete resource captures', () =>
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', ...initialContent,
         }));
         if (!environment.ok) throw new Error(environment.error);
-        expect(await census(), 'admitted creation starts with an empty binding set').toBe('unreferenced');
+        if (variant !== 'backupBeforePlacement') {
+            expect(await census(), 'admitted creation starts with an empty binding set').toBe('unreferenced');
+        }
+        if (variant === 'backupBeforePlacement') {
+            const bindings = [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword', source: binding.source }];
+            const prepared = await artifact('deployment-environment.v1', { ...content, bindings });
+            const input = { serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
+                ...prepared, referencedSavedSecretRevisions: [{ resourceId, revision: 1 }], grants: [] };
+            const builderGrant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: environment.environmentId,
+                machineId: buildMachineId, installationId: buildInstallationId, resourceId, resourceRevision: 1,
+                sealedContent: 'builder-must-not-receive-backup-credentials' };
+            expect(await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, { ...input, grants: [builderGrant] })))
+                .toMatchObject({ ok: false, error: 'deployment_conflict' });
+            expect(await db.machineSecretGrant.count({ where: { environmentId: environment.environmentId } })).toBe(0);
+            const result = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, input));
+            expect(result).toMatchObject({ ok: true, revision: environment.revision + 1 });
+            expect(await db.machineSecretGrant.count({ where: { environmentId: environment.environmentId } })).toBe(0);
+            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.environmentId } }))
+                .toMatchObject({ runtimeTargetLinkId: null, contentArtifactId: prepared.contentArtifactId,
+                    referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] });
+            return;
+        }
         if (variant === 'isolation') {
             const unrelated = await db.account.create({ data: { encryptionMode: 'plain' } });
             const privateId = crypto.randomUUID();
@@ -513,5 +551,6 @@ describe('Environment installation grants and complete resource captures', () =>
     it.each(['plain', 'e2ee', 'team'] as const)('commits %s captures atomically and rechecks resource authority at the actual binding transaction', roundtrip);
     it('retires rotated exact grants while preserving same-revision repair and non-secret delivery', () => roundtrip('rotation'));
     it('keeps another Account never-shared private resource independent of an opaque Environment', () => roundtrip('isolation'));
+    it('authors backup credential references through the binding transaction before placement', () => roundtrip('backupBeforePlacement'));
     it('refuses operational purposes without a current destination, Domain or data/native owner', () => roundtrip('operational'));
 });

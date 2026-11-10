@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { MachineSecretGrantV1Schema, machineSecretGrantSubjectKey,
-    type MachineSecretGrantV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+    type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretRequiredUseV1 } from '@happier-dev/deployments';
 import type { Tx } from '@/storage/inTx';
 import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -13,8 +14,25 @@ function invalidGrant(): never {
 }
 
 /** Index encoding only; the public canonical subject remains the grant identity. */
-function storageKey(grant: MachineSecretGrantV1 | MachineConnectorSecretGrantSubjectV1): string {
+function storageKey(grant: MachineSecretGrantSubjectV1): string {
     return createHash('sha256').update(machineSecretGrantSubjectKey(grant)).digest('hex');
+}
+
+/** Environment read admission may inspect exact grant coverage, never its sealed material. */
+export async function readEnvironmentSecretGrantCoverageInTx(tx: Tx, input: Readonly<{
+    environmentId: string;
+    requiredSecretUses: readonly EnvironmentSecretRequiredUseV1[];
+}>): Promise<Readonly<{ requiredGrantCount: number; missingGrantCount: number }>> {
+    const keys = [...new Set(input.requiredSecretUses.map(use => storageKey({
+        v: 1, kind: 'secret', environmentId: input.environmentId, ...use,
+    })))];
+    let found = 0;
+    for (const chunk of portableQueryChunks({ values: keys, bindingsPerValue: 1 })) {
+        found += (await tx.machineSecretGrant.findMany({
+            where: { subjectKey: { in: [...chunk] } }, select: { subjectKey: true },
+        })).length;
+    }
+    return { requiredGrantCount: keys.length, missingGrantCount: keys.length - found };
 }
 
 /** P21's admitted configure lifecycle is the Machine-scoped writer of the same installation table. */

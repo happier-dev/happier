@@ -10,7 +10,9 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
 import type { Tx } from '@/storage/inTx';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
     canDeployDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
-import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
+import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
+    readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
+import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
@@ -46,11 +48,15 @@ export async function readDeploymentApprovalEnvironmentInTx(tx: Tx, actorAccount
         if (!loaded.ok) return loaded;
     }
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: admittedEnvironmentId ?? input.environmentId },
-        select: { id: true, projectSourceId: true, purpose: true, previewTemplateEnvironmentId: true } });
+        select: { id: true, projectSourceId: true, purpose: true, previewTemplateEnvironmentId: true,
+            previewCompanionOfEnvironmentId: true,
+            previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
     if (!environment) return deploymentFailure('deployment_unavailable');
+    const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(environment);
     return DeploymentApprovalEnvironmentResultV1Schema.parse({ ok: true, environment: {
         id: environment.id, projectSourceId: environment.projectSourceId, purpose: environment.purpose,
-        ...(environment.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: environment.previewTemplateEnvironmentId } : {}),
+        ...(environment.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: environment.previewCompanionOfEnvironmentId } : {}),
+        ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
     } });
 }
 
@@ -204,8 +210,23 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
         const revision = current.get(formatSharedSavedSecretRefV1(capture.resourceId));
         return revision === undefined ? [] : [{ resourceId: capture.resourceId, revision }];
     });
+    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row);
+    const coverage = await readEnvironmentSecretGrantCoverageInTx(tx, {
+        environmentId: loaded.row.id, requiredSecretUses: required.requiredSecretUses,
+    });
+    const unavailableResource = captures?.some(capture => !current.has(formatSharedSavedSecretRefV1(capture.resourceId)));
+    const changedResource = captures?.some(capture => current.get(formatSharedSavedSecretRefV1(capture.resourceId)) !== capture.revision);
+    const secretScope = {
+        ...coverage,
+        ...(required.status === 'incomplete' ? { status: 'unavailable', reason: 'secret_scope_requirements_unavailable' }
+            : unavailableResource ? { status: 'unavailable', reason: 'secret_scope_resource_unavailable' }
+                : changedResource ? { status: 'actionNeeded', reason: 'secret_scope_resource_revision_changed' }
+                    : coverage.missingGrantCount ? { status: 'actionNeeded', reason: 'secret_scope_grants_required' }
+                        : { status: 'ready', reason: 'secret_scope_current' }),
+    };
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
         environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission), targetLinks, controller,
+        secretScope,
         ...(savedSecretRevisions === undefined ? {} : { savedSecretRevisions }),
         ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),
         ...(pending.pendingDeploy ? { pendingDeploy: pending.pendingDeploy } : {}),
@@ -284,6 +305,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     const readRows = (where: Prisma.DeploymentEnvironmentWhereInput) => tx.deploymentEnvironment.findMany({
         where, orderBy: { id: 'desc' }, take: limit + 1,
         include: { deployers: { select: { principalKind: true, principalId: true } },
+            previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } },
             // Exact visible groups consume Environment headers, not latest-attempt
             // history. Ordinary inventory retains its incumbent receipt projection.
             deployments: input.environmentIds === undefined
@@ -299,6 +321,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         + (input.previewRepositoryId === undefined ? 0 : 1)
         + (input.previewPullRequestIds === undefined && input.previewTemplateEnvironmentId === undefined ? 0 : 1) // Preview purpose.
         + (input.previewTemplateEnvironmentId === undefined ? 0 : 1)
+        + (input.previewCompanionOfEnvironmentId === undefined ? 0 : 1)
         + (cursor ? 1 : 0)
         + (input.machineId ? 7 + deploymentInProgressStates().length : 0);
     const bindingsPerValue = input.environmentIds !== undefined && input.previewPullRequestIds !== undefined ? 2 : 1;
@@ -312,6 +335,8 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             const where: Prisma.DeploymentEnvironmentWhereInput = {
                 ...(input.includeDeleted ? {} : { deletedAt: null }),
                 ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
+                ...(input.previewCompanionOfEnvironmentId === undefined ? {} : {
+                    previewCompanionOfEnvironmentId: input.previewCompanionOfEnvironmentId }),
                 ...(input.previewPullRequestIds === undefined ? {} : { purpose: 'preview',
                     previewPullRequestId: { in: previewPullRequestIds ? [...previewPullRequestIds] : undefined } }),
                 ...(input.previewRepositoryId === undefined ? {} : { previewRepositoryId: input.previewRepositoryId }),

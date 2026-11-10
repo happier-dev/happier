@@ -8,7 +8,7 @@ import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
 import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentControllerAvailabilityV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentBindingSavedSecretRevisionsV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 const collectionCoverage = z.optional(z.enum(['complete', 'partial']));
 
@@ -18,6 +18,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         projectSourceName: z.optional(z.nullable(z.string())),
         /** Saved configuration, independent of backup runs; omitted by older readers or unreadable content. */
         backupConfigured: z.optional(z.boolean()),
+        /** Actual opened template configuration; omitted when the private Artifact is unavailable. */
+        previewTemplateConfigured: z.optional(z.boolean()),
         /** Unknown unless the carried receipt is the runtime link's actual active deployment. */
         liveVersionTitle: z.optional(z.nullable(z.string())),
         runtimeTargetLink: z.optional(z.nullable(DeploymentTargetLinkHeaderV1Schema)),
@@ -44,6 +46,7 @@ export type DeploymentReceiptHistoryV1 = z.infer<typeof DeploymentReceiptHistory
 export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
     environment: DeploymentEnvironmentHeaderV1Schema,
     savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
+    secretScope: z.optional(DeploymentEnvironmentSecretScopeV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),
     content: DeploymentEnvironmentContentV1Schema,
     targetLinks: z.array(z.strictObject({
