@@ -62,9 +62,13 @@ export const SESSION_LIST_ROW_WIDTH_METRICS = Object.freeze({
     titleMinCharacters: 16,
 });
 
-/** The shared list `Item` density a session-list row of this density uses (Drafts, Scheduled). */
-export function resolveSessionListItemDensity(density: SessionListRowDensity): 'comfortable' | 'compact' | 'tight' {
-    return density === 'default' ? 'comfortable' : density === 'minimal' ? 'tight' : 'compact';
+/**
+ * The shared list `Item` density a session-list row of this density uses (Drafts, Scheduled, "Show more").
+ * A minimal row is the list's compact row, as `COLLECTION_ROW_DENSITY` says: its glyph column and gap are the
+ * list's, so the row's title lands on the session rows' edge (phone 50) instead of `tight`'s 46.
+ */
+export function resolveSessionListItemDensity(density: SessionListRowDensity): 'comfortable' | 'compact' {
+    return density === 'default' ? 'comfortable' : 'compact';
 }
 
 export function resolveSessionListRowTitleTextMetrics(params: Readonly<{

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     TEAM_GROUP_NAME_MAX_LENGTH_V1,
@@ -56,7 +57,6 @@ import {
 import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection';
 import { memberDefaultsAccess } from '../defaults/memberDefaults';
 
-const MEMBER_AVATAR_SIZE = 32;
 const GROUP_DETAIL_CHUNK_SIZE = 12;
 
 type GroupDetailVirtualizedRow = Readonly<{
@@ -569,7 +569,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                 leftElement={(
                                     <Avatar
                                         id={member.accountId}
-                                        size={MEMBER_AVATAR_SIZE}
+                                        size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                         imageUrl={member.account.avatarUrl}
                                     />
                                 )}
@@ -740,7 +740,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                     leftElement={(
                                         <Avatar
                                             id={membership.accountId}
-                                            size={MEMBER_AVATAR_SIZE}
+                                            size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                             imageUrl={membership.account.avatarUrl}
                                         />
                                     )}

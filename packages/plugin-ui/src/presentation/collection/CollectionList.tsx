@@ -205,8 +205,17 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    */
   catalogRow: Object.freeze({
     minHeight: 60,
-    markBox: 32,
-    markGap: 12,
+    /**
+     * The mark's column. On the phone it is the page row's (20 + 12), so a catalog record's title starts on
+     * the same edge as every other row of a sheet (64) instead of 76–80 (PHONE-GEOMETRY-1110).
+     */
+    markBox: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 32,
+    markGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 12,
+    /**
+     * An identity mark drawn in that column (a Team's logo, a person's avatar, a Store item): inside the box
+     * on a pointer platform, and overhanging the phone's 20 column evenly, on the glyph axis.
+     */
+    identityMarkPx: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowIdentityMarkPx : 28,
     rowGap: 2,
     /** Air above and below the text block: a two-line row (title 20 + 2 + description 18) lands on the floor. */
     paddingVertical: 10,
@@ -471,14 +480,27 @@ const groupLabelMenuStyle: ViewStyle = {
   paddingBottom: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
 };
 const groupLabelLeadStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 };
-const groupLabelMarkStyle: ViewStyle = { width: 16, height: 16, alignItems: 'center', justifyContent: 'center' };
+/**
+ * A group label's mark (a project's folder) and its gap to the label's text. On the phone the mark takes the
+ * rows' glyph column, so the label's text starts on the session rows' title edge (lab `.gl`: 18 / 50) instead of
+ * 42 (PHONE-GEOMETRY-1110). The lead's own `gap` is the first part of that gap.
+ */
+const GROUP_LABEL_MARK_PX = PHONE_COLUMN ? M.rowGlyphBox : 16;
+const GROUP_LABEL_MARK_GAP_PX = PHONE_COLUMN ? M.rowGlyphGap : 8;
+const groupLabelMarkStyle: ViewStyle = {
+  width: GROUP_LABEL_MARK_PX,
+  height: 16,
+  marginRight: GROUP_LABEL_MARK_GAP_PX - 8,
+  alignItems: 'center',
+  justifyContent: 'center',
+};
 // The disclosure's lead: glyph, title, count and chevron are one press target that hugs its content.
 const groupLabelDisclosureStyle: HappierPortableStyle = { ...groupLabelLeadStyle, gap: 4, alignSelf: 'stretch' };
 // The detail gives up its whole width before the title loses any: shrink is shared by weight × width, and an
 // ellipsis appears on any sub-pixel overflow, so a weight of 100 still cut "Chats" to "Ch…" beside a host name.
 const groupLabelDetailStyle: ViewStyle = { flexShrink: 100000, minWidth: 0 };
 const groupLabelDetailEndStyle: ViewStyle = { flexShrink: 0 };
-const groupLabelDisclosureMarkStyle: ViewStyle = { ...groupLabelMarkStyle, marginRight: 4 };
+const groupLabelDisclosureMarkStyle: ViewStyle = { ...groupLabelMarkStyle, marginRight: GROUP_LABEL_MARK_GAP_PX - 4 };
 // The free space after the fold control: what its hit area may take on that side.
 const GROUP_LABEL_SPACER_MIN_PX = 8;
 const groupLabelSpacerStyle: ViewStyle = { flex: 1, minWidth: GROUP_LABEL_SPACER_MIN_PX };

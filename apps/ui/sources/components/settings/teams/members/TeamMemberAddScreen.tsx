@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     HomeAccountSearchResultV1Schema,
@@ -34,7 +35,6 @@ import { teamRoleLabel } from '../teamLabels';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
 
 const ADMISSIBLE_ROLES: readonly TeamAdmissibleRoleV1[] = Object.freeze(['admin', 'member', 'guest']);
-const PICKER_AVATAR_SIZE = 32;
 const SEARCH_DEBOUNCE_MS = 250;
 
 type MemberSearchState = Readonly<{
@@ -232,7 +232,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                         leftElement={(
                             <Avatar
                                 id={candidate.accountId}
-                                size={PICKER_AVATAR_SIZE}
+                                size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                 imageUrl={candidate.profile.avatarUrl}
                             />
                         )}

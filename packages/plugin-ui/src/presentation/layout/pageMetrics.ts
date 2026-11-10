@@ -146,13 +146,19 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   rowMinHeightPx: 52,
   /**
    * A page row's leading column: one icon size in a fixed column, so the titles
-   * of a section line up whether a row carries a glyph, an identity mark (which
-   * may grow the column) or nothing. The glyph fills the column: beside a title
-   * and its description an 18px glyph read as undersized.
+   * of every sheet start on one edge (phone: 64) whether a row carries a glyph,
+   * an identity mark or nothing. The glyph fills the column: beside a title and
+   * its description an 18px glyph read as undersized.
    */
   rowIconGlyphPx: 20,
   rowLeadingColumnPx: 20,
   rowLeadingGapPx: 12,
+  /**
+   * An identity mark in a page row's leading column (a person's or Team's avatar, an Agent or role mark):
+   * centred on the glyph axis, 2 past the column on each side, so it never moves the title edge and keeps
+   * 10 to the title (phone-system lab, PHONE-GEOMETRY-1110).
+   */
+  rowIdentityMarkPx: 24,
   /**
    * A row whose leading element is a picture of the thing itself (a window's or a screen's thumbnail,
    * a file's preview) rather than a glyph: a landscape box, so the picture reads at a glance. Computer

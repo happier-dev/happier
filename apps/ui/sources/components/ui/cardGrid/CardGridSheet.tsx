@@ -9,12 +9,9 @@ import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentati
 
 import { Text } from '@/components/ui/text/Text';
 
-import {
-  SETTINGS_COLLECTION_GRID,
-  resolveSettingsCollectionGridColumns,
-} from './settingsCollectionGrid';
+import { CARD_GRID_SHEET, resolveCardGridSheetColumns } from './cardGridMetrics';
 
-export type SettingsCollectionGridCell = Readonly<{
+export type CardGridSheetCell = Readonly<{
   key: string;
   testID: string;
   title: string;
@@ -28,14 +25,14 @@ export type SettingsCollectionGridCell = Readonly<{
 
 /**
  * The cells of one section's sheet in a standalone collection page (R6): hairline cells, each a mark, a name and
- * its state, as many to a row as `resolveSettingsCollectionGridColumns` fits in the measured sheet. It lives
+ * its state, as many to a row as `resolveCardGridSheetColumns` fits in the measured sheet. It lives
  * inside an `ItemGroup`, which draws the section title and the sheet.
  */
-export const SettingsCollectionGrid = React.memo(
-  function SettingsCollectionGrid(
+export const CardGridSheet = React.memo(
+  function CardGridSheet(
     props: Readonly<{
       testID?: string;
-      cells: readonly SettingsCollectionGridCell[];
+      cells: readonly CardGridSheetCell[];
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -45,7 +42,7 @@ export const SettingsCollectionGrid = React.memo(
         event.nativeEvent.layout.width,
       );
       if (width !== null)
-        setColumns(resolveSettingsCollectionGridColumns(width));
+        setColumns(resolveCardGridSheetColumns(width));
     }, []);
     // Until measured the grid holds the phone's three, so a phone's first paint is its final layout.
     const perRow = columns ?? 3;
@@ -123,8 +120,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s2,
   },
   mark: {
-    width: SETTINGS_COLLECTION_GRID.markPx,
-    height: SETTINGS_COLLECTION_GRID.markPx,
+    width: CARD_GRID_SHEET.markPx,
+    height: CARD_GRID_SHEET.markPx,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: theme.space.s6,

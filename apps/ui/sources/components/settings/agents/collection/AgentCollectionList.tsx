@@ -37,8 +37,8 @@ import { resolveAgentsMachineCandidateAvailability, type AgentAdministrationCata
 import { AgentAdministrationCatalogBoundary, useBoundaryAgentAdministrationCatalog } from './AgentAdministrationCatalogBoundary';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
-import { SettingsCollectionGrid, type SettingsCollectionGridCell } from '@/components/settings/shell/SettingsCollectionGrid';
-import { SETTINGS_COLLECTION_GRID } from '@/components/settings/shell/settingsCollectionGrid';
+import { CardGridSheet, type CardGridSheetCell } from '@/components/ui/cardGrid/CardGridSheet';
+import { CARD_GRID_SHEET } from '@/components/ui/cardGrid/cardGridMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAgentAuthoringEntry } from '../authoring/useAgentAuthoringEntry';
 import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
@@ -529,7 +529,7 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
     // Standalone, the collection is a Settings page (R6, phone-system lab p4): each group is a section whose sheet
     // holds the Agents as a grid of marks, names and states. The machine chip and "+" are the page's own controls,
     // so Add's menu never nests in the navigation overflow.
-    const gridCellOf = (row: AgentCollectionRow): SettingsCollectionGridCell => {
+    const gridCellOf = (row: AgentCollectionRow): CardGridSheetCell => {
         const trouble = resolveRowStatus(row, resolveRowStatusLabel(row));
         const ready = row.status === 'ready' || row.status === 'updateAvailable';
         const state = trouble
@@ -544,7 +544,7 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             state,
             dimmed,
             mark: <HappierBrandMark brand={brandMarks?.[definition.id] ?? { displayName: row.entry.title }}
-                pixelSize={SETTINGS_COLLECTION_GRID.markPx} externallyLabelled />,
+                pixelSize={CARD_GRID_SHEET.markPx} externallyLabelled />,
             onPress: () => openCustomAcpEditor(router, definition.id, false),
         } : {
             key: row.key,
@@ -553,7 +553,7 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             state,
             dimmed,
             mark: <AgentCatalogIdentityIcon entry={row.entry} machineId={machine?.id ?? null} serverId={serverId}
-                current={projectionCurrent} color={theme.colors.text.primary} size={SETTINGS_COLLECTION_GRID.markPx} />,
+                current={projectionCurrent} color={theme.colors.text.primary} size={CARD_GRID_SHEET.markPx} />,
             onPress: () => openAgent(row.entry),
         };
     };
@@ -563,17 +563,17 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             {emptyRow}
             {groups.map((group) => group.rows.length > 0 ? (
                 <ItemGroup key={group.key} title={group.title}>
-                    <SettingsCollectionGrid testID={`settings-agents-collection.grid.${group.key}`} cells={group.rows.map(gridCellOf)} />
+                    <CardGridSheet testID={`settings-agents-collection.grid.${group.key}`} cells={group.rows.map(gridCellOf)} />
                 </ItemGroup>
             ) : null)}
             {visibleCustomBackends.length > 0 ? (
                 <ItemGroup title={t('settingsAgents.collection.customAgents')}>
-                    <SettingsCollectionGrid testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
+                    <CardGridSheet testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
                         key: backend.id,
                         testID: `settings-agents-collection.custom.${backend.id}`,
                         title: backend.title || backend.name,
                         mark: <HappierBrandMark brand={brandMarks?.[backend.id] ?? { displayName: backend.title || backend.name }}
-                            pixelSize={SETTINGS_COLLECTION_GRID.markPx} externallyLabelled />,
+                            pixelSize={CARD_GRID_SHEET.markPx} externallyLabelled />,
                         onPress: () => openCustomAcpEditor(router, backend.id, false),
                     }))} />
                 </ItemGroup>

@@ -24,8 +24,13 @@ export function resolveHappierPageRowDetailLayout(input: Readonly<{
   const labelColumnPx = input.titleNaturalWidthPx !== null
     ? Math.min(metrics.sectionTextMinWidthPx, input.titleNaturalWidthPx) + input.trailingWidthPx + rowChromePx
     : metrics.sectionTextMinWidthPx;
+  // Only a short value sits beside a label on a narrow row (the phone rule): a detail that takes more than half
+  // of the row's text column is a description, and it reads beneath its title (Session Info "Fork…  Native,
+  // replay or configure", L13), however short the label.
+  const textColumnPx = input.rowWidthPx - rowChromePx;
   const beneath = input.detailWidthPx !== null
-    && input.rowWidthPx - input.detailWidthPx - metrics.rowLeadingGapPx < labelColumnPx;
+    && (input.rowWidthPx - input.detailWidthPx - metrics.rowLeadingGapPx < labelColumnPx
+      || input.detailWidthPx > textColumnPx / 2);
   return {
     beneath,
     inlineMaxWidthPx: !beneath && input.titleNaturalWidthPx !== null && input.titleNaturalWidthPx < metrics.sectionTextMinWidthPx

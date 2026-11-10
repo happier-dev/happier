@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HappierUiEnvironmentProvider } from '../../environment/context.js';
 import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
 import * as authorBarrel from '../../index.public.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import {
   createSurfaceContext,
@@ -704,6 +705,34 @@ describe('Work primitives for plugin authors', () => {
       expect(word.textContent).toBe('Waiting for you');
       expect(word.style.color).toBe('rgb(148, 82, 0)');
       expect(ATTENTION).toBe('#945200');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('puts a page-density summary on the page row\'s glyph column, so an Inbox title shares the sheet\'s one edge', () => {
+    const mounted = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierWorkSummary
+          testID="summary"
+          density="page"
+          title="Create prompt document"
+          mark={<span data-testid="mark" />}
+          facts={['NLDW6-3-11-20', '8h']}
+          accessibilityLabel="Create prompt document"
+        />,
+      ),
+    );
+    try {
+      const column = byTestId(mounted.container, 'mark')!.parentElement!;
+      const text = column.nextElementSibling as HTMLElement;
+      expect({ column: column.style.width, gap: text.style.marginLeft }).toEqual({
+        column: `${HAPPIER_PAGE_METRICS.rowLeadingColumnPx}px`,
+        gap: `${HAPPIER_PAGE_METRICS.rowLeadingGapPx}px`,
+      });
+      expect(authorBarrel.HAPPIER_WORK_PAGE_ROW_METRICS.textInsetPx).toBe(
+        HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+      );
     } finally {
       mounted.unmount();
     }

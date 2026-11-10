@@ -18,6 +18,7 @@ import {
   type HappierTypeRole,
 } from '../text/typeScale.js';
 import { HAPPIER_COLLECTION_LIST_METRICS } from './CollectionList.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
@@ -245,11 +246,22 @@ export type HappierCollectionRowMainProps = Readonly<{
   density: HappierCollectionRowDensity;
   touchCompact?: boolean;
   identity?: ReactNode;
+  /**
+   * `page`: a row on a page sheet (the Inbox's Work rows) takes the page row's leading column and gap, so its
+   * title shares the sheet's one edge (phone 64) with every `Item` row; the mark sits centred on the glyph axis.
+   */
+  identityColumn?: 'density' | 'page';
   /** The title line: the title, then its quiet context and qualifiers. */
   title: ReactNode;
   /** Lines under the title. */
   children?: ReactNode;
 }>;
+
+const PAGE_IDENTITY_COLUMN_STYLE = {
+  width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx,
+  height: HAPPIER_COLLECTION_ROW_METRICS.identity.comfortable.slotSize,
+} as const;
+const PAGE_CONTENT_GAP_STYLE = { marginLeft: HAPPIER_PAGE_METRICS.rowLeadingGapPx } as const;
 
 /**
  * The slot layout every work row shares: the identity column at the density's size, then the text column
@@ -266,13 +278,14 @@ export function HappierCollectionRowMain(
     props.density,
     touchCompact,
   );
+  const page = props.identityColumn === 'page';
   return (
     <>
       {props.identity != null ? (
         <View
           style={[
             identityBase,
-            { width: identity.slotSize, height: identity.slotSize },
+            page ? PAGE_IDENTITY_COLUMN_STYLE : { width: identity.slotSize, height: identity.slotSize },
           ]}
         >
           {props.identity}
@@ -282,7 +295,7 @@ export function HappierCollectionRowMain(
         style={[
           contentBase,
           props.identity != null
-            ? { marginLeft: M.contentGap[props.density] }
+            ? page ? PAGE_CONTENT_GAP_STYLE : { marginLeft: M.contentGap[props.density] }
             : null,
         ]}
       >

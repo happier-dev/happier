@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import type { TeamMembershipV1 } from '@happier-dev/protocol/teams';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -12,7 +13,6 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import { TeamLeaveAction } from './TeamLeaveAction';
 import { teamMemberRowSubtitle } from './teamMemberPresentation';
 
-const MEMBER_AVATAR_SIZE = 36;
 
 /** One person on a Team: the Members roster and the People page draw the same row. */
 export const TeamMemberRow = React.memo(function TeamMemberRow(props: Readonly<{
@@ -31,7 +31,7 @@ export const TeamMemberRow = React.memo(function TeamMemberRow(props: Readonly<{
             subtitle={teamMemberRowSubtitle(membership, person, t('teams.members.joined', {
                 when: formatCalendarDate(membership.joinedAt, props.language),
             }))}
-            leftElement={<Avatar id={membership.accountId} size={MEMBER_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} />}
+            leftElement={<Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} />}
             accessoryLayout="adaptive"
             rightElementOutsidePressable={leaveContext !== undefined}
             rightElement={membership.status === 'suspended' || leaveContext ? <>

@@ -113,3 +113,13 @@ describe('resolveSessionListDensityViewState', () => {
         expect(subtitle).toHaveProperty('props.numberOfLines', 2);
     });
 });
+
+describe('resolveSessionListItemDensity', () => {
+    it('gives a minimal Drafts / Scheduled / "Show more" row the session row\'s identity gap, so its title shares their edge', async () => {
+        const { resolveSessionListItemDensity } = await import('./resolveSessionListDensityViewState');
+        const { ITEM_ICON_MARGIN_RIGHT } = await import('@/components/ui/lists/itemDensityMetrics');
+        // Minimal session rows draw on the collection row's compact anatomy (identity slot, then contentGap).
+        expect(ITEM_ICON_MARGIN_RIGHT[resolveSessionListItemDensity('minimal')])
+            .toBe(HAPPIER_COLLECTION_ROW_METRICS.contentGap.compact);
+    });
+});

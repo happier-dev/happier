@@ -119,7 +119,8 @@ const PAGE_ROW_PADDING_PX = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx - HAPPIE
  * so it reads as part of the row rather than as a block inside the sheet (lab `phone-P4`).
  */
 export const HAPPIER_WORK_PAGE_ROW_METRICS = Object.freeze({
-  textInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + MARK_SIZE_PX + MARK_TEXT_GAP_PX,
+  // The page row's own column (20 + 12), so an Inbox title lands on the sheet's one edge (phone 64, not 74).
+  textInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx,
   /** The row's trailing inset, matching its leading padding. */
   trailingInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
 });
@@ -360,6 +361,7 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
       style={[styles.summary, density === 'page' ? PAGE_SUMMARY_STYLE : null]}>
       <HappierCollectionRowMain
         density={SUMMARY_DENSITY}
+        identityColumn={density === 'page' ? 'page' : 'density'}
         identity={props.mark !== null && props.mark !== undefined ? (
           <>
             {props.mark}

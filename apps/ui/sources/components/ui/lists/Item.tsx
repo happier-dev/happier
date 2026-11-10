@@ -351,6 +351,26 @@ type PageRowStyles = Readonly<{
 }>;
 
 /** A hyphen between two characters: a name, id or date rather than a quantity. */
+/**
+ * A page row's `leftElement` box: as wide as an identity mark, set half the overhang into the row padding and half
+ * into the gap, so a 20 glyph or a 24 avatar leaves the title on the column's edge, and a wider facepile grows it.
+ */
+const PAGE_IDENTITY_MARK_OVERHANG_PX = (PAGE_LIST_METRICS.rowIdentityMarkPx - PAGE_LIST_METRICS.rowLeadingColumnPx) / 2;
+const PAGE_IDENTITY_MARK_STYLE = {
+    width: 'auto',
+    minWidth: PAGE_LIST_METRICS.rowIdentityMarkPx,
+    height: 'auto',
+    minHeight: PAGE_LIST_METRICS.rowLeadingColumnPx,
+    marginLeft: -PAGE_IDENTITY_MARK_OVERHANG_PX,
+    marginRight: PAGE_LIST_METRICS.rowLeadingGapPx - PAGE_IDENTITY_MARK_OVERHANG_PX,
+} as const;
+/** In a side pane the mark stands on the pane's text edge, so all of its overhang goes into the gap. */
+const PAGE_IDENTITY_MARK_SIDE_PANE_STYLE = {
+    ...PAGE_IDENTITY_MARK_STYLE,
+    marginLeft: 0,
+    marginRight: PAGE_LIST_METRICS.rowLeadingGapPx - 2 * PAGE_IDENTITY_MARK_OVERHANG_PX,
+} as const;
+
 const pageRowStylesByMetrics = new WeakMap<PageRowMetrics, PageRowStyles>();
 
 const sheetRowInsetStyles = new Map<number, Readonly<{ paddingHorizontal: number }>>();
@@ -1302,10 +1322,12 @@ export const Item = React.memo<ItemProps>((props) => {
     // `iconBoxSizeOverride` stays last: a call site that reserved room for an oversized leading
     // element (a capacity gauge, an avatar) means it whatever surface the row belongs to.
     // A leading mark (avatar, brand identity, facepile) is often larger than
-    // the density's glyph box. Centred in the fixed box it would overhang toward the sheet edge and
+    // the density's glyph box. Off a page, centred in the fixed box it would overhang toward the edge and
     // crowd the title, so the box grows to the mark instead; the density size stays its minimum.
-    // Every page row's leading column is one fixed width (a glyph sits centred in it; a larger identity
-    // mark grows it), so the titles of a section share one edge.
+    // Every page row's leading column is one fixed width: a glyph sits centred in it and an identity mark
+    // (drawn at `rowIdentityMarkPx`) overhangs it evenly on the same axis, so the titles of every sheet
+    // share one edge (PHONE-GEOMETRY-1110: 77 and 80 beside avatars, 64 elsewhere). Only a leading element
+    // wider than an identity mark (a facepile) still widens it.
     // In a side pane the glyph stands on the pane's text edge (start of the column), the line the pane's title
     // and section headings start on; on a page sheet it sits centred in the column.
     const pageLeadingColumnStyle = isPageRow
@@ -1326,10 +1348,11 @@ export const Item = React.memo<ItemProps>((props) => {
         // wider for an avatar, never overhanging the edge or crowding the title.
         : columnDescribedRow ? { width: 'auto', minWidth: resolvedIconBoxSize } as const
         : null;
-    const leadingMarkFitStyle = leftElement == null || iconBoxSize != null || isMenuRow
+    // A catalog record's mark box is fixed too: its identity mark is drawn at `catalogRow.identityMarkPx`.
+    const leadingMarkFitStyle = leftElement == null || iconBoxSize != null || isMenuRow || catalogGeometry
         ? null
         : isPageRow
-            ? { width: 'auto', height: 'auto', minWidth: PAGE_LIST_METRICS.rowLeadingColumnPx, minHeight: PAGE_LIST_METRICS.rowLeadingColumnPx } as const
+            ? sidePaneTextEdge ? PAGE_IDENTITY_MARK_SIDE_PANE_STYLE : PAGE_IDENTITY_MARK_STYLE
             // A list row's leading element wider than the glyph box (a tree row's disclosure + glyph) takes its
             // width instead of overhanging the title; the density box stays its minimum, so glyph rows align.
             : { width: 'auto', minWidth: resolvedIconBoxSize } as const;

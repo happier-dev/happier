@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     TEAM_NAME_MAX_LENGTH_V1,
@@ -50,7 +51,6 @@ import { TeamLogoPicker } from './TeamLogoPicker';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
-const OWNER_AVATAR_SIZE = 32;
 
 type CommittedTeam = Readonly<{
     team: TeamSummaryV1;
@@ -152,7 +152,7 @@ const InitialOwnerPicker = React.memo(function InitialOwnerPicker(props: Readonl
                             leftElement={(
                                 <Avatar
                                     id={candidate.accountId}
-                                    size={OWNER_AVATAR_SIZE}
+                                    size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                     imageUrl={candidate.profile.avatarUrl}
                                 />
                             )}

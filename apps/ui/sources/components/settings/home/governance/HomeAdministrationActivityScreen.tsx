@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import type { HomeAdministrationEventV1 } from '@happier-dev/protocol/home/governance';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -20,7 +21,6 @@ import { HomeAdministrationSection } from './HomeAdministrationSection';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { presentHomeAuditEvent, type HomeAuditNames } from './homeAuditPresentation';
 
-const ACTOR_MARK_SIZE = 28;
 
 const readAuditPage: HomePageReader<HomeAdministrationEventV1> = (scope, cursor) => listHomeAudit({
     scope,
@@ -46,7 +46,7 @@ export const HomeActivityRow = React.memo(function HomeActivityRow(props: Readon
         <Item
             testID={`home-activity-row:${props.event.id}`}
             leftElement={row.actorAccount
-                ? <Avatar id={row.actorAccount.id} size={ACTOR_MARK_SIZE} imageUrl={row.actorAccount.avatarUrl} />
+                ? <Avatar id={row.actorAccount.id} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.actorAccount.avatarUrl} />
                 : <Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
             title={`${row.actor} ${row.verb}`}
             titleLines={0}

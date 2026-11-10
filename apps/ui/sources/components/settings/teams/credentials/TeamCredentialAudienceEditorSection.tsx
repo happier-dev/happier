@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import type { TeamCredentialRouteV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -19,7 +20,6 @@ import {
     type TeamCredentialResourceDraft,
 } from './teamCredentialEditorDraft';
 
-const PRINCIPAL_AVATAR_SIZE = 32;
 
 export const TeamCredentialAudienceEditorSection = React.memo(function TeamCredentialAudienceEditorSection(props: Readonly<{
     context: TeamSectionContext;
@@ -185,7 +185,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
                                     testID={`team-credential-audience-member:${membershipId}`}
                                     title={name}
                                     leftElement={membership ? (
-                                        <Avatar id={membership.accountId} size={PRINCIPAL_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} />
+                                        <Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} />
                                     ) : undefined}
                                     detail={mode === null ? t('teams.credentials.audience.none') : deliveryModeLabel(mode)}
                                     accessibilityLabel={[name, mode === null ? t('teams.credentials.audience.none') : deliveryModeLabel(mode)].join(', ')}

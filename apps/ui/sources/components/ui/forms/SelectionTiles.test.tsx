@@ -86,6 +86,38 @@ describe('SelectionTiles', () => {
     expect(basis.endsWith('%')).toBe(true);
     expect(Number.parseFloat(basis) * 3).toBeGreaterThanOrEqual(100);
   });
+  it('sizes a fill preview from its measured tile, so a narrow phone tile never widens to keep the preview\'s height (D9)', async () => {
+    const { SelectionTiles } = await import('./SelectionTiles');
+    const { StyleSheet } = await import('react-native');
+    const screen = await renderScreen(
+      <SelectionTiles
+        variant="visual"
+        tileSizing="fill"
+        options={['adaptive', 'light', 'dark'].map((id) => ({
+          id,
+          title: id,
+          preview: React.createElement('Preview', { kind: id }),
+        }))}
+        value="adaptive"
+        onChange={vi.fn()}
+        testIdPrefix="theme"
+      />,
+    );
+    // A phone sheet's row: 402 − 2 × 16 sheet inset − 2 × 16 row padding.
+    const grid = screen.root.findAll((node) => typeof node.props.onLayout === 'function')[0]!;
+    await act(async () => {
+      grid.props.onLayout({ nativeEvent: { layout: { width: 338, height: 0, x: 0, y: 0 } } });
+    });
+    const frame = screen.root.findAll((node) => node.props.pointerEvents === 'none'
+      && node.findAll((child) => child.type === 'Preview' && child.props.kind === 'dark').length > 0)[0]!;
+    const style = StyleSheet.flatten(frame.props.style);
+    // Native layout derives a width from aspectRatio once a min height wins, pushing the preview past its tile
+    // and the screen edge; the frame's height is decided from the measured column instead.
+    expect(style.aspectRatio).toBeUndefined();
+    expect(typeof style.height).toBe('number');
+    const tileWidth = (338 - 2 * 10) / 3;
+    expect(style.height).toBeLessThanOrEqual(tileWidth);
+  });
   it('announces the selected radio even when every option has an identity mark', async () => {
     const { SelectionTiles } = await import('./SelectionTiles');
     const screen = await renderScreen(

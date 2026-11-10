@@ -8,9 +8,8 @@ import { teamViewerStandingLabel } from './teamLabels';
 import type { TeamsDirectoryRow } from './teamsDirectoryViewState';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
-const TEAM_AVATAR_SIZE = 36;
 /** Fits the rail's mark box, so Team names align with the rest of the rail. */
 const TEAM_RAIL_AVATAR_SIZE = 28;
 
@@ -80,7 +79,7 @@ export const TeamRow = React.memo(function TeamRow(props: Readonly<{
                         id={row.address.teamId}
                         monogram={row.team.name}
                         square
-                        size={TEAM_AVATAR_SIZE}
+                        size={HAPPIER_COLLECTION_LIST_METRICS.catalogRow.identityMarkPx}
                         imageUrl={row.team.logo?.url ?? null}
                         thumbhash={row.team.logo?.thumbhash ?? null}
                     />

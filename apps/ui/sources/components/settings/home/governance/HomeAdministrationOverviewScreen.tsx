@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type {
     HomeAccountRowV1,
@@ -349,7 +350,6 @@ function isActiveOwner(row: HomeAccountRowV1): boolean {
     return row.homeRole === 'owner' && row.status === 'active';
 }
 
-const OWNER_AVATAR_SIZE = 28;
 
 /** Who owns the Home, and how many people it has (lab `hcOverview-A` Ownership). */
 const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: Readonly<{ context: HomeAdministrationContext }>) {
@@ -404,7 +404,7 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
                                 subtitle={person.viewer && person.named
                                     ? t('homeGovernance.overviewPage.ownerYou')
                                     : homeRoleLabel('owner')}
-                                leftElement={<Avatar id={row.accountId} size={OWNER_AVATAR_SIZE} imageUrl={row.profile.avatarUrl ?? null} />}
+                                leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} />}
                                 mode="info"
                                 showChevron={false}
                             />
@@ -413,10 +413,8 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
                     <Item
                         testID="home-overview-people"
                         title={t('homeGovernance.people')}
-                        // A navigation row carries its glyph; centred in the owners' avatar box, its title
-                        // starts on the same edge as theirs.
+                        // A navigation row carries its glyph; the page column keeps its title on the owners' edge.
                         icon={<Icon name="user-circle" />}
-                        iconBoxSize={OWNER_AVATAR_SIZE}
                         subtitle={t('homeGovernance.overviewPage.peopleSummary', {
                             people: roster.total ?? roster.rows.length,
                             more: roster.total === null && roster.hasMore,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { HomeAccountRowV1 } from '@happier-dev/protocol/home/governance';
 import { useUnistyles } from 'react-native-unistyles';
@@ -42,7 +43,6 @@ type PeopleVirtualizedRow = Readonly<{
 
 const PEOPLE_CHUNK_SIZE = 12;
 /** The person's identity mark on the People list. */
-const PEOPLE_AVATAR_SIZE = 32;
 
 /** Stable admitted row inputs keep refresh/status publications out of unchanged mounted people. */
 const PeopleRosterRow = React.memo(function PeopleRosterRow(props: Readonly<{
@@ -63,7 +63,7 @@ const PeopleRosterRow = React.memo(function PeopleRosterRow(props: Readonly<{
         <Item
             testID={`home-people-row:${row.accountId}`}
             title={person.name}
-            leftElement={<Avatar id={row.accountId} size={PEOPLE_AVATAR_SIZE} imageUrl={row.profile.avatarUrl ?? null} />}
+            leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} />}
             subtitle={[
                 homeRoleLabel(row.homeRole),
                 person.viewer && person.named ? t('homeGovernance.person.you') : null,

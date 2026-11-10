@@ -399,7 +399,20 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
     : gridWidth > 0
       ? { width: columnWidth, flexBasis: 'auto', flexGrow: 0, flexShrink: 0 }
       : { flexBasis: `${100 / (columns + 1)}%`, flexShrink: 0 };
-  const previewAspect: ViewStyle | null = fill && props.previewAspectRatio ? { aspectRatio: props.previewAspectRatio, minHeight: 0 } : null;
+  // A fill preview's height comes from its measured column. Before the first measure, `aspectRatio` with the
+  // floor stands in; once measured, a definite height replaces it, because native layout widens a box whose
+  // aspect-ratio height lost to its min height (a 102 pt phone tile drew a 154 pt preview over its neighbours and
+  // past the screen edge, D9), where the web keeps the stretched width.
+  const previewWidth = columnWidth - 2 * (VISUAL_RING_GAP_PX + VISUAL_RING_WIDTH_PX);
+  const aspectRatio = props.previewAspectRatio ?? VISUAL_FILL_PREVIEW_ASPECT_RATIO;
+  const previewAspect: ViewStyle | null = !fill ? null
+    : gridWidth > 0 && previewWidth > 0
+      ? {
+        aspectRatio: undefined,
+        minHeight: 0,
+        height: props.previewAspectRatio ? previewWidth / aspectRatio : Math.max(VISUAL_PREVIEW_HEIGHT_PX, previewWidth / aspectRatio),
+      }
+      : props.previewAspectRatio ? { aspectRatio: props.previewAspectRatio, minHeight: 0 } : null;
   const showLabels = props.labels !== 'hidden';
   return (
     <View style={styles.visualGrid} onLayout={(event) => setGridWidth(event.nativeEvent.layout.width)} {...choiceGroupSemantics(props)}>
@@ -802,6 +815,7 @@ const VISUAL_TILE_MIN_WIDTH_PX = 84;
 const VISUAL_PREVIEW_HEIGHT_PX = 70;
 const VISUAL_PREVIEW_RADIUS_PX = 10;
 const VISUAL_RING_GAP_PX = 2;
+const VISUAL_RING_WIDTH_PX = 1.5;
 const VISUAL_GRID_GAP_PX = 10;
 /** A filling tile keeps the proportions of a small app window rather than a fixed height. */
 const VISUAL_FILL_PREVIEW_ASPECT_RATIO = 2.2;
@@ -912,8 +926,8 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     },
     visualRing: {
       // Concentric: ring radius = preview radius + gap + ring width.
-      borderRadius: VISUAL_PREVIEW_RADIUS_PX + VISUAL_RING_GAP_PX + 1.5,
-      borderWidth: 1.5,
+      borderRadius: VISUAL_PREVIEW_RADIUS_PX + VISUAL_RING_GAP_PX + VISUAL_RING_WIDTH_PX,
+      borderWidth: VISUAL_RING_WIDTH_PX,
       borderColor: 'transparent',
       padding: VISUAL_RING_GAP_PX,
     },

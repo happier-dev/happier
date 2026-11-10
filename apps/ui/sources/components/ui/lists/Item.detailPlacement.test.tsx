@@ -152,6 +152,14 @@ describe('Item page row detail placement', () => {
     expect(sharesTitleColumn(screen, visibleDetail(screen))).toBe(true);
   });
 
+  it('moves a description beneath a short label on a phone row: only a short value sits beside a label (L13)', async () => {
+    // Session Info › "Fork…  Native, replay or configure" on a 402 phone: the label is short, but the detail is
+    // a sentence that takes most of the line, so it reads as the row's description, beneath its title.
+    const screen = await renderDetailRow('Service identity · diagnostics', 'Fork', true);
+    await layout(screen, { row: 366, detail: 176, title: 34, titleText: 'Fork' });
+    expect(sharesTitleColumn(screen, visibleDetail(screen), 'Fork')).toBe(true);
+  });
+
   it('keeps a summary trailing on a wide row', async () => {
     const screen = await renderDetailRow(
       'Service identity · API tokens · Encryption',

@@ -20,3 +20,24 @@ export function resolveCardGridColumns(widthPx: number, requestedColumns: number
         columnGapPx: CARD_GRID.gapPx,
     });
 }
+
+/**
+ * The same grid drawn as one sheet of hairline cells (R6, phone-system lab `p4`): a standalone collection's
+ * section (Agents), each cell a mark, a name and its state. Cells abut (their hairlines are the gap) and keep room
+ * for a short name at the row-title size: about three on a phone, up to six on a wide page.
+ */
+export const CARD_GRID_SHEET = Object.freeze({
+    maxColumns: 6,
+    minCellWidthPx: 112,
+    markPx: 28,
+});
+
+/** How many cells a row of a sheet grid holds at this sheet width. */
+export function resolveCardGridSheetColumns(sheetWidthPx: number): number {
+    return resolveHappierColumnCountForWidth({
+        availableWidthPx: sheetWidthPx,
+        requestedColumns: CARD_GRID_SHEET.maxColumns,
+        minColumnWidthPx: CARD_GRID_SHEET.minCellWidthPx,
+        columnGapPx: 0,
+    });
+}
