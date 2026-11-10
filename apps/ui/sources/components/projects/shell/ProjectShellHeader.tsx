@@ -279,7 +279,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       onTabContextMenu={props.placement ? openTabMenu : undefined}
     />
   );
-  const pageTabs = environmentNavigation ? null : <>
+  const pageTabs = environmentNavigation || (props.pages.length === 0 && (props.overflowPages?.length ?? 0) === 0) ? null : <>
     {binding ? <EntityFlatReorderList binding={binding} axis="horizontal" testID={`${testID}.pages.reorder`}>{pageTabBar}</EntityFlatReorderList> : pageTabBar}
     {menu && menuPage ? <ContextMenu testID={`${testID}.pages.menu`} anchorRef={menuAnchorRef} open={menuPageId !== null}
       onOpenChange={closeTabMenu} items={menu.items} onSelect={selectTabMenu} separateCategories

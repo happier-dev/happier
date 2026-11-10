@@ -192,6 +192,43 @@ function signIn() {
 }
 
 describe('Projects › Sources', () => {
+  it('keeps Project chrome on the standalone Deployments entry without inventing a checkout', async () => {
+    const homes = await serveAccountHomes({ homes: [
+      { key: 'source', serverUrl: 'https://standalone-deployments.example', accountId: 'account-1' },
+    ] });
+    try {
+      shared.routes.params = { serverId: homes.homes.source!.id, projectSourceId: 'stored-source' };
+      shared.sources = [{ id: 'stored-source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account-1' }];
+      const { WorkspaceRouteBody } = await import('@/app/(app)/deployments/[projectSourceId]');
+      const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+      const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+      const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+      const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+      const route = (visible: boolean) => <AppPaneProvider><AccountNoticeInvestigationBoundary><DestinationInstanceContext.Provider value={{
+        tabId: 'deployments', pathname: '/deployments/stored-source', focused: false, visible, isFocused: () => false,
+        navigation,
+        ref: { kind: 'route', params: shared.routes.params },
+      }}><WorkspaceRouteBody /></DestinationInstanceContext.Provider></AccountNoticeInvestigationBoundary></AppPaneProvider>;
+      const screen = await renderScreen(route(false));
+      try {
+        expect(screen.findByTestId('project-shell-header')).not.toBeNull();
+        expect(shared.calls.filter(call => call.actionId === 'projects.sources.read')).toEqual([]);
+        await screen.update(route(true));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Production'));
+        expect(screen.findByTestId('project-shell-header.checkout')).toBeNull();
+        expect(shared.calls.filter(call => call.actionId === 'projects.sources.list')).toEqual([]);
+        await screen.update(route(false));
+        const readsBefore = shared.calls.filter(call => call.actionId === 'projects.sources.read').length;
+        shared.sources = [];
+        await act(async () => publishHomeAccountChange(homes.homes.source!.id, undefined, { changeKinds: ['account'] }));
+        expect(shared.calls.filter(call => call.actionId === 'projects.sources.read')).toHaveLength(readsBefore);
+        await screen.update(route(true));
+        await vi.waitFor(() => expect(shared.calls.filter(call => call.actionId === 'projects.sources.read')).toHaveLength(readsBefore + 1));
+        await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Production'));
+      } finally { await screen.unmount(); }
+    } finally { await homes.dispose(); }
+  });
+
   it('displays a repository-less Source and omits its repository Open action', async () => {
     signIn();
     shared.routes.params = { source: 'stored-source' };

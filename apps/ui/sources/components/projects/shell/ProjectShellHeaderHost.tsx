@@ -22,6 +22,7 @@ import { Modal } from '@/modal';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useWorkspaceRefs, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
@@ -32,13 +33,32 @@ import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayNam
 import { useOpenProject } from '../useOpenProject';
 import { useProjectRouteActions } from '../detail/useProjectRouteActions';
 import { readProjectRouteCheckoutRootPath } from '../detail/projectRouteState';
+import { useProjectSource } from '../sources/useProjectSources';
+import { projectPageLabel } from '../navigation/projectPageDisplay';
 import {
   ProjectCheckoutChip,
   ProjectShellHeader,
   type ProjectShellCheckout,
+  type ProjectShellPage,
 } from './ProjectShellHeader';
 
 const OPEN_ELSEWHERE = '\u0000open-elsewhere';
+const SOURCE_HEADER_PAGES: readonly ProjectShellPage[] = [];
+const SOURCE_HEADER_MENU: readonly PageHeaderMenuAction[] = [];
+const keepSourcePage = () => {};
+
+/** A stored Project's header uses its exact admitted Source; it has no checkout or checkout-only destinations. */
+export const ProjectSourceShellHeaderHost = React.memo(function ProjectSourceShellHeaderHost(props: Readonly<{
+  serverId: string | null;
+  sourceId: string | null;
+  presented: boolean;
+}>) {
+  const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+  const { source } = useProjectSource(props.presented ? binding : null, props.sourceId);
+  return <ProjectShellHeader projectName={source?.source.name ?? projectPageLabel('deployments')}
+    checkout={null} pages={SOURCE_HEADER_PAGES} activePage="deployments" onSelectPage={keepSourcePage}
+    onNewSession={null} menuActions={SOURCE_HEADER_MENU} />;
+});
 
 function lastPathSegment(path: string): string {
   return path.split(/[\\/]/u).filter(Boolean).pop() ?? path;
