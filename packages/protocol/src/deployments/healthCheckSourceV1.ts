@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
@@ -180,6 +180,23 @@ export const HealthCheckSetupDraftV1Schema = lazyZodSchema(() => z.strictObject(
 }).check(z.refine(draft => !draft.domain || draft.subject?.kind === 'environment')));
 export type HealthCheckSetupDraftV1 = z.infer<typeof HealthCheckSetupDraftV1Schema>;
 export const HealthCheckSetupDraftV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupDraftV1Schema));
+
+/** Configure prepares deliberate choices before cadence or endpoints are saved. */
+export const HealthCheckSetupPreviewInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...z.partial(HealthCheckSetupInputV1BaseSchema).shape,
+    v: z.literal(1), mode: z.literal('preview'), subject: HealthCheckSubjectV1Schema,
+}));
+export type HealthCheckSetupPreviewInputV1 = z.infer<typeof HealthCheckSetupPreviewInputV1Schema>;
+export const HealthCheckSetupPreviewInputV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupPreviewInputV1Schema));
+
+/** Only the saved source owner can supply the Test selector; defaults never do. */
+export const HealthCheckSetupPreviewResultV1Schema = lazyZodSchema(() => z.strictObject({
+    mode: z.literal('preview'), sourceConfig: HealthCheckSetupDraftV1Schema,
+    testContext: z.optional(z.strictObject({ serverId: id, machineId: id,
+        sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, expectedSourceRevision: keyword })),
+}));
+export type HealthCheckSetupPreviewResultV1 = z.infer<typeof HealthCheckSetupPreviewResultV1Schema>;
+export const HealthCheckSetupPreviewResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupPreviewResultV1Schema));
 
 /** Threshold decisions belong to the observer; consumers receive only its
  * committed transition, never endpoint configuration or probe evidence. */

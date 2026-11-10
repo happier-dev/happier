@@ -12,6 +12,17 @@ const webhookAction = {
 } as const;
 
 describe('plugin webhook contributions', () => {
+  it('admits a capability URL with the ordinary executable handler arm', () => {
+    const manifest = PluginManifestV2Schema.parse({
+      schemaVersion: 2, id: 'example.health-checks', version: '1.0.0', displayName: 'Health checks',
+      runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
+      contributes: { actions: [webhookAction], webhooks: [{ id: 'monitor', title: 'Monitor',
+        verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+        handlerAction: { localId: webhookAction.id },
+      }] },
+    });
+    expect(manifest.contributes.webhooks[0]).toMatchObject({ handlerAction: { localId: webhookAction.id } });
+  });
   it('admits a closed record-only capability endpoint without an executable handler', () => {
     const base = {
       schemaVersion: 2,

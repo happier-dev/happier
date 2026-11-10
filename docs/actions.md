@@ -49,6 +49,19 @@ and recipe selection reuses the Session recipe body. Source disclosure, Account
 scope and approval admission stay with the existing domain and Action owners;
 presentation adds no Action ids or per-step authorization.
 
+In unreleased 0.3 source, `notifications.test` tests an existing saved health
+alert destination. Its input addresses the Home, controller Machine, source,
+channel, saved destination index (from zero) and expected saved-source revision;
+it accepts no message or destination
+override. The shared approval preparation discloses the sending controller,
+exact saved destination and off-app encryption boundary for both UI and agents.
+Several saved destinations may use the same provider; the index identifies the
+exact row within the expected source revision.
+Execution admits the current saved source once and uses the existing notification
+delivery owner. Results distinguish sent, paused, off and unavailable. Quiet
+hours can pause a Test. A paused source or saved Off suppresses off-app delivery
+while committed health notices remain in Inbox.
+
 In unreleased 0.3 source, the prompt picker exposes selection and application
 through `ui.prompts.picker.select` and `ui.prompts.picker.apply` after
 `ui.prompts.picker.open`. Selection addresses a Library document, built-in token,
@@ -9355,11 +9368,14 @@ a show-once bearer:
   decision-only continuation, so no wrapping secret or new secret store is added.
 - `plugin.webhook.endpoint.ensure`. In 0.3 development, Agent/MCP can request endpoint
   setup as a person-class Action with a user-waivable approval default; a waived
-  automated request runs directly. An ordinary requester receives an approval Artifact reference; only
-  the deciding human's fresh `liveExecution` can contain `oneTimeGeneratedSecret`.
-  Observers, approval history and repeat decisions retain only endpoint id, revision,
-  public URL and readiness. `plugin.webhook.endpoint.read` is also discoverable on
-  Agent/MCP and keeps present-user authority; it never returns a credential.
+  automated request runs directly and retains its intentional live result. A
+  detached approval's deciding human can receive the fresh `liveExecution`.
+  The live result can contain `oneTimeGeneratedSecret` and a capability URL.
+  Observers, Session transcripts, approval history and repeat decisions retain
+  endpoint metadata without the public URL or one-time secret.
+  `plugin.webhook.endpoint.read` also keeps present-user authority and live-only
+  result custody: its live URL is available to the caller, while retained
+  observations contain endpoint metadata only.
   Plugin-provenance-only correspondence and target convergence are not Agent/MCP
   operations. Existing direct setup retains its live result; lost disclosure uses
   the existing Webhooks credential-rotation flow, not another endpoint or secret store.

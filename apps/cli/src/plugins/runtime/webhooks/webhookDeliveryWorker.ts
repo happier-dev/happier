@@ -101,6 +101,7 @@ function buildActionInputV1(claim: DeliveryClaimV1, credentials: StoredCredentia
     endpoint: {
       webhookContribution: claim.endpoint.webhookContribution,
       sourceInstanceId: claim.endpoint.sourceInstanceId,
+      ...(content.verified.verifier === 'capabilityUrl_v1' ? { webhookEndpointId: claim.endpoint.webhookEndpointId } : {}),
     },
     delivery: {
       deliveryId: claim.deliveryId,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
 function updateLengthPrefixedUtf8(hash: ReturnType<typeof createHash>, value: string): void {
     const bytes = Buffer.from(value, "utf8");
@@ -11,7 +11,7 @@ function updateLengthPrefixedUtf8(hash: ReturnType<typeof createHash>, value: st
 }
 
 export function createPluginWebhookDeliveryIdentityDigestV1(params: {
-    verifierKind: PluginWebhookSignedVerifierKindV1;
+    verifierKind: PluginWebhookVerifierV1['kind'];
     routeId: string;
     providerDeliveryId: string;
 }): string {

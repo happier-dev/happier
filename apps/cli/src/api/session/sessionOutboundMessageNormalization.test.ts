@@ -14,6 +14,59 @@ const NATIVE_SOURCE = { ...SOURCE, protocol: 'native' } as const;
 
 describe('normalizeAcpSessionMessageBody', () => {
   it.each(['acp', 'codex'] as const)(
+    'keeps webhook capability URLs and setup secrets out of %s Session transcripts while retaining endpoint metadata', protocol => {
+      for (const actionId of ['plugin.webhook.endpoint.ensure', 'plugin.webhook.endpoint.read'] as const) {
+        for (const transport of ['action_execute', 'shell'] as const) {
+          const caches = {
+            toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),
+            permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
+            toolCallInputByProviderAndId: new Map<string, unknown>(),
+          };
+          const endpointId = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+          const contribution = { pluginId: 'example.monitor', localId: 'events' };
+          const targetMaterialization = { machineId: 'machine', materializationId: 'materialization', pluginId: 'example.monitor' };
+          const input = actionId === 'plugin.webhook.endpoint.read' ? { webhookEndpointId: endpointId } : {
+            webhookContribution: contribution, targetMaterialization, sourceInstanceId: 'monitor',
+            setup: { kind: 'capabilityUrlV1', checkId: 'uptime' }, idempotencyKey: 'ensure-monitor-endpoint-0001',
+          };
+          const envelope = { actionId, input };
+          const toolCall = {
+            type: 'tool-call' as const, callId: 'webhook', id: 'webhook-call',
+            name: transport === 'shell' ? 'Bash' : 'mcp__happier__action_execute',
+            input: transport === 'shell'
+              ? { command: `happier tools call --source happier --tool action_execute --args-json '${JSON.stringify(envelope)}' --json` }
+              : envelope,
+          };
+          if (protocol === 'acp') normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: toolCall });
+          else normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE, ...caches, body: toolCall, debug: () => {} });
+          const privateUrl = 'https://home.test/v1/plugins/webhooks/private-capability-fixture';
+          const privateSecret = 'private-signed-webhook-setup-fixture';
+          // MCP publishes dispatch.result directly; the executor's ok/result
+          // envelope is not part of the native tool wire output.
+          const native = JSON.stringify({
+            webhookEndpointId: endpointId, revision: 1, publicUrl: privateUrl, readiness: 'ready',
+            ...(actionId === 'plugin.webhook.endpoint.read'
+              ? { contribution, targetMaterialization, sourceInstanceId: 'monitor', routing: 'accountEndpoint', createdAt: 1000 }
+              : { oneTimeGeneratedSecret: privateSecret }),
+          });
+          const output = transport === 'shell'
+            ? { stdout: JSON.stringify({ v: 1, ok: true, kind: 'tools_call', data: {
+              source: 'happier', tool: 'action_execute', isError: false, output: JSON.parse(native),
+            } }), stderr: '', exitCode: 0 }
+            : { content: [{ type: 'text', text: native }], structuredContent: JSON.parse(native), tool_use_result: native };
+          const toolResult = { type: 'tool-result' as const, callId: 'webhook', id: 'webhook-result', output };
+          const result = protocol === 'acp'
+            ? normalizeAcpSessionMessageBody({ source: SOURCE, ...caches, provider: 'claude', body: toolResult })
+            : normalizeCodexSessionMessageBody({ source: NATIVE_SOURCE, ...caches, body: { ...toolResult, type: 'tool-call-result' }, debug: () => {} });
+          const transcript = JSON.stringify(result);
+          expect(transcript).not.toContain(privateUrl);
+          expect(transcript).not.toContain(privateSecret);
+          expect(transcript).toContain(endpointId);
+        }
+      }
+    },
+  );
+  it.each(['acp', 'codex'] as const)(
     'keeps private clipboard operands and native result wrappers out of %s Session transcripts', protocol => {
       for (const actionId of ['computer.clipboard.read', 'computer.clipboard.write'] as const) {
         for (const transport of ['action_execute', 'shell', 'deferred'] as const) {

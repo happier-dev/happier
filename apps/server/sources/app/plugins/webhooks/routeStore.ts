@@ -1,4 +1,5 @@
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
 import { db } from "@/storage/db";
 
@@ -7,13 +8,14 @@ import {
     isPluginWebhookRoutingKindV1,
     type PluginWebhookRoutingKindV1,
 } from "./routingKind";
-import { isPluginWebhookSignedVerifierKindV1, type PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+import { isPluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 
 export type ActivePluginWebhookRouteV1 = Readonly<{
     routeId: string;
-    verifierKind: PluginWebhookSignedVerifierKindV1 | "capabilityUrl_v1";
+    verifierKind: PluginWebhookVerifierV1['kind'];
     routingKind: PluginWebhookRoutingKindV1;
     policyVersion: 1;
+    capabilityDelivery?: "handler" | "recordReceiptOnly";
 }>;
 
 export type ActivePluginWebhookEndpointV1 = Readonly<{
@@ -62,6 +64,7 @@ export async function findActivePluginWebhookRouteV1(opaqueRouteId: string): Pro
             policyVersion: true,
             enabled: true,
             revokedAt: true,
+            accountEndpoint: { select: { handlerActionId: true } },
         },
     });
     if (
@@ -79,6 +82,9 @@ export async function findActivePluginWebhookRouteV1(opaqueRouteId: string): Pro
         verifierKind: route.verifierKind,
         routingKind: route.routingKind,
         policyVersion: 1,
+        ...(route.verifierKind === "capabilityUrl_v1" ? {
+            capabilityDelivery: route.accountEndpoint?.handlerActionId ? "handler" as const : "recordReceiptOnly" as const,
+        } : {}),
     };
 }
 

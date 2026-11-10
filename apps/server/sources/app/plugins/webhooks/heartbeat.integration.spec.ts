@@ -4,7 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
-import { PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1, PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1, PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1, PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import { createPluginInstallationManifestPublisherSigningInputV1, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, stringifyPluginInstallationManifestCanonicalJsonV1 } from '@happier-dev/protocol/plugins/installations/manifests';
 
 import { db } from '@/storage/db';
@@ -22,6 +22,7 @@ const accountId = 'heartbeat-account';
 const pluginId = 'acme.heartbeat';
 const checkId = '脈'.repeat(1500);
 const publisherKey = tweetnacl.sign.keyPair();
+const managementErrors: Error[] = [];
 const target = {
     materialization: { machineId: 'heartbeat-machine', materializationId: 'heartbeat-materialization', pluginId },
     machineInstallationId: 'heartbeat-installation', pluginVersion: '1.0.0',
@@ -46,8 +47,12 @@ describe('record-only heartbeat ingress', () => {
             archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
             normalizedManifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Heartbeat',
                 engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
-                contributes: { webhooks: [{ id: 'heartbeat', title: 'Heartbeat',
-                    verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }, delivery: 'recordReceiptOnly' }] } },
+                contributes: { actions: [{ id: 'monitor-receive', title: 'Receive monitor', scopes: ['global'],
+                    surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' } }],
+                    webhooks: [{ id: 'heartbeat', title: 'Heartbeat',
+                    verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }, delivery: 'recordReceiptOnly' },
+                    { id: 'monitor', title: 'Monitor', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+                        handlerAction: { localId: 'monitor-receive' } }] } },
             collectionContracts: [], uiSlots: [],
             packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] },
         });
@@ -64,6 +69,10 @@ describe('record-only heartbeat ingress', () => {
             archiveDigestSha256: facts.archiveDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
+        app.addHook('onError', (request, _reply, error, done) => {
+            if (request.url === PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1) managementErrors.push(error);
+            done();
+        });
         enableAuthentication(app as never);
         registerPluginWebhookDaemonRoutes(app as never, undefined, {
             HAPPIER_FEATURE_PLUGINS__ENABLED: '1', HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: '1',
@@ -87,6 +96,30 @@ describe('record-only heartbeat ingress', () => {
                 ...proof, signatureBase64Url: Buffer.from(signature).toString('base64url'),
             } })).toString('base64url') } });
     }
+
+    it('stores capability URL monitor bodies on the ordinary delivery path and revokes subsequent requests', async () => {
+        const actions = createPluginWebhookEndpointActionsV1();
+        const ensured = await actions.ensure({ accountId, input: { ...input,
+            webhookContribution: { pluginId, localId: 'monitor' },
+            setup: { kind: 'capabilityUrlV1', checkId: 'monitor' }, idempotencyKey: 'monitor-ensure-0001' } });
+        const path = new URL(ensured.publicUrl).pathname;
+        const payload = { heartbeat: { monitorID: 7, status: 0, time: '2026-11-10 10:00:00' }, monitor: { id: 7 } };
+        expect(await ingestPluginWebhookV1({ opaqueRouteId: path.split('/').at(-1)!,
+            rawBody: new TextEncoder().encode(JSON.stringify(payload)), headers: { 'content-type': 'application/json' } }))
+            .toMatchObject({ kind: 'accepted' });
+        expect((await app.inject({ method: 'POST', url: path, payload })).statusCode).toBe(202);
+        const deliveries = await db.pluginWebhookDelivery.findMany({ where: { endpointId: ensured.webhookEndpointId } });
+        expect(deliveries).toHaveLength(2);
+        expect(deliveries[0]).toMatchObject({ state: 'queued', verifierKind: 'capabilityUrl_v1',
+            endpointHandlerActionId: 'monitor-receive', payload: { t: 'plain', v: {
+                verified: { verifier: 'capabilityUrl_v1' }, rawBodyBase64: Buffer.from(JSON.stringify(payload)).toString('base64'),
+            } } });
+        expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(405);
+        await actions.revoke({ accountId, input: { webhookEndpointId: ensured.webhookEndpointId,
+            expectedRevision: ensured.revision, idempotencyKey: 'monitor-revoke-0001' } });
+        expect((await app.inject({ method: 'POST', url: path, payload })).statusCode).toBe(404);
+        expect(await db.pluginWebhookDelivery.count({ where: { endpointId: ensured.webhookEndpointId } })).toBe(2);
+    });
 
     it('records only monotonic liveness through GET/POST, exact reads, reassignment, route rotation and revocation', async () => {
         const createdResponse = await callHost(PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, { caller: target.materialization, input });
@@ -131,7 +164,7 @@ describe('record-only heartbeat ingress', () => {
         const endpointAfter = await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: ensured.webhookEndpointId } });
         expect(endpointAfter).toEqual({ ...endpointBefore, lastAcceptedAt: latest });
         expect(await db.accountChange.findMany({ where: { accountId } })).toEqual(accountChangesBefore);
-        expect(await db.pluginWebhookDelivery.count()).toBe(0);
+        expect(await db.pluginWebhookDelivery.count({ where: { endpointId: ensured.webhookEndpointId } })).toBe(0);
         expect(await db.pluginWebhookCredential.count()).toBe(0);
         expect(sent).toHaveLength(firstReceiptHints + 1);
         for (const hint of sent) {
@@ -140,7 +173,7 @@ describe('record-only heartbeat ingress', () => {
                     sourceInstanceId: input.sourceInstanceId, checkId, lastAcceptedAt: expect.any(Number) } });
         }
         const created = await actions.ensureHeartbeat({ accountId, callerPluginId: pluginId, input });
-        expect(await db.pluginWebhookEndpoint.count()).toBe(1);
+        expect(await db.pluginWebhookEndpoint.count({ where: { webhookContributionId: 'heartbeat' } })).toBe(1);
         expect(created.webhookEndpointId).toBe(ensured.webhookEndpointId);
         expect(await actions.readHeartbeat({ accountId, caller: target.materialization, input: readInput })).toMatchObject({ kind: 'ready' });
         expect(await actions.readHeartbeat({ accountId, caller: { ...target.materialization, machineId: 'other-machine' }, input: readInput })).toEqual({ kind: 'unavailable', code: 'endpoint_unavailable' });
@@ -161,7 +194,7 @@ describe('record-only heartbeat ingress', () => {
             ...input, targetMaterialization: nextTarget, idempotencyKey: 'heartbeat-ensure-next-0001',
         } });
         expect(reassigned.webhookEndpointId).toBe(created.webhookEndpointId);
-        expect(await db.pluginWebhookEndpoint.count()).toBe(1);
+        expect(await db.pluginWebhookEndpoint.count({ where: { webhookContributionId: 'heartbeat' } })).toBe(1);
         expect(await actions.readHeartbeat({ accountId, caller: target.materialization, input: readInput })).toEqual({ kind: 'unavailable', code: 'endpoint_unavailable' });
         expect(await actions.readHeartbeat({ accountId, caller: nextTarget, input: readInput })).toEqual({ kind: 'ready', lastAcceptedAt: latest.getTime() });
         const beforeReassignedPing = sent.length;
@@ -220,4 +253,56 @@ describe('record-only heartbeat ingress', () => {
             input: { ...ordinaryInput, idempotencyKey: 'ordinary-source-identity-2' },
         })).rejects.toMatchObject({ code: 'source_conflict' });
     });
+    it('reads exact saved heartbeat management status without mutation', async () => {
+        const response = await callHost(PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, { caller: target.materialization,
+            input: { ...input, sourceInstanceId: 'heartbeat-status-source', idempotencyKey: 'heartbeat-status-ensure-0001' } });
+        const ensured = PluginWebhookEndpointEnsureResultV1Schema.parse(response.json());
+        const identity = { webhookEndpointId: ensured.webhookEndpointId, sourceInstanceId: 'heartbeat-status-source', checkId };
+        const status = await callHost(PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1, {
+            caller: target.materialization, input: { ...identity, operation: 'status' },
+        });
+        expect(status.statusCode, JSON.stringify({ response: status.json(), errors: managementErrors.map(error => ({
+            name: error.name, message: error.message, stack: error.stack,
+        })) })).toBe(200);
+        expect(status.json()).toEqual({ kind: 'ready', webhookEndpointId: ensured.webhookEndpointId, revision: 1 });
+    });
+    it('manages exact saved heartbeat URLs through signed host admission without returning their secrets', async () => {
+        const credentialCount = await db.pluginWebhookCredential.count();
+        const response = await callHost(PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, { caller: target.materialization, input: { ...input, sourceInstanceId: 'managed-heartbeat-source', idempotencyKey: 'managed-heartbeat-ensure-0001' } });
+        const ensured = PluginWebhookEndpointEnsureResultV1Schema.parse(response.json());
+        const identity = { webhookEndpointId: ensured.webhookEndpointId, sourceInstanceId: 'managed-heartbeat-source', checkId };
+        const managePath = PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1;
+        const manage = (operation: object) => callHost(managePath, { caller: target.materialization, input: { ...identity, ...operation } });
+        const status = await manage({ operation: 'status' });
+        expect(status.statusCode, JSON.stringify({ response: status.json(), errors: managementErrors.map(error => ({
+            name: error.name, message: error.message, stack: error.stack,
+        })) })).toBe(200);
+        expect(status.json()).toEqual({ kind: 'ready', webhookEndpointId: ensured.webhookEndpointId, revision: 1 });
+        const wrong = await callHost(managePath, { caller: target.materialization, input: { ...identity, checkId: 'other', operation: 'status' } });
+        expect(wrong.json()).toEqual({ kind: 'unavailable', code: 'endpoint_unavailable' });
+        const wrongHost = await callHost(managePath, { caller: { ...target.materialization, materializationId: 'other-host' },
+            input: { ...identity, operation: 'status' } });
+        expect(wrongHost.json()).toEqual({ kind: 'unavailable', code: 'endpoint_unavailable' });
+        const rotate = { operation: 'rotate', expectedRevision: 1, idempotencyKey: 'heartbeat-rotate-0001' };
+        expect((await app.inject({ method: 'POST', url: new URL(ensured.publicUrl).pathname })).statusCode).toBe(202);
+        const receipt = await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: ensured.webhookEndpointId }, select: { lastAcceptedAt: true } });
+        expect((await manage(rotate)).json()).toEqual({ kind: 'rotated', webhookEndpointId: ensured.webhookEndpointId, revision: 2 });
+        expect((await manage({ ...rotate, idempotencyKey: 'different-rotation-request' })).json())
+            .toEqual({ kind: 'unavailable', code: 'idempotency_conflict' });
+        expect(await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: ensured.webhookEndpointId }, select: { lastAcceptedAt: true } })).toEqual(receipt);
+        expect((await manage(rotate)).json()).toEqual({ kind: 'rotated', webhookEndpointId: ensured.webhookEndpointId, revision: 2 });
+        const actions = createPluginWebhookEndpointActionsV1();
+        const revealed = await actions.read({ accountId, input: { webhookEndpointId: ensured.webhookEndpointId } });
+        expect(revealed.publicUrl).not.toBe(ensured.publicUrl);
+        expect((await app.inject({ method: 'POST', url: new URL(ensured.publicUrl).pathname })).statusCode).toBe(404);
+        expect((await app.inject({ method: 'GET', url: new URL(revealed.publicUrl).pathname })).statusCode).toBe(202);
+        const revoked = await manage({ operation: 'revoke', expectedRevision: 2, idempotencyKey: 'heartbeat-revoke-0001' });
+        expect(revoked.json()).toEqual({ kind: 'revoked', webhookEndpointId: ensured.webhookEndpointId, revision: 3 });
+        expect((await manage({ operation: 'status' })).json()).toEqual({ kind: 'revoked', webhookEndpointId: ensured.webhookEndpointId, revision: 3 });
+        expect((await app.inject({ method: 'GET', url: new URL(revealed.publicUrl).pathname })).statusCode).toBe(404);
+        expect(await db.pluginWebhookDelivery.count({ where: { endpointId: ensured.webhookEndpointId } })).toBe(0);
+        expect(await db.pluginWebhookCredential.count()).toBe(credentialCount);
+    });
+
+
 });

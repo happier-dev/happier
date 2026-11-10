@@ -4,11 +4,14 @@ import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSche
 import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { systemdRuntime } from './systemd.js';
 import { healthCatalogActions } from './healthCatalog.js';
+import { monitorActions } from './monitorWebhooks.js';
+import { monitorCapabilityContributions, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema,
+    HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion, embedProtocolJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT,
     healthTransition, runHealthCheckObserver } from './healthObserver.js';
 import { deploymentEvents, deploymentEventActions, deploymentEventBackgroundServices } from './deploymentEvents.js';
@@ -37,7 +40,7 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...monitorActions, ...healthCatalogActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],
@@ -49,14 +52,15 @@ export const plugin = definePlugin({
             ]) }, { policy: 'closed' }),
         }, 'health/setup': {
         title: 'Configure saved health checks', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
-        surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'safe', readOnly: false,
-        inputSchema: HealthCheckSetupInputV1ProtocolSchema,
+        surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'safe', readOnly: { op: 'eq', path: 'mode', value: 'preview' },
+        inputSchema: defineProtocolUnion([HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema]),
         inputHints: { fields: [
             { path: 'v', title: 'Version', widget: 'number', defaultValue: 1,
                 visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'v' } } },
             { path: 'subject', title: 'Subject', widget: 'json', required: true,
                 placeholder: '{"kind":"machineService","machineId":"…","serviceId":"…"}' },
-            { path: 'checks', title: 'Health checks', widget: 'json', required: true,
+            { path: 'checks', title: 'Health checks', widget: 'json',
+                requiredWhen: { op: 'not', predicate: { op: 'eq', path: 'mode', value: 'preview' } },
                 placeholder: '[{"checkId":"tcp","kind":{"pluginId":"happier.machine.services","localId":"tcp"},"binding":{"kind":"healthCheck"},"config":{"host":"127.0.0.1","port":8080},"periodMs":300000,"consecutiveFailuresBeforeAlerting":1}]' },
             { path: 'investigation.mode', title: 'When a check needs attention', widget: 'select', defaultValue: 'inbox',
                 options: [{ value: 'inbox', label: 'Show in Inbox' }, { value: 'auto_start', label: 'Start investigation' }] },
@@ -65,13 +69,18 @@ export const plugin = definePlugin({
                 visibleWhen: { op: 'eq', path: 'investigation.mode', value: 'auto_start' },
                 requiredWhen: { op: 'eq', path: 'investigation.mode', value: 'auto_start' } },
         ] },
-        resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema),
+        resultSchema: { oneOf: [embedProtocolJsonSchema(HealthCheckSetupPreviewResultV1ProtocolSchema.jsonSchema, ['oneOf', 0]),
+            embedProtocolJsonSchema(createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema), ['oneOf', 1])] },
         async run(input, context) {
+            const preview = HealthCheckSetupPreviewInputV1ProtocolSchema.safeParse(input);
+            if (preview.success) return context.services.healthChecks.setup({
+                sourceInstanceId: createHealthCheckSourceInstanceIdV1(preview.data.subject), sourceConfig: preview.data,
+            }, { signal: context.signal });
             const draft = HealthCheckSetupInputV1ProtocolSchema.parse(input);
             const sourceInstanceId = createHealthCheckSourceInstanceIdV1(draft.subject);
             const sourceConfig = await context.services.healthChecks.setup({ sourceInstanceId,
                 sourceConfig: { ...draft, investigation: draft.investigation ?? { mode: 'inbox' } },
-                heartbeatContributionId: 'health-heartbeat' }, { signal: context.signal });
+                heartbeatContributionId: 'health-heartbeat', capabilityWebhookContributions: monitorCapabilityContributions }, { signal: context.signal });
             return { v: 1, sourceInstanceId, sourceContractVersion: 1, sourceConfig,
                 displayLabel: 'Saved health checks' };
         },
@@ -90,11 +99,18 @@ export const plugin = definePlugin({
                 { signal: context.signal });
         },
     } },
-    webhooks: { 'health-heartbeat': { title: 'Health heartbeat', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+    webhooks: { ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].webhookContributionId, {
+        title: monitorDefinitions[kind].title, verifier: { kind: 'capabilityUrl_v1' as const, routing: 'accountEndpoint' as const },
+        handlerAction: { localId: `health/${kind}/receive` },
+    }])), 'health-heartbeat': { title: 'Health heartbeat', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
         delivery: 'recordReceiptOnly' } },
-    healthCheckKinds: Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(id => [id, { ...healthKinds[id],
-        action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])),
-    events: { ...deploymentEvents, ...managedSetupEvents, ...mcpUpdateEvents, ...machinePresenceEvents, ...Object.fromEntries(([
+    healthCheckKinds: Object.fromEntries([...HEALTH_CHECK_KINDS_V1.map(id => [id, { ...healthKinds[id],
+        action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>]), ...monitorKinds.map(kind => [kind, {
+        title: monitorDefinitions[kind].title, configSchema: monitorDefinitions[kind].configSchema.jsonSchema,
+        action: `health/${kind}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])]),
+    events: { ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].observedEventId, { declaration: {
+        kind: 'event' as const, title: `${monitorDefinitions[kind].title} observation received`, payloadSchema: monitorObserved.jsonSchema,
+    } }])), ...deploymentEvents, ...managedSetupEvents, ...mcpUpdateEvents, ...machinePresenceEvents, ...Object.fromEntries(([
         [HEALTH_STATUS_EVENT, 'healthStatus', 'Health status changed', 'A saved health check failed or recovered.'],
         [HEALTH_CHECK_FAILED_EVENT, 'healthCheckFailed', 'Health check failed', 'A saved health check entered a failed condition.'],
         [HEALTH_CHECK_RECOVERED_EVENT, 'healthCheckRecovered', 'Health check recovered', 'A failed saved health check returned to healthy.'],

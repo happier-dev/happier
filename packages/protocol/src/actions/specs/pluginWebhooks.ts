@@ -1,6 +1,13 @@
 import type { PreNormalizedActionSpec } from './definition.js';
-import { PluginWebhookActionHttpPathsV1, PluginWebhookPluginSurfaceActionHttpPathsV1, PluginWebhookActionInputSchemasV1, PluginWebhookActionOutputSchemasV1, PluginWebhookEndpointEnsureResultV1Schema, isPluginWebhookPluginSurfaceActionIdV1, type PluginWebhookActionIdV1 } from '../../plugins/webhooks/endpointV1.js';
+import { z } from '../../zodRuntimePolicy.js';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PluginWebhookActionHttpPathsV1, PluginWebhookPluginSurfaceActionHttpPathsV1, PluginWebhookActionInputSchemasV1, PluginWebhookActionOutputSchemasV1, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookEndpointReadResultV1Schema, isPluginWebhookPluginSurfaceActionIdV1, type PluginWebhookActionIdV1 } from '../../plugins/webhooks/endpointV1.js';
 
+
+// Observation is applied again on retained receipt reads. Derive from the
+// canonical unrefined result objects while accepting an already omitted URL.
+const EnsureObservationInputSchema = lazyZodSchema(() => z.partial(PluginWebhookEndpointEnsureResultV1Schema, { publicUrl: true }));
+const ReadObservationInputSchema = lazyZodSchema(() => z.partial(PluginWebhookEndpointReadResultV1Schema, { publicUrl: true }));
 
 export const PLUGIN_WEBHOOK_ACTION_TITLES: Readonly<Record<PluginWebhookActionIdV1, string>> = Object.freeze({
   'plugin.webhook.endpoint.ensure': 'Ensure webhook endpoint',
@@ -52,12 +59,28 @@ export function createPluginWebhookActionSpec(actionId: PluginWebhookActionIdV1)
     ...(actionId === 'plugin.webhook.endpoint.ensure' ? {
       approvalResultCustody: 'live_only' as const,
       projectObservationOutput: (output: unknown) => {
-        const result = PluginWebhookEndpointEnsureResultV1Schema.parse(output);
+        const result = EnsureObservationInputSchema.parse(output);
         return {
           webhookEndpointId: result.webhookEndpointId,
           revision: result.revision,
-          publicUrl: result.publicUrl,
           readiness: result.readiness,
+        };
+      },
+    } : {}),
+    ...(actionId === 'plugin.webhook.endpoint.read' ? {
+      approvalResultCustody: 'live_only' as const,
+      projectObservationOutput: (output: unknown) => {
+        const result = ReadObservationInputSchema.parse(output);
+        return {
+          webhookEndpointId: result.webhookEndpointId,
+          revision: result.revision,
+          contribution: result.contribution,
+          targetMaterialization: result.targetMaterialization,
+          sourceInstanceId: result.sourceInstanceId,
+          routing: result.routing,
+          readiness: result.readiness,
+          createdAt: result.createdAt,
+          ...(result.revokedAt === undefined ? {} : { revokedAt: result.revokedAt }),
         };
       },
     } : {}),

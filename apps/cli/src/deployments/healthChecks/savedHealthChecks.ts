@@ -1,10 +1,14 @@
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import type { AccountSettings } from '@happier-dev/protocol';
+import type { SavedHealthCheckSourceRead } from './readSavedHealthCheckSource';
+import { HealthCheckSetupPreviewResultV1Schema, type HealthCheckSetupPreviewInputV1, type HealthCheckSetupPreviewResultV1, type HealthCheckSourceConfigV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { HealthChecksService, HealthCheckKindCatalogV1 } from '@happier-dev/plugin-sdk';
 import { z } from 'zod/mini';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
-import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
+import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema,
     type DeploymentDomainHeaderV1, type DeploymentEnvironmentHeaderV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { HealthCheckResultV1 } from '@happier-dev/deployment-protocol/v1';
@@ -18,7 +22,7 @@ import { readCertificateHealthCheckV1, readHttpHealthCheckV1, type AdmittedHttpH
 import { admitSavedEndpointCheck, readSavedEndpointCheck } from './savedEndpointCheck';
 import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
-import { deploymentDomainProbeVantageV1 } from '@happier-dev/deployments';
+import { resolveDeploymentCreationDefaultsV1, deploymentDomainProbeVantageV1 } from '@happier-dev/deployments';
 import { readTriageSessionHandoffChoicesV1 } from '@happier-dev/triage-sources/runtime';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -61,6 +65,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
     serverId: string;
     resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1;
     readKinds?(): HealthCheckKindCatalogV1;
+    readSavedSource?(sourceInstanceId: string, signal: AbortSignal): Promise<SavedHealthCheckSourceRead>;
+    readAccountSettings?(signal: AbortSignal): Promise<Readonly<{ accountId: string; settings: Pick<AccountSettings, 'deploymentDefaultsV1'> }>>;
     resolveSourceOwner?(): Readonly<{ caller: PluginMachineMaterializationRefV1; occurrenceId: string }> | null;
     readObserver(): Readonly<{ machineId: string; installationId: string }> | null;
     openDomainArtifact(artifactId: string, signal: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
@@ -125,37 +131,57 @@ export function createSavedHealthChecksHost(input: Readonly<{
                 if (!opened.ok) return unavailable(opened.error);
                 return { domain, targetLink, content: opened.content };
             };
-            return Object.freeze({
-                async listKinds(options?: Parameters<HealthChecksService['listKinds']>[0]) {
+            type SaveRequest = Parameters<HealthChecksService['setup']>[0];
+            type SetupOptions = Parameters<HealthChecksService['setup']>[1];
+            type PreviewRequest = Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupPreviewInputV1 }>;
+            function isPreviewRequest(request: PreviewRequest | SaveRequest): request is PreviewRequest {
+                return 'mode' in request.sourceConfig;
+            }
+            function setup(request: PreviewRequest, options?: SetupOptions): Promise<HealthCheckSetupPreviewResultV1>;
+            function setup(request: SaveRequest, options?: SetupOptions): Promise<HealthCheckSourceConfigV1>;
+            async function setup(request: PreviewRequest | SaveRequest, options?: SetupOptions): Promise<HealthCheckSetupPreviewResultV1 | HealthCheckSourceConfigV1> {
+                if (isPreviewRequest(request)) {
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();
-                    if (!seed.isOccurrenceCurrent()) return unavailable('source_unavailable');
-                    return input.readKinds?.() ?? [];
-                },
-                async readSource(request: Parameters<HealthChecksService['readSource']>[0], options?: Parameters<HealthChecksService['readSource']>[1]) {
-                    const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                    if (!seed.isOccurrenceCurrent() || !seed.resolveCurrentPluginMaterializationRef?.()) return unavailable('source_unavailable');
+                    const { mode, ...draft } = request.sourceConfig;
+                    const saved = await input.readSavedSource?.(request.sourceInstanceId, signal);
                     signal.throwIfAborted();
-                    if (!seed.isOccurrenceCurrent()) return unavailable('source_unavailable');
-                    const own = seed.resolveCurrentPluginMaterializationRef?.();
-                    if (!own) return unavailable('source_unavailable');
-                    // All producers borrow the one current health observer's adopted source;
-                    // external Action callers do not need to know its occurrence or materialization.
-                    const owner = input.resolveSourceOwner ? input.resolveSourceOwner()
-                        : { caller: own, occurrenceId: seed.occurrenceId };
-                    if (!owner) return unavailable('source_unavailable');
-                    const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: input.resolveAdoptedDefinitionSet,
-                        ...owner, sourceInstanceId: request.sourceInstanceId, signal });
-                    return batch.kind === 'available' ? batch.source : unavailable(batch.reason);
-                },
-                async manageHeartbeat(request: Parameters<HealthChecksService['manageHeartbeat']>[0], options?: Parameters<HealthChecksService['manageHeartbeat']>[1]) {
-                    const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                    if (saved?.kind === 'unavailable') return unavailable(saved.code);
+                    const retained = saved?.kind === 'available' ? saved : undefined;
+                    const sourceConfig = { ...(retained?.source ?? {}), ...draft };
+                    const environment = draft.subject.kind === 'environment' ? await readEnvironment(draft.subject.environmentId, signal) : undefined;
+                    if (sourceConfig.alerts === undefined) {
+                        let channels: NonNullable<HealthCheckSourceConfigV1['alerts']>['channels'] | undefined;
+                        if (environment) {
+                            const header = environment.environment;
+                            const prepared = DeploymentEnvironmentUpdateResultV1Schema.parse(await services.actions.execute('deployments.environments.update', {
+                                serverId: input.serverId, environmentId: header.id, expectedRevision: header.revision,
+                                contentArtifactId: header.contentArtifactId, contentHeaderVersion: header.contentHeaderVersion,
+                                contentBodyVersion: header.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts',
+                            }, { signal }));
+                            if (!prepared.ok) return unavailable(prepared.error);
+                            if (!prepared.creationDefaults) return unavailable('account_settings_unavailable');
+                            channels = prepared.creationDefaults.values.alertChannels;
+                        } else {
+                            const account = await input.readAccountSettings?.(signal);
+                            if (!account) return unavailable('account_settings_unavailable');
+                            channels = resolveDeploymentCreationDefaultsV1({ projectOwner: { kind: 'account', accountId: account.accountId },
+                                account: { accountId: account.accountId, defaults: account.settings.deploymentDefaultsV1 },
+                                target: { kind: 'ownServer', machines: [] } }).values.alertChannels;
+                        }
+                        sourceConfig.alerts = { channels: channels ?? [], phases: ['open', 'recovered'] };
+                    }
                     signal.throwIfAborted();
-                    const caller = seed.resolveCurrentPluginMaterializationRef?.();
-                    if (!seed.isOccurrenceCurrent() || !caller) return unavailable('source_unavailable');
-                    return input.manageHeartbeat ? input.manageHeartbeat({ caller, input: request }, signal)
-                        : PLUGIN_SERVICE_DESCRIPTORS.healthChecks.createUnavailable('endpoint_unavailable').manageHeartbeat(request, options);
-                },
-                async setup(request: Parameters<HealthChecksService['setup']>[0], options?: Parameters<HealthChecksService['setup']>[1]) {
+                    const machineId = environment?.environment.controllerMachineId ?? (draft.subject.kind === 'machineService' ? draft.subject.machineId : undefined);
+                    const testContext = retained && machineId && retained.source.alerts !== undefined
+                        && createCanonicalJsonSigningInput(sourceConfig.alerts) === createCanonicalJsonSigningInput(retained.source.alerts)
+                        ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId, expectedSourceRevision: retained.revision } : undefined;
+                    return HealthCheckSetupPreviewResultV1Schema.parse({ mode, sourceConfig, ...(testContext ? { testContext } : {}) });
+                }
+                return saveSetup(request, options);
+            }
+            async function saveSetup(request: SaveRequest, options?: SetupOptions): Promise<HealthCheckSourceConfigV1> {
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();
                     const caller = seed.resolveCurrentPluginMaterializationRef?.();
@@ -221,7 +247,38 @@ export function createSavedHealthChecksHost(input: Readonly<{
                             : { ...mapped, observingSince: (input.now ?? Date.now)() } };
                     }));
                     return { ...request.sourceConfig, checks };
+            }
+            return Object.freeze({
+                async listKinds(options?: Parameters<HealthChecksService['listKinds']>[0]) {
+                    const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                    signal.throwIfAborted();
+                    if (!seed.isOccurrenceCurrent()) return unavailable('source_unavailable');
+                    return input.readKinds?.() ?? [];
                 },
+                async readSource(request: Parameters<HealthChecksService['readSource']>[0], options?: Parameters<HealthChecksService['readSource']>[1]) {
+                    const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                    signal.throwIfAborted();
+                    if (!seed.isOccurrenceCurrent()) return unavailable('source_unavailable');
+                    const own = seed.resolveCurrentPluginMaterializationRef?.();
+                    if (!own) return unavailable('source_unavailable');
+                    // All producers borrow the one current health observer's adopted source;
+                    // external Action callers do not need to know its occurrence or materialization.
+                    const owner = input.resolveSourceOwner ? input.resolveSourceOwner()
+                        : { caller: own, occurrenceId: seed.occurrenceId };
+                    if (!owner) return unavailable('source_unavailable');
+                    const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: input.resolveAdoptedDefinitionSet,
+                        ...owner, sourceInstanceId: request.sourceInstanceId, signal });
+                    return batch.kind === 'available' ? batch.source : unavailable(batch.reason);
+                },
+                async manageHeartbeat(request: Parameters<HealthChecksService['manageHeartbeat']>[0], options?: Parameters<HealthChecksService['manageHeartbeat']>[1]) {
+                    const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                    signal.throwIfAborted();
+                    const caller = seed.resolveCurrentPluginMaterializationRef?.();
+                    if (!seed.isOccurrenceCurrent() || !caller) return unavailable('source_unavailable');
+                    return input.manageHeartbeat ? input.manageHeartbeat({ caller, input: request }, signal)
+                        : PLUGIN_SERVICE_DESCRIPTORS.healthChecks.createUnavailable('endpoint_unavailable').manageHeartbeat(request, options);
+                },
+                setup,
                 async read(request: Parameters<HealthChecksService['read']>[0], options?: Parameters<HealthChecksService['read']>[1]) {
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();

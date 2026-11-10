@@ -46,3 +46,15 @@ it('preserves an explicit observer selection and refuses malformed or withdrawn 
         .toEqual({ status: 'unavailable' });
     expect(opened).toHaveLength(1);
 });
+
+it('opens Domain first-configuration on the existing Environment source without inventing cadence or checks', async () => {
+    const subject = { kind: 'environment', environmentId: 'production' } as const;
+    const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
+    const opened: unknown[] = [];
+    expect(await openMachineServiceHealthSetupV1({ subject, domain }, {
+        signal: new AbortController().signal,
+        ui: { openAutomationEvent: async request => { opened.push(request); } },
+    })).toEqual({ status: 'opened' });
+    expect(opened).toEqual([expect.objectContaining({ sourceInstanceId: expect.stringMatching(/^health:/),
+        setupInput: { v: 1, subject, domain } })]);
+});

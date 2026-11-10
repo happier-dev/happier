@@ -32,6 +32,14 @@ const validContent = {
 } as const;
 
 describe('PluginWebhookDeliveryContentV1Schema', () => {
+  it('carries capability-authenticated handler content without a fabricated signing credential', () => {
+    const content = { ...validContent, headers: [], verified: {
+      verifier: 'capabilityUrl_v1', providerDeliveryId: 'sha256:body-digest',
+    } };
+    expect(PluginWebhookDeliveryContentV1Schema.parse(content)).toEqual(content);
+    expect(PluginWebhookDeliveryContentV1Schema.safeParse({ ...content,
+      headers: validContent.headers }).success).toBe(false);
+  });
   it('accepts the strict canonical GitHub content envelope', () => {
     expect(PluginWebhookDeliveryContentV1Schema.parse(validContent)).toEqual(validContent);
     expect(StoredPluginWebhookDeliveryContentV1Schema.parse({ t: 'plain', v: validContent })).toEqual({
@@ -221,7 +229,7 @@ describe('PluginWebhookActionResultV1Schema', () => {
 });
 
 describe('PluginWebhookActionInputV1Schema', () => {
-  it('rejects plugin-supplied endpoint authority', () => {
+  it('carries the worker endpoint identity while refusing routing authority operands', () => {
     const input = {
       v: 1,
       endpoint: {
@@ -247,6 +255,9 @@ describe('PluginWebhookActionInputV1Schema', () => {
     expect(PluginWebhookActionInputV1Schema.safeParse({
       ...input,
       endpoint: { ...input.endpoint, webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' },
+    }).success).toBe(true);
+    expect(PluginWebhookActionInputV1Schema.safeParse({ ...input,
+      endpoint: { ...input.endpoint, revision: 1, setup: { kind: 'capabilityUrl' } },
     }).success).toBe(false);
   });
 });

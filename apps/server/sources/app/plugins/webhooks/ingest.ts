@@ -1,4 +1,5 @@
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { randomUUID } from 'node:crypto';
 import { PluginWebhookDeliveryContentV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 
 import { db } from "@/storage/db";
@@ -18,7 +19,8 @@ import {
     createPluginWebhookStoredEnvelopeV1,
     type PluginWebhookStoredEnvelopeReadyV1,
 } from "./storedEnvelope";
-import { readPluginWebhookSignedVerifierV1, type PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+import { readPluginWebhookSignedVerifierV1 } from "./verifiers/catalog";
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 import { requiresProviderInstallationIdV1 } from "./routingKind";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
 
@@ -52,8 +54,8 @@ export type PluginWebhookIngestDependenciesV1 = Readonly<{
         endpointId: string;
         expectedEndpointRevision: number;
         routeId: string;
-        verifierKind: PluginWebhookSignedVerifierKindV1;
-        credentialVersionId: string;
+        verifierKind: PluginWebhookVerifierV1['kind'];
+        credentialVersionId?: string;
         deliveryIdentityDigest: string;
         stored: PluginWebhookStoredEnvelopeReadyV1;
         now?: Date;
@@ -103,7 +105,7 @@ export type PluginWebhookIngestResultV1 =
 export type VerifiedPluginWebhookSignatureV1 = Readonly<{
     route: ActivePluginWebhookRouteV1;
     providerDeliveryId: string;
-    credentialVersionId: string;
+    credentialVersionId?: string;
 }>;
 
 export type PreparedPluginWebhookSignatureVerifierV1 = Readonly<{
@@ -142,7 +144,19 @@ export async function preparePluginWebhookSignatureVerifierV1(params: Readonly<{
     if (afterRoute) return afterRoute;
     if (!route) return { kind: "rejected", statusCode: 404, code: "not_found" };
 
-    if (route.verifierKind === "capabilityUrl_v1") return { kind: "recordReceiptOnly", route };
+    if (route.verifierKind === "capabilityUrl_v1") {
+        if (route.capabilityDelivery !== "handler") return { kind: "recordReceiptOnly", route };
+        if (params.method === "GET") return { kind: "rejected", statusCode: 405, code: "method_not_allowed" };
+        // The opaque URL authenticates this delivery. Named monitors provide no
+        // universal delivery id; status/replay dedupe belongs to their observer.
+        const providerDeliveryId = randomUUID();
+        let finalized = false;
+        return { kind: "ready", verifier: { route, providerDeliveryId, update() {}, verify() {
+            if (finalized) return null;
+            finalized = true;
+            return { route, providerDeliveryId };
+        } } };
+    }
     if (params.method === "GET") return { kind: "rejected", statusCode: 405, code: "method_not_allowed" };
     const signed = readPluginWebhookSignedVerifierV1(route.verifierKind);
     if (!signed) return { kind: "rejected", statusCode: 401, code: "unauthorized" };
@@ -210,7 +224,7 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
     if (beforeRoute) return beforeRoute;
     const route = params.verification.route;
     const signed = readPluginWebhookSignedVerifierV1(route.verifierKind);
-    if (!signed) return { kind: "rejected", statusCode: 404, code: "not_found" };
+    if (!signed && route.verifierKind !== "capabilityUrl_v1") return { kind: "rejected", statusCode: 404, code: "not_found" };
     const providerDeliveryId = params.verification.providerDeliveryId;
     const credentialVersionId = params.verification.credentialVersionId;
 
@@ -243,20 +257,20 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
         const afterAccount = unavailableIfAborted();
         if (afterAccount) return afterAccount;
         if (!account) return { kind: "rejected", statusCode: 503, code: "unavailable" };
-        const eventHeader = readSingleHeader(params.headers, signed.eventHeader);
+        const eventHeader = signed ? readSingleHeader(params.headers, signed.eventHeader) : null;
         const eventType = eventHeader && PROVIDER_EVENT_PATTERN_V1.test(eventHeader) ? eventHeader : undefined;
         const content = PluginWebhookDeliveryContentV1Schema.parse({
             v: 1,
             receivedAtMs: now.getTime(),
             contentType: normalizeContentType(readSingleHeader(params.headers, "content-type")),
-            headers: eventType ? [{ name: signed.eventHeader, value: eventType }] : [],
+            headers: eventType && signed ? [{ name: signed.eventHeader, value: eventType }] : [],
             rawBodyBytes: params.rawBody.byteLength,
             rawBodyBase64: encodeBase64(params.rawBody, "base64"),
             verified: {
-                verifier: signed.kind,
+                verifier: route.verifierKind,
                 providerDeliveryId,
                 ...(eventType ? { eventType } : {}),
-                credentialVersionId,
+                ...(credentialVersionId ? { credentialVersionId } : {}),
             },
         });
         const stored = createPluginWebhookStoredEnvelopeV1({ account, content });
@@ -266,10 +280,10 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
             endpointId: endpoint.endpointId,
             expectedEndpointRevision: endpoint.revision,
             routeId: route.routeId,
-            verifierKind: signed.kind,
-            credentialVersionId,
+            verifierKind: route.verifierKind,
+            ...(credentialVersionId ? { credentialVersionId } : {}),
             deliveryIdentityDigest: createPluginWebhookDeliveryIdentityDigestV1({
-                verifierKind: signed.kind,
+                verifierKind: route.verifierKind,
                 routeId: route.routeId,
                 providerDeliveryId,
             }),

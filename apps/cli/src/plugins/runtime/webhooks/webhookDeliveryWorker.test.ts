@@ -92,13 +92,18 @@ describe('plugin webhook claimed delivery worker', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it.each(['plain', 'e2ee'] as const)('drops retired %s stored content while dispatching the same-plugin Action and settling only the renewed lease', async mode => {
+  it.each([
+    ['plain', 'github_hmac_sha256_v1'], ['e2ee', 'github_hmac_sha256_v1'],
+    ['plain', 'capabilityUrl_v1'], ['e2ee', 'capabilityUrl_v1'],
+  ] as const)('drops retired %s %s stored content while dispatching the same-plugin Action and settling only the renewed lease', async (mode, verifier) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const secret = new Uint8Array(32).fill(7);
-    const retainedContent = { ...content, retired: true,
-      headers: content.headers.map(header => ({ ...header, retired: true })),
-      verified: { ...content.verified, retired: true },
+    const selectedContent = verifier === 'capabilityUrl_v1' ? { ...content, headers: [],
+      verified: { verifier, providerDeliveryId: content.verified.providerDeliveryId } } : content;
+    const retainedContent = { ...selectedContent, retired: true,
+      headers: selectedContent.headers.map(header => ({ ...header, retired: true })),
+      verified: { ...selectedContent.verified, retired: true },
     };
     expect(PluginWebhookDeliveryContentV1Schema.safeParse(retainedContent).success).toBe(false);
     const sealedContent = Buffer.from(sealBoxBundle({
@@ -112,7 +117,8 @@ describe('plugin webhook claimed delivery worker', () => {
     const detachedReadGate = new Promise<void>((resolve) => { releaseDetachedRead = resolve; });
     let detachedReference: ReturnType<typeof readCurrentPluginWebhookInvocationReferenceV1> = null;
     const execute = vi.fn(async (_actionId: string, input: unknown) => {
-      expect(input).not.toHaveProperty('endpoint.webhookEndpointId');
+      if (verifier === 'capabilityUrl_v1') expect(input).toHaveProperty('endpoint.webhookEndpointId', 'wh_ep_AAECAwQFBgcICQoLDA0ODw');
+      else expect(input).not.toHaveProperty('endpoint.webhookEndpointId');
       observedReference = readCurrentPluginWebhookInvocationReferenceV1();
       void detachedReadGate.then(() => {
         detachedReference = readCurrentPluginWebhookInvocationReferenceV1();

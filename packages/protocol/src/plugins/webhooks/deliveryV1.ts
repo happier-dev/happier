@@ -1,5 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
 
@@ -54,8 +54,9 @@ const PluginWebhookSelectedHeaderV1Schema = lazyZodSchema(() => z.readonly(z.str
 
 function checkSelectedEventHeaderV1(
   selected: Readonly<{ name: string; value: string }> | undefined,
-  verified: Readonly<{ verifier: keyof typeof SELECTED_EVENT_HEADER_BY_VERIFIER_V1; eventType?: string | undefined }>,
+  verified: Readonly<{ verifier: keyof typeof SELECTED_EVENT_HEADER_BY_VERIFIER_V1 | 'capabilityUrl_v1'; eventType?: string | undefined }>,
 ): string | null {
+  if (verified.verifier === 'capabilityUrl_v1') return selected || verified.eventType ? 'Capability URL deliveries have no provider event header' : null;
   if (selected?.value !== verified.eventType) return 'Verified event type must match the selected event header';
   if (selected && selected.name !== SELECTED_EVENT_HEADER_BY_VERIFIER_V1[verified.verifier]) {
     return 'Selected event header must belong to the verifier';
@@ -63,12 +64,15 @@ function checkSelectedEventHeaderV1(
   return null;
 }
 
-const PluginWebhookVerifiedContentV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+const PluginWebhookVerifiedContentV1Schema = lazyZodSchema(() => z.readonly(z.union([z.strictObject({
   verifier: SIGNED_WEBHOOK_VERIFIER_SCHEMA,
   providerDeliveryId: ASCII_TOKEN_128_SCHEMA,
   eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
   credentialVersionId: ASCII_TOKEN_128_SCHEMA,
-})));
+}), z.strictObject({
+  verifier: z.literal('capabilityUrl_v1'),
+  providerDeliveryId: ASCII_TOKEN_128_SCHEMA,
+})])));
 
 export const PluginWebhookDeliveryContentV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   v: z.literal(1),
@@ -111,6 +115,7 @@ export const PluginWebhookActionInputV1Schema = lazyZodSchema(() => z.readonly(z
   endpoint: z.strictObject({
     webhookContribution: QualifiedWebhookContributionRefV1Schema,
     sourceInstanceId: ASCII_TOKEN_128_SCHEMA,
+    webhookEndpointId: z.optional(PluginWebhookEndpointIdV1Schema),
   }),
   delivery: z.strictObject({
     deliveryId: ASCII_TOKEN_128_SCHEMA,
@@ -126,7 +131,7 @@ export const PluginWebhookActionInputV1Schema = lazyZodSchema(() => z.readonly(z
     rawBodyBase64: z.string().check(z.maxLength(PLUGIN_WEBHOOK_MAX_ENCODED_RAW_BODY_CHARS_V1)),
   }),
   verified: z.strictObject({
-    verifier: SIGNED_WEBHOOK_VERIFIER_SCHEMA,
+    verifier: z.union([SIGNED_WEBHOOK_VERIFIER_SCHEMA, z.literal('capabilityUrl_v1')]),
     eventType: z.optional(WEBHOOK_EVENT_SCHEMA),
   }),
 }).check(z.superRefine((value, context) => {

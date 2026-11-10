@@ -5,11 +5,15 @@ import { plugin } from '../../../../../packages/plugins/machine-services/src/man
 import { createHealthCheckSourceAdapter } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
-import { AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationEventAdmitInputV1Schema, AutomationEventSourceDefinitionV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import type { AccountKvEntry, AccountKvService } from '@happier-dev/plugin-sdk/storage';
 import type { HealthCheckResultV1, HealthCheckSourceConfigV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createConfiguredHealthCheckNotices } from '../deploymentServiceHealthNotices';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
@@ -36,6 +40,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
     const writes: JsonValue[] = [];
     const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
     const hostListeners = new Map<string, Set<(event: { payload: JsonValue }) => void | Promise<void>>>();
+    const pluginListeners = new Map<string, Set<(event: { payload: JsonValue }) => void | Promise<void>>>();
     const sourceReports = new Set<() => void>();
     const kv = {
         async get(key: string) { return rows.get(key) ?? null; },
@@ -45,6 +50,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
             const version = (previous?.version ?? 0) + 1;
             rows.set(key, { version, value }); writes.push(value); return { version };
         },
+        async transaction<T>(operation: (store: AccountKvService) => Promise<T>) { return operation(kv as AccountKvService); },
     };
     const read = vi.fn(async () => [{ checkId: 'http', result: result(status, now) }]);
     const execute = vi.fn(async (id: string, input: unknown) => {
@@ -75,19 +81,27 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
                 if (!listeners) { listeners = new Set(); hostListeners.set(target.eventId, listeners); }
                 listeners.add(listener);
                 return { dispose() { listeners.delete(listener); } };
+            } }, plugin: { subscribe(target: { localId: string }, listener: (event: { payload: JsonValue }) => void | Promise<void>) {
+                let listeners = pluginListeners.get(target.localId);
+                if (!listeners) { listeners = new Set(); pluginListeners.set(target.localId, listeners); }
+                listeners.add(listener);
+                return { dispose() { listeners.delete(listener); } };
             } } } },
     } as unknown as BackgroundServiceContext;
-    const adapter = createHealthCheckSourceAdapter(() => now, context.services.events.host);
+    const adapter = createHealthCheckSourceAdapter(() => now, context.services.events.host, context.services.events.plugin);
     const errors: unknown[] = [];
     const cycle = (sourceAdapter = adapter, selectedContext = context) => runCheckpointedPluginEventObserverV1({
         context: selectedContext, source: { ...sourceAdapter, async observe(input) {
             try { return await sourceAdapter.observe(input); } catch (error) { errors.push(error); throw error; }
         } }, mode: 'once', now: () => now,
     });
-    return { context, adapter, errors, read, writes, admissions, cycle, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
+    return { context, adapter, errors, read, writes, admissions, cycle, kv, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
         clock(time: number) { now = time; },
         async heartbeat(payload: JsonValue) {
             for (const listener of hostListeners.get('@happier/health-check/heartbeat-received') ?? []) await listener({ payload });
+        },
+        async monitor(payload: JsonValue, localId = 'health-uptime-kuma-observed') {
+            for (const listener of pluginListeners.get(localId) ?? []) await listener({ payload });
         },
         async invalidate(payload: JsonValue) {
             for (const listener of hostListeners.get('@happier/automation/event-sources-invalidated') ?? []) await listener({ payload });
@@ -104,6 +118,91 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it.each(['uptime-kuma', 'gatus'] as const)('carries registered %s deliveries through shared D5 into one Domain C1 condition and recovery', async kind => {
+        const artifacts = createPlainAccountArtifactHttpBoundary();
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.environment.controllerMachineId = materialization.machineId;
+        environment.environment.protection = 'production';
+        const endpoint = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+        const mapped: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'environment', environmentId: environment.environment.id },
+            checks: [{ checkId: 'shop', kind: { pluginId: materialization.pluginId, localId: kind },
+                binding: { kind: 'domain', domainId: 'shop-domain', targetLinkId: environment.environment.runtimeTargetLinkId!, condition: 'domain_probe_failed' },
+                config: { ...(kind === 'uptime-kuma' ? { monitorId: '7' } : { endpointGroup: '', endpointName: 'Shop' }),
+                    webhookEndpointId: endpoint, observingSince: 100 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 2 }] };
+        const f = fixture(mapped, ['health-check-failed', 'health-check-recovered']);
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
+            storage: { account: { kv: f.kv as AccountKvService } }, healthChecks: { readSource: async () => mapped },
+            events: { plugin: { emit: async (localId: string, payload: JsonValue) => f.monitor(payload, localId) } },
+        } });
+        f.read.mockImplementation(async () => [{ checkId: 'shop', result: HealthCheckResultV1Schema.parse(await kit.invokeAction(`health/${kind}`,
+            { sourceInstanceId: definition.sourceInstanceId, checkId: 'shop' })) }]);
+        const noticeDefinition = AutomationEventSourceDefinitionV1Schema.parse({ ...definition, sourceConfig: mapped,
+            observationOnly: { kind: 'observationOnly' } });
+        const publish = createConfiguredHealthCheckNotices({ credentials: artifacts.credentials, serverId: environment.environment.serverId,
+            serverHttpBaseUrl: 'https://monitor-notices.test', machineId: materialization.machineId,
+            readService: async () => null, readEnvironment: async () => environment });
+        const deliver = async (status: 'down' | 'up', receivedAtMs: number) => {
+            const raw = JSON.stringify(kind === 'uptime-kuma' ? { monitor: { id: 7 }, heartbeat: { monitorID: 7, status: status === 'up' ? 1 : 0,
+                time: new Date(Date.UTC(2026, 10, 10) + receivedAtMs).toISOString().replace('T', ' ').replace('Z', ''), msg: 'private provider body' },
+                subject: { environmentId: 'forged-environment' } }
+                : { endpointGroup: '', endpointName: 'Shop', status: status === 'up' ? 'RESOLVED' : 'TRIGGERED', msg: 'private provider body' });
+            await kit.invokeAction(`health/${kind}/receive`, { v: 1, endpoint: {
+                webhookContribution: { pluginId: materialization.pluginId, localId: `health-${kind}` },
+                sourceInstanceId: definition.sourceInstanceId, webhookEndpointId: endpoint },
+                delivery: { deliveryId: `monitor-${receivedAtMs}`, providerDeliveryId: `monitor-${receivedAtMs}`, attempt: 1, replay: 0, receivedAtMs },
+                request: { contentType: 'application/json', headers: [], rawBodyBytes: Buffer.byteLength(raw), rawBodyBase64: Buffer.from(raw).toString('base64') },
+                verified: { verifier: 'capabilityUrl_v1' } });
+            await f.cycle();
+        };
+        const subscription = f.adapter.subscribeWake?.(async () => {});
+        try {
+            await f.cycle();
+            await deliver('down', 200); await deliver('down', 200);
+            expect(f.admissions).toHaveLength(0);
+            await deliver('down', 300);
+            expect(f.admissions).toHaveLength(1);
+            await publish({ caller: materialization, definition: noticeDefinition, admitted: true, signal: new AbortController().signal,
+                observation: f.admissions[0]! });
+            expect([...artifacts.rows.values()].map(row => decodePlainArtifactStoredContent(String(row.header))))
+                .toEqual([expect.objectContaining({ healthPhase: 'open', source: expect.objectContaining({ subject: expect.objectContaining({
+                    kind: 'domain', environmentId: environment.environment.id, domainId: 'shop-domain', condition: 'domain_probe_failed' }) }) })]);
+            await deliver('up', 400);
+            expect(f.admissions).toHaveLength(2);
+            await publish({ caller: materialization, definition: noticeDefinition, admitted: true, signal: new AbortController().signal,
+                observation: f.admissions[1]! });
+            const headers = [...artifacts.rows.values()].map(row => decodePlainArtifactStoredContent(String(row.header)));
+            expect(headers).toEqual([expect.objectContaining({ healthPhase: 'recovered' })]);
+            expect(JSON.stringify(headers)).not.toContain('private provider body');
+            expect(JSON.stringify(headers)).not.toContain('forged-environment');
+            expect(f.errors).toEqual([]);
+        } finally { subscription?.dispose(); await kit.dispose(); }
+    });
+    it('counts distinct monitor receipts once and wakes the same observer without an idle timer', async () => {
+        const endpoint = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+        const mapped = { ...source, checks: [{ ...source.checks[0]!, kind: { pluginId: materialization.pluginId, localId: 'uptime-kuma' },
+            config: { monitorId: '7', webhookEndpointId: endpoint, observingSince: 0 } }] };
+        const f = fixture(mapped, ['health-check-failed', 'health-check-recovered']);
+        let observation = result('down', 1000);
+        f.read.mockImplementation(async () => [{ checkId: 'http', result: observation }]);
+        const subscription = f.adapter.subscribeWake?.(async () => {});
+        const hint = { sourceInstanceId: definition.sourceInstanceId, checkId: 'http', webhookEndpointId: endpoint };
+        try {
+            await f.cycle();
+            f.clock(100_000); await f.cycle();
+            expect(f.read).toHaveBeenCalledTimes(1);
+            await f.monitor(hint); await f.cycle();
+            expect(f.admissions).toHaveLength(0);
+            observation = result('down', 2000);
+            await f.monitor(hint); await f.cycle();
+            expect(f.admissions).toHaveLength(1);
+            observation = result('up', 3000);
+            await f.monitor({ ...hint, webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBA' }); await f.cycle();
+            expect(f.admissions).toHaveLength(1);
+            await f.monitor(hint); await f.cycle();
+            expect(f.admissions).toHaveLength(2);
+            expect(f.admissions[1]?.payload).toMatchObject({ transition: 'recovered', observedAt: 3000 });
+        } finally { subscription?.dispose(); }
+    });
     it('selects failed and recovered Events from one saved observer without evidence or duplicate failure runs', async () => {
         const f = fixture(source, ['health-check-failed', 'health-check-recovered']);
         await f.cycle(); f.tick('down'); await f.cycle();
@@ -239,27 +338,27 @@ describe('saved health source registration and finite cycles', () => {
         f.read.mockImplementation(async () => [{ checkId: 'heartbeat', ...readHeartbeatHealthCheckV1({
             observer: { machineId: materialization.machineId, installationId: 'installation' }, vantage: 'outside',
             periodMs: 1000, graceMs: 200, lastAcceptedAt: acceptedAt }, f.now()) }]);
-        const completed = Array.from({ length: 3 }, () => {
-            let resolve!: () => void;
-            const promise = new Promise<void>(done => { resolve = done; });
-            return { promise, resolve };
-        });
-        let observations = 0;
+        let observed!: () => void;
+        const initialObservation = new Promise<void>(resolve => { observed = resolve; });
         // The SDK reports this public source status after committing its next
-        // eligibility, so invalidation cannot race the initial cycle's write.
-        f.onSourceReport(() => completed[observations++]?.resolve());
+        // eligibility. Equal later statuses are intentionally not republished.
+        f.onSourceReport(observed);
         const abort = new AbortController();
         const running = runCheckpointedPluginEventObserverV1({ context: { ...f.context, signal: abort.signal },
             source: f.adapter, now: f.now });
         try {
-            await completed[0]!.promise;
+            await initialObservation;
             expect(f.read).toHaveBeenCalledTimes(1);
-            await f.invalidate({}); await completed[1]!.promise;
+            await f.invalidate({});
+            // All fixture host transports resolve immediately. Yield a turn so
+            // the quiet catalog cycle settles without requiring a status write.
+            await new Promise<void>(resolve => { setImmediate(resolve); });
             expect(f.read).toHaveBeenCalledTimes(1);
             // The first accepted ping arrived while this socket was disconnected;
             // reconnect carries the producer's reason, without replaying a ping.
             acceptedAt = f.now();
-            await f.invalidate({ reason: 'reconnect' }); await completed[2]!.promise;
+            // The authenticated provider wake settles after its finite cycle.
+            await f.invalidate({ reason: 'reconnect' });
             expect(f.read).toHaveBeenCalledTimes(2);
             expect(f.admissions).toHaveLength(0);
         } finally {

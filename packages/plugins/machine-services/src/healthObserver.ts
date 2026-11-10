@@ -9,7 +9,8 @@ import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
-import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
+import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
+import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
 const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
@@ -26,9 +27,10 @@ type Candidate = Readonly<{ key: string; expectedVersion: number | 'absent'; val
 /** The shared SDK runner owns lifecycle/adoption/wakes/admission. This finite
  * adapter owns only due times, incomplete live streaks and transition custody. */
 export function createHealthCheckSourceAdapter(now: () => number = Date.now,
-    host?: BackgroundServiceContext['services']['events']['host']): PluginCheckpointedEventSourceAdapterV1<HealthCheckSourceConfigV1, Candidate> {
+    host?: BackgroundServiceContext['services']['events']['host'],
+    pluginEvents?: BackgroundServiceContext['services']['events']['plugin']): PluginCheckpointedEventSourceAdapterV1<HealthCheckSourceConfigV1, Candidate> {
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
-        due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string> }>();
+        due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string>; monitorResults: Map<string, string> }>();
     return {
         observeWhileAdmissionPending: true,
         decode(definition) {
@@ -43,7 +45,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 sourceConfig: source, materialization: context.materialization ?? null });
             let state = live.get(definition.sourceInstanceId);
             if (state?.basis !== basis) {
-                state = { basis, source, due: new Map(), failures: new Map(), pendingChecks: new Set() };
+                state = { basis, source, due: new Map(), failures: new Map(), pendingChecks: new Set(), monitorResults: new Map() };
                 live.set(definition.sourceInstanceId, state);
             }
             const { due, failures, pendingChecks } = state;
@@ -76,6 +78,15 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 due.set(identity, observation?.nextEligibleAt === undefined ? time + check.periodMs : observation.nextEligibleAt);
                 const result = observation?.result;
                 if (!result) throw new PluginError({ code: 'health_check_result_unavailable', message: 'The saved check did not return a result' });
+                if (isMonitorCheck(check)) {
+                    due.set(identity, null);
+                    // The shared runner parks immediate drains during pending
+                    // admission and releases them when that admission settles.
+                    if (replaying) { pendingChecks.add(identity); continue; }
+                    const identityOfResult = createCanonicalJsonSigningInput(result);
+                    if (state.monitorResults.get(identity) === identityOfResult) continue;
+                    state.monitorResults.set(identity, identityOfResult);
+                }
                 // Current health keeps advancing on its existing due schedule.
                 // Event admission retains its first result/clock until settled,
                 // including after reload; fresh probes cannot replace that Event.
@@ -141,7 +152,19 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             return { complete: true };
         },
         subscribeWake(wake) {
-            if (!host) return { dispose() {} };
+            const monitorSubscriptions = pluginEvents ? monitorKinds.map(kind => pluginEvents.subscribe({
+                pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: monitorDefinitions[kind].observedEventId,
+            }, async event => {
+                const hint = monitorObserved.parse(event.payload);
+                const state = live.get(hint.sourceInstanceId);
+                const check = state?.source.checks.find(value => value.checkId === hint.checkId && isMonitorCheck(value));
+                const config = check?.config;
+                if (!state || !config || typeof config !== 'object' || Array.isArray(config)
+                    || config.webhookEndpointId !== hint.webhookEndpointId) return;
+                state.pendingChecks.add(hint.checkId);
+                await wake(hint.sourceInstanceId);
+            })) : [];
+            if (!host) return { dispose() { for (const subscription of monitorSubscriptions) subscription.dispose(); } };
             const receiptSubscription = host.subscribe({ eventId: '@happier/health-check/heartbeat-received', scope: { kind: 'account' } }, async event => {
                 const receipt = event.payload;
                 const state = live.get(receipt.sourceInstanceId);
@@ -157,14 +180,15 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 let pending = false;
                 for (const state of live.values()) {
                     for (const check of state.source.checks) {
-                        if (check.kind.localId !== 'heartbeat') continue;
+                        if (check.kind.localId !== 'heartbeat' && !isMonitorCheck(check)) continue;
                         state.pendingChecks.add(check.checkId);
                         pending = true;
                     }
                 }
                 if (pending) await wake();
             });
-            return { dispose() { receiptSubscription.dispose(); reconnectSubscription.dispose(); } };
+            return { dispose() { receiptSubscription.dispose(); reconnectSubscription.dispose();
+                for (const subscription of monitorSubscriptions) subscription.dispose(); } };
         },
         retryAt({ definition, error, now: time }) {
             if (isPluginError(error) && !error.retryable) return null;
@@ -175,7 +199,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
 }
 
 export async function runHealthCheckObserver(context: BackgroundServiceContext): Promise<void> {
-    await runCheckpointedPluginEventObserverV1({ context, source: createHealthCheckSourceAdapter(Date.now, context.services.events.host) });
+    await runCheckpointedPluginEventObserverV1({ context, source: createHealthCheckSourceAdapter(Date.now,
+        context.services.events.host, context.services.events.plugin) });
 }
 
 export const savedHealthActions = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {

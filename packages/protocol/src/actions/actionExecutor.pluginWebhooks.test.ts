@@ -97,45 +97,60 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       }
     }
   });
-  it.each(['agent', 'mcp'] as const)('requires human setup consent on %s and confines the secret to the deciding human', async (surface) => {
+  it.each((['agent', 'mcp'] as const).flatMap(surface =>
+    (['signed', 'capability', 'read'] as const).map(mode => ({ surface, mode })),
+  ))('requires human setup consent on $surface for $mode and retains metadata without live secrets', async ({ surface, mode }) => {
+    const actionId = mode === 'read' ? 'plugin.webhook.endpoint.read' : 'plugin.webhook.endpoint.ensure';
+    const actionInput = mode === 'read' ? { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' }
+      : mode === 'capability' ? { ...ensureInput, setup: { kind: 'capabilityUrlV1', checkId: 'monitor' } } : ensureInput;
     expect(getActionSpec('plugin.webhook.endpoint.ensure').safety).toBe('danger');
     let stored: ApprovalRequest | null = null;
     const persisted: ApprovalRequest[] = [];
     const metadata = {
       webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', revision: 1,
-      publicUrl: 'https://example.test/v1/plugins/webhooks/opaque-route',
       readiness: 'providerConfirmationRequired' as const,
+      ...(mode === 'read' ? { contribution: ensureInput.webhookContribution,
+        targetMaterialization: ensureInput.targetMaterialization, sourceInstanceId: ensureInput.sourceInstanceId,
+        routing: 'accountEndpoint' as const, createdAt: 1000 } : {}),
     };
+    const publicUrl = 'https://example.test/v1/plugins/webhooks/private-capability-url';
     const secret = 'one-time-webhook-credential';
+    const liveOutput = { ...metadata, publicUrl, ...(mode === 'signed' ? { oneTimeGeneratedSecret: secret } : {}) };
     // HTTP endpoint and Artifact persistence are system boundaries; admission,
     // approval transitions, replay and observation projection remain real.
-    const pluginWebhookAction = vi.fn(async () => ({ ...metadata, oneTimeGeneratedSecret: secret }));
+    const pluginWebhookAction = vi.fn(async () => liveOutput);
     const observeActionExecution = vi.fn();
     const executor = createActionExecutor({
       pluginWebhookAction, observeActionExecution,
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => {
-        stored = request; persisted.push(request); return { artifactId: 'webhook-approval' };
+        stored = structuredClone(request); persisted.push(structuredClone(request)); return { artifactId: 'webhook-approval' };
       },
-      approvalsGet: async () => stored,
+      approvalsGet: async () => stored === null ? null : structuredClone(stored),
       approvalsUpdate: async ({ request }) => {
-        stored = request; persisted.push(request); return { ok: true as const };
+        stored = structuredClone(request); persisted.push(structuredClone(request)); return { ok: true as const };
       },
     } as ActionExecutorDeps);
     const requester = {
       surface, authority: 'account_automation', actionCaller: { kind: 'host' },
       serverId: 'home-1', runtimeAccountId: 'account-1', actionRequestId: 'webhook-ensure-1',
     } as const;
-    expect(await executor.execute('plugin.webhook.endpoint.ensure', ensureInput, { ...requester,
+    const waived = await executor.execute(actionId, actionInput, { ...requester, actionRequestId: 'webhook-waived-1',
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
-        'plugin.webhook.endpoint.ensure': [surface],
+        [actionId]: [surface],
       } }),
-    })).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    });
+    expect(waived).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(waived).toEqual({ ok: true, result: liveOutput });
     expect(stored).toBeNull();
     pluginWebhookAction.mockClear();
-    const requested = await executor.execute('plugin.webhook.endpoint.ensure', ensureInput, requester);
-    expect(requested).toMatchObject({ ok: true, result: {
-      kind: 'approval_request_created', artifactId: 'webhook-approval',
+    // Explicit CLI requests use the canonical detached flow for live-only
+    // results; Agent/MCP direct Ask retains a blocking invocation instead.
+    const requested = await executor.execute('approval.request.create', {
+      actionId, actionArgs: actionInput, summary: 'Manage webhook endpoint', createdBy: { surface: 'system' },
+    }, { ...requester, surface: 'cli', authority: 'present_user', actionRequestId: 'webhook-human-request' });
+    expect(requested, JSON.stringify(requested)).toMatchObject({ ok: true, result: {
+      artifactId: 'webhook-approval',
     } });
     expect(pluginWebhookAction).not.toHaveBeenCalled();
     expect(await executor.execute('approval.request.decide', {
@@ -144,9 +159,11 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     const decided = await executor.execute('approval.request.decide', {
       artifactId: 'webhook-approval', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1' });
+    expect(JSON.stringify(persisted)).not.toContain(publicUrl);
+    expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain(publicUrl);
     expect(decided).toMatchObject({ ok: true, result: {
       status: 'executed', execution: { ok: true, result: metadata },
-      liveExecution: { ok: true, result: { ...metadata, oneTimeGeneratedSecret: secret } },
+      liveExecution: { ok: true, result: liveOutput },
     } });
     expect(JSON.stringify(persisted)).not.toContain(secret);
     expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain(secret);
@@ -154,6 +171,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       artifactId: 'webhook-approval', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'home-1' });
     expect(JSON.stringify(repeated)).not.toContain(secret);
+    expect(JSON.stringify(repeated)).not.toContain(publicUrl);
     expect(pluginWebhookAction).toHaveBeenCalledOnce();
   });
 

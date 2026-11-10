@@ -1,4 +1,5 @@
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_SETUP_OPEN_ACTION_REF_V1, HealthCheckSubjectV1ProtocolSchema,
+    HealthCheckDomainSetupIntentV1ProtocolSchema,
     createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
@@ -17,6 +18,7 @@ export { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
 /** Opening carries the watched subject; the existing editor chooses the observer independently. */
 export const MachineServiceHealthSetupOpenInputV1Schema = defineProtocolObject({
     subject: HealthCheckSubjectV1ProtocolSchema,
+    domain: HealthCheckDomainSetupIntentV1ProtocolSchema.optional(),
     monitoringMachineId: defineProtocolString({ minLength: 1, pattern: '^\\S(?:.*\\S)?$' }).optional(),
 }, { policy: 'closed' });
 
@@ -25,6 +27,6 @@ export function createMachineServiceHealthSetupSeedV1(input: ReturnType<typeof M
         eventRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: HEALTH_CHECK_FAILED_EVENT },
         sourceInstanceId: createHealthCheckSourceInstanceIdV1(input.subject),
         ...(input.monitoringMachineId ? { monitoringMachineId: input.monitoringMachineId } : {}),
-        setupInput: { v: 1 as const, subject: input.subject },
+        setupInput: { v: 1 as const, subject: input.subject, ...(input.domain ? { domain: input.domain } : {}) },
     };
 }

@@ -19,7 +19,7 @@ import {
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 import type { PluginWebhookStoredEnvelopeReadyV1 } from "./storedEnvelope";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
-import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
 const TERMINAL_COMPACTION_BATCH_V1 = 500;
 // Reserve the public response/error path; this never extends ingress custody.
@@ -215,12 +215,13 @@ async function confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(
         endpointId: string;
         providerConfirmedAt: Date | null;
         currentCredentialVersionId: string | null;
-        authenticatedCredentialVersionId: string;
+        authenticatedCredentialVersionId?: string;
         now: Date;
     }>,
 ): Promise<void> {
     if (
         params.providerConfirmedAt !== null
+        || params.authenticatedCredentialVersionId === undefined
         || params.currentCredentialVersionId !== params.authenticatedCredentialVersionId
     ) return;
     await tx.pluginWebhookEndpoint.updateMany({
@@ -230,15 +231,18 @@ async function confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(
 }
 
 function isPluginWebhookCredentialAcceptedAt(params: Readonly<{
+    verifierKind: PluginWebhookVerifierV1['kind'];
     currentCredentialVersionId: string | null;
     previousCredential: Readonly<{
         credentialVersionId: string;
         state: string;
         acceptUntil: Date | null;
     }> | null;
-    authenticatedCredentialVersionId: string;
+    authenticatedCredentialVersionId?: string;
     now: Date;
 }>): boolean {
+    if (params.verifierKind === "capabilityUrl_v1") return params.authenticatedCredentialVersionId === undefined;
+    if (params.authenticatedCredentialVersionId === undefined) return false;
     return params.currentCredentialVersionId === params.authenticatedCredentialVersionId
         || (
             params.previousCredential?.credentialVersionId === params.authenticatedCredentialVersionId
@@ -252,9 +256,9 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
     endpointId: string;
     expectedEndpointRevision: number;
     routeId: string;
-    verifierKind: PluginWebhookSignedVerifierKindV1;
+    verifierKind: PluginWebhookVerifierV1['kind'];
     /** The exact credential version whose secret verified this delivery. */
-    credentialVersionId: string;
+    credentialVersionId?: string;
     deliveryIdentityDigest: string;
     stored: PluginWebhookStoredEnvelopeReadyV1;
     now?: Date;
@@ -344,6 +348,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             // the exact credential membership at durable admission so retiring
             // a credential cannot race an already verified request into custody.
             const credentialStillAccepted = isPluginWebhookCredentialAcceptedAt({
+                verifierKind: params.verifierKind,
                 currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
                 previousCredential: endpoint.route.previousCredential,
                 authenticatedCredentialVersionId: params.credentialVersionId,
@@ -567,6 +572,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             });
             if (!endpoint) return null;
             if (!isPluginWebhookCredentialAcceptedAt({
+                verifierKind: params.verifierKind,
                 currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
                 previousCredential: endpoint.route.previousCredential,
                 authenticatedCredentialVersionId: params.credentialVersionId,

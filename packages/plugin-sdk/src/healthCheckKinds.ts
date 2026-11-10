@@ -10,6 +10,9 @@ export type { HealthCheckSourceSelectorV1 } from '@happier-dev/protocol/deployme
 export { HealthCheckSourceSelectorV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export type { HealthCheckDomainSetupIntentV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export { HealthCheckDomainSetupIntentV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+export type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+export { HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { PluginWebhookHeartbeatManageInputV1, PluginWebhookHeartbeatManageResultV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 export type { PluginWebhookHeartbeatManageInputV1, PluginWebhookHeartbeatManageResultV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 export { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
@@ -79,6 +82,8 @@ export interface HealthChecksService {
     /** Control an exact saved heartbeat without disclosing its secret address. */
     manageHeartbeat(input: PluginWebhookHeartbeatManageInputV1, options?: PluginCancellationOptions): Promise<PluginWebhookHeartbeatManageResultV1>;
     /** Explicit setup enrolls declared capability endpoints; saved config retains only nonsecret identities. */
+    setup(input: Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupPreviewInputV1 }>,
+        options?: PluginCancellationOptions): Promise<HealthCheckSetupPreviewResultV1>;
     setup(input: Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupInputV1;
         heartbeatContributionId: string;
         capabilityWebhookContributions?: Readonly<Record<string, string>> }>, options?: PluginCancellationOptions): Promise<HealthCheckSourceConfigV1>;

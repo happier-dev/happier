@@ -1,7 +1,8 @@
-import { createElement as h, useState, type ReactElement } from 'react';
+import { createElement as h, useEffect, useState, type ReactElement } from 'react';
 import {
     HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, HealthCheckKindCatalogV1ProtocolSchema, createHealthCheckSourceInstanceIdV1,
-    HealthCheckHttpConfigV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
+    HealthCheckHttpConfigV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema,
+    type HealthCheckSetupPreviewResultV1,
     HealthCheckSetupInputV1ProtocolSchema, HealthCheckTcpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1,
     type HealthCheckKindV1, type HealthCheckKindCatalogV1, type HealthCheckSetupDraftV1, type HealthCheckSetupInputV1, type HealthCheckSubjectV1,
 } from '@happier-dev/plugin-sdk';
@@ -168,6 +169,27 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const t = usePluginTranslation();
     const host = usePluginHostApi();
     const [draft, setDraft] = useState<Draft>(EMPTY);
+    const [alertDraft, setAlertDraft] = useState<Readonly<{
+        alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
+    }>>({ alerts: props.sourceOptions.alerts });
+    const { alerts, testContext: preparedSource } = alertDraft;
+    const setAlerts = (next: SourceOptions['alerts']) => setAlertDraft(current => ({ ...current, alerts: next }));
+    const [previewUnavailable, setPreviewUnavailable] = useState(false);
+    const [previewAttempt, setPreviewAttempt] = useState(0);
+    useEffect(() => {
+        let retired = false;
+        const { domain, ...sourceOptions } = props.sourceOptions;
+        void host.executeAction({ pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health/setup' }, {
+            v: 1, mode: 'preview', subject: props.subject, ...(props.existing.length ? { checks: props.existing } : {}), ...sourceOptions,
+        }, { signal: props.signal }).then(value => {
+            const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.parse(value);
+            if (retired || props.signal.aborted) return;
+            setAlertDraft(current => ({ alerts: current.alerts ?? prepared.sourceConfig.alerts,
+                ...(current.alerts === props.sourceOptions.alerts ? { testContext: prepared.testContext } : {}) }));
+            setPreviewUnavailable(false);
+        }).catch(() => { if (!retired && !props.signal.aborted) setPreviewUnavailable(true); });
+        return () => { retired = true; };
+    }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt]);
     const [investigationMode, setInvestigationMode] = useState(props.sourceOptions.investigation?.mode ?? 'inbox');
     const [configuredActionId, setConfiguredActionId] = useState(props.sourceOptions.investigation?.mode === 'auto_start'
         ? props.sourceOptions.investigation.configuredActionId : '');
@@ -182,6 +204,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedConfig: '{}' });
     const issues = fieldIssues(draft, t);
     const candidate = buildHealthCheckSetupInput(props.subject, props.existing, draft, { ...props.sourceOptions,
+        ...(alerts === undefined ? {} : { alerts }),
         investigation: investigationMode === 'auto_start'
             ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
     const loopback = props.observerMachineId === undefined || draft.contributedKind || nativeDomain ? null : {
@@ -197,7 +220,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         && isValidPluginJsonSchemaValue(draft.contributedValidator, configFor(draft)));
     const monitorKind = !draft.contributedKind && isMonitorKind(draft.kind) ? draft.kind : null;
     const monitorValid = !monitorKind || monitorDefinitions[monitorKind].configSchema.safeParse(configFor(draft)).success;
-    const canAdd = candidate.success && contributedValid && monitorValid && loopback?.refused !== true && !saving;
+    const canAdd = alerts !== undefined && candidate.success && contributedValid && monitorValid && loopback?.refused !== true && !saving;
     const domainConditions = [
         { value: 'domain_probe_failed', label: t(`${K}.domain.route`, 'Route check') },
         { value: 'certificate_renewal_failed', label: t(`${K}.domain.certificate`, 'Certificate renewal') },
@@ -276,7 +299,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     ];
 
     return h(Stack, { gap: 'large', testID: 'health-setup-form' },
-        h(SavedHealthAlertControls, { alerts: props.sourceOptions.alerts }),
+        previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
+            h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
+        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource }),
         h(SavedHeartbeatControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
         h(SavedHealthCheckControls, { subject: props.subject, checks: props.existing, signal: props.signal }),
         ...props.existing.flatMap(check => {

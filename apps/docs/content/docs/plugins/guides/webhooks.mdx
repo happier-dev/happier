@@ -17,7 +17,15 @@ setup enrolls the endpoint through the host; the saved source stores only its
 endpoint id. Obtain its URL through the existing guarded endpoint-read flow.
 Treat the complete URL as a secret: possession admits GET or POST without a
 signature or body. Do not place it in source configuration, logs or transcripts.
-Rotation and revocation use the existing endpoint lifecycle.
+In saved-check setup, choose **Reveal address** to view it, then copy the URL or
+a GET/POST curl command. **Rotate address** retires the old URL immediately;
+reveal and install the replacement in your job. **Revoke address** stops pings.
+The stable check keeps its latest receipt when its address rotates.
+
+Agents can manage the exact saved heartbeat through the health management Action,
+which returns status and revision without disclosing the URL. The person must
+reveal a replacement address in the UI. Generic endpoint disclosure remains
+person-only.
 
 Accepted pings update only the endpoint's monotonic receipt timestamp and hint
 the assigned Machine. They do not enqueue a delivery or run an Action. The
@@ -26,6 +34,32 @@ first ping it reports unknown, and it becomes late only after period plus grace.
 The observer's existing loop owns that deadline and the configured failure
 threshold, then parks until a new hint. This is the development author contract;
 it does not assert released package or loaded UI availability.
+
+## Saved external monitors (0.3 development source)
+
+The bundled Machine services setup offers **Uptime Kuma** and **Gatus** checks.
+Choose the watched service or Environment first, then map its monitor identity.
+The saved configuration contains that identity and a nonsecret endpoint id;
+provider payloads cannot choose another subject or Domain. Reveal and copy the
+address through the person-only endpoint controls, then configure the provider:
+
+- Uptime Kuma 1.23.16: use its **Webhook** notification with the JSON body option.
+  Enter the numeric monitor id in Happier. Only heartbeat status `0` (down) and
+  `1` (up) produce observations; test, pending and maintenance messages do not.
+- Gatus v5.16.0: configure a custom alert provider with method `POST`, header
+  `Content-Type: application/json`, and this body. Map the exact endpoint group
+  and name in Happier; the group may be empty.
+
+```json
+{"endpointGroup":"[ENDPOINT_GROUP]","endpointName":"[ENDPOINT_NAME]","status":"[ALERT_TRIGGERED_OR_RESOLVED]"}
+```
+
+Both use capability URL handler delivery through the existing queue. They feed
+the same saved-check observer, failure threshold and notice condition as finite
+checks. Replayed results do not count again. Editing the source withdraws its
+previous observations; a fresh matching delivery establishes the new mapping.
+Revoking the endpoint stops subsequent deliveries. Never put its URL or raw
+provider message in Event payloads, logs, or an agent transcript.
 
 ## Declare the verifier and handler Action together
 
@@ -96,6 +130,28 @@ does not use it. A Sentry issue delivery's `action` (`created`, `resolved`,
 `assigned`, `archived`, `unresolved`) is in the raw body for the plugin to parse.
 Endpoint credentials are currently server-generated only; storing a Sentry
 integration's own Client Secret on an endpoint is not available yet.
+
+### Capability URL delivery (0.3 development source)
+
+Providers without a signed webhook format can POST to an Account endpoint with
+`verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }` and the same
+`handlerAction` declaration shown above. Possession of its opaque URL authenticates
+the request. The host queues and seals its body through the ordinary webhook
+delivery path; the handler receives `verified.verifier: 'capabilityUrl_v1'` with
+no signing credential or selected provider header. Handler endpoints accept POST;
+GET returns 405.
+
+For a heartbeat that needs only liveness, declare `delivery: 'recordReceiptOnly'`
+instead of a handler. That endpoint accepts GET and POST and stores only its
+accepted receipt time. It creates no body delivery or handler invocation.
+
+Keep capability URLs in endpoint controls and provider configuration, outside
+Event payloads, logs and agent transcripts. Endpoint ensure/read observations and
+approval history retain metadata without the URL; use the guarded live endpoint
+controls to reveal or copy it. Revoking the endpoint withdraws later
+requests through the existing endpoint lifecycle. Capability requests have no
+provider delivery identifier: normalize a provider observation before assigning
+domain identity, and keep equal observations from producing duplicate transitions.
 
 Decode the raw body only after `PluginWebhookActionInputSchema` admits the
 input. The verifier has already authenticated the delivery; the Action should
