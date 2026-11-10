@@ -1013,6 +1013,42 @@ describe('resource proposal card', () => {
     expect(calls(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED)).toHaveLength(0);
   });
 
+  it.each(['storage', 'processes'] as const)('settles a reopened %s run when device credential acquisition fails after sign-out and allows another attempt', async kind => {
+    const base = proposal({ status: 'rejected', updatedAtMs: 2, decision: { kind: 'reject', decidedAtMs: 2 } });
+    const request = kind === 'storage' ? base : ApprovalRequestV2Schema.parse({ ...base,
+      actionId: 'machines.processes.stop',
+      actionArgs: { machineId: MACHINE, targets: [{ ref: 'cHJvYzox', expect: { level: 'proven' } }] },
+      executionOriginV1: { ...base.executionOriginV1, actionId: 'machines.processes.stop' },
+    });
+    const boundary = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => call.method === RPC_METHODS.MACHINES_PROCESSES_CHECK
+      ? { checks: [{ ref: 'cHJvYzox', present: true, identityEqual: true, level: 'proven', memoryBytes: GB }] }
+      : call.method === RPC_METHODS.MACHINES_PROCESSES_STOP
+      ? { status: 'ended', outcomes: [{ ref: 'cHJvYzox', outcome: 'ended', freedBytes: GB }] }
+      : boundary(call));
+    const hook = await renderHook(() => useResourceProposalCheck(request, homeId));
+    await act(async () => { hook.getCurrent()!.reopen!(); });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(hook.getCurrent()?.runFromUi).toBeTypeOf('function');
+    });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId }))!;
+    await TokenStorage.removeCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId });
+    vi.mocked(Modal.alert).mockClear();
+    try {
+      await act(async () => { await expect(hook.getCurrent()!.runFromUi!()).resolves.toBe(false); });
+    } finally {
+      await TokenStorage.setCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId }, credentials);
+    }
+    expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), t('approvals.decisionError'));
+    expect(hook.getCurrent()!.display).toMatchObject({ kind: 'ask' });
+    expect(hook.getCurrent()!.retryReceipts).toHaveLength(0);
+    expect(calls(kind === 'storage' ? RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE : RPC_METHODS.MACHINES_PROCESSES_STOP)).toHaveLength(0);
+    await act(async () => { expect(await hook.getCurrent()!.runFromUi!()).toBe(true); });
+    expect(hook.getCurrent()!.display).toMatchObject({ kind: kind === 'storage' ? 'trashed' : 'stopped' });
+  });
+
   it('tries a skipped item again as a new invocation for that item only', async () => {
     const result: PileApplyResultV1 = {
       batchId: 'batch-1', mode: 'trash', inTrashBytes: 5 * GB, freedBytes: 0,
@@ -1266,6 +1302,32 @@ describe('resource proposal card', () => {
     await vi.waitFor(() => expect(calls(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN)).toHaveLength(1));
     expect(calls(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN)[0]!.payload).toMatchObject({ machineId: MACHINE, ref: 'cHJvYzox' });
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('resourceProposal.startedAgain'));
+  });
+
+  it('settles Start again when device credential acquisition fails after sign-out without marking the process started', async () => {
+    const base = proposal();
+    const request = ApprovalRequestV2Schema.parse({ ...base, actionId: 'machines.processes.stop',
+      actionArgs: { machineId: MACHINE, targets: [{ ref: 'cHJvYzox', expect: { level: 'proven' } }] },
+      executionOriginV1: { ...base.executionOriginV1, actionId: 'machines.processes.stop' },
+      status: 'executed', updatedAtMs: 3, decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 3, ok: true,
+        result: { status: 'ended', outcomes: [{ ref: 'cHJvYzox', outcome: 'ended', freedBytes: GB }] } },
+    });
+    const hook = await renderHook(() => useResourceProposalCheck(request, homeId));
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId }))!;
+    await TokenStorage.removeCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId });
+    vi.mocked(Modal.alert).mockClear();
+    try {
+      await act(async () => { await expect(hook.getCurrent()!.startAgain!('cHJvYzox')).resolves.toBe(false); });
+    } finally {
+      await TokenStorage.setCredentialsForServerUrl('https://proposal-home.example', { serverId: homeId }, credentials);
+    }
+    expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), t('approvals.decisionError'));
+    expect(hook.getCurrent()!.startedAgain.has('cHJvYzox')).toBe(false);
+    expect(calls(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN)).toHaveLength(0);
+    await act(async () => { expect(await hook.getCurrent()!.startAgain!('cHJvYzox')).toBe(true); });
+    expect(hook.getCurrent()!.startedAgain.has('cHJvYzox')).toBe(true);
   });
 
   it.each(['machines.processes.stop', 'machines.processes.kill', 'machines.processes.leftBehind.cleanUp'] as const)('checks and approves only the selected %s references', async (actionId) => {
