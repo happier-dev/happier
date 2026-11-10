@@ -114,7 +114,7 @@ export function planAgentCliInstallForRuntime(params: Readonly<{
   const runtimeSpec = params.runtimeSpec;
   const commands = resolveAgentInstallCommands(runtimeSpec, params.platform);
 
-  if (runtimeSpec.managedInstall) {
+  if (runtimeSpec.managedInstall && runtimeSpec.managedInstall.kind !== 'vendor_recipe') {
     return {
       ok: true,
       plan: {
@@ -151,7 +151,7 @@ export function planAgentCliInstallForRuntime(params: Readonly<{
       commands,
       requiresAdmin,
       installMode: 'vendor_recipe',
-      managedInstall: null,
+      managedInstall: runtimeSpec.managedInstall,
     },
   };
 }

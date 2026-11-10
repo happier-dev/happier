@@ -527,9 +527,33 @@ describe('bounded Agent External Sessions invocation', () => {
         await expect(wrapped.resolveSource(runtimeOnlyHostRequest)).resolves.toEqual(successFor('resolveSource'));
 
         expect(createInvocationExec).toHaveBeenCalledOnce();
-        expect(createInvocationExec).toHaveBeenCalledWith(receivedRequest?.signal);
+        expect(createInvocationExec).toHaveBeenCalledWith(receivedRequest?.signal, expect.any(Function));
         expect(receivedRequest?.exec).toBe(unavailableInvocationExec);
         expect(receivedRequest?.exec).not.toBe(hostSuppliedExec);
+    });
+
+    it('retains one native execution lease while qualification shrinks a transcript page', async () => {
+        let preparations = 0, retired = 0, pages = 0;
+        const wrapped = createWrapper({
+            createInvocationExec: async (_signal, retainCleanup) => {
+                preparations++;
+                retainCleanup({ async dispose() { retired++; } });
+                return unavailableInvocationExec;
+            },
+            contribution: { ...contributionWith(method => successFor(method)),
+                async pageTranscript() {
+                    pages++;
+                    return { ok: true, value: { items: pages === 1 ? [{ id: 'item', createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'x'.repeat(1500) } } }] : [],
+                        nextCursor: pages === 1 ? 'native'.repeat(350) : 'tail' } };
+                },
+            },
+        });
+        const result = await wrapped.pageTranscript({ ...requestFor('pageTranscript'), maxSerializedBytes: 4096 });
+        expect(result.ok ? null : result).toBeNull();
+        expect(pages).toBe(2);
+        expect(preparations).toBe(1);
+        expect(retired).toBe(1);
     });
 
     it('retains the exact acquired managed read through retirement until its containing operation settles', async () => {

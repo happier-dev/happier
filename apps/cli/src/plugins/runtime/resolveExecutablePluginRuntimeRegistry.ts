@@ -1,6 +1,7 @@
 import { createProductionPluginSettingsHostFactory } from './invocation/services/settingsHost';
 import { createStablePluginEventsBroker } from './invocation/services/events';
 import { resolveAgentPluginSettingsFromService } from './agentPluginSettings';
+import { prepareAgentAuxiliaryNativeOperation } from './agentAuxiliaryNativeOperation';
 
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -6292,8 +6293,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
         }
         const declaredAgentLocalId = declaredAgent.identity?.localId ?? declaredAgent.id;
+        const nativeOperation = agentParams.auxiliaryNativeOperation && params?.agentIsolation?.read()?.enabled
+            ? await prepareAgentAuxiliaryNativeOperation({ machine: params.agentIsolation,
+                requester: readDaemonManagedServiceRequester(), correlationId: agentParams.correlationId,
+                signal: agentParams.signal })
+            : undefined;
+        if (nativeOperation) agentParams.auxiliaryNativeOperation!.retainCleanup(nativeOperation);
+        const agentIsolation = nativeOperation?.agentIsolation ?? params?.agentIsolation;
         const agentSystemTools = createDeclaredAgentCliSystemToolService({
-            ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(params?.agentIsolation) } : {}),
+            ...(!agentParams.agentCliLaunch ? { memberLaunch: readMemberAgentCliLaunchContext(agentIsolation) } : {}),
             agentId: agentParams.agentId,
             localAgentId: declaredAgentLocalId,
             binding: declaredAgent.catalogEntry?.agentCliSystemTool,
@@ -6385,7 +6393,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return { seed, operation: {
             filesystemRoots: Object.freeze({
                 pluginData: join(storePaths.storageDir, agentParams.pluginId, 'fs'),
-                workspace: agentParams.cwd,
+                workspace: nativeOperation?.workingDirectory ?? agentParams.cwd,
                 projects: new Map(),
             }),
             hostAccessRequests: Object.freeze([
@@ -6393,6 +6401,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ...connectedAccountHostAccess,
             ]),
             ...(agentParams.environment ? { environment: agentParams.environment } : {}),
+            ...(nativeOperation ? { agentIsolation: nativeOperation.agentIsolation,
+                requesterIdentity: nativeOperation.requesterIdentity, defaultCwd: nativeOperation.workingDirectory } : {}),
             ...(agentParams.prepareAgentNativeLaunch ? { prepareAgentNativeLaunch: agentParams.prepareAgentNativeLaunch } : {}),
             ...(agentParams.assertLaunchCurrent ? { assertLaunchCurrent: agentParams.assertLaunchCurrent } : {}),
             ...(exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId } : {}),

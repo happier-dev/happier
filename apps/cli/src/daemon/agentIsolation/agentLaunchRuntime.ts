@@ -5,6 +5,12 @@ import { normalizeMaterializationKeyForPath } from '../connectedServices/materia
 
 const operationParent = (agentHome: string) => join(agentHome, 'runtime', 'operations');
 
+/** Native state roots use either the admitted identity home or a selected lease. */
+export function resolveAgentLaunchNativeEnvironment(home: string) {
+  return { XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local/share'),
+    XDG_STATE_HOME: join(home, '.local/state') };
+}
+
 /** Only this namespace holds finite effects; Session resume homes stay retained. */
 export function agentLaunchOperationRuntimeHome(agentHome: string, materializationKey: string): string {
   return join(operationParent(agentHome), normalizeMaterializationKeyForPath(materializationKey));

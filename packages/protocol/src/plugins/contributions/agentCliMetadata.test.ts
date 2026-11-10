@@ -57,6 +57,18 @@ function validCliMetadata() {
 }
 
 describe('native Agent CLI/auth metadata', () => {
+  it('admits a managed vendor recipe destination without copying its platform commands', () => {
+    const cli = validCliMetadata();
+    const configured = { ...cli, install: { ...cli.install, managed: {
+      kind: 'vendor_recipe', binaryName: 'grok', installDirEnvKey: 'GROK_INSTALL_DIR',
+      env: { GROK_NO_MODIFY_PATH: '1' },
+    } } };
+    expect(PluginAgentContributionV2Schema.parse(nativeAgent(configured)).cli).toEqual(configured);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({ ...configured,
+      install: { ...configured.install, managed: { ...configured.install.managed, installDirEnvKey: '' } },
+    })).success).toBe(false);
+  });
+
   it('accepts one strict provider-neutral executable, install, auth, and login block', () => {
     const parsed = PluginAgentContributionV2Schema.parse(nativeAgent(validCliMetadata()));
 

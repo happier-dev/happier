@@ -32,7 +32,7 @@ export type PrepareRequesterNativeOperationInput = Readonly<{
   preparedIdentity?: PreparedRequesterNativeIdentity;
   requesterAccount?: RequesterAccountActionContext;
   retainedRequesterCustody?: ReturnType<NonNullable<RequesterAccountActionContext['retainCustody']>>;
-  readMaterial(): AgentLaunchOperationMaterialization | undefined;
+  readMaterial(identity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'>): AgentLaunchOperationMaterialization | undefined;
   ingress?: RpcHandlerContext;
   signal: AbortSignal;
   /** A status read consumes an existing native binding without provisioning. */
@@ -47,7 +47,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   homeServerIdentityId?: string | null;
   machineId: string;
   installationId: string | null | undefined;
-  reloadController: Parameters<typeof prepareRequesterOperationMaterial>[0]['reloadController'];
+  reloadController?: Parameters<typeof prepareRequesterOperationMaterial>[0]['reloadController'];
 }>) {
   const unavailable = () => Object.assign(new PluginError({ code: 'agent_isolation_unavailable',
     message: 'Requester native execution is unavailable', retryable: false,
@@ -70,7 +70,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   if (placement === 'daemon') throw unavailable();
   const operation = { machine, requesterIdentity, signal: input.signal,
     managedHappierBinaryPath: machine.managedHappierBinaryPath ?? resolveInstalledMachineEffectCli(),
-    readMaterial: input.readMaterial };
+  };
   let memberIdentity: AgentIsolationMemberNativeIdentity | undefined;
   let workingDirectory: string;
   let target: AgentLaunchMaterialization | undefined;
@@ -92,27 +92,32 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     memberIdentity = native.identity;
     workingDirectory = native.identity.workspaceRoot;
     agentIsolation = createAgentIsolationOperationContext({ ...operation,
+      readMaterial: () => input.readMaterial(native.identity),
       machine: { ...machine, read: () => memberSnapshot }, memberIdentity,
       rpcContext: input.ingress, daemonObservation: native.daemonObservation });
   } else {
     if (!input.preparedIdentity) assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot, agentLaunchKind: 'exec' });
     const nativeIdentity = input.preparedIdentity?.kind === 'sharedAgent' ? input.preparedIdentity.identity
       : await readAgentIsolationNativeIdentity(input.signal);
-    const material = input.readMaterial();
+    const material = input.readMaterial(nativeIdentity);
     if (!material) throw unavailable();
     target = projectAgentIsolationOperationMaterial(nativeIdentity, material);
     workingDirectory = nativeIdentity.home;
-    agentIsolation = createAgentIsolationOperationContext({ ...operation, nativeIdentity, readTarget: () => target });
+    agentIsolation = createAgentIsolationOperationContext({ ...operation, nativeIdentity,
+      readMaterial: () => input.readMaterial(nativeIdentity), readTarget: () => target });
   }
   const launch = agentIsolation.read()?.launch;
   if (!launch) throw unavailable();
   const runtimeHome = launch.runtimeHome;
   let material: Awaited<ReturnType<typeof prepareRequesterOperationMaterial>> | undefined;
   try {
-    if (input.requesterAccount) material = await prepareRequesterOperationMaterial({
-      requesterAccount: input.requesterAccount, requesterIdentity,
-      ...(input.retainedRequesterCustody ? { retainedCustody: input.retainedRequesterCustody } : {}),
-      reloadController: host.reloadController, signal: input.signal });
+    if (input.requesterAccount) {
+      if (!host.reloadController) throw unavailable();
+      material = await prepareRequesterOperationMaterial({
+        requesterAccount: input.requesterAccount, requesterIdentity,
+        ...(input.retainedRequesterCustody ? { retainedCustody: input.retainedRequesterCustody } : {}),
+        reloadController: host.reloadController, signal: input.signal });
+    }
     input.signal.throwIfAborted();
     return { requesterIdentity: selected, memberIdentity, workingDirectory, agentIsolation,
       materialTarget: { runtimeHome: launch.runtimeHome, ...(memberIdentity ? { memberIdentity } : {}) },

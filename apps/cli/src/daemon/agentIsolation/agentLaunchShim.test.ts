@@ -58,6 +58,29 @@ async function expectTransientMaterialRemoved(launch: AgentLaunchPayload): Promi
 }
 
 describe('Agent launch runtime home', () => {
+  it('keeps admitted native source roots across independent finite reads and preserves selected-account roots', async () => {
+    const agentHome = await home();
+    const nativeRoots = { XDG_CONFIG_HOME: join(agentHome, '.config'),
+      XDG_DATA_HOME: join(agentHome, '.local/share'), XDG_STATE_HOME: join(agentHome, '.local/state') };
+    const selectedRoots = { XDG_CONFIG_HOME: join(agentHome, 'selected/config'),
+      XDG_DATA_HOME: join(agentHome, 'selected/data'), XDG_STATE_HOME: join(agentHome, 'selected/state') };
+    const observed: unknown[] = [];
+    for (const [index, roots] of [nativeRoots, nativeRoots, selectedRoots].entries()) {
+      const output = new PassThrough();
+      const chunks: Buffer[] = [];
+      output.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      const result = await executeAgentLaunchPayload({ v: 1, executable: process.execPath,
+        args: ['-e', 'process.stdout.write(JSON.stringify({home:process.env.HOME,config:process.env.XDG_CONFIG_HOME,data:process.env.XDG_DATA_HOME,state:process.env.XDG_STATE_HOME}))'],
+        cwd: agentHome, runtimeHome: join(agentHome, 'runtime/operations', `read-${index}`),
+        environment: roots, selectedMaterials: [],
+      }, { agentHome, input: Readable.from([]), stdout: output, stderr: new PassThrough() });
+      expect(result).toEqual({ code: 0, signal: null });
+      observed.push(JSON.parse(Buffer.concat(chunks).toString()));
+    }
+    expect(observed).toEqual([nativeRoots, nativeRoots, selectedRoots].map(roots => ({
+      home: agentHome, config: roots.XDG_CONFIG_HOME, data: roots.XDG_DATA_HOME, state: roots.XDG_STATE_HOME,
+    })));
+  });
   it.skipIf(process.platform !== 'linux')('executes a Provider-key frame from the Unix adapter without consuming the child stdin', async () => {
     const agentHome = await home();
     const selectedKey = 'synthetic-selected-provider-\n"é\\value';

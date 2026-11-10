@@ -13,7 +13,7 @@ import { writeBytesAtomic } from '../../utils/fs/writeJsonAtomic';
 import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, parseAgentLaunchPayload, type AgentLaunchPayload, type AgentLaunchFramePayload } from './agentLaunchFrame';
 import { createBestEffortCleanupDirectory } from '../connectedServices/materialization/materializer';
 import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
-import { prepareAgentLaunchIdentityCache, retireAgentLaunchOperationRuntime } from './agentLaunchRuntime';
+import { prepareAgentLaunchIdentityCache, retireAgentLaunchOperationRuntime, resolveAgentLaunchNativeEnvironment } from './agentLaunchRuntime';
 import { AgentLaunchDiagnosticError, createAgentLaunchStderr, type AgentLaunchFailure, type AgentLaunchFailureStage } from './agentLaunchDiagnostics';
 
 async function prepareNativeSocketDirectory(payload: AgentLaunchPayload): Promise<() => Promise<void>> {
@@ -135,9 +135,8 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
     const { spawnSupervisedPluginProcess } = await import('../../plugins/runtime/exec/processSupervisor');
     if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });
     const identity = userInfo();
-    const environment = { ...payload.environment, HOME: io.agentHome, USER: identity.username, LOGNAME: identity.username,
-      SHELL: '/bin/sh', XDG_CONFIG_HOME: join(payload.runtimeHome, '.config'),
-      XDG_DATA_HOME: join(payload.runtimeHome, '.local/share'), XDG_STATE_HOME: join(payload.runtimeHome, '.local/state'),
+    const environment = { ...resolveAgentLaunchNativeEnvironment(payload.runtimeHome), ...payload.environment,
+      HOME: io.agentHome, USER: identity.username, LOGNAME: identity.username, SHELL: '/bin/sh',
       XDG_CACHE_HOME: cacheHome };
     if (io.terminal) {
       // The payload shares the actual foreground terminal. Pipes would lose

@@ -19,6 +19,23 @@ import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const);
 
 describe('host-issued Agent native launch qualifier', () => {
+    it('uses the finite operation working directory by default and preserves an explicit child directory', async () => {
+        await withTempDir('happier-native-operation-cwd-', async root => {
+            const operationCwd = join(root, 'operation');
+            const explicitCwd = join(root, 'explicit');
+            await Promise.all([mkdir(operationCwd), mkdir(explicitCwd)]);
+            const service = createStablePluginExecService({
+                defaultCwd: operationCwd,
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => root,
+            });
+            const request = { executable, args: ['-e', 'process.stdout.write(process.cwd())'] };
+            const inherited = await service.run(request);
+            expect(Buffer.from(inherited.stdout).toString()).toBe(await realpath(operationCwd));
+            const explicit = await service.run({ ...request, cwd: explicitCwd });
+            expect(Buffer.from(explicit.stdout).toString()).toBe(await realpath(explicitCwd));
+        });
+    });
     it.each(['unknown', 'member', 'applying member'] as const)('applies native admission before filesystem effects for %s (2026-11-02 guest fallback ruling)', async source => {
         await withTempDir('happier-native-requester-admission-', async cwd => {
             const identity = source === 'unknown' ? { kind: 'unknown' as const, reason: 'session_requester_unavailable' as const }

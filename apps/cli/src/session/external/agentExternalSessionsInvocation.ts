@@ -970,6 +970,8 @@ function readMaxItems(value: unknown): number | null {
         : null;
 }
 
+export type RetainExternalSessionsOperationCleanup = (cleanup: Readonly<{ dispose(): Promise<void> }>) => void;
+
 export type BoundedExternalSessionsOperationResult<T> =
     | Readonly<{ status: 'fulfilled'; value: T }>
     | Readonly<{ status: 'rejected'; reason: string }>
@@ -997,7 +999,7 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     deadlineAtMs?: number;
-    operation(signal: AbortSignal, deadlineAtMs: number | undefined): Promise<T> | T;
+    operation(signal: AbortSignal, deadlineAtMs: number | undefined, retainCleanup: RetainExternalSessionsOperationCleanup): Promise<T> | T;
 }>): Promise<BoundedExternalSessionsOperationResult<T>> {
     if (!params.isCurrent() || params.retirementSignal.aborted) {
         return Object.freeze({ status: 'retired' });
@@ -1029,9 +1031,19 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
     }
     const cancelDeadline = deadlineAtMs === undefined ? undefined : armExternalSessionsDeadline(deadlineAtMs, () => finish('timeout'));
     const settled = Promise.resolve()
-        .then(() => terminal === null
-            ? params.operation(operationController.signal, deadlineAtMs)
-            : Promise.reject(new Error('External Sessions invocation cancelled before leaf admission')))
+        .then(async () => {
+            if (terminal !== null) throw new Error('External Sessions invocation cancelled before leaf admission');
+            const cleanups: Array<Readonly<{ dispose(): Promise<void> }>> = [];
+            try {
+                return await params.operation(operationController.signal, deadlineAtMs, cleanup => { cleanups.push(cleanup); });
+            } finally {
+                // The leaf's process custody settles before its material lease.
+                // Cancellation may already have returned through the race below.
+                const retired = await Promise.allSettled(cleanups.reverse().map(cleanup => cleanup.dispose()));
+                const failure = retired.find(result => result.status === 'rejected');
+                if (failure?.status === 'rejected') throw failure.reason;
+            }
+        })
         .then(
             (value) => ({ status: 'fulfilled' as const, value }),
             (error: unknown) => ({ status: 'rejected' as const,
@@ -1068,7 +1080,7 @@ async function invokeBounded<T>(params: Readonly<{
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     deadlineAtMs?: number;
-    operation(signal: AbortSignal, deadlineAtMs: number | undefined): Promise<unknown> | unknown;
+    operation(signal: AbortSignal, deadlineAtMs: number | undefined, retainCleanup: RetainExternalSessionsOperationCleanup): Promise<unknown> | unknown;
     parse(value: unknown): AgentExternalSessionsResult<T>;
 }>): Promise<AgentExternalSessionsResult<T>> {
     const outcome = await invokeBoundedExternalSessionsOperation({
@@ -1101,16 +1113,16 @@ async function invokeBoundedQualifiedTranscriptPage<T>(params: Readonly<{
     isCurrent(): boolean;
     deadlineAtMs?: number;
     maxSerializedBytes: number;
-    operation(signal: AbortSignal, deadlineAtMs: number | undefined, producerBytes: number): Promise<unknown>;
+    operation(signal: AbortSignal, deadlineAtMs: number | undefined, producerBytes: number, retainCleanup: RetainExternalSessionsOperationCleanup): Promise<unknown>;
     parseValue(value: unknown): T | null;
 }>): Promise<AgentExternalSessionsResult<T>> {
     return await invokeBounded({
         ...params,
-        async operation(signal, deadlineAtMs) {
+        async operation(signal, deadlineAtMs, retainCleanup) {
             let producerBytes = params.maxSerializedBytes;
             while (producerBytes > 0) {
                 if (signal.aborted) throw signal.reason;
-                const value = await params.operation(signal, deadlineAtMs, producerBytes);
+                const value = await params.operation(signal, deadlineAtMs, producerBytes, retainCleanup);
                 const parsed = parseAndBoundResult(value, params.parseValue, undefined);
                 // A producer exceeding its admitted budget is invalid. Only
                 // host-added qualification bytes may cause a smaller page read.
@@ -1141,7 +1153,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
      * This wrapper owns only its admission, currentness, cancellation, and
      * result bounds before passing that service to a contribution callback.
      */
-    createInvocationExec(signal: AbortSignal): Promise<ExecService>;
+    createInvocationExec(signal: AbortSignal, retainCleanup: RetainExternalSessionsOperationCleanup): Promise<ExecService>;
     createTranscriptMediaService?(signal: AbortSignal): Pick<SessionMediaService, 'publishToolResultMedia'> | null;
 
 }>): BoundedAgentExternalSessionsContribution {
@@ -1164,10 +1176,11 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         source: AgentExternalSessionSource,
         signal: AbortSignal,
         maxSerializedBytes: number | undefined,
+        retainCleanup: RetainExternalSessionsOperationCleanup,
     ) => {
         const managedEndpointRead = await bindManagedEndpointRead(source, signal);
         signal.throwIfAborted();
-        const exec = await params.createInvocationExec(signal);
+        const exec = await params.createInvocationExec(signal, retainCleanup);
         signal.throwIfAborted();
         const ripgrep: AgentExternalSessionsRipgrep = Object.freeze({
             async run(request) {
@@ -1213,10 +1226,10 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             return await invokeBounded({
                 signal: request.signal, retirementSignal: params.retirementSignal, isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
                     const media = params.createTranscriptMediaService?.(signal);
                     if (!media?.publishToolResultMedia) return unavailable();
-                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes);
+                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes, retainCleanup);
                     return await operation.call(params.contribution, { source, remoteSessionId, itemId, sourceMessageId, toolCallId, cursor,
                         signal, deadlineAtMs, maxSerializedBytes, ...invocation, media });
                 },
@@ -1244,8 +1257,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
-                    const invocation = await bindInvocationContext(parsedSource, signal, maxSerializedBytes);
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
+                    const invocation = await bindInvocationContext(parsedSource, signal, maxSerializedBytes, retainCleanup);
                     return await operation.call(params.contribution, {
                         source: parsedSource,
                         ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
@@ -1269,11 +1282,12 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
+                        retainCleanup,
                     );
                     return await params.contribution.resolveSource({
                         source: parsedSource,
@@ -1320,11 +1334,12 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
+                        retainCleanup,
                     );
                     return await runWithSessionInputPromptUserTextReader(
                         createCodingSessionInputPromptUserTextReader(params.identity.agentId),
@@ -1386,8 +1401,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
-                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes);
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
+                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes, retainCleanup);
                     return await hydrateCandidates.call(params.contribution, {
                         source, candidates: Object.freeze(candidates), signal, deadlineAtMs,
                         maxSerializedBytes, ...invocation,
@@ -1408,11 +1423,12 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
+                        retainCleanup,
                     );
                     return await params.contribution.resolveLinkIdentity({
                         source: parsedSource,
@@ -1438,11 +1454,12 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
-                operation: async (signal, deadlineAtMs) => {
+                operation: async (signal, deadlineAtMs, retainCleanup) => {
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
+                        retainCleanup,
                     );
                     return await params.contribution.resolveLinkedIdentity({
                         source: parsedSource,
@@ -1482,18 +1499,20 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             ) {
                 return invalidRequest();
             }
+            let boundInvocation: ReturnType<typeof bindInvocationContext> | undefined;
             return await invokeBoundedQualifiedTranscriptPage({
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
                 maxSerializedBytes,
-                operation: async (signal, deadlineAtMs, producerBytes) => {
-                    const invocation = await bindInvocationContext(
+                operation: async (signal, deadlineAtMs, producerBytes, retainCleanup) => {
+                    const invocation = await (boundInvocation ??= bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
-                    );
+                        retainCleanup,
+                    ));
                     return await params.contribution.pageTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),
                         ...(request.projection === 'terminal' && supportsTranscriptMedia ? { transcriptMediaAvailable: true as const } : {}),
@@ -1526,18 +1545,20 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             if (!parsedSource || !remoteSessionId || maxItems === null || maxSerializedBytes === null || cursor === null || !scope) {
                 return invalidRequest();
             }
+            let boundInvocation: ReturnType<typeof bindInvocationContext> | undefined;
             return await invokeBoundedQualifiedTranscriptPage({
                 signal: request.signal,
                 retirementSignal: params.retirementSignal,
                 isCurrent: params.isCurrent,
                 deadlineAtMs: request.deadlineAtMs,
                 maxSerializedBytes,
-                operation: async (signal, deadlineAtMs, producerBytes) => {
-                    const invocation = await bindInvocationContext(
+                operation: async (signal, deadlineAtMs, producerBytes, retainCleanup) => {
+                    const invocation = await (boundInvocation ??= bindInvocationContext(
                         parsedSource,
                         signal,
                         maxSerializedBytes,
-                    );
+                        retainCleanup,
+                    ));
                     return await params.contribution.readAfterTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),
                         ...(request.projection === 'terminal' && supportsTranscriptMedia ? { transcriptMediaAvailable: true as const } : {}),

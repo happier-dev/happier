@@ -1245,6 +1245,7 @@ function createLease(params: Readonly<{
     const createInvocationServices = async (
         signal: AbortSignal,
         cwd = process.cwd(),
+        auxiliaryNativeOperation?: Parameters<CreateAgentInvocationServices>[0]['auxiliaryNativeOperation'],
     ) => (
         await params.createAgentInvocationServices?.({
             pluginId: params.pluginId,
@@ -1253,6 +1254,7 @@ function createLease(params: Readonly<{
             occurrenceId: params.occurrenceId,
             correlationId: randomUUID(),
             cwd,
+            ...(auxiliaryNativeOperation ? { auxiliaryNativeOperation } : {}),
             providerBindingActive:
                 params.registration.providerBinding !== undefined,
             signal,
@@ -1343,8 +1345,8 @@ function createLease(params: Readonly<{
                 },
                 isCurrent: params.isOccurrenceCurrent,
                 retirementSignal: params.retirementSignal,
-                createInvocationExec: async (signal) => (
-                    (await createInvocationServices(signal)).exec
+                createInvocationExec: async (signal, retainCleanup) => (
+                    (await createInvocationServices(signal, process.cwd(), { retainCleanup })).exec
                 ),
                 ...(managedEndpointRead
                     ? { managedEndpointRead }

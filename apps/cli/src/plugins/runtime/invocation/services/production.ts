@@ -118,6 +118,8 @@ type ResolvePluginExecutable = (
 export type { PluginSecretDeclaration } from '../../context/declaredPluginSecrets';
 
 type PluginOperationServicesInput = Readonly<{
+    defaultCwd?: string;
+    agentIsolation?: Parameters<typeof createStablePluginExecService>[0]['agentIsolation'];
     prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
     agentLaunchKind?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchKind;
     executionKind?: HostPluginExecExecutionKind;
@@ -526,6 +528,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
             agentLaunchKind?: PluginOperationServicesInput['agentLaunchKind'];
             executionKind?: PluginOperationServicesInput['executionKind'];
             requesterIdentity?: PluginOperationServicesInput['requesterIdentity'];
+            agentIsolation?: PluginOperationServicesInput['agentIsolation'];
+            defaultCwd?: PluginOperationServicesInput['defaultCwd'];
             assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
         }>,
     ) => {
@@ -644,7 +648,9 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
             filesystemRoots: roots,
             ...(params?.exec ? {
                 exec: {
-                    ...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
+                    ...(overrides?.defaultCwd ? { defaultCwd: overrides.defaultCwd } : {}),
+                    ...((overrides?.agentIsolation ?? params.exec.agentIsolation)
+                        ? { agentIsolation: overrides?.agentIsolation ?? params.exec.agentIsolation } : {}),
                     ...(overrides?.agentLaunchKind ? { agentLaunchKind: overrides.agentLaunchKind } : {}),
                     ...(overrides?.executionKind ? { executionKind: overrides.executionKind } : {}),
                     ...(overrides?.requesterIdentity ? { requesterIdentity: overrides.requesterIdentity } : {}),
@@ -811,6 +817,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
                     ...(operation.agentLaunchKind ? { agentLaunchKind: operation.agentLaunchKind } : {}),
                     ...(operation.executionKind ? { executionKind: operation.executionKind } : {}),
                     ...(operation.requesterIdentity ? { requesterIdentity: operation.requesterIdentity } : {}),
+                    ...(operation.agentIsolation ? { agentIsolation: operation.agentIsolation } : {}),
+                    ...(operation.defaultCwd ? { defaultCwd: operation.defaultCwd } : {}),
                     ...(operation.assertLaunchCurrent ? { assertLaunchCurrent: operation.assertLaunchCurrent } : {}),
                     ...(operation.settingsDeclarations
                         ? { settingsDeclarations: operation.settingsDeclarations }

@@ -68,7 +68,7 @@ function resolveManagedAgentCommandPathInInstallDir(
   return join(installDir, resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec));
 }
 
-async function prepareManagedAgentInstallRoot(runtimeSpec: AgentCliRuntimeDescriptor, env: NodeJS.ProcessEnv): Promise<string> {
+export async function prepareManagedAgentInstallRoot(runtimeSpec: AgentCliRuntimeDescriptor, env: NodeJS.ProcessEnv): Promise<string> {
   const installRoot = resolveAgentCliManagedInstallRootForRuntime(runtimeSpec, { processEnv: env });
   await mkdir(installRoot, { recursive: true });
   // Secure scratch creation makes recursive ancestors private. Only this

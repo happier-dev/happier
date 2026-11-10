@@ -49,6 +49,12 @@ export type AgentCliManagedAssetNameByPlatform = Readonly<
 
 export type AgentCliManagedInstallSpec =
   | Readonly<{
+      kind: 'vendor_recipe';
+      binaryName: string;
+      installDirEnvKey: string;
+      env?: Readonly<Record<string, string>>;
+    }>
+  | Readonly<{
       kind: 'github_release_binary';
       githubRepo: string;
       releaseTag?: string;

@@ -1287,6 +1287,8 @@ export function createStablePluginExecService(params: Readonly<{
     observeProcessOutput?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
     invocationTimeoutMs?: number | null;
     resolvePath(path: PluginPath): Promise<string>;
+    /** Finite operation workspace selected by the host; explicit child cwd wins. */
+    defaultCwd?: string;
     agentCli?: PluginAgentCliReadinessServiceForHost;
     systemTools?: ExecSystemToolServiceV1;
     prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
@@ -1649,7 +1651,8 @@ export function createStablePluginExecService(params: Readonly<{
         let cwd: string | undefined;
         try {
             cwd = typeof request.cwd === 'string' ? await realpath(request.cwd)
-                : request.cwd ? await params.resolvePath(request.cwd) : undefined;
+                : request.cwd ? await params.resolvePath(request.cwd)
+                : params.defaultCwd ? await realpath(params.defaultCwd) : undefined;
         } catch (error) {
             releaseExecutable();
             if (isPluginError(error)) throw error;

@@ -86,6 +86,14 @@ const PluginAgentCliArchiveEntriesByPlatformSchema = lazyZodSchema(() => z.stric
 
 export const PluginAgentCliManagedInstallSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('vendor_recipe'),
+    binaryName: NonEmptyStringSchema,
+    /** Run the existing manual recipes with this variable pointing at the managed candidate bin directory. */
+    installDirEnvKey: NonEmptyStringSchema,
+    /** Static vendor installer options, such as disabling shell-profile/PATH changes. */
+    env: z.optional(z.record(NonEmptyStringSchema, z.string())),
+  }),
+  z.strictObject({
     kind: z.literal('github_release_binary'),
     githubRepo: NonEmptyStringSchema,
     /** Omit to track latest; a declared tag is required and never falls back to latest. */

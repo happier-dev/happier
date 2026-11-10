@@ -207,7 +207,12 @@ remain separate contributions. Its demanded native model catalog preserves all
 returned IDs, including contributor variants and their native descriptions.
 An explicit unavailable default returns a typed model-selection failure rather
 than choosing another account or rewriting the model. Install/update uses the
-declared vendor recipe, while ordinary native launches disable auto-update.
+declared managed vendor recipe, with explicit consent and the canonical managed
+candidate/verification/promotion lifecycle. Ordinary native launches disable
+auto-update. On isolated Machines, finite native-history callbacks use the
+existing requester-native-operation owner to select the member identity and
+workspace and retire its operation resources. Independent reads retain that identity's native
+home; they do not borrow an active Session's launch.
 Native resume identity remains the existing runtime descriptor's provider Session
 ID. Reachability uses the declared native inspection hook, separately from
 file-copy authority. Forks retain the source workspace; a managed child allocation
@@ -2447,8 +2452,9 @@ is not filtered. The client currently does not advertise `session.notices`.
 
 Prompt-result usage aliases are normalized only by
 `apps/cli/src/usage/usageObservation.ts`. fx's prompt-usage projection supplies
-`totalTokens = inputTokens + outputTokens`, since cache write/read and reasoning
-are details of those totals. The generic host recognizes only ACP v1 stop
+`totalTokens = inputTokens + outputTokens` when both operands were measured and
+no explicit total was supplied, since cache write/read and reasoning are details
+of those totals. Missing measurements remain unknown. The generic host recognizes only ACP v1 stop
 reasons. A plugin may translate an equivalent native value through
 `sessionUpdates.projectStopReason`; fx owns its temporary upstream aliases.
 Any remaining unknown value ends through the existing unknown-cause terminal

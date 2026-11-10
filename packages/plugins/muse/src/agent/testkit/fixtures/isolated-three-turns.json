@@ -1,0 +1,1883 @@
+{
+  "evidence": {
+    "kind": "observed-native-selected-prefix",
+    "source": "/tmp/happier-muse-isolated-long-history-bwle786a/writer-recording.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-long-history-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "note": "Exact initialize/start/first three consecutive echo turns from the isolated 260-turn characterization. Selected prefix only; no native resume, fork, EOF or full-history claim. Echo proves native input/stream admission, not model inference. No owner credentials or subscription were used.",
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-three-turns; all native UUID identities consistently replaced with fixture UUIDv7 values; sent/received direction labels normalized to send/recv. Wire fields and event order otherwise retained."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "happier_muse",
+            "version": "0.3.0"
+          },
+          "capabilities": {
+            "experimentalApi": true
+          }
+        },
+        "id": 1
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": true,
+          "grantedCapabilities": [],
+          "museHome": "[TEMP]/isolated-three-turns/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "session/start",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000001",
+          "workspaceRoot": "[TEMP]/isolated-three-turns/workspace",
+          "permissionProfile": ":ask-me",
+          "approvalMode": "promptUnmatched"
+        },
+        "id": 3
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862001,
+        "jsonrpc": "2.0",
+        "method": "session/started",
+        "params": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:57:41.900214Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-three-turns/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:57:41.901902Z",
+            "workspaceRoot": "[TEMP]/isolated-three-turns/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:57:41.900214Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-three-turns/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:57:41.901902Z",
+            "workspaceRoot": "[TEMP]/isolated-three-turns/workspace"
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:1"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "turn/start",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "commandId": "00000000-0000-7000-8000-000000000003",
+          "input": [
+            {
+              "type": "text",
+              "text": "ISOLATED-HISTORY-0000"
+            }
+          ]
+        },
+        "id": 4
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862007,
+        "jsonrpc": "2.0",
+        "method": "session/approvalModeChanged",
+        "params": {
+          "clientName": "happier_muse",
+          "commandId": "00000000-0000-7000-8000-000000000001",
+          "mode": "promptUnmatched",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "source": "approvalReconfigure",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000004",
+              "sequence": 7
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000004",
+              "sequence": 7
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 4,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "00000000-0000-7000-8000-000000000003",
+          "disposition": "started",
+          "startedNewTurn": true,
+          "status": "accepted",
+          "turnId": "00000000-0000-7000-8000-000000000003"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862014,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "running",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862016,
+        "jsonrpc": "2.0",
+        "method": "turn/started",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000003",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000003",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862016,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "commandId": "00000000-0000-7000-8000-000000000003",
+            "itemId": "00000000-0000-7000-8000-000000000006",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T15:57:42.010828Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "ISOLATED-HISTORY-0000",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:3"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862025,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-000000000007",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000008",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.024882Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000009",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862033,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000000a",
+            "kind": "agentMessage",
+            "revision": 1,
+            "status": "inProgress",
+            "text": "",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4.1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862033,
+        "jsonrpc": "2.0",
+        "method": "item/delta",
+        "params": {
+          "delta": "echo: ISOLATED-HISTORY-0000",
+          "field": "text",
+          "itemId": "00000000-0000-7000-8000-00000000000a",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4.2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862035,
+        "jsonrpc": "2.0",
+        "method": "session/tokenUsage",
+        "params": {
+          "cumulative": {
+            "outputTokens": 0,
+            "promptTokens": 0,
+            "totalTokens": 0
+          },
+          "durationMs": 1,
+          "modelId": null,
+          "promptTokens": 0,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000b",
+              "sequence": 45
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000b",
+              "sequence": 45
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "totalTokens": 0,
+          "turnId": "00000000-0000-7000-8000-000000000003",
+          "usage": {
+            "cachedTokens": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:5"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862036,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000000a",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T15:57:42.035641Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "echo: ISOLATED-HISTORY-0000",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000c",
+              "sequence": 47
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000c",
+              "sequence": 47
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:6"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862040,
+        "jsonrpc": "2.0",
+        "method": "turn/foregroundCompleted",
+        "params": {
+          "blockingAgents": [
+            "goal-reminder",
+            "verify-reminder"
+          ],
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000003",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:7"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862040,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-00000000000e",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-00000000000e/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000000d",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.039376Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-00000000000f",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:8"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862044,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000010",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000010/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000011",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.043759Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000012",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:9"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862071,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-000000000007",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000008",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.070626Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "00000000-0000-7000-8000-000000000009",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000013",
+              "sequence": 62
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:10"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862071,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-00000000000e",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-00000000000e/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000000d",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.071326Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-00000000000f",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000014",
+              "sequence": 63
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:11"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862072,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000010",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000010/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000011",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.071981Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000012",
+            "turnId": "00000000-0000-7000-8000-000000000003"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000015",
+              "sequence": 64
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:12"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862074,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "idle",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862076,
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+          "durationMs": 61,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000016",
+              "sequence": 65
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000016",
+              "sequence": 65
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "terminal": "completed",
+          "timeToFirstTokenMs": 23,
+          "turnId": "00000000-0000-7000-8000-000000000003",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "turn/start",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "commandId": "00000000-0000-7000-8000-000000000017",
+          "input": [
+            {
+              "type": "text",
+              "text": "ISOLATED-HISTORY-0001"
+            }
+          ]
+        },
+        "id": 5
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 5,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "00000000-0000-7000-8000-000000000017",
+          "disposition": "started",
+          "startedNewTurn": true,
+          "status": "accepted",
+          "turnId": "00000000-0000-7000-8000-000000000017"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862089,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "running",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:14"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862091,
+        "jsonrpc": "2.0",
+        "method": "turn/started",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000017",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000018",
+              "sequence": 70
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000018",
+              "sequence": 70
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000017",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:14"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862091,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "commandId": "00000000-0000-7000-8000-000000000017",
+            "itemId": "00000000-0000-7000-8000-000000000019",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T15:57:42.085052Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "ISOLATED-HISTORY-0001",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000018",
+              "sequence": 70
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000018",
+              "sequence": 70
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:15"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862098,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-00000000001a",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000001b",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.097541Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-00000000001c",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000001b",
+              "sequence": 88
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000001b",
+              "sequence": 88
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:16"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862107,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000001d",
+            "kind": "agentMessage",
+            "revision": 1,
+            "status": "inProgress",
+            "text": "",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:16.1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862108,
+        "jsonrpc": "2.0",
+        "method": "item/delta",
+        "params": {
+          "delta": "echo: ISOLATED-HISTORY-0001",
+          "field": "text",
+          "itemId": "00000000-0000-7000-8000-00000000001d",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:16.2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862108,
+        "jsonrpc": "2.0",
+        "method": "session/tokenUsage",
+        "params": {
+          "cumulative": {
+            "outputTokens": 0,
+            "promptTokens": 0,
+            "totalTokens": 0
+          },
+          "durationMs": 1,
+          "modelId": null,
+          "promptTokens": 0,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000001e",
+              "sequence": 100
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000001e",
+              "sequence": 100
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "totalTokens": 0,
+          "turnId": "00000000-0000-7000-8000-000000000017",
+          "usage": {
+            "cachedTokens": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:17"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862110,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000001d",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T15:57:42.10975Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "echo: ISOLATED-HISTORY-0001",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000001f",
+              "sequence": 102
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000001f",
+              "sequence": 102
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:18"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862114,
+        "jsonrpc": "2.0",
+        "method": "turn/foregroundCompleted",
+        "params": {
+          "blockingAgents": [
+            "goal-reminder",
+            "verify-reminder"
+          ],
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000020",
+              "sequence": 108
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000020",
+              "sequence": 108
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000017",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:19"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862114,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000021",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000021/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000020",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.113978Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000022",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000020",
+              "sequence": 108
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000020",
+              "sequence": 108
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:20"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862119,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000023",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000023/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000024",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.119049Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000025",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000024",
+              "sequence": 115
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000024",
+              "sequence": 115
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:21"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862172,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-00000000001a",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000001b",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.171403Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "00000000-0000-7000-8000-00000000001c",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000001b",
+              "sequence": 88
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000026",
+              "sequence": 117
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:22"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862172,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000021",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000021/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000020",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.172195Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000022",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000020",
+              "sequence": 108
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000027",
+              "sequence": 118
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:23"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862173,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000023",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000023/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000024",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.17298Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000025",
+            "turnId": "00000000-0000-7000-8000-000000000017"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000024",
+              "sequence": 115
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000028",
+              "sequence": 119
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:24"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862174,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "idle",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:25"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862177,
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+          "durationMs": 88,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000029",
+              "sequence": 120
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000029",
+              "sequence": 120
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "terminal": "completed",
+          "timeToFirstTokenMs": 22,
+          "turnId": "00000000-0000-7000-8000-000000000017",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:25"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "turn/start",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "commandId": "00000000-0000-7000-8000-00000000002a",
+          "input": [
+            {
+              "type": "text",
+              "text": "ISOLATED-HISTORY-0002"
+            }
+          ]
+        },
+        "id": 6
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 6,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "00000000-0000-7000-8000-00000000002a",
+          "disposition": "started",
+          "startedNewTurn": true,
+          "status": "accepted",
+          "turnId": "00000000-0000-7000-8000-00000000002a"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862186,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "running",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:26"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862187,
+        "jsonrpc": "2.0",
+        "method": "turn/started",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-00000000002a",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000002b",
+              "sequence": 125
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000002b",
+              "sequence": 125
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-00000000002a",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:26"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862187,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "commandId": "00000000-0000-7000-8000-00000000002a",
+            "itemId": "00000000-0000-7000-8000-00000000002c",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T15:57:42.181106Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "ISOLATED-HISTORY-0002",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000002b",
+              "sequence": 125
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000002b",
+              "sequence": 125
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:27"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862194,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-00000000002d",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000002e",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.193478Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-00000000002f",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000002e",
+              "sequence": 143
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000002e",
+              "sequence": 143
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:28"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862202,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-000000000030",
+            "kind": "agentMessage",
+            "revision": 1,
+            "status": "inProgress",
+            "text": "",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:28.1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862202,
+        "jsonrpc": "2.0",
+        "method": "item/delta",
+        "params": {
+          "delta": "echo: ISOLATED-HISTORY-0002",
+          "field": "text",
+          "itemId": "00000000-0000-7000-8000-000000000030",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:28.2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862204,
+        "jsonrpc": "2.0",
+        "method": "session/tokenUsage",
+        "params": {
+          "cumulative": {
+            "outputTokens": 0,
+            "promptTokens": 0,
+            "totalTokens": 0
+          },
+          "durationMs": 1,
+          "modelId": null,
+          "promptTokens": 0,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000031",
+              "sequence": 155
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000031",
+              "sequence": 155
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "totalTokens": 0,
+          "turnId": "00000000-0000-7000-8000-00000000002a",
+          "usage": {
+            "cachedTokens": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:29"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862205,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-000000000030",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T15:57:42.204677Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "echo: ISOLATED-HISTORY-0002",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000032",
+              "sequence": 157
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000032",
+              "sequence": 157
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:30"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862222,
+        "jsonrpc": "2.0",
+        "method": "turn/foregroundCompleted",
+        "params": {
+          "blockingAgents": [
+            "goal-reminder",
+            "verify-reminder"
+          ],
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000033",
+              "sequence": 163
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000033",
+              "sequence": 163
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-00000000002a",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:31"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862222,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000034",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000034/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000033",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.209366Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000035",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000033",
+              "sequence": 163
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000033",
+              "sequence": 163
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:32"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862228,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000036",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000036/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000037",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.227327Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000038",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000037",
+              "sequence": 170
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000037",
+              "sequence": 170
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:33"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862255,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-00000000002d",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000002e",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.25485Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "00000000-0000-7000-8000-00000000002f",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000002e",
+              "sequence": 143
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000039",
+              "sequence": 172
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:34"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862256,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000034",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000034/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000033",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.255857Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000035",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000033",
+              "sequence": 163
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000003a",
+              "sequence": 173
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:35"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862257,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000036",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000036/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000037",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:57:42.256602Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000038",
+            "turnId": "00000000-0000-7000-8000-00000000002a"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000037",
+              "sequence": 170
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000003b",
+              "sequence": 174
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:36"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862257,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "idle",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:37"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239862260,
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+          "durationMs": 76,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000003c",
+              "sequence": 175
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000003c",
+              "sequence": 175
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "terminal": "completed",
+          "timeToFirstTokenMs": 21,
+          "turnId": "00000000-0000-7000-8000-00000000002a",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:37"
+        }
+      }
+    }
+  ]
+}

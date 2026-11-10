@@ -392,7 +392,14 @@ surfaces. A refused archive never replaces the previous managed runtime.
 In 0.3 development, Agent install/update jobs wrap the canonical managed installer
 in the daemon; browser, phone, and dedicated CLI callers submit to that same owner.
 Vendor recipes stay inside this abstraction and require explicit consent. Managed
-package acquisition uses the managed pnpm selection/bootstrap owner: if no usable
+vendor recipes additionally declare their executable name, installation-directory
+environment key and static installer environment. The existing recipe runner gives
+them a candidate directory and scratch home/config roots; the managed installer
+verifies and promotes the complete candidate executable directory. Failure or
+cancellation preserves the current install. Muse declares `MUSE_INSTALL_DIR` and
+`MUSE_NO_MODIFY_PATH=1`, so its vendor installer targets that candidate without
+editing the person's shell profile or Windows user PATH. Managed package
+acquisition uses the managed pnpm selection/bootstrap owner: if no usable
 managed or explicit override command is available, it fails rather than falling
 back to `pnpm` on `PATH`. See
 [Agent install and update jobs](./agents-catalog.md#agent-cli-install-and-update-jobs-03-development).
@@ -450,7 +457,7 @@ overrides contain only the owned directories and managed Python preference;
 authored index and authentication settings retain their normal child-environment
 priority.
 
-One request-scoped exception exists: `AgentCliSourcePolicy` (`packages/cli-common/src/agents/resolution.ts`). Passing `sourcePolicy: 'managed_only'` to the canonical resolver, install preflight, or `prepareAgentCliForRuntime(...)` restricts that single request to the managed install under its own `HAPPIER_HOME_DIR`: environment overrides, system/global installs and vendor recipes are ignored, and a retry may reuse a valid current managed install. It is a per-request argument, never a persisted or environment-configurable preference, because a composition that may run only what it installed itself (the temporary-computer Runner) must not be widened by the endpoint's environment. Such a composition passes the returned resolution unchanged into the launch through `buildAgentCliLaunchSpecFromResolution(...)`; resolving again at launch would let an override or system binary substitute itself between readiness and launch.
+One request-scoped exception exists: `AgentCliSourcePolicy` (`packages/cli-common/src/agents/resolution.ts`). Passing `sourcePolicy: 'managed_only'` to the canonical resolver, install preflight, or `prepareAgentCliForRuntime(...)` restricts that single request to the managed install under its own `HAPPIER_HOME_DIR`: environment overrides, system/global installs and recipes without a managed destination are ignored, and a retry may reuse a valid current managed install. A declared managed vendor recipe remains eligible and still requires explicit consent. It is a per-request argument, never a persisted or environment-configurable preference, because a composition that may run only what it installed itself (the temporary-computer Runner) must not be widened by the endpoint's environment. Such a composition passes the returned resolution unchanged into the launch through `buildAgentCliLaunchSpecFromResolution(...)`; resolving again at launch would let an override or system binary substitute itself between readiness and launch.
 
 Model Provider endpoints are not Agent executables. Provider discovery may use only the bounded detector and local-command declarations owned by the Provider contribution and the canonical local-services/runtime abstractions. An adopted local service is observed but never stopped or restarted by Happier. A Provider process started through the managed-local-service path is owned by that path; Provider code must not spawn `node`, package managers, or vendor commands directly. See [Providers](./providers.md#local-discovery-and-process-ownership).
 

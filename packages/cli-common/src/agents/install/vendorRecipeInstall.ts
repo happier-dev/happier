@@ -1,9 +1,14 @@
-import { existsSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { constants as fsConstants, existsSync } from 'node:fs';
+import { access, mkdir, stat } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
+
+import type { AgentCliManagedInstallSpec } from '@happier-dev/agents';
 
 import { commandExistsOnPath, execFileWithDeadline, ExecFileTerminationError, resolveWindowsCommandInvocation } from '../../process/index.js';
-import { resolveAgentCliCommandForRuntime, type AgentCliRuntimeDescriptor } from '../resolution.js';
+import { resolveAgentCliCommandForRuntime, resolveAgentCliManagedCommandRelativePathForRuntime, type AgentCliRuntimeDescriptor } from '../resolution.js';
 import type { AgentInstallProgressCallback } from '../installProgress.js';
+import { promoteManagedCurrentInstall } from '../promoteManagedCurrentInstall.js';
+import { prepareManagedAgentInstallRoot } from './managedInstall.js';
 
 type VendorRecipeInstallCommand = Readonly<{
   cmd: string;
@@ -215,6 +220,8 @@ export async function runVendorRecipeInstall(params: Readonly<{
   runCommand: typeof execFileWithDeadline;
   appendCommandLog: AppendCommandLogFn;
   appendLogLine: AppendLogLineFn;
+  /** Managed candidates must succeed independently of any already-installed executable. */
+  acceptResolvedAfterFailure?: boolean;
   signal?: AbortSignal;
   onProgress?: AgentInstallProgressCallback;
 }>): Promise<VendorRecipeInstallResult> {
@@ -222,5 +229,52 @@ export async function runVendorRecipeInstall(params: Readonly<{
     const result = await runLoggedAgentCommand({ ...params, command });
     if (!result.ok) return result;
   }
+  return { ok: true };
+}
+
+export async function installManagedVendorRecipeAgentCli(params: Parameters<typeof runVendorRecipeInstall>[0] & Readonly<{
+  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'vendor_recipe' }>;
+}>): Promise<VendorRecipeInstallResult> {
+  params.signal?.throwIfAborted();
+  const installRoot = await prepareManagedAgentInstallRoot(params.runtimeSpec, params.env);
+  // The vendor-recipe lifecycle creates and disposes this scratch directory before/after dispatch.
+  const scratchDir = params.vendorScratchDir!;
+  const candidateDir = join(scratchDir, 'candidate');
+  const candidateCommand = join(candidateDir, resolveAgentCliManagedCommandRelativePathForRuntime(params.runtimeSpec));
+  const installDir = dirname(candidateCommand);
+  const homeDir = join(scratchDir, 'home');
+  await mkdir(installDir, { recursive: true });
+  await mkdir(homeDir);
+  const env: NodeJS.ProcessEnv = {
+    ...params.env,
+    ...params.managedInstall.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    ZDOTDIR: homeDir,
+    XDG_CONFIG_HOME: join(homeDir, '.config'),
+    XDG_CACHE_HOME: join(homeDir, '.cache'),
+    XDG_DATA_HOME: join(homeDir, '.local', 'share'),
+    XDG_STATE_HOME: join(homeDir, '.local', 'state'),
+    APPDATA: join(homeDir, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(homeDir, 'AppData', 'Local'),
+    [params.managedInstall.installDirEnvKey]: installDir,
+  };
+  const result = await runVendorRecipeInstall({ ...params, env, acceptResolvedAfterFailure: false });
+  if (!result.ok) return result;
+  params.signal?.throwIfAborted();
+  if (!(await stat(candidateCommand).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }))?.isFile()) {
+    return { ok: false, errorCode: 'command-failed',
+      errorMessage: `Vendor recipe did not install ${params.managedInstall.binaryName} in the managed candidate directory.` };
+  }
+  await access(candidateCommand, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+  await promoteManagedCurrentInstall({
+    installRoot,
+    candidatePath: candidateDir,
+    signal: params.signal,
+    reportWarning: (message) => params.appendLogLine(params.logPath, `# ${message}`),
+  });
   return { ok: true };
 }

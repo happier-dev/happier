@@ -206,6 +206,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
             context?: unknown,
         ) => ReturnType<Parameters<typeof createStablePluginExecService>[0]['resolveExecutable']>;
         resolvePath: Parameters<typeof createStablePluginExecService>[0]['resolvePath'];
+        defaultCwd?: string;
         environment?: Readonly<Record<string, string>>;
         prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
         assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
@@ -1009,6 +1010,7 @@ export function createPluginInvocationServicesFromDescriptors(
                 ),
             } : {}),
             resolvePath: params.exec!.resolvePath,
+            ...(params.exec!.defaultCwd ? { defaultCwd: params.exec!.defaultCwd } : {}),
             ...(params.exec!.agentCli ? { agentCli: params.exec!.agentCli } : {}),
             ...(systemTools ? { systemTools } : {}),
             ...(params.exec!.environment ? { environment: params.exec!.environment } : {}),

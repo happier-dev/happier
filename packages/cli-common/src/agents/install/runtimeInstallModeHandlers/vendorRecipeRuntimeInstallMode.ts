@@ -1,15 +1,15 @@
 import { execFileWithDeadline } from '../../../process/index.js';
 
 import { buildRuntimeInstallModeErrorResult, buildRuntimeInstallModeOkResult } from '../runtimeInstallModeResult.js';
-import { runVendorRecipeInstall } from '../vendorRecipeInstall.js';
+import { installManagedVendorRecipeAgentCli, runVendorRecipeInstall } from '../vendorRecipeInstall.js';
 
 import type { RuntimeInstallModeHandlerEntry, RuntimeInstallModeHandlerParams } from '../runtimeInstallModeTypes.js';
 
 export const vendorRecipeRuntimeInstallModeHandler: RuntimeInstallModeHandlerEntry = {
-    matchesPlan: (plan) => plan.managedInstall == null,
+    matchesPlan: (plan) => plan.managedInstall == null || plan.managedInstall.kind === 'vendor_recipe',
     run: async (params: RuntimeInstallModeHandlerParams) => {
         const { runtimeSpec, plan, env, lifecycleContext, deps } = params;
-        const vendorResult = await runVendorRecipeInstall({
+        const recipeParams = {
             runtimeSpec,
             commands: plan.commands,
             env,
@@ -20,7 +20,10 @@ export const vendorRecipeRuntimeInstallModeHandler: RuntimeInstallModeHandlerEnt
             onProgress: params.onProgress,
             appendCommandLog: lifecycleContext.appendCommandLog,
             appendLogLine: lifecycleContext.appendLogLine,
-        });
+        };
+        const vendorResult = plan.managedInstall?.kind === 'vendor_recipe'
+            ? await installManagedVendorRecipeAgentCli({ ...recipeParams, managedInstall: plan.managedInstall })
+            : await runVendorRecipeInstall(recipeParams);
         if (vendorResult.ok) {
             return buildRuntimeInstallModeOkResult({ plan, lifecycleContext });
         }

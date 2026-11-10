@@ -249,6 +249,10 @@ export type CreateAgentInvocationServices = (
         connectedAccountsOwner?: import('./connectedAccounts').StablePluginConnectedAccountsOwner;
         cwd: string;
         environment?: Readonly<Record<string, string>>;
+        /** Host-owned auxiliary callback lifetime; never accepted from plugin input. */
+        auxiliaryNativeOperation?: Readonly<{
+            retainCleanup(cleanup: Readonly<{ dispose(): Promise<void> }>): void;
+        }>;
         /** Captured host preparation; generic Exec stays nonactivating. */
         prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
         /** Captured host authority, rechecked by the physical Exec owner before launch. */
