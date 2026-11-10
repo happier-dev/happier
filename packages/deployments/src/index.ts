@@ -19,6 +19,7 @@ export * from './projection/deploymentHealthAggregateLease.js';
 export * from './templates/prepareDeploymentTemplateInstantiationV1.js';
 export * from './backups/resticExecutor.js';
 export * from './backups/configurationV1.js';
+export * from './actions/deploymentCiStep.js';
 export * from './actions/backups.js';
 export * from './backups/restoreLifecycle.js';
 export * from './backups/preMigrationBackup.js';
@@ -31,6 +32,6 @@ export { buildResticRetentionArgsV1, type BackupRetentionV1 } from './backups/re
 
 export * from './secrets/prepareEnvironmentSecretBindingsV1.js';
 export { readDeploymentSecretRevisionFacts } from './secrets/readDeploymentSecretRevisionFacts.js';
-export { projectEnvironmentSecretBindingRequiredUsesV1, type EnvironmentSecretRequiredUseV1,
+export { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1, type EnvironmentSecretRequiredUseV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from './secrets/projectEnvironmentSecretBindingRequiredUsesV1.js';
 export * from './secrets/sealMachineSecretGrantEnvelopeV1.js';

@@ -19,7 +19,7 @@ import { ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS, readActionCliExecutionTarget } f
 import { finiteActionExitCode, supportsFiniteActionOutcome, readFiniteActionOutcome, readFiniteActionOperationAddress } from '@/cli/actions/finiteOutcome';
 import { renderDeploymentGithubActionsStep } from '@/cli/actions/deploymentCiStep';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -318,6 +318,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     const executor = await deps.createExecutorFn({ credentials, ...fixedServer, serverIdentityId,
       readCredentials: () => deps.readCredentialsForServerIdFn(fixedServer.serverId), externalActionClient: true });
     const context = { ...actionContext(signal), serverId: fixedServer.serverId, serverIdentityId };
+    const artifacts = createCredentialedAccountArtifactStore(credentials);
     const detail = await readDeploymentEnvironmentForHost({ environmentId, context }, {
       readMetadata: async () => {
         const value = DeploymentEnvironmentGetResultV1Schema.parse(unwrapOuterActionResult(await executor.execute(
@@ -327,8 +328,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
           errorCode: 'deployment_access_denied', error: 'deployment_access_denied' });
         return value;
       },
-      open: async artifactId => ArtifactActionOutputSchemasV1['artifact.get'].parse(unwrapOuterActionResult(
-        await executor.execute('artifact.get', { artifactId }, context))).artifact,
+      open: async artifactId => runWithServerHttpBaseUrl(fixedServer.serverApiUrl, () => artifacts.read(artifactId, {
+        signal, prepareRecipients: false, includeSharedAudience: false,
+      })),
       assertCurrent: async () => {
         signal?.throwIfAborted();
         if ((await deps.readCredentialsForServerIdFn(fixedServer.serverId))?.token !== credentials.token) {

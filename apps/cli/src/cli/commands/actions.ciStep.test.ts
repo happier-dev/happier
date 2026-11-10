@@ -1,3 +1,7 @@
+import fastify from 'fastify';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { registerAccountArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import axios from 'axios';
@@ -27,7 +31,8 @@ const token = `hap_v1_11111111-1111-4111-8111-111111111111_${'A'.repeat(43)}`;
 const homeId = 'srv_ci_home';
 const environmentId = "prod'quoted-$(printf unexpected)-${{ secrets.NOT_AN_INPUT }}";
 const sha = 'a'.repeat(40);
-function generationDeps(kind: 'repository' | 'stored' = 'repository', supported = true) {
+const httpFixtures: Array<() => Promise<void>> = [];
+function generationDeps(kind: 'repository' | 'stored' = 'repository', supported = true, mode: string = 'plain', origin = 'https://ci.example.test') {
   const detail = createDeploymentEnvironmentDetailV1();
   detail.environment.id = environmentId;
   detail.environment.serverId = homeId;
@@ -35,15 +40,21 @@ function generationDeps(kind: 'repository' | 'stored' = 'repository', supported 
     ? { kind, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['app'] } }
     : { kind, document: 'services: {app: {image: nginx:1}}', composeDigest: `sha256:${'a'.repeat(64)}`,
       contentRevision: 1, profiles: [], services: ['app'] };
+  // The Home is a genuine system boundary. Reuse the canonical Artifact HTTP
+  // testkit so the real client opens the actual plain storage envelope.
+  const home = fastify();
+  home.get('/v1/account/encryption', async () => ({ mode, updatedAt: 0 }));
+  const artifacts = registerAccountArtifactRoutes(home, 'account', { encryptionMode: 'plain' });
+  artifacts.seed(detail.environment.contentArtifactId,
+    encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'CI' }),
+    encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) }));
+  const restoreHttp = installAxiosFastifyAdapter({ app: home, origin });
+  httpFixtures.push(async () => { restoreHttp(); await home.close(); });
   const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => supported
     ? { ok: true, environment: detail.environment, targetLinks: [] }
     : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
     deploymentAction: transport, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
-    artifactAction: async () => ({ artifact: { artifactId: detail.environment.contentArtifactId,
-      ownerAccountId: 'account', access: 'owner', publicAudience: 'none',
-      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'CI' }, body: JSON.stringify(detail.content),
-      revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } }),
     isActionApprovalRequired: () => false });
   return { createExecutorFn: () => ({ ...executor, resolveSessionTarget: async (): Promise<never> => { throw new Error('No Session'); } }) };
 }
@@ -60,7 +71,8 @@ function evaluateGithubEnvironment(value: string): string {
 let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_TOKEN', 'HAPPIER_ACTIVE_SERVER_ID',
   'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
 
-afterEach(() => {
+afterEach(async () => {
+  for (const dispose of httpFixtures.splice(0).reverse()) await dispose();
   envScope.restore();
   envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_TOKEN', 'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
@@ -103,11 +115,10 @@ describe('emitted deployment CI step through the Actions command', () => {
       await writeCredentialsTokenOnlyForServerId('ci-profile', { token: 'interactive' });
       // Only the Account HTTP boundary is substituted; the real Action facade,
       // Artifact schema and exact Environment content opener run underneath get.
-      vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, updatedAt: 0 } });
       const output = captureConsoleLogAndMuteStdout();
       try {
         await handleActionsCommand(['get', 'deployments.deploy', '--github-actions', '--environment', environmentId,
-          '--server-id', 'ci-profile', '--json'], generationDeps(kind, supported));
+          '--server-id', 'ci-profile', '--json'], generationDeps(kind, supported, mode));
         expect(output.logs.join('\n')).not.toContain('${{ github.sha }}');
         expect(JSON.parse(output.logs.join('\n'))).toMatchObject({ ok: false, error: { code } });
         expect(process.exitCode).toBe(1);
@@ -130,10 +141,9 @@ describe('emitted deployment CI step through the Actions command', () => {
         localServerUrl: 'http://127.0.0.1:1' });
       await writeCredentialsTokenOnlyForServerId('ci-profile', { token: 'interactive' });
       const output = captureConsoleLogAndMuteStdout();
-      vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 0 } });
       try {
         await handleActionsCommand(['get', 'deployments.deploy', '--github-actions', '--environment', environmentId,
-          '--server-id', 'ci-profile'], generationDeps());
+          '--server-id', 'ci-profile'], generationDeps('repository', true, 'plain', 'http://127.0.0.1:1'));
         const emitted = output.logs.join('\n');
         expect(emitted, 'Actions discovery must emit the requested runnable CI step').toContain('${{ github.sha }}');
         const [step] = StepSchema.parse(parse(emitted));
@@ -176,8 +186,8 @@ describe('emitted deployment CI step through the Actions command', () => {
                 manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
           submissions += 1;
           expect(input).toEqual({ serverId: homeId, environmentId, sha, requestKey: '123-2' });
-          if (state === 'offline' || state === 'client_required') return { ok: false,
-            errorCode: state === 'offline' ? 'machine_unavailable' : state,
+          if (state === 'offline' || state === 'client_required' || state === 'waitingApproval') return { ok: false,
+            errorCode: state === 'offline' ? 'machine_unavailable' : state === 'waitingApproval' ? 'approval_waiting' : state,
             error: state, ...(state === 'offline' ? { details: { role: 'controller', machineIds: ['controller'], nextActions: ['start'] } } : {}) };
           if (state === 'pending' || state === 'pendingHeld' || state === 'pendingMissing') return {
             ok: true, environmentId, revision: 2, kind: 'pending', actionOperationId: 'operation',
