@@ -7,6 +7,7 @@ import { t } from '@/text';
 
 import type { HealthNoticeInvestigationOutcome, HealthNoticeInvestigationPlacement } from './healthNoticeInvestigation';
 import { InvestigationPlacementChooser } from './InvestigationPlacementChooser';
+import { useOpenTriageActionEditor } from './useOpenTriageActionEditor';
 
 /**
  * What happened after Investigate, for every failure surface that offers it (Inbox notices, failed
@@ -24,9 +25,12 @@ export function InvestigationOutcomeBanner(props: Readonly<{
   /** Triage asked where to work: the same Investigate, retried with the person's choice. */
   onChoosePlacement: (placement: HealthNoticeInvestigationPlacement) => void;
   pending: boolean;
+  /** A container that owns its gutter draws the banner inline; pages keep the section inset. */
+  placement?: 'page-section' | 'inline';
 }>) {
   const testID = props.testID ?? 'inbox.notice.investigate';
   const { outcome } = props;
+  const openEditor = useOpenTriageActionEditor();
   if (outcome.kind === 'started') return null;
   if (outcome.kind === 'placement_choice_required') return <InvestigationPlacementChooser choice={outcome}
     pending={props.pending} onChoose={props.onChoosePlacement} testID={`${testID}.placement`} />;
@@ -36,12 +40,16 @@ export function InvestigationOutcomeBanner(props: Readonly<{
       : outcome.kind === 'uncertain'
         ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.uncertainTitle'), description: t('inbox.work.healthNotice.uncertainBody') }
         : NOT_SET_UP.has(outcome.code)
-          // No configured investigation is a setup step, not a failure.
-          ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.notSetUpTitle'), description: t('inbox.work.healthNotice.notSetUpBody') }
+          // No configured investigation is a setup step, not a failure: it opens the actions editor on the record
+          // pressed (or the list when none answered), the same open as Edit action….
+          ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.notSetUpTitle'), description: t('inbox.work.healthNotice.notSetUpBody'),
+            action: openEditor === null ? null : { label: t('inbox.work.healthNotice.notSetUpAction'),
+              onPress: () => { openEditor(outcome.configuredActionId); } } }
           : { tone: 'danger' as const, title: t('inbox.work.healthNotice.unavailableTitle'),
             description: t('inbox.work.healthNotice.unavailableBody'), details: [outcome.code] };
   return <AttentionBanner testID={`${testID}.${outcome.kind}`} tone={copy.tone} title={copy.title}
-    description={copy.description} details={'details' in copy ? copy.details : undefined} />;
+    description={copy.description} details={'details' in copy ? copy.details : undefined}
+    action={'action' in copy ? copy.action : undefined} placement={props.placement} />;
 }
 
 const noop = () => {};

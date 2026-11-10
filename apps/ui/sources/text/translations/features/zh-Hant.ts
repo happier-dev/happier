@@ -6133,8 +6133,9 @@ const zhHant: typeof en = {
         unavailableBody: '未啟動任何內容。',
         alertInvestigateHint: '以此問題為證據開啟工作階段。',
         investigateUnavailable: '此警示無法進行調查。',
-        notSetUpTitle: '尚未設定調查',
-        notSetUpBody: '請在 PRs, Issues & Tasks 中設定後再試一次。',
+        notSetUpTitle: '此動作尚未設定',
+        notSetUpBody: '請在「動作」中完成設定後再試一次。',
+        notSetUpAction: '開啟動作',
         placementTitle: '選擇工作位置',
         placementReason: {
             controller_required: '控制器未知。請選擇要工作的機器。',

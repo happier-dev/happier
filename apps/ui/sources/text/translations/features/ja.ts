@@ -6138,8 +6138,9 @@ const ja: typeof en = {
         unavailableBody: '何も開始されていません。',
         alertInvestigateHint: 'この問題を根拠としてセッションを開きます。',
         investigateUnavailable: 'このアラートでは調査を利用できません。',
-        notSetUpTitle: '調査が設定されていません',
-        notSetUpBody: 'PRs, Issues & Tasks で設定してから、もう一度お試しください。',
+        notSetUpTitle: 'このアクションは設定されていません',
+        notSetUpBody: 'アクションで設定を完了してから、もう一度お試しください。',
+        notSetUpAction: 'アクションを開く',
         placementTitle: '作業する場所を選択',
         placementReason: {
             controller_required: 'コントローラーが不明です。作業するマシンを選んでください。',

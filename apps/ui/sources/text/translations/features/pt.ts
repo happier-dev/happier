@@ -6143,8 +6143,9 @@ const pt: typeof en = {
         unavailableBody: 'Nada foi iniciado.',
         alertInvestigateHint: 'Abre uma sessão com este problema como evidência.',
         investigateUnavailable: 'Investigar não está disponível para este alerta.',
-        notSetUpTitle: 'Nenhuma investigação configurada',
-        notSetUpBody: 'Configure uma em PRs, Issues & Tasks e tente novamente.',
+        notSetUpTitle: 'Esta ação não está configurada',
+        notSetUpBody: 'Conclua a configuração em Ações e tente novamente.',
+        notSetUpAction: 'Abrir ações',
         placementTitle: 'Escolha onde trabalhar',
         placementReason: {
             controller_required: 'O controlador não é conhecido. Escolha a máquina em que trabalhar.',

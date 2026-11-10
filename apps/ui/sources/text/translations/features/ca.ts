@@ -6143,8 +6143,9 @@ const ca: typeof en = {
         unavailableBody: 'No s’ha iniciat res.',
         alertInvestigateHint: 'Obre una sessió amb aquesta incidència com a evidència.',
         investigateUnavailable: 'Investigar no està disponible per a aquesta alerta.',
-        notSetUpTitle: 'No hi ha cap investigació configurada',
-        notSetUpBody: 'Configura’n una a PRs, Issues & Tasks i torna-ho a provar.',
+        notSetUpTitle: 'Aquesta acció no està configurada',
+        notSetUpBody: 'Acaba de configurar-la a Accions i torna-ho a provar.',
+        notSetUpAction: 'Obre les accions',
         placementTitle: 'Tria on treballar',
         placementReason: {
             controller_required: 'No se’n coneix el controlador. Tria la màquina on treballar.',

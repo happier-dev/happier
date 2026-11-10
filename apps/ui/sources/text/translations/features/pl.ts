@@ -6161,8 +6161,9 @@ const pl: typeof en = {
         unavailableBody: 'Nic nie zostało uruchomione.',
         alertInvestigateHint: 'Otwiera sesję z tym problemem jako dowodem.',
         investigateUnavailable: 'Badanie nie jest dostępne dla tego alertu.',
-        notSetUpTitle: 'Nie skonfigurowano badania',
-        notSetUpBody: 'Skonfiguruj je w PRs, Issues & Tasks i spróbuj ponownie.',
+        notSetUpTitle: 'Ta akcja nie jest skonfigurowana',
+        notSetUpBody: 'Dokończ jej konfigurację w Akcjach i spróbuj ponownie.',
+        notSetUpAction: 'Otwórz akcje',
         placementTitle: 'Wybierz, gdzie pracować',
         placementReason: {
             controller_required: 'Kontroler nie jest znany. Wybierz maszynę do pracy.',

@@ -6133,8 +6133,9 @@ const zhHans: typeof en = {
         unavailableBody: '未启动任何内容。',
         alertInvestigateHint: '以此问题为证据打开会话。',
         investigateUnavailable: '此警报无法进行调查。',
-        notSetUpTitle: '尚未设置调查',
-        notSetUpBody: '请在 PRs, Issues & Tasks 中设置后重试。',
+        notSetUpTitle: '此操作尚未设置',
+        notSetUpBody: '请在“操作”中完成设置后重试。',
+        notSetUpAction: '打开操作',
         placementTitle: '选择工作位置',
         placementReason: {
             controller_required: '控制器未知。请选择要工作的机器。',

@@ -70,6 +70,8 @@ export type HealthNoticeInvestigationOutcome =
   | Readonly<{ kind: 'selectionRequired'; fields: Extract<TriageSessionHandoffResultV1, { kind: 'selectionRequired' }>['fields'] }>
   | Readonly<{ kind: 'uncertain' }>
   | Readonly<{ kind: 'unavailable'; code: string;
+    /** The configured record this answer is about, when a record was run: the set-up step opens it. */
+    configuredActionId?: string;
     handoff?: Extract<TriageSessionHandoffResultV1, { kind: 'sendResult' }>;
     detail?: Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['detail'] }>;
 
@@ -180,8 +182,10 @@ export function useHealthNoticeInvestigate(
         signal: own.signal,
         ...(placement ? { placement } : {}),
       });
-      if (!own.signal.aborted)
-        setOutcome(readHealthNoticeInvestigationOutcome(result));
+      if (!own.signal.aborted) {
+        const read = readHealthNoticeInvestigationOutcome(result);
+        setOutcome(read?.kind === 'unavailable' ? { ...read, configuredActionId: selection.configuredActionId } : read);
+      }
     } catch {
       if (!own.signal.aborted)
         setOutcome({ kind: 'unavailable', code: 'unknown_error' });

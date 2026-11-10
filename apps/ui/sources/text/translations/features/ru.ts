@@ -6170,8 +6170,9 @@ const ru: typeof en = {
         unavailableBody: 'Ничего не запущено.',
         alertInvestigateHint: 'Открывает сессию с этой проблемой в качестве данных.',
         investigateUnavailable: 'Расследование недоступно для этого оповещения.',
-        notSetUpTitle: 'Расследование не настроено',
-        notSetUpBody: 'Настройте его в PRs, Issues & Tasks и повторите попытку.',
+        notSetUpTitle: 'Это действие не настроено',
+        notSetUpBody: 'Завершите его настройку в разделе «Действия» и повторите попытку.',
+        notSetUpAction: 'Открыть действия',
         placementTitle: 'Выберите, где работать',
         placementReason: {
             controller_required: 'Контроллер неизвестен. Выберите машину для работы.',

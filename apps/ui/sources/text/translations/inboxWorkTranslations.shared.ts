@@ -82,8 +82,9 @@ export const en = {
         unavailableBody: 'Nothing was started.',
         alertInvestigateHint: 'Opens a session with this issue as evidence.',
         investigateUnavailable: 'Investigate isn’t available for this alert.',
-        notSetUpTitle: 'No investigation set up',
-        notSetUpBody: 'Set one up in PRs, Issues & Tasks, then try again.',
+        notSetUpTitle: 'This action isn’t set up',
+        notSetUpBody: 'Finish setting it up in Actions, then try again.',
+        notSetUpAction: 'Open actions',
         placementTitle: 'Choose where to work',
         placementReason: {
             controller_required: 'Its controller isn’t known. Pick the Machine to work on.',

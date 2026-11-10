@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
@@ -33,10 +35,17 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
       {investigation.showOutcome && investigation.outcome ? (
-        <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
-          testID="project-deployments.environment.agent-action" onChoosePlacement={investigation.investigateWithPlacement}
-          pending={investigation.pending} />
+        // The facts block owns the gutter, so the outcome spans it and lines up with the button above.
+        <View style={styles.outcome}>
+          <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
+            testID="project-deployments.environment.agent-action" onChoosePlacement={investigation.investigateWithPlacement}
+            pending={investigation.pending} placement="inline" />
+        </View>
       ) : null}
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  outcome: { alignSelf: 'stretch' },
+});

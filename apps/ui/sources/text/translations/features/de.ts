@@ -6135,8 +6135,9 @@ const de: typeof en = {
         unavailableBody: 'Es wurde nichts gestartet.',
         alertInvestigateHint: 'Öffnet eine Sitzung mit diesem Problem als Beleg.',
         investigateUnavailable: 'Untersuchen ist für diese Warnung nicht verfügbar.',
-        notSetUpTitle: 'Keine Untersuchung eingerichtet',
-        notSetUpBody: 'Richte eine in PRs, Issues & Tasks ein und versuche es erneut.',
+        notSetUpTitle: 'Diese Aktion ist nicht eingerichtet',
+        notSetUpBody: 'Richte sie unter Aktionen fertig ein und versuche es erneut.',
+        notSetUpAction: 'Aktionen öffnen',
         placementTitle: 'Wähle, wo gearbeitet wird',
         placementReason: {
             controller_required: 'Der Controller ist nicht bekannt. Wähle die Maschine, auf der gearbeitet wird.',

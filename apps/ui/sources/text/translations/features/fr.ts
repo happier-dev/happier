@@ -6141,8 +6141,9 @@ const fr: typeof en = {
         unavailableBody: 'Rien n’a été lancé.',
         alertInvestigateHint: 'Ouvre une session avec ce problème comme preuve.',
         investigateUnavailable: 'Enquêter n’est pas disponible pour cette alerte.',
-        notSetUpTitle: 'Aucune enquête configurée',
-        notSetUpBody: 'Configurez-en une dans PRs, Issues & Tasks, puis réessayez.',
+        notSetUpTitle: 'Cette action n’est pas configurée',
+        notSetUpBody: 'Terminez sa configuration dans Actions, puis réessayez.',
+        notSetUpAction: 'Ouvrir les actions',
         placementTitle: 'Choisir où travailler',
         placementReason: {
             controller_required: 'Son contrôleur est inconnu. Choisis la machine sur laquelle travailler.',

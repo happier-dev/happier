@@ -193,7 +193,8 @@ describe('useHealthNoticeInvestigate', () => {
     const handoff = { kind: 'sendResult', session: { serverId: scope.serverId, sessionId: 'diagnosis' },
       result: { status: 'rejected', code: 'session_input_target_unavailable' } } as const;
     const result = await press({ choices: offered, run: { v: 1, handoff } });
-    expect(result.outcome).toEqual({ kind: 'unavailable', code: 'session_input_target_unavailable', handoff });
+    expect(result.outcome).toEqual({ kind: 'unavailable', code: 'session_input_target_unavailable', handoff,
+      configuredActionId: 'investigate' });
     expect(result.pending).toBe(false);
     // One choice read and one invocation; a refused input must not trigger another send.
     expect(result.calls).toHaveLength(2);
@@ -380,18 +381,18 @@ describe('useHealthNoticeInvestigate', () => {
     ],
     [
       { v: 1, handoff: { kind: 'unavailable', reason: 'targetUnavailable' } },
-      { kind: 'unavailable', code: 'targetUnavailable' },
+      { kind: 'unavailable', code: 'targetUnavailable', configuredActionId: 'investigate' },
     ],
     [
       { v: 1, handoff: { kind: 'unavailable', reason: 'targetUnavailable',
         detail: { reason: 'session_start_refused', cause: 'permission_denied' } } },
-      { kind: 'unavailable', code: 'permission_denied',
+      { kind: 'unavailable', code: 'permission_denied', configuredActionId: 'investigate',
         detail: { reason: 'session_start_refused', cause: 'permission_denied' } },
     ],
     [
       { v: 1, handoff: { kind: 'unavailable', reason: 'targetUnavailable',
         detail: { reason: 'session_start_refused', cause: 'SOURCE_RUNTIME_RELOAD_REQUIRED' } } },
-      { kind: 'unavailable', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED',
+      { kind: 'unavailable', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', configuredActionId: 'investigate',
         detail: { reason: 'session_start_refused', cause: 'SOURCE_RUNTIME_RELOAD_REQUIRED' } },
     ],
     [
@@ -462,6 +463,37 @@ describe('agent actions on a native subject page', () => {
         context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }] }) })]);
       expect(hook.getCurrent().intent.outcome).toEqual({ kind: 'started',
         handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
+    } finally { await hook.unmount(); }
+  });
+});
+
+describe('a pressed record its owner cannot start', () => {
+  // QA-ACTION-PARITY-1109 r117 recorded shape: the Environment's "Set it up" answered
+  // { kind: 'unavailable', reason: 'configuredActionUnavailable' }. The outcome keeps the record pressed so the
+  // set-up step can open that record in the one actions editor.
+  it('names the pressed record in a set-up outcome', async () => {
+    const subject = { kind: 'deploymentEnvironment', serverId: scope.serverId, environmentId: 'environment' } as const;
+    const setUp = { configuredActionId: 'deployments.set-up', sessionChoice: { kind: 'configured' },
+      agentChoice: { kind: 'configured' }, delivery: 'configured' } as const;
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+      invokeContributedAction: async (request) => ({ ok: true, result: request.action.localId === 'actions/read-v1'
+        ? { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
+          { label: 'Set it up', selection: setUp, launchMode: 'review', startable: true, forSubject: true },
+        ] }
+        : { v: 1, handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' } } }),
+    }));
+    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+      execute: createFrontDoorActionExecute(executor) });
+    const bound = {
+      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
+      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
+      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
+    };
+    const hook = await renderHook(() => useHealthNoticeInvestigate(bound));
+    try {
+      await act(async () => { await hook.getCurrent().launch('review', 'deployments.set-up'); });
+      expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'configuredActionUnavailable',
+        configuredActionId: 'deployments.set-up' });
     } finally { await hook.unmount(); }
   });
 });

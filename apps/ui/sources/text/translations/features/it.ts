@@ -6143,8 +6143,9 @@ const it: typeof en = {
         unavailableBody: 'Non è stato avviato nulla.',
         alertInvestigateHint: 'Apre una sessione con questo problema come prova.',
         investigateUnavailable: 'Indaga non è disponibile per questo avviso.',
-        notSetUpTitle: 'Nessuna indagine configurata',
-        notSetUpBody: 'Configurane una in PRs, Issues & Tasks, poi riprova.',
+        notSetUpTitle: 'Questa azione non è configurata',
+        notSetUpBody: 'Completane la configurazione in Azioni, poi riprova.',
+        notSetUpAction: 'Apri azioni',
         placementTitle: 'Scegli dove lavorare',
         placementReason: {
             controller_required: 'Il suo controller non è noto. Scegli la macchina su cui lavorare.',
