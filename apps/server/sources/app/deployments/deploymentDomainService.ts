@@ -30,6 +30,7 @@ import type { EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/depl
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
+import { DeploymentDomainProviderCaptureV1Schema, deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 type DeploymentDomainRow = NonNullable<Awaited<ReturnType<Tx['deploymentDomain']['findUnique']>>>;
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
@@ -37,6 +38,10 @@ type Captures = ReturnType<typeof DeploymentDomainCapturedPlacementsV1Schema.par
 function readCaptures(row: Readonly<{ capturedPlacements: unknown }>): Captures | null {
     const parsed = DeploymentDomainCapturedPlacementsV1Schema.safeParse(row.capturedPlacements);
     return parsed.success && parsed.data.length > 0 ? parsed.data : null;
+}
+function readProviderCapture(row: Readonly<{ capturedPlacements: unknown }>) {
+    const parsed = DeploymentDomainProviderCaptureV1Schema.safeParse(row.capturedPlacements);
+    return parsed.success ? parsed.data : null;
 }
 /** Reference disclosure projects only this Machine's admitted native placements. */
 export function projectDeploymentDomainMachineReferences(row: Readonly<{ id: string; environmentId: string; capturedPlacements: unknown }>, machineId: string) {
@@ -53,9 +58,10 @@ async function readDeploymentDomainContentRowsInTx(tx: Tx, input: Readonly<{
     environmentId: string; artifactId: string; referenceFields: readonly typeof domainContentReferenceFields[number][];
     placement?: Pick<Captures[number]['placement'], 'environmentId' | 'targetLinkId' | 'machineId' | 'installationId'>;
 }>) {
-    const needles = input.referenceFields.map(field => JSON.stringify([{
-        ...(input.placement ? { placement: input.placement } : {}), [field]: { contentArtifactId: input.artifactId },
-    }]));
+    const needles = input.referenceFields.flatMap(field => {
+        const reference = { ...(input.placement ? { placement: input.placement } : {}), [field]: { contentArtifactId: input.artifactId } };
+        return [JSON.stringify([reference]), ...(input.placement ? [] : [JSON.stringify({ kind: 'provider', ...reference })])];
+    });
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     let rows: { state: string; capturedPlacements: unknown }[];
     if (provider === 'postgres') rows = await tx.$queryRawUnsafe(
@@ -68,9 +74,12 @@ async function readDeploymentDomainContentRowsInTx(tx: Tx, input: Readonly<{
         const placement = Object.entries(input.placement ?? {});
         const placementConditions = placement.map(([key]) => `json_extract(c.value, '$.placement.${key}') = ?`);
         const contentConditions = input.referenceFields.map(field => `json_extract(c.value, '$.${field}.contentArtifactId') = ?`);
+        const providerConditions = input.placement ? [] : input.referenceFields.map(field =>
+            `json_extract(d."capturedPlacements", '$.${field}.contentArtifactId') = ?`);
         rows = await tx.$queryRawUnsafe(
-            `SELECT d."state", d."capturedPlacements" FROM "DeploymentDomain" d WHERE d."environmentId" = ? AND d."deletedAt" IS NULL AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(d."capturedPlacements") = 'array' THEN d."capturedPlacements" ELSE '[]' END) c WHERE ${[...placementConditions, `(${contentConditions.join(' OR ')})`].join(' AND ')})`,
-            input.environmentId, ...placement.map(([, value]) => value), ...input.referenceFields.map(() => input.artifactId));
+            `SELECT d."state", d."capturedPlacements" FROM "DeploymentDomain" d WHERE d."environmentId" = ? AND d."deletedAt" IS NULL AND (EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(d."capturedPlacements") = 'array' THEN d."capturedPlacements" ELSE '[]' END) c WHERE ${[...placementConditions, `(${contentConditions.join(' OR ')})`].join(' AND ')})${providerConditions.length ? ` OR (json_extract(d."capturedPlacements", '$.kind') = 'provider' AND (${providerConditions.join(' OR ')}))` : ''})`,
+            input.environmentId, ...placement.map(([, value]) => value), ...input.referenceFields.map(() => input.artifactId),
+            ...providerConditions.map(() => input.artifactId));
     }
     return rows.map(row => ({ ...row, capturedPlacements: typeof row.capturedPlacements === 'string'
         ? JSON.parse(row.capturedPlacements) as unknown : row.capturedPlacements }));
@@ -161,6 +170,16 @@ export async function readAcceptedDeploymentTeardownDomainContentInTx(tx: Tx,
         artifactId, referenceFields: domainContentReferenceFields });
     for (const domain of domains) {
         if (domain.state !== 'removing') continue;
+        const provider = readProviderCapture(domain);
+        if (provider && provider.placement.environmentId === binding.environmentId
+            && provider.placement.serverId === binding.serverIdentityId && provider.placement.accountId === binding.accountId
+            && provider.placement.requestId === binding.requestId && provider.requestEnvelopeDigest === binding.requestEnvelopeDigest
+            && provider.placement.controller.machineId === binding.machineId
+            && provider.placement.controller.installationId === binding.installationId) {
+            const content = domainContentReferenceFields.map(field => provider[field])
+                .find(reference => reference.contentArtifactId === artifactId);
+            if (content) return content;
+        }
         for (const capture of readCaptures(domain) ?? []) {
             if (capture.placement.environmentId !== binding.environmentId || !matchesAcceptedDeploymentDomainCapture(binding, capture)) continue;
             const content = domainContentReferenceFields.map(field => capture[field])
@@ -187,6 +206,7 @@ export async function readAcceptedDeploymentDomainSecretDestinationInTx(tx: Tx,
 }
 
 export function projectDeploymentDomainHeader(row: DeploymentDomainRow) {
+    const provider = readProviderCapture(row);
     const captures = readCaptures(row) ?? [];
     const first = captures[0];
     const operationAddress = first?.execution && captures.every(capture =>
@@ -200,6 +220,9 @@ export function projectDeploymentDomainHeader(row: DeploymentDomainRow) {
         revision: row.revision, state: row.state, ...deploymentContentReference(row),
         createdByAccountId: row.createdByAccountId,
         placements: captures.map(publicCapture),
+        ...(provider ? { provider: true, providerPlacement: provider.placement,
+            operationAddress: { serverId: provider.placement.serverId, machineId: provider.placement.controller.machineId,
+                operationId: provider.placement.actionOperationId } } : {}),
         ...(operationAddress ? { operationAddress } : {}),
         dnsHealth: (captures.find(capture => capture.desired && capture.dnsHealth?.status !== 'up')
             ?? captures.find(capture => capture.desired))?.dnsHealth,
@@ -329,9 +352,37 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         || !previous && input.expectedDomainRevision !== undefined) return deploymentFailure('deployment_conflict');
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: loaded.row.id,
         role: 'runtime', deletedAt: null, detachedAt: null }, include: { machines: true } });
-    if (!link || link.revision !== input.expectedTargetLinkRevision || link.sourceKind !== 'host' || link.targetKind !== 'ownServer') {
+    if (!link || link.revision !== input.expectedTargetLinkRevision) {
         return deploymentFailure('deployment_conflict');
     }
+    if (input.provider === true) {
+        if (membership || link.sourceKind !== 'plugin' || previous && (!readProviderCapture(previous) || previous.targetLinkId !== link.id))
+            return deploymentFailure('deployment_conflict');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('machine_unavailable');
+        const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
+        if (contentFailure) return contentFailure;
+        const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
+            revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
+        if (!controller?.installationId || !controller.installationPublicKey
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentFailure('machine_unavailable');
+        const capturedPlacements = DeploymentDomainProviderCaptureV1Schema.parse({ kind: 'provider',
+            placement: { serverId: input.serverId, accountId: actorAccountId, environmentId: input.environmentId,
+                targetLinkId: link.id, domainId: input.domainId, controller: { machineId: controller.id,
+                    installationId: controller.installationId }, actionOperationId: input.actionOperationId, requestId: input.requestId },
+            installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'), content: deploymentContentReference(input),
+            environmentContent: deploymentContentReference(loaded.row), targetLinkContent: deploymentContentReference(link),
+            ...(executionBinding?.requestEnvelopeDigest ? { requestEnvelopeDigest: executionBinding.requestEnvelopeDigest } : {}) });
+        const row = previous ? await tx.deploymentDomain.update({ where: { id: previous.id }, data: {
+            ...deploymentContentReference(input), capturedPlacements, state: 'pending', revision: { increment: 1 },
+        } }) : await tx.deploymentDomain.create({ data: { id: input.domainId, environmentId: loaded.row.id,
+            targetLinkId: link.id, state: 'pending', createdByAccountId: actorAccountId,
+            ...deploymentContentReference(input), capturedPlacements } });
+        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { revision: { increment: 1 } } });
+        await saveRepeatKey(tx, repeatKey, digest, defaultRepeatKeyExpiresAt(now));
+        await publishDeploymentChangesInTx(tx, 'admission' in loaded ? loaded.admission : loaded, loaded.row.id, loaded.row.revision + 1);
+        return domainResult(row, loaded.row.revision + 1);
+    }
+    if (link.sourceKind !== 'host' || link.targetKind !== 'ownServer') return deploymentFailure('deployment_conflict');
     const desiredMembers = membership?.members ?? link.machines;
     if (input.placements.some(item => !desiredMembers.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
         && item.machineId !== loaded.row.edgeMachineId)
@@ -436,11 +487,25 @@ export async function prepareDeploymentTeardownDomainsInTx(tx: Tx, actorAccountI
     if (rows.length === 0) return { ok: true as const };
     if (!binding?.requestEnvelopeDigest) return deploymentFailure('unsupported_action');
     if (!loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
-    const captured = rows.map(row => ({ row, captures: readCaptures(row) }));
-    if (captured.some(job => !job.captures)) return deploymentFailure('deployment_conflict');
+    const captured = rows.map(row => ({ row, captures: readCaptures(row), provider: readProviderCapture(row) }));
+    if (captured.some(job => !job.captures && !job.provider)) return deploymentFailure('deployment_conflict');
     const jobs = await captureDeploymentDomainRemovalContentInTx(tx, loaded,
-        captured.map(job => ({ row: job.row, captures: job.captures! })));
+        captured.flatMap(job => job.captures ? [{ row: job.row, captures: job.captures }] : []));
     if (!jobs) return deploymentFailure('deployment_conflict');
+    const providers = captured.flatMap(job => job.provider ? [{ row: job.row, capture: job.provider }] : []);
+    if (providers.length) {
+        // Home already admitted this controller. Capture its key once for the retained Domain job.
+        const controller = await tx.machine.findUnique({ where: { id: binding.machineId },
+            select: { installationId: true, installationPublicKey: true } });
+        if (!controller?.installationPublicKey || controller.installationId !== binding.installationId)
+            return deploymentFailure('machine_unavailable');
+        for (const job of providers) await tx.deploymentDomain.update({ where: { id: job.row.id }, data: {
+            state: 'removing', revision: { increment: 1 }, capturedPlacements: { ...job.capture,
+                installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'),
+                requestEnvelopeDigest: binding.requestEnvelopeDigest, placement: { ...job.capture.placement,
+                    accountId: actorAccountId, controller: { machineId: binding.machineId, installationId: binding.installationId },
+                    actionOperationId, requestId: binding.requestId } } } });
+    }
     for (const [index, job] of jobs.entries()) {
         await markDeploymentDomainRemovingInTx(tx, job.row, job.captures, { actorAccountId, actionOperationId,
             requestId: binding.requestId, retireSharedTunnel: index === jobs.length - 1, binding });
@@ -467,6 +532,26 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     const digest = deploymentIntentDigest(input);
     const repeated = await fetchRepeatKey(tx, repeatKey, now);
     if (repeated) return repeated === digest ? domainResult(row, loaded.row.revision) : deploymentFailure('deployment_conflict');
+    const provider = readProviderCapture(row);
+    if (provider) {
+        if (row.deletedAt || row.revision !== input.expectedDomainRevision || loaded.row.revision !== input.expectedRevision)
+            return deploymentFailure('deployment_conflict');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('machine_unavailable');
+        const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
+            revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
+        if (!controller?.installationId || !controller.installationPublicKey
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentFailure('machine_unavailable');
+        const changed = await tx.deploymentDomain.update({ where: { id: row.id }, data: { state: 'removing', revision: { increment: 1 },
+            capturedPlacements: { ...provider, installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'),
+                placement: { ...provider.placement, accountId: actorAccountId, controller: {
+                    machineId: controller.id, installationId: controller.installationId },
+                    actionOperationId: input.actionOperationId, requestId: input.requestId },
+                ...(executionBinding?.requestEnvelopeDigest ? { requestEnvelopeDigest: executionBinding.requestEnvelopeDigest } : {}) } } });
+        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { revision: { increment: 1 } } });
+        await saveRepeatKey(tx, repeatKey, digest, defaultRepeatKeyExpiresAt(now));
+        await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
+        return domainResult(changed, loaded.row.revision + 1);
+    }
     const captures = readCaptures(row);
     if (!captures || row.deletedAt || row.revision !== input.expectedDomainRevision || loaded.row.revision !== input.expectedRevision) {
         return deploymentFailure('deployment_conflict');
@@ -523,6 +608,35 @@ export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDo
     const row = await tx.deploymentDomain.findFirst({ where: { id: input.domainId, environmentId: input.environmentId } });
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
     if (!row || !environment) return deploymentFailure('deployment_unavailable');
+    const provider = readProviderCapture(row);
+    if (provider) {
+        const observation = input.providerObservation;
+        if (!observation || input.observations.length || row.deletedAt || row.revision !== input.expectedDomainRevision)
+            return deploymentFailure('deployment_conflict');
+        const { proof, ...body } = observation;
+        if (!isDeepStrictEqual(body.placement, provider.placement) || !verifyMachineInstallationProof({
+            payload: deploymentDomainProviderObservationProofPayloadV1({ expectedDomainRevision: input.expectedDomainRevision, observation: body }),
+            proof, publicKey: provider.installationPublicKey })) return deploymentFailure('deployment_access_denied');
+        const removed = body.state === 'removed';
+        if (removed !== (row.state === 'removing')) return deploymentFailure('deployment_conflict');
+        let reference = deploymentContentReference(row);
+        const custody = await readProjectSourceCustodyInTx(tx, environment.projectSourceId);
+        if (!custody) return deploymentFailure('deployment_unavailable');
+        if (body.contentUpdate) {
+            const updated = await updateDeploymentStoredContentInTx(tx, provider.placement.accountId, custody,
+                reference, body.contentUpdate, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
+            if (!updated.ok) return updated;
+            reference = updated.reference;
+        }
+        if (!removed && row.state === body.state && !body.contentUpdate) return domainResult(row, environment.revision);
+        const now = await readTransactionDatabaseTime(tx);
+        const changed = await tx.deploymentDomain.update({ where: { id: row.id }, data: {
+            state: removed ? 'removing' : body.state, ...(removed ? { deletedAt: now } : {}), observedAt: now,
+            ...reference, capturedPlacements: { ...provider, content: reference }, revision: { increment: 1 } } });
+        await publishDeploymentChangesInTx(tx, custody, environment.id, environment.revision);
+        return domainResult(changed, environment.revision);
+    }
+    if (input.providerObservation) return deploymentFailure('deployment_conflict');
     const captures = readCaptures(row);
     if (!captures || captures.some(capture => !capture.dockerEngineId) || row.deletedAt
         || row.revision !== input.expectedDomainRevision || input.observations.length !== captures.length) {

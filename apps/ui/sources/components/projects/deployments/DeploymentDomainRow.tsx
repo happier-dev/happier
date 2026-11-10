@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isDeploymentReadDemandActiveV1, projectDeploymentDomainFactsV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
@@ -6,6 +7,7 @@ import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions
 import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { presentActionFailureTechnicalDetails } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -31,6 +33,7 @@ type DomainRowProps = Readonly<{
   disabled: boolean;
   onVerify?: () => void;
   onRemove?: () => void;
+  onConfigureChecks?: (anchorRef: React.RefObject<View | null>) => void;
   /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
   missingCredentials?: readonly DomainCredentialRole[];
   onChooseCredential?: (role: DomainCredentialRole) => void;
@@ -97,8 +100,14 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
       mode="info"
       rightElement={props.onRemove && props.onVerify ? <DomainRowMenu item={item} disabled={props.disabled}
         retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove}
+        onConfigureChecks={props.onConfigureChecks}
         missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : undefined}
     />
+    {item.content.providerObservation?.dns.map((record, index) => (
+      <FieldItem key={JSON.stringify([record.type, record.name, index])} label={`${record.type} · ${record.name}`}>
+        <Text selectable>{record.value}</Text>
+      </FieldItem>
+    ))}
     {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
   </>;
 }
@@ -111,12 +120,14 @@ function DomainRowMenu(
     retryRemoval: boolean;
     onVerify: () => void;
     onRemove: () => void;
+    onConfigureChecks?: (anchorRef: React.RefObject<View | null>) => void;
     missingCredentials: readonly DomainCredentialRole[];
     onChooseCredential?: (role: DomainCredentialRole) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
+  const anchorRef = React.useRef<View>(null);
   const { missingCredentials, onChooseCredential } = props;
   const id = `project-deployments.environment.domains.${props.item.domain.id}.menu`;
   const removing = props.item.domain.state === 'removing';
@@ -137,6 +148,13 @@ function DomainRowMenu(
         title: t('projects.deployments.domainCheckAgain'),
         icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />,
       }] : []),
+      ...(!removing && props.onConfigureChecks ? [{
+        id: 'configure-checks',
+        category: 'check',
+        testID: `${id}.configure-checks`,
+        title: t('projects.deployments.settingsSections.addCheck'),
+        icon: <Icon name="heartbeat" size={16} color={theme.colors.text.secondary} />,
+      }] : []),
       {
         id: 'remove',
         category: 'operations',
@@ -146,7 +164,7 @@ function DomainRowMenu(
         icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [id, missingCredentials, onChooseCredential, removing, theme.colors.text.secondary],
+    [id, missingCredentials, onChooseCredential, props.onConfigureChecks, removing, theme.colors.text.secondary],
   );
   if (props.disabled || removing && !props.retryRemoval) return null;
   return (
@@ -163,16 +181,17 @@ function DomainRowMenu(
           const role = missingCredentials.find(item => `credential:${item}` === itemId);
           if (role) onChooseCredential?.(role);
         } else if (itemId === 'verify') props.onVerify();
+        else if (itemId === 'configure-checks') props.onConfigureChecks?.(anchorRef);
         else if (itemId === 'remove') props.onRemove();
       }}
       trigger={({ toggle }) => (
-        <IconButton
+        <View ref={anchorRef}><IconButton
           testID={id}
           iconName="dots-three"
           variant="plain"
           accessibilityLabel={t('common.more')}
           onPress={toggle}
-        />
+        /></View>
       )}
     />
   );
@@ -182,21 +201,22 @@ function DomainRowMenu(
 function DomainStateLine(
   props: Readonly<{
     state: Readonly<{ variant: StatusPillVariant; label: string }>;
-    route: string;
+    route: string | null;
   }>,
 ) {
   const subtitleStyle = useItemSubtitleTextStyle();
   return (
     <Text style={subtitleStyle}>
       <StatusWord variant={props.state.variant} label={props.state.label} />
-      {` · ${props.route}`}
+      {props.route ? ` · ${props.route}` : null}
     </Text>
   );
 }
 
 /** Where the address leads: a redirect, or the service and port (and path, when it is not every path). */
-function domainRoute(content: DomainItem['content']): string {
+function domainRoute(content: DomainItem['content']): string | null {
   const { target } = content;
+  if (target.kind === 'provider') return null;
   if (target.redirectTo)
     return t('projects.deployments.domainRedirect', {
       target: target.redirectTo,
@@ -210,6 +230,7 @@ function domainRoute(content: DomainItem['content']): string {
 
 /** The one thing that sets this address apart from a plain public one, as lab r3 tags it. */
 function domainTag(content: DomainItem['content']): string | null {
+  if (content.target.kind === 'provider') return null;
   if (content.target.redirectTo)
     return t('projects.deployments.domainTagRedirect');
   if (content.basicAuth) return t('projects.deployments.domainTagBasicAuth');

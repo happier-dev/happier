@@ -23,6 +23,9 @@ export type {
     DeploymentTargetPromoteInputV1, DeploymentTargetTeardownInputV1,
     DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
+    DeploymentTargetVariablesReadInputV1, DeploymentTargetVariablesSyncInputV1,
+    DeploymentTargetVariablesReadResultV1, DeploymentTargetVariablesSyncResultV1,
+    DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
@@ -31,6 +34,10 @@ export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
     >;
 }> = canonicalRoleInputs;
 export { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export type { DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { DeploymentTargetVariablesReadResultV1ProtocolSchema,
+    DeploymentTargetVariablesSyncResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleResultV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetRoleResultV1> = canonicalRoleResult;
 export const DeploymentTargetPreparationBaseV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetPreparationBaseV1> = canonicalPreparationBase;
 export const DeploymentDataParentBranchRefV1ProtocolSchema: ProtocolComposableSchema<DeploymentDataParentBranchRefV1> = canonicalParentBranch;

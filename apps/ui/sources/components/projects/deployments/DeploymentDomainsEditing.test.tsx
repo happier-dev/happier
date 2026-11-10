@@ -7,6 +7,7 @@ import {
 import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentReceiptDetailV1,
+  createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
@@ -117,6 +118,7 @@ async function renderDomains(
   detail: Detail,
   items: readonly unknown[],
   domainActions: Record<string, unknown>,
+  healthSetup = false,
 ) {
   const receipt = createDeploymentReceiptDetailV1();
   const transport: Partial<DeploymentReadTransportV1> = {
@@ -153,6 +155,8 @@ async function renderDomains(
         onOpenReceipt={() => {}}
         destination={{ tab: 'domains', section: null }}
         domainActions={domainActions as never}
+        lifetime={healthSetup ? { scope: { serverId: 'home', accountId: 'account-owner' },
+          isCurrent: () => true, onRetire: () => ({ dispose() {} }) } : undefined}
       />
     </PresentedDetailNavigationProvider>,
   );
@@ -190,7 +194,98 @@ function domainActions(detail: Detail) {
   };
 }
 
+function platformDetail(targetKind = 'vercel', content: Record<string, unknown> = {}) {
+  return createDeploymentEnvironmentDetailV1({ targetLinks: [{ content,
+    targetLink: createDeploymentTargetLinkHeaderV1({ source: { kind: 'plugin',
+      contribution: { pluginId: `happier.deploy.${targetKind === 'workers' ? 'cloudflare' : 'vercel'}`, localId: 'runtime' } },
+      targetKind, machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a' }),
+  }] });
+}
+
 describe('Environment → Domains: add form (P6)', () => {
+  it('opens the exact saved Domain check setup before enrolling a cadence', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const actions = domainActions(detail);
+    const item = domain('public-domain', 'shop.example.com');
+    const { screen, controller, settle } = await renderDomains(detail, [item], actions, true);
+    await settle('project-deployments.environment.domains.public-domain');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel === 'shop.example.com');
+    expect(menu).toBeDefined();
+    expect(menu!.props.items).toContainEqual(expect.objectContaining({ id: 'configure-checks' }));
+    await act(async () => { menu!.props.onSelect('configure-checks'); });
+    const { NewAccountTriggerPopover } = await import('@/components/workflows/triggers/AccountTriggersSection');
+    const setup = screen.findAllByType(NewAccountTriggerPopover)[0]!;
+    expect(setup.props.eventSeed).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
+      setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id },
+        domain: { domainId: 'public-domain', targetLinkId: 'target-a' } } });
+    expect(setup.props.eventSeed.setupInput).not.toHaveProperty('checks');
+    expect(actions.addDomain).not.toHaveBeenCalled();
+    await screen.unmount(); controller.retire();
+  });
+  it('adds a platform address with provider routing and no native service or port', async () => {
+    const detail = platformDetail();
+    const actions = domainActions(detail);
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      expect(screen.findByTestId(`${id}.service`)).toBeNull();
+      expect(screen.findByTestId(`${id}.port`)).toBeNull();
+      await act(async () => { screen.changeTextByTestId(`${id}.host`, 'app.example.test'); });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        content: { hostname: 'app.example.test', target: { kind: 'provider' } },
+      }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('uses the linked Workers credential and waits for an explicit zone choice before adding', async () => {
+    const account = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'linked' };
+    const detail = platformDetail('workers', { credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+      purpose: { consumer: { pluginId: 'happier.deploy.cloudflare', localId: 'workers-inspect' }, purpose: 'deploy.manage' },
+      target: { kind: 'account', account } }, providerIdentity: { providerAccountId: 'cloudflare-account',
+        providerResourceId: 'worker-exact', providerEnvironment: 'production' }, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' } });
+    const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async () => ({ ok: true, value: { kind: 'ready',
+      zones: [{ zoneId: 'zone-other', name: 'other.test' }, { zoneId: 'zone-exact', name: 'example.test' }], options: [],
+      defaults: { connector: { imageRef: 'unused', version: 'unused' } }, connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } } }));
+    const actions = { ...domainActions(detail), inspectPlatformTarget };
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => { screen.changeTextByTestId(`${id}.host`, 'app.example.test'); });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).not.toHaveBeenCalled();
+      expect(screen.findByTestId(`${id}.ingress.account`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith('happier.deploy.cloudflare/actions/workers-domain-zones-read',
+        { credentialRef: account, accountId: 'cloudflare-account', hostname: 'app.example.test' }, { signal: expect.any(AbortSignal) });
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const choice = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.zone`);
+      expect(choice).toBeDefined();
+      await act(async () => { choice!.props.onSelect('zone-exact'); });
+      expect(screen.findByTestId(`${id}.ingress.read`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
+        hostname: 'app.example.test', target: { kind: 'provider', zone: { zoneId: 'zone-exact', name: 'example.test' } },
+      } }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('renders the retained provider DNS instructions after a fresh Domain read', async () => {
+    const detail = platformDetail();
+    const item = domain('provider-domain', 'app.example.test', { target: { kind: 'provider' }, healthCheck: undefined,
+      providerObservation: { v: 1, hostname: 'app.example.test', state: 'pending',
+        dns: [{ type: 'TXT', name: '_validation.app.example.test', value: 'retained-provider-value' }] } });
+    const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail));
+    try {
+      expect(await settle('project-deployments.environment.domains.provider-domain')).not.toBeNull();
+      const { Text } = await import('@/components/ui/text/Text');
+      expect(screen.findAllByType(Text).some(node => node.props.selectable === true && node.props.children === 'retained-provider-value')).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('adds a redirect alias, your own certificate and a basic-auth user in one Domain Add', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = {

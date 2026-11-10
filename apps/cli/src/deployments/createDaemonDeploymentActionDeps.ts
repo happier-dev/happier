@@ -45,7 +45,7 @@ import {
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
 import { readPreviewDomainForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
@@ -94,7 +94,8 @@ import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptConten
 import { preparePromotionForHost } from './preparePromotionForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -758,7 +759,6 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 ...(domain ? { domain } : {}) }, { storage,
                 readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
                 create: request => executePreviewTemplateCreationForHost({ ...request, plan }, { ...host, storage }),
-                deploy: ({ input, context }) => deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input, context }),
             });
         }
         return preview.nativeTemplate ? previewTemplateCreateContinuation(preview.nativeTemplate, prepared) : undefined;
@@ -1042,6 +1042,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         ensureServiceObservations: host.ensureServiceObservations });
     const admitPreview = async (environment: DeploymentEnvironmentDetailV1, context: ActionExecutorContext, sha?: string) => {
         if (environment.environment.purpose !== 'preview') return;
+        const admittedRoot = readHostAdmittedReviewedParentV1(context.hostReviewedChild) ?? readHostAdmittedReviewedRootV1(context);
+        if (admittedRoot?.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
+            await admitForkPreviewDeploymentForHost({ environment, context, sha }, artifactId => open(artifactId, context));
+            return;
+        }
         const templateEnvironmentId = environment.environment.previewTemplateEnvironmentId;
         if (!templateEnvironmentId) return refuse('deployment_content_unavailable');
         const admission = await admitPreviewEnvironmentForHost({ content: environment.content, templateEnvironmentId }, {

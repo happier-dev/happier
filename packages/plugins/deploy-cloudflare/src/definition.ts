@@ -11,6 +11,10 @@ import { selectionActions } from './platform/selections.js';
 import { workerActions, workerLinkSchema } from './platform/workersActions.js';
 import { pagesLink, pagesLinkSchema } from './platform/pagesPrepare.js';
 import { pagesLifecycleActions } from './platform/pagesDeploy.js';
+import { pagesTrafficActions } from './platform/traffic.js';
+import { workerTrafficActions } from './platform/workerTraffic.js';
+import { pagesLogsActions } from './platform/logs.js';
+import { domainActions } from './platform/domains.js';
 
 import { targetOptionResources, targetOptionsRead, targetOptionInputTypes } from './platform/targetOptions.js';
 import { inspect, productInspectActions } from './platform/inspect.js';
@@ -42,7 +46,7 @@ const tokenConfiguration = { ...accountConfiguration, fields: [...accountConfigu
 ] } as const;
 
 type CloudflareActionDeclarations = typeof productInspectActions & typeof tunnelActions & typeof zoneActions & typeof selectionActions
-  & typeof workerActions & typeof pagesLifecycleActions & Readonly<{
+  & typeof workerActions & typeof workerTrafficActions & typeof pagesLifecycleActions & typeof pagesTrafficActions & typeof pagesLogsActions & typeof domainActions & Readonly<{
     'target-options-read': typeof targetOptionsRead;
     'targets-inspect-v1': typeof inspect;
     'pages-link': typeof pagesLink;
@@ -51,15 +55,17 @@ type CloudflareActionDeclarations = typeof productInspectActions & typeof tunnel
 const actions: Readonly<{
   [TId in keyof CloudflareActionDeclarations]: PluginActionDefinition<
     Omit<CloudflareActionDeclarations[TId], 'run' | 'observeRead'>>;
-}> = { 'target-options-read': targetOptionsRead, ...productInspectActions, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
+}> = { 'target-options-read': targetOptionsRead, ...productInspectActions, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...workerTrafficActions, ...pagesLifecycleActions, ...pagesTrafficActions, ...pagesLogsActions, ...domainActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
 
 const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
-    actions: { inspect: 'workers-inspect', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel' } },
+    actions: { inspect: 'workers-inspect', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', promote: 'workers-promote', rollback: 'workers-rollback',
+      domains: { read: 'workers-domains-read', add: 'workers-domains-add', verify: 'workers-domains-verify', remove: 'workers-domains-remove' } } },
     pages: { role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
       description: 'Adopt an existing Pages project.',
       targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
-      actions: { inspect: 'pages-inspect', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe' } } } as const;
+      actions: { inspect: 'pages-inspect', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe', rollback: 'pages-rollback', logs: { build: 'pages-build-logs-read' },
+        domains: { read: 'pages-domains-read', add: 'pages-domains-add', verify: 'pages-domains-verify', remove: 'pages-domains-remove' } } } } as const;
 
 export const definition: Pick<DefinePluginInput<typeof actions>,
   'version' | 'displayName' | 'entrypoints' | 'activation' | 'hostAccess' | 'inputTypes' | 'brand'
@@ -77,9 +83,9 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
   }, { id: 'cloudflare-tunnel', capability: 'network', reason: 'Create or adopt the reviewed remote tunnel, read its connector token and reconcile owned configuration and DNS records.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
   }, { id: 'cloudflare-workers', capability: 'network', reason: 'Inspect the selected Worker and deploy, observe or cancel its reviewed Git build.',
-    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT'] },
+    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
   }, { id: 'cloudflare-pages', capability: 'network', reason: 'Adopt an existing Pages project and upload the reviewed prepared assets and Functions.',
-    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST'] },
+    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'DELETE'] },
   }, { id: 'cloudflare-oauth', capability: 'network', reason: 'Exchange, refresh and revoke the registered Cloudflare OAuth authorization.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://dash.cloudflare.com' }], methods: ['GET', 'POST'] },
   }, { id: 'deploy.manage', capability: 'connectedAccounts', reason: 'Use the selected Cloudflare deployment account.',

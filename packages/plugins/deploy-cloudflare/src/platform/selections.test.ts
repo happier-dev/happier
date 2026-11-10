@@ -86,6 +86,16 @@ it('uses the selected connection and canonical connector defaults with only a ho
   } finally { await state.kit.dispose(); }
 });
 
+it('reads only the deliberately selected Workers Domain zone using deployment custody', async () => {
+  const state = await fixture();
+  try {
+    await expect(state.kit.invokeAction('workers-domain-zones-read', { credentialRef, accountId, hostname: input.hostname, zoneId }))
+      .resolves.toMatchObject({ kind: 'ready', zones: [{ zoneId, name: zone.name }], options: [] });
+    expect(state.requests.map(request => new URL(request.url).pathname)).toEqual([`/client/v4/zones/${zoneId}`]);
+    expect(state.requests[0]!.credentialBinding).toMatchObject({ purpose: 'deploy.manage' });
+  } finally { await state.kit.dispose(); }
+});
+
 it('reports missing selected provider account metadata without using the profile id or contacting Cloudflare', async () => {
   const state = await fixture();
   try {

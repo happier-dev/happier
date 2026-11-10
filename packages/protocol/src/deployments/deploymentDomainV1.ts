@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
@@ -117,12 +117,25 @@ export const DeploymentDomainStateV1Schema = lazyZodSchema(() => z.enum([
     'pending', 'applying', 'active', 'warning', 'failed', 'removing',
 ]));
 
+/** A provider Domain is controlled here; it has no fabricated Caddy destination. */
+export const DeploymentDomainProviderPlacementV1Schema = lazyZodSchema(() => z.strictObject({
+    serverId: id, accountId: id, environmentId: id, targetLinkId: id, domainId: id,
+    controller: z.strictObject({ machineId: id, installationId: id }), actionOperationId: id, requestId: id,
+}));
+export const DeploymentDomainProviderCaptureV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('provider'), placement: DeploymentDomainProviderPlacementV1Schema,
+    installationPublicKey: id, content: DeploymentArtifactContentReferenceV1Schema,
+    environmentContent: DeploymentArtifactContentReferenceV1Schema, targetLinkContent: DeploymentArtifactContentReferenceV1Schema,
+    requestEnvelopeDigest: z.optional(id),
+}));
+
 /** Source-admitted metadata records a reference, not current private-body access. */
 export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), id, environmentId: id, targetLinkId: id, revision,
     state: DeploymentDomainStateV1Schema, ...DeploymentArtifactContentReferenceV1Schema.shape,
     createdByAccountId: id, observedAtMs: z.optional(timestamp),
     placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
+    provider: z.optional(z.literal(true)), providerPlacement: z.optional(DeploymentDomainProviderPlacementV1Schema),
     /** Exact admitted controller operation; absent for legacy captures without execution custody. */
     operationAddress: z.optional(ActionOperationAddressV1Schema),
     dnsHealth: z.optional(domainDnsHealth()),
@@ -141,12 +154,12 @@ const addMetadata = () => ({
     membershipDeploymentId: z.optional(id),
     membershipMachines: z.optional(DeploymentOwnServerTargetMachinesV1Schema),
     placements: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id, dockerEngineId: id,
-        listener: z.enum(['privateOrigin', 'public']) })).check(z.minLength(1),
+        listener: z.enum(['privateOrigin', 'public']) })).check(
         z.refine(items => new Set(items.map(item => `${item.machineId}:${item.installationId}:${item.nativeServer}`)).size === items.length,
             { message: 'Native placements must be unique.' }))),
 });
 export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
-    ...addMetadata(), ...DeploymentArtifactContentReferenceV1Schema.shape,
+    ...addMetadata(), ...DeploymentArtifactContentReferenceV1Schema.shape, provider: z.optional(z.literal(true)),
 }).check(z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
     { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })));
 export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
@@ -157,8 +170,10 @@ export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.safeExtend(DeploymentDomainAddPreparedInputV1Schema, {
     actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddPreparedInputV1Schema.shape.placements),
+    provider: z.optional(z.literal(true)),
     authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
-}));
+}).check(z.refine(value => value.provider === true ? value.placements.length === 0 : value.placements.length > 0,
+    { message: 'Native Domains require placements; provider Domains have none.' })));
 export const DeploymentDomainRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({ ...mutation, expectedDomainRevision: revision }));
 export const DeploymentDomainRemoveAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainRemoveInputV1Schema, {
     actionOperationId: id, requestId: id,
@@ -179,20 +194,30 @@ export const DeploymentDomainObservationV1Schema = lazyZodSchema(() => z.extend(
     proof: MachineInstallationProofV1Schema,
 }));
 export const DeploymentDomainTransitionInputV1Schema = lazyZodSchema(() => z.strictObject({ ...domain,
-    expectedDomainRevision: revision, observations: z.array(DeploymentDomainObservationV1Schema).check(z.minLength(1)),
-}));
+    expectedDomainRevision: revision, observations: z.array(DeploymentDomainObservationV1Schema),
+    providerObservation: z.optional(DeploymentDomainProviderObservationV1Schema),
+}).check(z.refine(value => value.providerObservation ? value.observations.length === 0 : value.observations.length > 0,
+    { message: 'A Domain transition settles exactly one placement kind.' })));
 /** The admitted controller commits vendor provenance before dispatching the captured native effect. */
-export const DeploymentDomainPreparedContentInputV1Schema = lazyZodSchema(() => z.strictObject({ ...domain,
-    expectedDomainRevision: revision, actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,
-    // Artifact history retains bodies, not headers: predecessor captures must keep their exact readable header.
-    contentUpdate: z.strictObject({
+export const DeploymentDomainContentUpdateV1Schema = lazyZodSchema(() => z.strictObject({
         body: z.nonoptional(ArtifactJsonUpdateHttpInputV1Schema.shape.body),
         expectedBodyVersion: z.nonoptional(ArtifactJsonUpdateHttpInputV1Schema.shape.expectedBodyVersion),
         expectedHeaderVersion: ArtifactJsonUpdateHttpInputV1Schema.shape.expectedHeaderVersion,
         kind: ArtifactJsonUpdateHttpInputV1Schema.shape.kind,
         provenance: ArtifactJsonUpdateHttpInputV1Schema.shape.provenance,
         provenanceDataEncryptionKey: ArtifactJsonUpdateHttpInputV1Schema.shape.provenanceDataEncryptionKey,
-    }),
+}));
+export const DeploymentDomainProviderObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
+    placement: DeploymentDomainProviderPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
+    contentUpdate: z.optional(DeploymentDomainContentUpdateV1Schema),
+}));
+export const DeploymentDomainProviderObservationV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainProviderObservationBodyV1Schema, {
+    proof: MachineInstallationProofV1Schema,
+}));
+export const DeploymentDomainPreparedContentInputV1Schema = lazyZodSchema(() => z.strictObject({ ...domain,
+    expectedDomainRevision: revision, actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,
+    // Artifact history retains bodies, not headers: predecessor captures must keep their exact readable header.
+    contentUpdate: DeploymentDomainContentUpdateV1Schema,
 }));
 export type DeploymentDomainAddInputV1 = z.infer<typeof DeploymentDomainAddInputV1Schema>;
 export type DeploymentDomainAddAdmissionInputV1 = z.infer<typeof DeploymentDomainAddAdmissionInputV1Schema>;
@@ -203,6 +228,19 @@ export type DeploymentDomainListInputV1 = z.infer<typeof DeploymentDomainListInp
 export type DeploymentDomainTransitionInputV1 = z.infer<typeof DeploymentDomainTransitionInputV1Schema>;
 export type DeploymentDomainPreparedContentInputV1 = z.infer<typeof DeploymentDomainPreparedContentInputV1Schema>;
 export type DeploymentDomainObservationBodyV1 = z.infer<typeof DeploymentDomainObservationBodyV1Schema>;
+export type DeploymentDomainProviderObservationBodyV1 = z.infer<typeof DeploymentDomainProviderObservationBodyV1Schema>;
+
+export function deploymentDomainProviderObservationProofPayloadV1(input: Readonly<{
+    expectedDomainRevision: number; observation: DeploymentDomainProviderObservationBodyV1;
+}>): MachineInstallationProofPayloadV1 {
+    const observation = DeploymentDomainProviderObservationBodyV1Schema.parse(input.observation);
+    const placement = observation.placement;
+    return { version: 1, ...placement.controller, accountId: placement.accountId,
+        deploymentDomainTransition: { serverId: placement.serverId, environmentId: placement.environmentId, domainId: placement.domainId,
+            actionOperationId: placement.actionOperationId, expectedRevision: input.expectedDomainRevision,
+            requestBodyDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-provider-domain-observation-v1',
+                [createCanonicalJsonSigningInput(observation)]) } };
+}
 
 /** The incumbent installation-proof envelope signs exact material, native evidence and Domain CAS. */
 export function deploymentDomainObservationProofPayloadV1(input: Readonly<{

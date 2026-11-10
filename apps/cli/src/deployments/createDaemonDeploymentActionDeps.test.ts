@@ -1,6 +1,7 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import axios from 'axios';
+import { normalizeGithubWebhookDelivery } from '../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
 import { logger } from '@/ui/logger';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { z } from 'zod/mini';
@@ -1630,7 +1631,7 @@ describe('installed deployment storage and target composition', () => {
                     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'domain-root', binding: {
                         serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
                         admittedMachineRole: 'manage', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a',
-                        actionId: rootAction, environmentId: environment.environment.id, requestId: envelope.requestId,
+                        actionId: rootAction, environmentId: environment.environment.id, deploymentChildRoot: true, requestId: envelope.requestId,
                         accountEncryptionMode: 'plain', target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                         deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(rootAction, rootInput) } });
                     const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
@@ -1640,7 +1641,11 @@ describe('installed deployment storage and target composition', () => {
                     if (!requester) throw new Error('Expected admitted authored Domain requester');
                     disposeRequester = () => requester.dispose();
                     context = { ...context, externalActionExecutionAuthorization: requester.authorization,
-                        originalActionEnvelope: envelope, externalActionTarget: target };
+                        originalActionEnvelope: envelope, externalActionTarget: target,
+                        signExternalActionApprovalInput: ({ actionId, input, target: approvalTarget, requesterConfirmation, sessionTargetsV1 }) =>
+                            signExternalActionApprovalInputV1({ authorizationToken: authorization.token, actionId, input, target: approvalTarget,
+                                ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}),
+                                privateKey: identity.secretKey }) };
                 }
                 let result: ActionExecuteResult;
                 try { result = await executor.execute(rootAction, rootInput, context); }
@@ -4227,10 +4232,14 @@ describe('installed deployment storage and target composition', () => {
                 });
                 const pushedSha = git('rev-parse', 'HEAD');
                 expect(pushedSha).not.toBe(receipt.content.sourceIntent.sha);
+                const normalized = normalizeGithubWebhookDelivery({ eventType: 'push', providerDeliveryId: 'delivery-1', receivedAtMs: 1000,
+                    rawBody: new TextEncoder().encode(JSON.stringify({ repository: { id: 77, full_name: 'owner/source' },
+                        ref: 'refs/heads/main', before: receipt.content.sourceIntent.sha, after: pushedSha })) }).automationEvent;
+                if (!normalized) throw new Error('Expected normalized repository push');
                 const base = { v: 1 as const, kind: 'pluginEvent' as const,
-                    eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
-                    sourceSelectorId: '00000000-0000-4000-8000-000000000002', occurrenceId: 'delivery-1', occurredAt: 1000,
-                    payload: { repository: { repositoryId: '77', nameWithOwner: 'owner/source' }, ref: 'refs/heads/main', after: pushedSha } };
+                    eventRef: normalized.eventRef,
+                    sourceSelectorId: '00000000-0000-4000-8000-000000000002', occurrenceId: normalized.occurrenceId,
+                    occurredAt: normalized.occurredAtMs, payload: normalized.payload };
                 const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...base, sourceInstanceId: 'github:repository:77', sourceContractVersion: 1,
                     observationReceivedAt: 1000, filter: { version: null, result: 'matched' } });
                 const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,

@@ -1,7 +1,7 @@
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1,
     createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentTargetRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { isDeploymentTargetRuntimeRoleV1, type DeploymentTargetRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 import type { DeploymentTargetRoleAdmissionHost, DeploymentTargetRoleAdmissionRequest } from './admitDeploymentTargetRoleForHost';
 
@@ -12,7 +12,7 @@ export function createDeploymentTargetRoleAdmissionFixture(role: DeploymentTarge
     const credentialPrincipal = { kind: 'account' as const, accountId: 'custody-account',
         purpose: { consumer: { pluginId: 'acme.alpha', localId: 'selection' }, purpose: 'action-account' },
         target: options.target ?? { kind: 'account' as const, account } };
-    const dataRole = role.includes('.');
+    const dataRole = !isDeploymentTargetRuntimeRoleV1(role);
     const actionLocalId = role === 'uploadDeploy'
         ? 'upload-deploy'
         : dataRole ? role.toLowerCase().replaceAll('.', '-') : role;

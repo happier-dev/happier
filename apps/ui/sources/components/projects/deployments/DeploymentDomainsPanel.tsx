@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
@@ -17,6 +17,9 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
+import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
+import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
@@ -49,7 +52,7 @@ export type DeploymentDomainEditing = Readonly<{
   /** The Compose services the serving receipt runs, by name: what Service starts on when the definition lists none. */
   deployedServices?: readonly string[];
   /** The runtime target the addresses route to; Add domain needs one. */
-  targetLink: Readonly<{ id: string; revision: number }> | null;
+  targetLink: Readonly<{ id: string; revision: number; provider?: DeploymentTargetLinkContentV1 | null }> | null;
   review: DeploymentReviewHandle;
   /** Names the Machine a held review waits on. */
   machine: string;
@@ -70,6 +73,7 @@ export function DeploymentDomainsPanel(
     phone?: boolean;
     /** Absent where the page cannot write: the addresses stay read-only. */
     editing?: DeploymentDomainEditing | null;
+    healthSetup?: Readonly<{ controllerMachineId: string; lifetime: ServerAccountScopeLifetime }> | null;
   }>,
 ) {
   const domains = useDeploymentEnvironmentDomains(
@@ -80,6 +84,9 @@ export function DeploymentDomainsPanel(
   const { items } = domains.result;
   const { editing } = props;
   const [adding, setAdding] = React.useState(false);
+  const [checkSetup, setCheckSetup] = React.useState<Readonly<{
+    item: DomainItem; anchorRef: React.RefObject<View | null>;
+  }> | null>(null);
   const refresh = domains.refresh;
   const onSettled = React.useCallback(() => {
     editing?.onChanged();
@@ -149,6 +156,7 @@ export function DeploymentDomainsPanel(
           busy={running}
           taken={items.map((item) => item.content.hostname)}
           recordedIngress={editing.recordedIngress}
+          provider={editing.targetLink.provider}
           inspect={editing.actions.inspectPlatformTarget}
           services={services}
           initialService={content ? initialDomainService(content, services.length > 0 ? services : editing.deployedServices ?? NO_SERVICES) : null}
@@ -178,10 +186,22 @@ export function DeploymentDomainsPanel(
           disabled={running}
           onVerify={editing ? () => { void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
           onRemove={editing ? () => { void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
+          onConfigureChecks={editing && props.healthSetup ? anchorRef => setCheckSetup({ item, anchorRef }) : undefined}
           missingCredentials={setBindings && content ? missingCredentials(item, bound) : undefined}
           onChooseCredential={setBindings && content ? (role) => { void chooseCredential(item, role); } : undefined}
         />
       ))}
+      {checkSetup && editing && props.healthSetup ? <NewAccountTriggerPopover
+        anchorRef={checkSetup.anchorRef}
+        onRequestClose={() => setCheckSetup(null)}
+        accountLifetime={props.healthSetup.lifetime}
+        initialProject={{ machineId: props.healthSetup.controllerMachineId, directory: '~' }}
+        eventSeed={guidedStarterEventSeed('healthFailed', {
+          subject: { kind: 'environment', environmentId: props.environmentId, machineId: props.healthSetup.controllerMachineId },
+          controllerMachineId: props.healthSetup.controllerMachineId,
+          domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },
+        })}
+      /> : null}
       {adding && items.length === 0 ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
@@ -262,6 +282,7 @@ function DomainAddForm(
     busy: boolean;
     taken: readonly string[];
     recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
+    provider?: DeploymentTargetLinkContentV1 | null;
     inspect?: DomainIngressInspection;
     /** The definition's selected Compose services; empty means Service is typed. */
     services: readonly string[];
@@ -293,9 +314,14 @@ function DomainAddForm(
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
   const [ingressMode, setIngressMode] = React.useState(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
-  const needsSelection = props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare';
-  const { selection: ingress, fields: ingressFields } = useDeploymentDomainIngressFields({
-    hostname: hostname.trim().toLowerCase(), busy: props.busy, inspect: props.inspect, enabled: needsSelection,
+  const provider = props.provider !== undefined;
+  const needsZone = props.provider?.providerEnvironment?.kind === 'script';
+  const principal = props.provider?.credentialPrincipal;
+  const linkedZone = needsZone ? principal?.kind === 'account' && principal.target.kind === 'account'
+    && props.provider?.providerIdentity ? { credentialRef: principal.target.account, accountId: props.provider.providerIdentity.providerAccountId } : null : undefined;
+  const needsSelection = !provider && (props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare');
+  const { selection: ingress, zone, fields: ingressFields } = useDeploymentDomainIngressFields({
+    hostname: hostname.trim().toLowerCase(), busy: props.busy, inspect: props.inspect, enabled: needsSelection || needsZone, linkedZone,
   });
   const host = hostname.trim().toLowerCase();
   const containerPort = Number(port);
@@ -307,7 +333,8 @@ function DomainAddForm(
   const probeValid = probePath.startsWith('/');
   const redirect = redirectTo.trim();
   const user = basicAuthUser.trim();
-  const ready = host.length > 0 && !duplicate && service.trim().length > 0 && portValid && pathValid && probeValid && (!needsSelection || !!ingress) && !props.busy;
+  const ready = host.length > 0 && !duplicate && !props.busy && (provider ? !needsZone || !!zone
+    : service.trim().length > 0 && portValid && pathValid && probeValid && (!needsSelection || !!ingress));
   return (
     <InlineAddExpander
       isOpen
@@ -319,6 +346,10 @@ function DomainAddForm(
       onCancel={props.onCancel}
       onSave={() => {
         if (!ready) return;
+        if (provider) {
+          void props.onAdd({ hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } });
+          return;
+        }
         void props.onAdd({
           hostname: host,
           target: {
@@ -352,7 +383,7 @@ function DomainAddForm(
             error={duplicate ? t('projects.deployments.domainExists') : null}
           />
         </FieldItem>
-        {!props.recordedIngress ? (
+        {!provider && !props.recordedIngress ? (
           <>
             <FieldItem label={t('projects.deployments.editors.reachThrough')}>
               <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode" fill
@@ -367,6 +398,7 @@ function DomainAddForm(
           </>
         ) : null}
         {ingressFields}
+        {!provider ? <>
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem label={t('projects.deployments.domainFieldService')} style={props.phone ? undefined : styles.routeService}>
             {props.services.length > 0 ? (
@@ -482,6 +514,7 @@ function DomainAddForm(
             accessibilityLabel={t('projects.deployments.domainFieldCheck')}
           />
         </FieldItem>
+        </> : null}
       </View>
     </InlineAddExpander>
   );

@@ -8,14 +8,19 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealS
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
-import { projectDeploymentDomainHeader } from './deploymentDomainService';
+import { projectDeploymentDomainHeader, projectDeploymentDomainMachineReferences, prepareDeploymentTeardownDomainsInTx,
+    readAcceptedDeploymentTeardownDomainContentInTx, readMemberDeploymentDomainContentInTx } from './deploymentDomainService';
+import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { DeploymentDomainCapturedPlacementsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 describe('public Domain storage and native custody', () => {
     const serverId = `srv_${'d'.repeat(32)}`;
@@ -59,6 +64,101 @@ describe('public Domain storage and native custody', () => {
         await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: target.id } });
         return { owner, foreign, machine, key, environment, target, content };
     }
+
+    it.each(['plain', 'e2ee'] as const)('admits a provider Domain without fabricating native placements in %s', async mode => {
+        const f = await fixture(mode);
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'happier.deploy.vercel', contributionLocalId: 'runtime', targetKind: 'vercel' } });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+                targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+                actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), provider: true, placements: [],
+                ...await f.content('deployment-domain.v1') };
+            const added = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${f.environment.id}/domains`,
+                headers: { 'x-test-user-id': f.owner.id }, payload: input });
+            expect(added.statusCode).toBe(200);
+            expect(added.json()).toMatchObject({ ok: true, domain: { id: input.domainId, provider: true, state: 'pending', placements: [] } });
+            expect(JSON.stringify(added.json())).not.toContain('qa-domain-1101-ingress.localhost');
+            const stored = await db.deploymentDomain.findUniqueOrThrow({ where: { id: input.domainId } });
+            expect(stored.capturedPlacements).toMatchObject({ kind: 'provider', placement: { controller: {
+                machineId: f.machine.id, installationId: f.machine.installationId } } });
+            const result = DeploymentDomainMutationResultV1Schema.parse(added.json());
+            if (!result.ok || !result.domain.providerPlacement) throw new Error('provider capture missing');
+            const url = `/v1/deployments/environments/${f.environment.id}/domains/${input.domainId}`;
+            const headers = { 'x-test-user-id': f.owner.id };
+            const settle = (domain: typeof result.domain, state: 'active' | 'removed', tamper = false) => {
+                const observation = { placement: domain.providerPlacement!, state };
+                return app.inject({ method: 'POST', url: `${url}/transitions`, headers, payload: {
+                    serverId, environmentId: f.environment.id, domainId: input.domainId, expectedDomainRevision: domain.revision,
+                    observations: [], providerObservation: { ...observation, ...(tamper ? { state: 'warning' } : {}),
+                        proof: signMachineInstallationProof({ privateKey: f.key.secretKey,
+                            payload: deploymentDomainProviderObservationProofPayloadV1({ expectedDomainRevision: domain.revision, observation }) }) },
+                } });
+            };
+            expect((await settle(result.domain, 'active', true)).statusCode).toBe(403);
+            const active = DeploymentDomainMutationResultV1Schema.parse((await settle(result.domain, 'active')).json());
+            if (!active.ok) throw new Error(active.error);
+            expect(active.domain).toMatchObject({ state: 'active', revision: 2 });
+            expect((await app.inject({ method: 'GET', url: `${url}?serverId=${serverId}`, headers })).json()).toEqual(active);
+            expect((await settle(active.domain, 'active')).json()).toEqual(active);
+            const removal = DeploymentDomainMutationResultV1Schema.parse((await app.inject({ method: 'POST', url: `${url}/remove`, headers,
+                payload: { serverId, environmentId: f.environment.id, domainId: input.domainId, expectedRevision: active.revision,
+                    expectedDomainRevision: active.domain.revision, actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+                    requestKey: crypto.randomUUID() } })).json());
+            if (!removal.ok) throw new Error(removal.error);
+            expect(removal.domain).toMatchObject({ state: 'removing' });
+            expect((await settle(removal.domain, 'removed')).json()).toMatchObject({ ok: true, domain: { deletedAtMs: expect.any(Number) } });
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('captures retained provider Domains under the existing teardown admission in %s', async mode => {
+        const f = await fixture(mode);
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'happier.deploy.vercel', contributionLocalId: 'runtime', targetKind: 'vercel' } });
+        const reference = await f.content('deployment-domain.v1');
+        const domainId = crypto.randomUUID();
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const added = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${f.environment.id}/domains`,
+                headers: { 'x-test-user-id': f.owner.id }, payload: { serverId, domainId, environmentId: f.environment.id,
+                    expectedRevision: 1, targetLinkId: f.target.id, expectedTargetLinkRevision: 1,
+                    requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+                    provider: true, placements: [], ...reference } });
+            expect(added.statusCode).toBe(200);
+        });
+        const actionOperationId = crypto.randomUUID();
+        const binding = { serverIdentityId: serverId, accountId: f.owner.id,
+            authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch }, actionId: 'deployments.teardown',
+            target: { kind: 'machine', machineId: f.machine.id }, machineId: f.machine.id,
+            custodianAccountId: f.owner.id, installationId: f.machine.installationId!, environmentId: f.environment.id,
+            requestId: crypto.randomUUID(), requestEnvelopeDigest: 'd'.repeat(43) } satisfies ExternalActionExecutionAuthorizationBindingV1;
+        const result = await inTx(async tx => {
+            const loaded = await loadDeploymentEnvironmentInTx(tx, f.owner.id, serverId, f.environment.id);
+            if (!loaded.ok) throw new Error(loaded.error);
+            return prepareDeploymentTeardownDomainsInTx(tx, f.owner.id, actionOperationId, loaded, binding);
+        });
+        expect(result).toEqual({ ok: true });
+        const removing = await db.deploymentDomain.findUniqueOrThrow({ where: { id: domainId } });
+        expect(removing).toMatchObject({ state: 'removing', capturedPlacements: { kind: 'provider',
+            requestEnvelopeDigest: binding.requestEnvelopeDigest, placement: { actionOperationId, requestId: binding.requestId } } });
+        expect(await inTx(tx => readAcceptedDeploymentTeardownDomainContentInTx(tx, binding, reference.contentArtifactId))).toEqual(reference);
+        expect(await inTx(tx => readAcceptedDeploymentTeardownDomainContentInTx(tx,
+            { ...binding, requestEnvelopeDigest: 'x'.repeat(43) }, reference.contentArtifactId))).toBeNull();
+        const otherMachineId = crypto.randomUUID();
+        for (const changed of [
+            { ...binding, machineId: otherMachineId, target: { kind: 'machine' as const, machineId: otherMachineId } },
+            { ...binding, installationId: crypto.randomUUID() },
+            { ...binding, requestId: crypto.randomUUID() },
+            { ...binding, accountId: f.foreign.id },
+        ]) {
+            expect(await inTx(tx => readAcceptedDeploymentTeardownDomainContentInTx(tx,
+                changed, reference.contentArtifactId))).toBeNull();
+        }
+        expect(projectDeploymentDomainMachineReferences(removing, f.machine.id)).toEqual([]);
+        expect(await inTx(tx => readMemberDeploymentDomainContentInTx(tx, {
+            environmentId: f.environment.id, targetLinkId: f.target.id, machineId: f.machine.id,
+            installationId: f.machine.installationId!, artifactId: reference.contentArtifactId,
+        }))).toBeNull();
+    });
 
     it.each(['plain', 'e2ee'] as const)('keeps native-only Domain success unhealthy until public DNS is observed in %s', async mode => {
         const f = await fixture(mode);

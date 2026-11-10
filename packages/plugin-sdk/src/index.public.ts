@@ -2,8 +2,9 @@ export type { ActionConfirmationWhen } from './definePlugin.js';
 export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
 export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';
 export type { BackupDestinationContributionV1 } from './backupDestinations.js';
-export type { BackupDestinationOpenV1 } from './backupDestinations.js';
-export { BackupDestinationOpenV1ProtocolSchema, BackupDestinationCredentialBindingV1ProtocolSchema } from './backupDestinations.js';
+export type { BackupDestinationOpenV1, BackupDestinationOpenInputV1 } from './backupDestinations.js';
+export { BackupDestinationOpenV1ProtocolSchema, BackupDestinationCredentialBindingV1ProtocolSchema,
+  SFTP_BACKUP_DESTINATION_REF_V1 } from './backupDestinations.js';
 export type {
     DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
     DeploymentTargetCredentialPrincipalV1,
@@ -33,6 +34,8 @@ export type { HealthCheckSourceSelectorV1 } from './healthCheckKinds.js';
 export { HealthCheckSourceSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export type { HealthCheckDomainSetupIntentV1 } from './healthCheckKinds.js';
 export { HealthCheckDomainSetupIntentV1ProtocolSchema } from './healthCheckKinds.js';
+export type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from './healthCheckKinds.js';
+export { HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from './healthCheckKinds.js';
 export { createHealthCheckSourceInstanceIdV1, HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';
 export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_SETUP_OPEN_ACTION_REF_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
@@ -211,7 +214,7 @@ export type { PluginInvocationContributionIdentity } from './identity.js';
 export type { PluginInvocationOriginSurface } from './invocation.js';
 export type { PluginJsonValueV2 } from './identity.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
-export { buildQualifiedPluginContributionKey } from './identity.js';
+export { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from './identity.js';
 export { computeSha256HexDigest } from './identity.js';
 export { createCanonicalJsonSigningInput } from './identity.js';
 export type { PluginMachineMaterializationRefV1 } from './invocation.js';

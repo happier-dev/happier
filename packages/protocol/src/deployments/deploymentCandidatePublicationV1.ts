@@ -1,11 +1,12 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { hasDeploymentEnvironmentContentPatchV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
-import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntentV1Schema } from './deploymentBackupConfigureV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
@@ -61,7 +62,9 @@ export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(()
 }));
 export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
 export const DeploymentEnvironmentUpdateNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  mode: z.optional(z.literal('preview')),
   defaultsFor: z.optional(DeploymentConfigurationDefaultsForV1Schema),
+  previewPlacement: z.optional(z.strictObject({ runtimeTargetLinkId: z.optional(id), buildMachineId: z.optional(id) })),
   environmentId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
   authoredMetadataDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
@@ -98,9 +101,17 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
   }
   if (actionId === 'deployments.environments.update') {
     const value = readRecord(input);
-    if (value.mode !== 'preview' && !hasDeploymentEnvironmentContentPatchV1(value.patch)) return undefined;
+    const patch = readRecord(value.patch);
+    const previewTemplate = readRecord(patch.previewTemplate);
+    if (value.mode !== 'preview' && !hasDeploymentEnvironmentContentPatchV1(value.patch) && patch.buildMachineId === undefined) return undefined;
     return DeploymentNativeAdmissionV1Schema.parse({ environmentId: value.environmentId,
-      ...(value.mode === 'preview' ? { defaultsFor: DeploymentConfigurationDefaultsForV1Schema.parse(value.defaultsFor) } : {}),
+      ...(value.mode === 'preview' ? { mode: 'preview' } : {}),
+      ...(value.defaultsFor === undefined ? {} : { defaultsFor: DeploymentConfigurationDefaultsForV1Schema.parse(value.defaultsFor) }),
+      ...(previewTemplate.runtimeTargetLinkId === undefined && patch.buildMachineId === undefined ? {} : {
+        previewPlacement: {
+          ...(previewTemplate.runtimeTargetLinkId === undefined ? {} : { runtimeTargetLinkId: previewTemplate.runtimeTargetLinkId }),
+          ...(patch.buildMachineId === undefined ? {} : { buildMachineId: patch.buildMachineId }),
+        } }),
       inputDigest: computeDeploymentEnvironmentUpdateInputDigestV1(value),
       authoredMetadataDigest: computeDeploymentEnvironmentUpdateMetadataDigestV1(value) });
   }
@@ -172,12 +183,12 @@ export function computeDeploymentEnvironmentUpdateInputDigestV1(input: Readonly<
 }
 /** The original signed invocation owns one create-only Environment candidate. */
 export function createDeploymentEnvironmentContentArtifactIdV1(input: Readonly<{
-  accountId: string; serverIdentityId: string; actionId: string; requestId: string;
-  requestEnvelopeDigest: string; environmentId: string;
-}>): string {
+  accountId: string; serverIdentityId: string; requestId: string; requestEnvelopeDigest: string;
+} & ({ actionId: string; environmentId: string }
+  | { actionId: typeof DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1; environmentId?: never })>): string {
   return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-environment-publication-v1',
     [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
-      input.environmentId]));
+      ...(input.environmentId === undefined ? [] : [input.environmentId])]));
 }
 
 /** Preserve the admitted routing metadata when private content becomes an Artifact reference. */

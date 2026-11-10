@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
@@ -105,6 +105,9 @@ export type DeploymentTargetRoleCommonInputV1 = z.infer<typeof DeploymentTargetR
 export const DeploymentTargetPreparationBaseV1Schema = lazyZodSchema(() => z.extend(z.omit(DeploymentTargetRoleCommonInputV1Schema, {
     providerIdentity: true,
 }), {
+    // Inspection can prepare a provider choice before its Environment is created. Association and
+    // lifecycle inputs retain their required Environment coordinates at their own boundary.
+    environmentId: z.optional(id), expectedRevision: z.optional(revision),
     providerAccountId: z.optional(id), providerIdentity: z.optional(DeploymentTargetProviderIdentityV1Schema),
     targetLinkId: z.optional(id), expectedTargetLinkRevision: z.optional(revision),
 }));

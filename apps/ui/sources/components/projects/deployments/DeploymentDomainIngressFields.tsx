@@ -26,6 +26,7 @@ export type DomainIngressInspection = ReturnType<typeof createDeploymentActions>
 type Selection = NonNullable<DeploymentDomainContentV1['ingress']>;
 type TunnelOption = Readonly<{ label: string; selection: Selection }>;
 type Zone = Readonly<{ zoneId: string; name: string }>;
+export type LinkedDomainZoneContext = Readonly<{ credentialRef: QualifiedConnectedAccountRef; accountId: string }>;
 type Defaults = Readonly<{ accountId?: string; connector: Readonly<{ imageRef: string; version: string }> }>;
 type ZoneRead = Readonly<{ key: string; credentialKey: string; defaults?: Defaults }> & (
   | Readonly<{ kind: 'ready'; zones: readonly Zone[] }>
@@ -45,6 +46,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   busy: boolean;
   inspect?: DomainIngressInspection;
   enabled: boolean;
+  /** Present for Workers: use the runtime Link's credential and select only a zone. */
+  linkedZone?: LinkedDomainZoneContext | null;
 }>) {
   const [credentialRef, setCredentialRef] = React.useState<QualifiedConnectedAccountRef | null>(null);
   const [accountId, setAccountId] = React.useState('');
@@ -61,15 +64,18 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   // choice aborts it through the Action's own signal (O-DEPLOY F2). There is no timeout.
   const flight = React.useRef<AbortController | null>(null);
   const [stopped, setStopped] = React.useState<Readonly<{ kind: 'zones' | 'tunnels'; key: string }> | null>(null);
-  const credentialKey = JSON.stringify(credentialRef);
+  const zonesOnly = props.linkedZone !== undefined;
+  const selectedCredential = zonesOnly ? props.linkedZone?.credentialRef ?? null : credentialRef;
+  const selectedAccountId = zonesOnly ? props.linkedZone?.accountId ?? '' : accountId.trim();
+  const credentialKey = JSON.stringify(selectedCredential);
   const defaults = zones?.credentialKey === credentialKey ? zones.defaults : undefined;
   const connectorOverride = imageRef.trim() || version.trim() ? {
     imageRef: imageRef.trim() || defaults?.connector.imageRef || '',
     version: version.trim() || defaults?.connector.version || '',
   } : undefined;
-  const input = { credentialRef, hostname: props.hostname,
-    ...(accountId.trim() ? { accountId: accountId.trim() } : {}),
-    ...(connectorOverride ? { connector: connectorOverride } : {}) };
+  const input = { credentialRef: selectedCredential, hostname: props.hostname,
+    ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
+    ...(!zonesOnly && connectorOverride ? { connector: connectorOverride } : {}) };
   const zoneKey = JSON.stringify(input);
   const currentZones = zones?.key === zoneKey ? zones : null;
   const explicitZone = currentZones?.kind === 'unavailable' && currentZones.reason === 'zone_list_unavailable';
@@ -80,12 +86,12 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const selected = currentTunnels?.kind === 'ready' && tunnelChoice !== null
     ? currentTunnels.options[Number(tunnelChoice)]?.selection : undefined;
   // A disabled Find zones says what it is waiting for, so it never reads as a read that is stuck.
-  const zonesNeed = reading !== null ? null : !credentialRef ? t('projects.deployments.editors.zonesNeedAccount')
+  const zonesNeed = reading !== null ? null : !selectedCredential ? t('projects.deployments.editors.zonesNeedAccount')
     : !props.hostname ? t('projects.deployments.editors.zonesNeedDomain') : null;
   const stopRead = React.useCallback(() => { flight.current?.abort(); flight.current = null; }, []);
   React.useEffect(() => stopRead, [stopRead, credentialKey, tunnelChoice, props.enabled]);
-  const canRead = !!props.inspect && !!credentialRef && !!props.hostname
-    && (!connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
+  const canRead = !!props.inspect && !!selectedCredential && !!props.hostname
+    && (zonesOnly || !connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
   const inspect = async (kind: 'zones' | 'tunnels') => {
     if (!canRead || !props.inspect || kind === 'tunnels' && !zoneId) return;
     stopRead();
@@ -94,7 +100,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
     setStopped(null);
     setReading(kind);
     try {
-      const result = await props.inspect(selectionAction, { ...input, ...(kind === 'tunnels' ? { zoneId } : {}) },
+      const result = await props.inspect(zonesOnly ? 'happier.deploy.cloudflare/actions/workers-domain-zones-read' : selectionAction,
+        { ...input, ...(kind === 'tunnels' ? { zoneId } : zonesOnly && explicitZone && explicitZoneId.trim() ? { zoneId: explicitZoneId.trim() } : {}) },
         { signal: controller.signal });
       if (controller.signal.aborted) return;
       const value: unknown = result.ok ? result.value : null;
@@ -173,8 +180,10 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       title={t('projects.deployments.editors.readStopped')}
       action={{ label: t('common.retry'), testID: `${id}.${kind}.retry`, onPress: () => { void inspect(kind); } }} />
   ) : null;
-  return { selection: props.enabled ? selected : undefined, fields: props.enabled ? (
+  const selectedZone = currentZones?.kind === 'ready' ? currentZones.zones.find(zone => zone.zoneId === zoneId) : undefined;
+  return { selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
+      {!zonesOnly ? <>
       <ConnectedAccountPurposeTargetChooser
         testID={`${id}.account`}
         localizedTextPluginId={binding.service.pluginId}
@@ -201,6 +210,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
       </ExpandableItem>
+      </> : null}
       {/* A search, not a refresh glyph: a disabled refresh arrow reads as a stuck spinner (JOURNEY-OPUS-88 F2). */}
       <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
         icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
@@ -224,12 +234,12 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       ) : currentZones?.kind === 'unavailable' && reading !== 'zones' ? <SurfaceStateCard testID={`${id}.zones.error`} size="line" kind="error"
         title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail}
         action={{ label: t('common.retry'), testID: `${id}.zones.retry`, onPress: () => { void inspect('zones'); } }} /> : null}
-      {zoneId ? (
+      {!zonesOnly && zoneId ? (
         <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')}
           icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
       ) : null}
-      {zoneId ? readState('tunnels') : null}
-      {currentTunnels?.kind === 'ready' ? (
+      {!zonesOnly && zoneId ? readState('tunnels') : null}
+      {!zonesOnly && currentTunnels?.kind === 'ready' ? (
         <FieldItem label={t('projects.deployments.domainIngressTunnel')}>
           <ValueFieldSelect testID={`${id}.tunnel`} label={t('projects.deployments.domainIngressTunnel')}
             items={currentTunnels.options.map((option, index) => ({ id: String(index), title: option.label }))}
@@ -237,7 +247,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
             disabled={props.busy || currentTunnels.options.length === 0} />
           {currentTunnels.options.length === 0 ? <Text>{t('projects.deployments.domainIngressEmpty')}</Text> : null}
         </FieldItem>
-      ) : currentTunnels?.kind === 'unavailable' && reading !== 'tunnels' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
+      ) : !zonesOnly && currentTunnels?.kind === 'unavailable' && reading !== 'tunnels' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
         title={currentTunnels.remedy} diagnosticCode={currentTunnels.reason} diagnosticDetail={currentTunnels.diagnosticDetail}
         action={{ label: t('common.retry'), testID: `${id}.tunnels.retry`, onPress: () => { void inspect('tunnels'); } }} /> : null}
     </View>

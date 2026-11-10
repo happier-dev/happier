@@ -21,7 +21,8 @@ const selectedZoneResult = union([
  * Partial zones support Tunnel, but every hostname needs external DNS setup:
  * https://developers.cloudflare.com/cloudflare-one/faq/cloudflare-tunnels-faq/
  */
-export async function readSelectedZone(value: JsonValue, context: PluginAccountActionContext) {
+export async function readSelectedZone(value: JsonValue, context: PluginAccountActionContext,
+  purpose: 'tunnel.manage' | 'deploy.manage' = 'tunnel.manage') {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
   const input = value as ReturnType<typeof selectedZoneInput.parse>;
   const unavailable = (reason: string, providerStatus?: number) => ({ kind: 'unavailable' as const, zones: [], reason,
@@ -30,7 +31,7 @@ export async function readSelectedZone(value: JsonValue, context: PluginAccountA
   try {
     const response = await context.services.http.request({ method: 'GET',
       url: `https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(input.zoneId)}`, redirect: 'error',
-      credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com', method: 'GET', headerNames: ['authorization'] },
+      credentialBinding: { kind: 'connectedAccountPurpose', purpose, origin: 'https://api.cloudflare.com', method: 'GET', headerNames: ['authorization'] },
     }, { signal: context.signal }).catch(error => {
       context.signal.throwIfAborted();
       if (isPluginError(error)) throw error;

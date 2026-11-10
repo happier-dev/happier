@@ -69,8 +69,10 @@ function selectionRecovery(reason: string): { requiredFact: string; remedy: stri
  * https://developers.cloudflare.com/api/resources/zones/methods/list/
  * https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/list/
  */
-const readSelectionsImpl: PluginAccountActionHandler<ReturnType<typeof selectionsInput.parse>,
-  ReturnType<typeof selectionsResult.parse>> = async (input, context) => {
+type SelectionHandler = PluginAccountActionHandler<ReturnType<typeof selectionsInput.parse>, ReturnType<typeof selectionsResult.parse>>;
+const readSelectionsImpl = async (input: Parameters<SelectionHandler>[0], context: Parameters<SelectionHandler>[1],
+  zonesOnly = false): Promise<ReturnType<typeof selectionsResult.parse>> => {
+  const purpose = zonesOnly ? 'deploy.manage' : 'tunnel.manage';
   const accounts = await context.services.actions.execute('connectedServices.accounts.list',
     { service: input.credentialRef.service }, { signal: context.signal });
   context.signal.throwIfAborted();
@@ -88,10 +90,12 @@ const readSelectionsImpl: PluginAccountActionHandler<ReturnType<typeof selection
   const connector = input.connector ?? defaults.connector;
   const zoneId = input.zoneId;
   if (zoneId !== undefined) {
-    const selected = await readSelectedZone({ credentialRef: input.credentialRef, accountId, zoneId }, context);
+    const selected = await readSelectedZone({ credentialRef: input.credentialRef, accountId, zoneId }, context, purpose);
     if (selected.kind === 'unavailable') return unavailable(selected.reason, selected.providerStatus);
     const hostname = input.hostname.toLowerCase(), zoneName = selected.zones[0].name.toLowerCase();
     if (hostname !== zoneName && !hostname.endsWith(`.${zoneName}`)) return unavailable('hostname_outside_zone');
+    if (zonesOnly) return { kind: 'ready', zones: selected.zones.map(({ zoneId, name }) => ({ zoneId, name })),
+      options: [], defaults, connectorDiscovery };
   }
   const collection = zoneId === undefined ? 'https://api.cloudflare.com/client/v4/zones'
     : `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/cfd_tunnel`;
@@ -104,7 +108,7 @@ const readSelectionsImpl: PluginAccountActionHandler<ReturnType<typeof selection
       const query = new URLSearchParams(zoneId === undefined ? { 'account.id': accountId, page: String(page) }
         : { is_deleted: 'false', page: String(page) });
       const response = await context.services.http.request({ method: 'GET', url: `${collection}?${query}`, redirect: 'error',
-        credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com',
+        credentialBinding: { kind: 'connectedAccountPurpose', purpose, origin: 'https://api.cloudflare.com',
           method: 'GET', headerNames: ['authorization'] } }, { signal: context.signal }).catch(error => {
           context.signal.throwIfAborted();
           if (isPluginError(error)) throw error;
@@ -147,8 +151,8 @@ const readSelectionsImpl: PluginAccountActionHandler<ReturnType<typeof selection
   }
 };
 
-const readSelections: typeof readSelectionsImpl = async (input, context) => {
-  try { return await readSelectionsImpl(input, context); }
+const readSelections: typeof readSelectionsImpl = async (input, context, zonesOnly = false) => {
+  try { return await readSelectionsImpl(input, context, zonesOnly); }
   catch (error) {
     context.signal.throwIfAborted();
     if (!isPluginError(error)) throw error;
@@ -166,8 +170,18 @@ const readSelections: typeof readSelectionsImpl = async (input, context) => {
       remedy: typeof details.remedy === 'string' ? details.remedy : fallback.remedy } }, { cause: error });
   }
 };
+const readWorkerZones: SelectionHandler = (input, context) => readSelections(input, context, true);
 
 export const selectionActions = {
+  'workers-domain-zones-read': {
+    title: 'Read Workers Domain zones', description: 'List the linked Account zones or read the explicitly selected zone for this address.',
+    execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+    scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
+    inputSchema: selectionsInput, resultSchema: selectionsResult,
+    hostAccess: ['deploy.manage', 'cloudflare-api'],
+    connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
+    run: readWorkerZones,
+  },
   'cloudflare-named/selections-read': {
     title: 'Read named Cloudflare tunnel choices',
     description: 'List Account zones or read complete tunnel choices using connected Account and connector defaults with optional overrides. Connector discovery is unavailable.',

@@ -29,6 +29,8 @@ In 0.3 development, the Cloudflare plugin's read-only `cloudflare-named/selectio
 
 In 0.3 development, choosing the Cloudflare Workers or Pages target fixes the product for its linking choices. Each target supplies its own inspect fields and choice Resource, reusing the existing preparation handlers and finite provider reader. The sheet asks for that product’s account, project and environment without another Product choice or Cloudflare-specific UI logic.
 
+In 0.3 development, the Environment draft uses that same platform editor for Vercel, Cloudflare and other declared runtime targets before Save. Check reads the provider without requiring an Environment to exist. After the creation review, Create saves the Environment and passes the exact inspected provider content to the existing target-link Action. A refused link preserves the created Environment and opens its Settings for recovery. The draft and saved Permissions page share the existing deployer controls: managers, members, or chosen people and Groups from the Source's owner and shared audience. Shared Teams use the existing member and Group picker; a directly shared Account or Group can be chosen without expanding its access. Production protection remains a separate choice; Source audience admission still owns which principals can be selected.
+
 Cloudflare Pages Direct Upload accepts the provider's `success: true` asset-upload
 and hash-registration acknowledgements without a `result` field. Data-bearing
 responses still require `result`. An explicit provider rejection remains
@@ -181,6 +183,8 @@ native settlement path. Environment and check identify the retained notice;
 operation and configuration revisions remain evidence. Inventory, Test and a
 successful restore preparation do not recover a failed execution check. Native
 outcome uncertainty remains open until a successful execution of that check.
+An explicit typed cancellation does not publish a failure. An uncertain native
+outcome still publishes when the caller has stopped observing it.
 The producer captures the Environment's saved health-source alert selection at
 admission. If that read is unavailable, it retains the Inbox notice with the
 safe reason and skips off-app delivery; it does not treat unavailable settings
@@ -248,6 +252,31 @@ the existing authored-input proof. Generic Artifact creation refuses this intern
 kind. The full input digest binds the template; the metadata digest preserves the
 remaining patch while the private operand is removed before Home storage.
 
+Preview Create materializes the template's explicit variable blueprints through
+the existing reviewed bindings continuation. Fork previews retain only explicit
+plain values and deployment facts; they inherit no Saved Secret references,
+Environment references or data selections. Their exact commit is reviewed on
+Create, with Deploy as its reviewed child, before allocating the child Environment
+or preparing source and images. The same admission checks the actual build and
+runtime Machines against their complete Environment inventories and refuses
+Production workloads or incomplete placement facts.
+
+The selected wildcard Domain supplies one expanded hostname and planned URL.
+Explicit `domainUrl` and `primaryUrl` deployment facts may use that URL before the
+child route exists. Route creation follows successful deployment through the
+ordinary Domains Action; a planned URL alone does not establish serving, DNS or
+TLS readiness.
+
+In 0.3 development, saving a GitHub preview template also enrolls an ordinary
+sibling Workflow for `deployment-receipt-changed`, alongside the PR lifecycle
+source. It observes the template's preview children and passes the receipt's
+Environment and Deployment ids to the existing Forge preview-status Action.
+Its private Workflow retains the configured Account reference and repository
+configuration, never credential material. Resaving refreshes that configuration
+and reuses the Workflow identified by its qualified Action, Home and template.
+Disabling new previews leaves both sources enabled for retained-preview cleanup
+and status publication; removing the template configuration does not disarm them.
+
 ## Database SQL reads (0.3 development)
 
 The Database page and agent-facing `deployments.data.query` Action use the same
@@ -274,6 +303,16 @@ lowercase letters, digits or underscores. The `happier_` prefix is reserved.
 The native Action input reports `invalid_query_parameter` for other names;
 managed providers retain their own parameter syntax, including Supabase's
 numeric keys.
+
+The canonical psql input admission API has explicit query and dump modes.
+Dump mode accepts multiple SQL statements and PostgreSQL plain-text COPY data
+through its exact physical `\.` terminator, using the same incremental scanner
+for strings and byte streams. It refuses executable client commands and
+`COPY PROGRAM`. The exact whole-line `\restrict` and `\unrestrict` directives
+with alphanumeric keys are admitted only in dump mode, as emitted by
+[PostgreSQL plain dumps](https://www.postgresql.org/docs/16/app-pgdump.html);
+[psql owns their key matching](https://www.postgresql.org/docs/16/app-psql.html#APP-PSQL-META-COMMAND-RESTRICT).
+Query mode continues to refuse client commands and additional statements.
 
 Results use the existing public Action response envelope limit from
 `actions/externalActionLimits.ts`, including UTF-8 JSON framing, column metadata
@@ -1043,6 +1082,11 @@ declared exports with an explicit private endpoint list: each entry names its
 key, Compose service, container port and scheme. A private-network entry uses
 `exposure: 'privateNetwork'` with the selected exact network. An Iroh entry uses
 `exposure: 'loopback'` and `transport: { kind: 'iroh' }`, without `privateNetwork`.
+The same transport may also accompany an exact `privateNetwork` export; that
+export publishes both the selected network address and a literal loopback TCP
+address. `via: 'auto'` prefers the shared observed network publication, then
+falls back to Iroh. Explicit `privateNetwork` retains the exact-network choice
+for a network export. The receipt records the chosen route and network identity.
 An empty list clears the declarations. This operand cannot author public exports
 or loopback exports without the Iroh transport; existing declarations remain readable.
 `patch.definition` accepts the existing
@@ -1054,7 +1098,7 @@ the prepared content reference. Signed private authoring publishes its invocatio
 Artifact even when the selected content is unchanged. Neither an export
 declaration nor a source save opens a firewall rule or deploys the change.
 
-The Iroh export contract is development-only. Activation requires one effective
+The Iroh export contract is development-only. Activation requires one effective loopback
 TCP publication for the exported container port, bound to a literal loopback
 address with an actual host port. Host networking cannot establish that mapping.
 `resolvePrivateServiceExportAdmissionForHost` selects the active member,
@@ -1522,7 +1566,11 @@ Artifact does not establish a preview relationship, current head or approval.
 A prepared preview child identifies its current template revision, pull request
 and runtime target link. Storage derives the four preview relation ids from that
 same Source-managed repository template and live link, and requires an enabled
-saved admission definition. Standard Environments have none of those four ids.
+saved admission definition. Standard Environments persist none of those four ids.
+A standard data companion instead records one unique
+`previewCompanionOfEnvironmentId` relation to the actual preview. Read-only
+approval metadata derives its template id through that relation, so the companion
+uses the template's approval scope without acquiring a second PR identity.
 This storage relation does not establish current-head/fork approval. The Workflow
 claimant reads current `previewTemplate.data` for each PR occurrence. It creates
 `pr-<number>` through the ordinary Environment writer, using fresh child runtime
@@ -1535,13 +1583,20 @@ settings and ingress are not copied into the child.
 
 An own-server PostgreSQL selection records the original source backup capture
 and an explicit destination backup choice. Child creation prepares the selected
-template with fresh Saved Secrets and bindings. The reviewed Create continuation
+template with fresh Saved Secrets and bindings. Template preparation keeps
+selected database variables under that fresh template custody; saved parent
+variable blueprints are retained only for other variables, for both placements.
+The reviewed Create continuation
 uses `deployments.backups.configure` with `initializeAndSave` to initialize and
 save the explicit destination configuration under a child-owned prefix. The
-repository's Compose must already declare the selected PostgreSQL service and
-its variable and persistent-volume sites. The exact PR checkout remains the
-sole Compose source; template preparation supplies fresh bindings and data
-metadata without changing repository content. The Workflow
+repository's existing PostgreSQL service is used when its template metadata
+declares the selected database and persistent-volume sites. Each repository
+service serves one selection. Otherwise, ordinary Create derives one standard,
+non-production companion data Environment from the pinned catalog template;
+repeated selections use the existing Add composition to namespace their services,
+variables and volumes. The exact PR checkout remains the sole repository Compose
+source. Template preparation supplies fresh bindings and metadata without changing
+repository content. The companion's catalog owns its stored Compose. The Workflow
 first deploys only the child database, then runs the existing cross-Environment
 restore prepare/confirm Actions. A provisioned database receives a safety backup
 under the child's configuration before import. Source backup credentials stay
@@ -1550,35 +1605,38 @@ The app deploy runs only after verified restoration. A later PR event also check
 the original Run's immutable copy outcome before starting the app. An incomplete
 copy requires review or closing and reopening the preview; synchronization does
 not silently bypass it. This first native path uses one runtime Machine.
-Repositories without that service require a companion data Environment. The
-approved companion extension is being implemented at the same preview Create,
-list and close owners: one named companion belongs to the main PR preview,
-uses a catalog definition and connects through the existing private service
-reference. It does not claim a second PR preview identity or modify repository
-Compose. Its persistence migration remains a draft until feature FINAL.
+Companion database connections use ordinary private service references and fresh
+child Secret references. The catalog publishes only an ephemeral loopback port;
+the existing native observation and Iroh owners resolve its assigned port. After
+all copies verify, the ordinary binding writer connects the main preview and the
+app can deploy. Companion connections currently require native Linux Docker;
+the existing container bridge refuses Docker Desktop and non-Linux hosts.
+Saving template intent performs none of these effects.
 
 The child's private content records its creation Workflow Run. On close, the
 caller reads that Run's authenticated branch captures and invokes ordinary data
 teardown before removing the runtime and Environment. Disabling new previews
 keeps an existing lifecycle listener available for this cleanup. Native database
 provision retains the exact observed PostgreSQL volume deletion operands in the
-same Run. Close passes those operands to ordinary teardown; other volumes retain
+same Run. Close discovers the companion through its persisted relation and removes
+it before the main preview, including when the main preview was already removed.
+It passes the captured operands to ordinary teardown; other volumes retain
 their existing default. This is
 development source behavior; real GitHub delivery and managed-provider effects
 still require the composed live journey on the reloaded development stack.
 
-The GitHub plugin's development preview publication Workflow reads the current
-deployment receipt on a selected controller, then binds its receipt, Environment
-and runtime link ids into the single `github/pull-request/preview-status` Forge
-Action. It publishes an admitted own-server child and exact receipt to the current
-PR head; retrying publication does not redeploy. The host admits its Environment approval
-scope through the preview relation to the template. Publication does not grant
-deployment approval. Pending, failed and removed publications carry no URL. Ready
-publication remains unavailable until P41 supplies current application readiness
-and its authoritative preview URL; historical receipts and caller URLs do not
-supply that fact. This publication Workflow is separate from the lifecycle
-caller above. Teardown publication precedes child deletion when publication is
-part of the selected Workflow.
+The GitHub plugin's development preview publication uses the single
+`github/pull-request/preview-status` Forge Action for the enrolled receipt-change
+Workflow, explicit publication Workflows and visible retry. The receipt-change
+source also wakes on canonical Domain header changes, so an unchanged successful
+receipt can publish Ready once its Domain becomes active. The Action derives the
+publication from the current child, exact receipt and authoritative Domain URL;
+historical receipts and caller URLs do not supply readiness. Retained successful
+teardown receipts permit Removed publication after child deletion. Pending,
+failed and removed publications carry no URL. The host admits the Environment
+approval scope through the preview relation to the template; publication does
+not grant deployment approval. Retrying publication does not redeploy, and a
+publication failure leaves the ready application's URL available in PR Overview.
 
 In development source, a managed preview data-create Action retains a minimal
 paired-delete projection in its existing Workflow invocation output. Neon and
@@ -2488,8 +2546,9 @@ ledger is added. If capture or verification evidence expires with ordinary opera
 retention, a new run and verification are required before destructive maintenance.
 Development-source backup setup and retention editing use the controller Action
 `deployments.backups.configure`. Its four intents are `test`, `save`,
-`initializeAndSave` and `markNotNeeded`; each is admitted as a mutation. Setup can
-run before an Environment has a deployment target. Generic Environment updates
+`initializeAndSave` and `markNotNeeded`; each is admitted as a mutation. Setup
+that does not require a source Machine can run before an Environment has a
+deployment target. Generic Environment updates
 cannot write backup configuration or retention.
 The host resolves the installed destination and calls
 `prepareDeploymentBackupConfigurationV1` to validate its nonsecret configuration,
@@ -2498,6 +2557,13 @@ occurrence. First setup resolves creation defaults through the Project defaults
 owner; an unset retention policy means Keep everything, and no schedule is created
 implicitly. Destination field labels and choices come from its descriptor's
 `fieldHints`.
+AnotherMachine setup consumes the Environment already read by Configure. The
+selected runtime link's sole member owns its data; the controller is not a
+fallback. With zero or several members, setup returns `source_unavailable`
+before sender, credential custody or Machine Setup effects. The shared data
+operand selector uses the same single-member owner for backup and restore.
+Native multi-Machine backup and restore operands remain unavailable until an
+admitted per-service placement fact exists.
 Test acquires invocation-scoped credential material through the existing P42
 owner and checks the selected repository with a write/read/delete probe. It does
 not initialize a repository or persist configuration or bindings. Save requires
@@ -2572,26 +2638,40 @@ and Environment facts on demand, without a stored score or background polling.
 The Project home Readiness widget binds the Project itself without a checkout.
 Its explicit Environment picker borrows the Project's existing paged deployment
 collection; selection and Refresh invoke one composite read while presented.
-Opening Fix navigates to the existing Environment setup section without writing
-configuration or creating a Session. Ask agent uses the configured Triage owner
+The widget selects one Environment. The public Action also accepts a batch of
+Environments belonging to its admitted controller; a mixed-controller batch is
+refused at admission and does not route implicitly to other controllers.
+Opening Fix opens the existing owner setup or editor without writing configuration
+or creating a Session. Ask agent uses the configured Triage owner
 with the exact Project, Environment and fact. Its existing Environment subject
 retains this optional Readiness context in reference evidence and verifies the
 Environment's Project membership before choosing Agent placement. Different
 facts retain different handoff outcomes; opening the widget reads no handoff catalog.
-Its controller reads the exact Environment membership and revision, then delegates
-selected native health reads through the existing target-daemon Action. Backup health
+Its controller reads the exact Environment membership and revision. Health and
+Alerts borrow the same saved Workflow source configuration. A whole finite refresh
+performs one Account source census for its selected Environments and borrows one
+readonly notification channel catalog when destination inspection is needed;
+neither is persisted as Readiness state. Current health coverage
+comes from the admitted observer's retained Domain observations, including their
+original timestamp and same-Machine or outside vantage. Native service health is
+not evidence of saved check coverage. Secret readiness exposes only counts of current
+required grants for the exact Environment and installations, never values. Backup health
 comes only from the backup owner's exact scoped operation records: the last successful
 backup and last verification result, with their recorded completion times. Failed
 verification retains only its safe code and step on the existing operation result.
+When the caller selects only an Environment, its current runtime link supplies the
+backup target through the shared data-target selector; an explicit target remains explicit.
 Reading readiness or the daily digest never opens restic or acquires repository secrets.
 No recorded backup reports `no_verified_backup_yet`; scheduled verification owns freshness.
 The existing receipt query is daemon-local: a controller reports backup health as
 `unavailable` for another target daemon until that owner exposes reachable recorded
 facts. It never interprets inaccessible remote history as an empty backup history.
 The result identifies each fact's owner and reports `ready`, `actionNeeded` or
-`unavailable`. CI Source/check selection, health observer coverage, alert wiring,
-required secret grants and security Source status require their owning projections;
-missing projections remain explicitly unavailable. An older configuration's verified
+`unavailable`. CI and security Source presence is projected by the selected repository
+provider through the existing Forge CI and caller-scoped Triage owners; CI run results
+and security finding counts do not decide source readiness. Saved alert destinations
+are inspected by their own channel provider without sending a notification. Missing
+owner projections remain explicitly unavailable. An older configuration's verified
 backup does not establish current configured-source readiness. The backup owner
 requires recorded verification for every currently configured source, without a
 consumer-defined age threshold. Readiness does not mint another public admission or
@@ -2600,11 +2680,18 @@ the same public Actions and input builder. The daily digest reads selected Autom
 through `workflow.trigger.list` and `workflow.run.summaries`, preserving native
 next-due and actual started-run facts without a local scheduler.
 Backup maintenance reads the current Environment at execution. A saved Nightly
-target's `expectedRevision` is accepted but ignored; later Environment edits do
-not require rewriting existing triggers. Native runtime preparation uses that
-current snapshot's revision. Environment-changing Actions, including restore,
-keep their revision checks. Capture configuration, active generation and retention
-selection checks remain with their existing backup owners.
+schedule binds its Account, Home, stable Environment, destination and backup
+policy. Each occurrence resolves one current exact target through the existing
+Environment reader; run, verification and maintenance use that same capture.
+A new deployment of the same Environment does not require rewriting the trigger.
+Changing its bound identity or schedule/retention policy requires fresh automatic
+approval. Without a current target, the occurrence reports unavailable and has
+no backup effects. Environment-changing Actions, including restore, retain their
+revision checks; explicit restore and drill source captures stay exact.
+After Configure returns a captured nonnull `review.creationDefaults.backupSchedule`,
+the UI or agent adds it through the existing public `workflow.trigger.add` Action.
+Configure does not create a schedule implicitly. A failed follow-up retries only
+schedule creation; the configured backup remains visible without a schedule.
 Failed backup runs remain in the existing operation history, projected by
 `projectDeploymentBackupHistory` through `deployments.backups.history` with their
 terminal state, safe error code and step. Backups failure notices consume those
@@ -2657,7 +2744,11 @@ If a confirmation changes the prepared operands, start a new preparation rather
 than reusing the rejected operation.
 When that destination has meaningful data and its selected managed provisioner
 supports a native snapshot, preparation also retains the provisioner's exact
-snapshot offer. UI and agent approval share its coverage, billing source and
+snapshot offer when the admitted native launch has no remote Engine selector.
+A remote Engine selector suppresses that offer with the typed review reason
+`restore_snapshot_remote_engine`; ordinary restore remains available. This rule
+uses the admitted launch selector and does not infer a remote host's enrolled
+Machine identity. UI and agent approval share coverage, billing source and
 price when supplied, and observed running/stopped/unknown consistency. Snapshot
 is selected by default for an eligible offer; a root-disk-only offer explicitly
 excludes attached volumes and does not imply application quiescence. Confirmation
@@ -2693,6 +2784,15 @@ capture/current-generation reads and installed-secret acquisition to that job.
 PostgreSQL integrity uses the engine's `pg_amcheck` default corruption checks
 with `--install-missing`, not a connectivity query; its supported object scope
 is documented by [PostgreSQL](https://www.postgresql.org/docs/15/app-pgamcheck.html).
+The development PostgreSQL restore owner imports both uploads and repository
+archives through an actual restricted login, preserving that non-superuser
+object owner after activation. Successful import disables its login and removes
+its password; restored `SECURITY DEFINER` objects never become administrator-owned.
+Cancellation before retirement leaves the staged database and its restricted
+LOGIN role for manual recovery. The result names `inspectStagingDatabase`;
+inspect that operation's staged database and retire or remove its role as part
+of recovery. Cancellation does not run a separate cleanup process or expire
+the role automatically.
 Pre-migration completion retains `ownServer.preMigrationBackup` in the existing
 receipt Artifact through its existing compare-and-swap writer. The closed capture
 contains the owned manifest, actual PostgreSQL database and custom-archive format,
@@ -2749,6 +2849,19 @@ The starter creates no Environment or agent Session. Query rows, `complete` and
 any diagnostic remain in the existing child result; incomplete output does not
 claim a complete data comparison. The composed native drill and query host
 integration remain under verification.
+Exact-capture verification retains the original operation's repository and
+configuration through the same restore/P42 credential owner. The current source
+generation supplies native execution; its current backup configuration does not
+retarget the selected historical snapshot. Run and prune continue to use current
+configuration.
+
+Development-source stop-copy backups declare their exact admitted native service
+IDs and retained Domain subjects on the existing Action operation before stop.
+Confirmed resume withdraws those subjects. While that readable operation is
+running, the existing health/Inbox projection presents the same open condition
+as an Update with **Expected during backup**. After settlement or uncertain
+observation, a still-down condition uses its ordinary attention policy. These
+facts change neither health observations nor server-followed Machine presence.
 
 The private `/v1/deployments/environments/:environmentId/backup` writer reuses
 Source manage admission and the existing Environment/Artifact compare-and-swap.
@@ -3103,14 +3216,19 @@ inactive, unloaded (`LoadState=not-found`) unit as stopped; a confirmed Stop
 settles its operation rather than retaining an uncertain receipt.
 
 In 0.3 development source, the mounted Inbox explains an existing service-health
-condition from an already-readable running stop, restart, deployment or reboot operation.
+condition from an already-readable running stop, restart, deployment, backup or reboot operation.
 Native control publishes its exact service and generation before dispatch;
 reboot captures running services and retained Domain placements for the admitted
 Machine installation. Domain explanations require the exact Environment, link
-and Domain probe subject, and never cover certificate failures. An unavailable,
-uncertain, foreign-Account or settled operation supplies no explanation. This
+and Domain probe subject, and never cover certificate failures. Aggregate
+Environment health retains its ordinary condition policy. Recreate rollout
+dispatch publishes the admitted member services and retained Domain subjects
+before activation, then withdraws them on the child phase acknowledgement.
+An unavailable, reconnecting, uncertain, foreign-Account or settled operation
+supplies no explanation. The existing row renders **Expected during backup**
+(or the matching operation); it keeps the same condition and read state. This
 presentation changes neither the health observation nor server-followed presence,
-and creates no second notice or persisted expectation.
+and creates no second notice or separate expectation record.
 
 For a contributed target whose installed descriptor declares no teardown role,
 the development teardown Action prepares the existing plain detach disposition.
@@ -4112,8 +4230,8 @@ settles the public Domain state without putting the hostname or DNS values in
 server-readable metadata or the root Domain Action result.
 
 Cloudflare Pages custom domains apply to Production. An initializing or pending
-domain remains pending and retains the provider's CNAME and, when supplied, TXT
-instructions. Check again reads the provider's domain status without adding or
+provider result leaves the Domain in its warning state and retains the provider's
+CNAME and, when supplied, TXT instructions. Check again reads the provider's domain status without adding or
 retrying it. Workers custom domains require a Production script and an explicit
 zone from the linked Cloudflare Account. Zone selection reuses the existing
 Cloudflare selection owner with deployment custody and does not enumerate

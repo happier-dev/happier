@@ -84,7 +84,7 @@ import {
   readDeploymentActionError,
   type DeploymentActionOutcome,
 } from './deploymentActionOutcome';
-import type { createDeploymentActions } from './deploymentActions';
+import { createDeploymentActions } from './deploymentActions';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { useStoredDefinitionDocument } from './StoredDefinitionEditor';
@@ -102,7 +102,8 @@ import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
 import { showDeploymentPlatformTargetSheet, useDeploymentPlatformTargets, type DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
-import { showDeploymentRestoreSheet } from './DeploymentRestoreSheet';
+import { showDeploymentRestoreSheet, type DeploymentRestoreSheetInput } from './DeploymentRestoreSheet';
+import { deploymentDataTargetOperands } from '@happier-dev/deployments';
 import { deploymentRestoreOperands, retainedBackupFromSummary } from './deploymentRestore';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { useDeploymentEnvironmentDeletion } from './useDeploymentEnvironmentDeletion';
@@ -135,6 +136,10 @@ import { DeploymentAdminLogin } from './DeploymentAdminLogin';
 import type { EnvironmentCompanionId } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { EnvironmentLogsCompanion } from './EnvironmentLogsCompanion';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { randomUUID } from '@/platform/randomUUID';
+import { DeploymentVersionComparison } from './DeploymentVersionComparison';
+import { DeploymentPullRequestDeploy } from './DeploymentPullRequestDeploy';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -172,6 +177,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       environmentTitle?: (environmentId: string) => string | null;
       /** The captured Home/Account the Variables draft writes under; absent while it is not current. */
       lifetime?: ServerAccountScopeLifetime | null;
+      workspaceRef?: WorkspaceRefV1 | null;
       /** The Action owner's `deployments.bindings.set`; absent where the page cannot write. */
       setBindings?: EnvironmentBindingsCommit | null;
       /** The open tab and Settings section, from the page's URL; a standalone render keeps its own. */
@@ -197,10 +203,6 @@ export const DeploymentEnvironmentDetail = React.memo(
       onDuplicate?: (source: DeploymentEnvironmentDetailV1) => void;
       /** The Action owner's platform inspect and Link; absent where the page cannot write. */
       platformLink?: DeploymentPlatformLinkActions | null;
-      /** A platform draft was just created: open Add platform target once its detail is here. */
-      /** A platform draft's new Environment: open Add platform target on this declared target, once. */
-      openPlatformLink?: string | null;
-      onPlatformLinkOpened?: () => void;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -312,6 +314,19 @@ export const DeploymentEnvironmentDetail = React.memo(
       snapshot: environment.snapshot,
       setBindings: props.setBindings ?? null,
     });
+    const previewActions = React.useMemo(() => props.lifetime && detail
+      ? createDeploymentActions(props.lifetime, detail.environment.projectSourceId) : null,
+    [props.lifetime, detail?.environment.projectSourceId]);
+    const previewBindings = useEnvironmentSecretBindingsDraft({ environmentId: props.environmentId,
+      lifetime: props.lifetime ?? null, snapshot: environment.snapshot, bindingTarget: 'previewTemplate',
+      readOnly: !props.environmentActions,
+      setBindings: props.environmentActions && previewActions ? async (input, operation) => {
+        const template = detail?.content.previewTemplate;
+        if (!detail || !template) throw new Error('deployment_unavailable');
+        const result = await previewActions.setPreviewBindings(detail.environment, template, input, operation);
+        if (result.ok) void environment.refresh();
+        return result;
+      } : null });
     const disposition = useDeploymentEnvironmentDeletion({
       environmentId: props.environmentId,
       lifetime: props.lifetime ?? null,
@@ -326,15 +341,6 @@ export const DeploymentEnvironmentDetail = React.memo(
       machineIds.length === 1 ? machineIds[0] : null,
       readMachineOnline,
     );
-    // A platform draft opens Add platform target as soon as its new Environment can be linked.
-    const openPlatformRef = React.useRef<((initialTargetKey?: string) => void) | null>(null);
-    const { openPlatformLink, onPlatformLinkOpened } = props;
-    const canOpenPlatform = detail !== null && disposition.canLink;
-    React.useEffect(() => {
-      if (!openPlatformLink || !canOpenPlatform || !openPlatformRef.current) return;
-      openPlatformRef.current(openPlatformLink);
-      onPlatformLinkOpened?.();
-    }, [openPlatformLink, canOpenPlatform, onPlatformLinkOpened]);
 
     if (!detail) {
       // Shaped like the page while the Environment read settles (R5); a failed read is one card with Retry.
@@ -579,7 +585,6 @@ export const DeploymentEnvironmentDetail = React.memo(
         ...(props.onOpenRecoveryDestination ? { onOpenRecoveryDestination: props.onOpenRecoveryDestination } : {}),
       });
     } : null;
-    openPlatformRef.current = openPlatform;
     // Restore a backup: the pre-migration dump the serving deploy kept, read from the active receipt the page
     // already holds. The restore Action decides admission at each press.
     const servingReceipt = active.snapshot.value;
@@ -587,6 +592,15 @@ export const DeploymentEnvironmentDetail = React.memo(
       ? retainedBackupFromSummary(backupSummary.result.value, deploymentSourceLabel(servingReceipt.content)) : null;
     const restoreAction = props.restore ?? null;
     const restoreOperands = retainedBackup ? deploymentRestoreOperands(detail, retainedBackup) : null;
+    const restoreTarget = deploymentDataTargetOperands(detail);
+    const backupSources = detail.content.backup && 'configRevision' in detail.content.backup ? detail.content.backup.sources : [];
+    const uploadDestinations: NonNullable<DeploymentRestoreSheetInput['uploadTarget']>['destinations'] = backupSources.map(source =>
+      source.kind === 'volume' ? { kind: 'volume', service: source.service, volume: source.volume }
+        : { kind: 'database', service: source.service,
+          ...(retainedBackup?.service === source.service ? { database: retainedBackup.database } : {}) });
+    const uploadTarget: DeploymentRestoreSheetInput['uploadTarget'] = lifetime && restoreTarget && activeId && uploadDestinations.length
+      ? { scope: lifetime.scope, operands: { ...restoreTarget, deploymentId: activeId }, destinations: uploadDestinations } : undefined;
+
     // P10: the Add sheet opens over the Environment, in place; it never leaves for Store. Settings › Backups reuses it.
     const openAddDatabase = lifetime ? () => {
       showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
@@ -600,13 +614,13 @@ export const DeploymentEnvironmentDetail = React.memo(
         onNavigate: destination => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}),
       }) : null;
-    const openRestore = restoreAction && retainedBackup && restoreOperands ? () => {
+    const openRestore = restoreAction && (retainedBackup && restoreOperands || uploadTarget) ? () => {
       showDeploymentRestoreSheet({
         name: detail.content.name,
-        machine: machineName(restoreOperands.machineId),
-        backup: retainedBackup,
-        operands: restoreOperands,
-        restore: (input) => restoreAction(input),
+        machine: machineName(restoreOperands?.machineId ?? uploadTarget!.operands.machineId),
+        ...(retainedBackup && restoreOperands ? { backup: retainedBackup, operands: restoreOperands } : {}),
+        ...(uploadTarget ? { uploadTarget } : {}),
+        restore: (input, operation) => restoreAction(input, operation),
         onApproval: review.request,
       });
     } : null;
@@ -945,6 +959,18 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </View>
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
+              {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
+                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
+                workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
+              {detail.content.definition.kind === 'repository' ? <DeploymentPullRequestDeploy
+                key={`${props.serverId}:${props.accountId}:${detail.environment.projectSourceId}:${projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision}:${props.workspaceRef?.id}`}
+                workspaceRef={props.workspaceRef} projectSourceId={detail.environment.projectSourceId}
+                sourceRevision={projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision ?? null}
+                compose={detail.content.definition.compose} serverId={props.serverId} accountId={props.accountId}
+                disabled={!ready || deployBlocked} onDeploy={async sourceIntent => {
+                  if (!deploy || availability.kind !== 'ready') return;
+                  await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, sourceIntent, requestKey: randomUUID() }));
+                }} /> : null}
               {runtime && runtime.members.length > 1 ? (
                 <EnvironmentServersSection
                   members={runtime.members}
@@ -1059,6 +1085,9 @@ export const DeploymentEnvironmentDetail = React.memo(
               scope={props.lifetime?.scope ?? null}
               lifetime={props.lifetime ?? null}
               environmentId={props.environmentId}
+              projectSourceId={detail.environment.projectSourceId}
+              providerTargetLinkId={runtime?.source.kind === 'plugin' ? runtime.id : null}
+              providerVariablesActive={props.demand.mounted && props.demand.visible && props.demand.focused}
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
@@ -1068,6 +1097,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             <DeploymentDomainsPanel
               controller={props.controller}
               environmentId={props.environmentId}
+              healthSetup={props.lifetime && controllerMachineId
+                ? { lifetime: props.lifetime, controllerMachineId } : null}
               demand={props.demand}
               phone={props.phone}
               editing={props.domainActions ? {
@@ -1085,6 +1116,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           ) : tab === 'permissions' ? (
             <DeploymentPermissionsPanel
               detail={detail}
+              lifetime={props.lifetime ?? null}
               machineName={machineName}
               onOpenController={() => openTab('settings', 'controller')}
               onOpenPreviews={() => openTab('settings', 'previews')}
@@ -1093,6 +1125,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           ) : (
             <DeploymentEnvironmentSettingsPanel
               detail={detail}
+              previewBindings={previewBindings}
               definitionDocument={definitionDocument}
               phone={props.phone}
               controller={props.controller}

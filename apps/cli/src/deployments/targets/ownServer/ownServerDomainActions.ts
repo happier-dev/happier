@@ -167,6 +167,7 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
     request: Omit<Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0], 'input'>
         & Readonly<{ input: DeploymentTeardownInputV1 }>,
     host: DomainDiscoveryHost & Readonly<{ serverId: string; storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+        prepareProviderDomain?: NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
 ): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
     const input = request.input;
@@ -180,9 +181,12 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
     }
     const children: HostReviewedChildrenPlanV1['children'][number][] = [];
     for await (const domain of readEnvironmentDomainsForHost(input.environmentId, request.context, host)) {
-        const plan = await prepareOwnServerDomainReviewedChildren({ ...request, actionId: 'deployments.domains.remove',
+        const removal = { ...request, actionId: 'deployments.domains.remove' as const,
             input: { serverId: input.serverId, environmentId: input.environmentId, domainId: domain.id,
-                expectedDomainRevision: domain.revision, expectedRevision: input.expectedRevision, requestKey: input.requestKey } }, host);
+                expectedDomainRevision: domain.revision, expectedRevision: input.expectedRevision, requestKey: input.requestKey } };
+        if (domain.provider && !host.prepareProviderDomain) return failure('unsupported_action');
+        const plan = domain.provider ? await host.prepareProviderDomain!(removal)
+            : await prepareOwnServerDomainReviewedChildren(removal, host);
         if (plan && 'errorCode' in plan) return plan;
         if (plan) children.push(...plan.children);
     }
@@ -320,6 +324,8 @@ export function createOwnServerDomainActions(host: Readonly<{
         owner: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>['environment']['owner'],
         context: ActionExecutorContext): Promise<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>;
     persistPreparedContent: ReturnType<typeof createOwnServerDomainContentWriter>;
+    retireProviderDomain?(request: Readonly<{ domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1;
+        context: ActionExecutorContext }>): Promise<Awaited<ReturnType<NonNullable<ActionExecutorDeps['deploymentAction']>>>>;
     headers(context: ActionExecutorContext, actionId: string,
         request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
 }>) {
@@ -487,7 +493,9 @@ export function createOwnServerDomainActions(host: Readonly<{
                     if (!opened.ok) result = failure(opened.error);
                     else {
                         hostname = opened.content.hostname;
-                        result = await execute('deployments.domains.remove', { serverId: host.serverId,
+                        result = domain.provider ? host.retireProviderDomain
+                            ? await host.retireProviderDomain({ domain, content: opened.content, context }) : failure('unsupported_action')
+                            : await execute('deployments.domains.remove', { serverId: host.serverId,
                             environmentId, domainId: domain.id, expectedDomainRevision: domain.revision, expectedRevision, requestKey }, context,
                             { domain, content: opened.content });
                     }

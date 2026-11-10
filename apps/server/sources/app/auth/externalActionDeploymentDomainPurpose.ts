@@ -51,6 +51,8 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
         if ('placements' in original) {
             const { placements: _derivedPlacements, ...withoutPlacements } = original;
             candidates.push(withoutPlacements);
+            const { provider: _derivedProvider, ...withoutProvider } = withoutPlacements;
+            candidates.push(withoutProvider);
         }
         if (admitted?.authoredMetadataDigest !== undefined) {
             return 'authoredInputDigest' in original && original.authoredInputDigest === admitted.inputDigest
