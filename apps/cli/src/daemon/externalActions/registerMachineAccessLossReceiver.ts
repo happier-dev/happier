@@ -31,6 +31,7 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
   serverId: string;
   machineId: string;
   readLiveWorkInventory?: () => Promise<LiveWorkInventoryV1>;
+  readRequesterMachineResourceAccountIds?: () => readonly string[];
   resolveInstallationId: () => string | null;
   cleanupRequesterMachineTerminals?: CleanupRequesterMachineTerminals;
   /** Same P11 owner for admitted retirement and retained-binding reconciliation. */
@@ -64,7 +65,7 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
           options.memberOperations?.readProvisionedRequesterAccounts({ rpcContext: context }),
           options.readLiveWorkInventory(),
         ]);
-        const accountIds = new Set<string>();
+        const accountIds = new Set(options.readRequesterMachineResourceAccountIds?.() ?? []);
         let coverage = inventory.coverage;
         if (retained) {
           for (const accountId of retained.accountIds) accountIds.add(accountId);

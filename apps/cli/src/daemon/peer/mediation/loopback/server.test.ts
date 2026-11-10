@@ -601,6 +601,56 @@ describe('peer mediation loopback server', () => {
     }
   });
 
+  it('refuses an export tunnel without B admission even for the custodian', async () => {
+    const handshake = createIrohMachineHandshake({ flow: 'tcp_tunnel', grantOverrides: {
+      scope: { kind: 'tcp_tunnel', tunnelId: 'native-tunnel-1', allowedPorts: [3000], serviceExport: {
+        exportKey: 'web', service: { kind: 'deployment', machineId: 'machine_1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
+        installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
+        destination: { host: '127.0.0.1', port: 3000 },
+      } },
+    } });
+    const app = createPeerMediationLoopbackApp({ nowMs: () => 2000,
+      expected: { accountId: 'account_1', machineId: 'machine_1', flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'local' },
+      trustRoots: IROH_TRUST_ROOTS, tunnel: {},
+      irohMachineAdmission: { localEndpointId: IROH_TARGET_ENDPOINT_ID, role: 'acceptor', allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => null },
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open', payload: {
+        v: 2, kind: 'open', tunnelId: 'native-tunnel-1', targetMachineId: 'machine_1', routeKind: 'iroh_peer',
+        destination: { host: '127.0.0.1', port: 3000 }, grant: handshake.grant, proof: handshake.proof,
+      } });
+      expect(response.json()).toMatchObject({ ok: false, reasonCode: 'service_export_unavailable' });
+    } finally { await app.close(); }
+  });
+
+  it.each(['acceptor', 'initiator'] as const)('carries the signed export requester through the %s endpoint without granting generic shared TCP', async (role) => {
+    const serviceExport = {
+      exportKey: 'web', service: { kind: 'deployment' as const, machineId: 'machine_1', environmentId: 'environment',
+        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
+      installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
+      destination: { host: '127.0.0.1', port: 3000 },
+    };
+    const handshake = createIrohMachineHandshake({ flow: 'tcp_tunnel', accountId: 'requester',
+      grantOverrides: { scope: { kind: 'tcp_tunnel', tunnelId: 'native-tunnel-1', allowedPorts: [3000], serviceExport } } });
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2000,
+      expected: { accountId: 'custodian', machineId: role === 'acceptor' ? 'machine_1' : 'machine_source',
+        flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'local-loopback' },
+      trustRoots: IROH_TRUST_ROOTS,
+      irohMachineAdmission: { localEndpointId: role === 'acceptor' ? IROH_TARGET_ENDPOINT_ID : IROH_SOURCE_ENDPOINT_ID,
+        role, allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => ({ port: 46001 }) },
+    });
+    const headers = { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: role === 'acceptor' ? IROH_SOURCE_ENDPOINT_ID : IROH_TARGET_ENDPOINT_ID };
+    try {
+      expect((await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH, headers, payload: handshake })).statusCode).toBe(204);
+      const generic = createIrohMachineHandshake({ flow: 'tcp_tunnel', accountId: 'requester' });
+      expect((await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH, headers, payload: generic })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+        headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: 'f'.repeat(64) }, payload: handshake })).statusCode).toBe(403);
+    } finally { await app.close(); }
+  });
+
   it('rejects non-loopback bind hosts before startup', () => {
     const anyAddress = ['0', '0', '0', '0'].join('.');
     expect(assertPeerMediationLoopbackBindHost('127.0.0.1')).toBe('127.0.0.1');

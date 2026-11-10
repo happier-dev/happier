@@ -897,6 +897,26 @@ canonical voice relay policy; configured server caps are signed even when omitte
 request. Neither path invents an idle or duration budget when the application owner has none.
 Generic TCP opens still require their signed destination and the operator's port allowlist.
 
+Machine-to-Machine service exports use the same V2 Iroh TCP grant. Its optional
+`scope.serviceExport` is a `TcpTunnelServiceExportBindingV1`: Environment/service identity,
+export key, installation, deployment, generation, and one exact loopback destination.
+Home admits the authenticated requester's access to both Machines through
+`resolveMachineAdmission` at grant issue and preserves that requester in the signed grant.
+Team membership alone does not authorize guests; they need a direct Account or explicit
+Group grant as described in [Teams](teams.md). Generic shared-Machine TCP grants remain refused.
+
+Machine B's inner tunnel-open owner consumes `resolvePrivateServiceExportAdmissionForHost`
+through `resolveServiceExport` and compares its applied/served binding with the signed
+binding before TCP IO. B uses its applied deployment content and current local service row;
+it does not fetch Environment content using the requester or custodian's credentials.
+Home does not verify exports. A missing resolver, changed occurrence,
+undeclared export or different destination cannot open a service tunnel. Existing authenticated
+Machine access-loss custody calls close that requester's open forwarding streams; a downgrade
+that retains Use access leaves them running. New grants consume the current access decision.
+The existing custody reconnect census includes requester IDs from the active forward/tunnel
+owners, so Home can recover an access-loss delivery missed while disconnected.
+These are 0.3 development contracts; native composed forwarding validation belongs to NET-FWD.
+
 Preview HTTP and WebSocket adapters use native HTTP framing over the same PMS-backed Duplex.
 HTTPS targets layer native TLS over that Duplex with normal certificate and hostname verification;
 there is no insecure certificate fallback. Native HTTP decodes chunked responses before forwarding

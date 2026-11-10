@@ -98,6 +98,12 @@ function addIrohPeerRouteGrantBindingIssuesV2(
   payload: IrohPeerRouteGrantBindingFieldsV2,
   ctx: z.core.$RefinementCtx,
 ): void {
+  if (payload.scope.kind === 'tcp_tunnel' && payload.scope.serviceExport
+    && (payload.routeKind !== 'iroh_peer' || payload.iroh?.initiator.kind !== 'machine'
+      || payload.iroh.operationKind !== 'tcp_tunnel'
+      || payload.machineId !== payload.scope.serviceExport.service.machineId)) {
+    ctx.addIssue({ code: 'custom', path: ['scope', 'serviceExport'], message: 'Service exports require the exact target and Machine-initiated Iroh TCP carrier.' });
+  }
   if (payload.routeKind === 'iroh_peer') {
     const iroh = payload.iroh;
     if (!iroh) {

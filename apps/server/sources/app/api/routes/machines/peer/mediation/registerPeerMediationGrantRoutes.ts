@@ -333,8 +333,11 @@ export function registerPeerMediationGrantRoutes(
             };
         }
 
-        // Only the preview access owner can mint resource/policy-bound authority.
-        if (parsed.data.scope.kind === 'tcp_tunnel' && parsed.data.scope.preview) {
+        // Preview authority belongs to its access owner. Service exports use
+        // only the endpoint-bound V2 carrier and B's local export admission.
+        if (parsed.data.scope.kind === 'tcp_tunnel' && (parsed.data.scope.preview
+            || parsed.data.scope.serviceExport && !("v" in parsed.data && parsed.data.v === 2
+                && parsed.data.routeKind === 'iroh_peer'))) {
             return { ok: false, reasonCode: 'invalid_scope', receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected };
         }
 
@@ -522,30 +525,34 @@ export function registerPeerMediationGrantRoutes(
         const workspaceCarrier = isWorkspaceSyncMachineCarrierGrant({
             routeKind: parsed.data.routeKind, scope: parsed.data.scope, iroh: irohBinding,
         });
+        // B resolves its signed binding against the current local export at
+        // inner open. Home admits only this authenticated actor's A/B access.
+        const serviceExportCarrier = parsed.data.routeKind === 'iroh_peer'
+            && parsed.data.scope.kind === 'tcp_tunnel' && parsed.data.scope.serviceExport !== undefined;
         // Authentication already admitted the exact child and codec holder.
         // Consume its typed result rather than repeating job/receiver admission.
         // The exact native Sync envelope grants transport only, so current
         // shared Machine access suffices. Its receiving prepared target owns
         // filesystem authority and binds the signed actor.
-        const directOwnershipRejection = childAdmission ? null : await rejectUnlessMachinesOwned(accountId, [
+        const directOwnershipRejection = childAdmission && !serviceExportCarrier ? null : await rejectUnlessMachinesOwned(accountId, [
             parsed.data.machineId,
             ...(irohBinding?.initiator.kind === "machine"
                 ? [irohBinding.initiator.machineId]
                 : []),
-        ], workspaceCarrier ? null
+        ], workspaceCarrier || serviceExportCarrier ? null
             : parsed.data.flowKind === 'machine_rpc' ? 'machine_rpc_method_server_required' : 'route_unavailable');
         if (directOwnershipRejection) return directOwnershipRejection;
         if (irohBinding) {
             const endpointAuthorityRejection = await rejectUnlessIrohMachineEndpointsCurrent(
                 childAdmission?.codecAdmission.custodianAccountId ?? accountId,
                 irohBinding,
-                workspaceCarrier,
+                workspaceCarrier || serviceExportCarrier,
             );
             if (endpointAuthorityRejection) return endpointAuthorityRejection;
         }
 
         const directGrantInput = {
-            accountId: childAdmission && childSigner ? childSigner.custodianAccountId : accountId,
+            accountId: childAdmission && childSigner && !serviceExportCarrier ? childSigner.custodianAccountId : accountId,
             machineId: parsed.data.machineId,
             flowKind: parsed.data.flowKind,
             routeKind: parsed.data.routeKind,

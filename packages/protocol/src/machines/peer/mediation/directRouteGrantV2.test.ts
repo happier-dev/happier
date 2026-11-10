@@ -51,6 +51,40 @@ function payload() {
 }
 
 describe('DirectRouteGrantV2', () => {
+  it('retains the exact managed export occurrence and loopback destination in signed TCP authority', () => {
+    const serviceExport = {
+      exportKey: 'postgres',
+      service: { kind: 'deployment', machineId: 'machine-target', environmentId: 'environment',
+        environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' },
+      installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
+      destination: { host: '127.0.0.1', port: 5432 },
+    };
+    const input = {
+      ...payload(), machineId: 'machine-target', flowKind: 'tcp_tunnel', routeKind: 'iroh_peer',
+      endpointFingerprint: targetEndpointId,
+      iroh: { ...irohBinding, operationKind: 'tcp_tunnel' },
+      scope: { kind: 'tcp_tunnel', tunnelId: 'service-tunnel', allowedPorts: [5432], serviceExport },
+    };
+    const parsed = DirectRouteGrantPayloadV2Schema.parse(input);
+    expect(parsed.scope).toEqual(input.scope);
+    const signingInput = createDirectRouteGrantSigningInputV2(parsed);
+    const changed = DirectRouteGrantPayloadV2Schema.parse({ ...input, scope: {
+      ...input.scope, serviceExport: { ...serviceExport, generation: 'replacement' },
+    } });
+    expect(createDirectRouteGrantSigningInputV2(changed)).not.toEqual(signingInput);
+    for (const destination of [{ host: '192.168.1.1', port: 5432 }, { host: '127.0.0.1', port: 6379 }]) {
+      expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
+        ...input.scope, serviceExport: { ...serviceExport, destination },
+      } }).success).toBe(false);
+    }
+    expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
+      ...input.scope, allowedPorts: [5432, 6379],
+    } }).success).toBe(false);
+    expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
+      ...input.scope, serviceExport: { ...serviceExport, service: { ...serviceExport.service, machineId: 'other-machine' } },
+    } }).success).toBe(false);
+  });
+
   it('requires and signs the canonical machine/1 binding on iroh_peer requests and payloads', () => {
     const scope = {
       kind: 'bounded_transfer' as const,

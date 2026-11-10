@@ -283,9 +283,14 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
       const preparedTargetActor = options.admission.role === 'acceptor' && parsedHandshake.success
         && (parsedHandshake.data.flow === 'workspace_sync'
           || parsedHandshake.data.flow === 'finite_transfer' && parsedHandshake.data.initiator.kind === 'account_client');
+      // Home admits A/B Machine access for this actor. B's inner TCP owner
+      // admits its exact local export before any destination is dialed.
+      const serviceExportActor = parsedHandshake.success && parsedHandshake.data.flow === 'tcp_tunnel'
+        && parsedHandshake.data.grant.payload.scope.kind === 'tcp_tunnel'
+        && parsedHandshake.data.grant.payload.scope.serviceExport !== undefined;
       const verified = verifyMachineCarrierHandshakeV1({
         handshake: request.body,
-        accountId: preparedTargetActor ? parsedHandshake.data.grant.payload.accountId : options.accountId,
+        accountId: preparedTargetActor || serviceExportActor ? parsedHandshake.data.grant.payload.accountId : options.accountId,
         machineId: options.machineId,
         localEndpointId: options.admission.localEndpointId,
         role: options.admission.role,

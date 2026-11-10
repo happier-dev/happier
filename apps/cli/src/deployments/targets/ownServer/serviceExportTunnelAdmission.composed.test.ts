@@ -101,6 +101,13 @@ it('admits the requester against B current export and closes only its open strea
                     version: 2, kind: 'open', tunnelId: 'live', substreamId: 'child', payloadLength: 0,
                 } }));
                 await vi.waitFor(() => expect(sockets).toHaveLength(1));
+                const duplicate = await (app as typeof app & { injectWS(path: string): Promise<WebSocket> }).injectWS('/peer-mediation/v1/tunnel/stream');
+                duplicate.send(encodePeerTcpTunnelBinaryFrameV2({ header: {
+                    version: 2, kind: 'open', tunnelId: 'live', substreamId: 'duplicate', payloadLength: 0,
+                } }));
+                await vi.waitFor(() => expect(duplicate.readyState === 3 || sockets.length === 2).toBe(true));
+                expect(sockets).toHaveLength(1);
+                expect(duplicate.readyState).toBe(3);
                 const rpc = new RpcHandlerManager({ scopePrefix: host.machineId, encryptionMode: 'plain', logger() {},
                     authorizeRequest: input => authorizeMachineRpcRequest(input, {
                         machineId: host.machineId, resolveCustodianAccountId: async () => 'custodian',

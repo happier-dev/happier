@@ -149,7 +149,8 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 if (existing) return existing;
                 const tunnel = activeTunnels.get(tunnelId);
                 if (!tunnel) return null;
-                if (tunnel.previewApplication && (!attachPreview || tunnel.closeTransport)) return null;
+                if ((tunnel.previewApplication || tunnel.serviceExportRequesterAccountId) && tunnel.closeTransport) return null;
+                if (tunnel.previewApplication && !attachPreview) return null;
                 if (attachPreview && !tunnel.previewApplication) return null;
                 if (tunnel.openStreamTimeout) {
                     clearTimeout(tunnel.openStreamTimeout);
