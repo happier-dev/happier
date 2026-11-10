@@ -5,7 +5,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-de
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { prepareExternalActionRequesterAccountAuthorization } from './externalActionExecutionAuthorization';
+import { prepareExternalActionRequesterAccountAuthorization, resolveExternalActionRootInvocationAuthority } from './externalActionExecutionAuthorization';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -54,4 +54,7 @@ it.each([
   const prepared = await prepareExternalActionRequesterAccountAuthorization(args);
   expect(minted).toBe(true);
   expect(prepared).toMatchObject({ token: 'evidence-home-proof', binding: { authentication } });
+  // A terminal's original CLI invocation may be present-user, but the minted
+  // root retains Home's automation floor when used for admitted continuations.
+  expect(resolveExternalActionRootInvocationAuthority(prepared!)).toBe('account_automation');
 });

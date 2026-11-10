@@ -617,6 +617,9 @@ export async function readExternalActionInstalledMachine(
 /** Schema-checked provenance projection only; Home still verifies the issued root and current principal. */
 export function resolveExternalActionRootInvocationAuthority(authorization: ExternalActionExecutionAuthorizationV1): ActionRequiredAuthority {
   const binding = authorization.binding;
+  // The original terminal CLI invocation can be present-user. Its signed Home
+  // root keeps the terminal automation floor for admitted continuations.
+  if ('authentication' in binding && binding.authentication.kind === 'terminal') return 'account_automation';
   const credential = binding.sessionActionOrigin || binding.workflowActionOrigin ? 'agent'
     : 'authentication' in binding ? binding.authentication.kind : 'api_token';
   return resolveInvocationAuthority({ credential, surface: 'rpc' });
