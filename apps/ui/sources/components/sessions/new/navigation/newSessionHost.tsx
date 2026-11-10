@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter, type HrefObject } from 'expo-router';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { isNewSessionPickerSubflowPath, pickNewSessionRouteParams, type NewSessionRouteParams } from './setNewSessionPickerReturnParams';
 
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
@@ -101,6 +102,18 @@ export function NewSessionEmbeddedHostProvider(props: Readonly<{
     host: NewSessionEmbeddedHost;
     children: React.ReactNode;
 }>): React.ReactElement {
+    const routeParams = useLocalSearchParams();
+    const host = props.host;
+    const returned: NewSessionRouteParams = host.kind !== 'docked' && routeParams.newSessionHostDraftId === host.params.draftId
+        && typeof routeParams.dataId === 'string' ? pickNewSessionRouteParams(routeParams) : {};
+    const returnedKey = JSON.stringify(returned);
+    const consumedDataId = React.useRef<unknown>(undefined);
+    React.useEffect(() => {
+        if (host.kind === 'docked' || returned.newSessionHostDraftId !== host.params.draftId
+            || typeof returned.dataId !== 'string' || consumedDataId.current === returned.dataId) return;
+        consumedDataId.current = returned.dataId;
+        host.setParams(returned);
+    }, [returnedKey, host.params.draftId, host.kind, host.setParams]);
     return (
         <NewSessionEmbeddedHostContext.Provider value={props.host}>
             {props.children}
@@ -181,7 +194,8 @@ export function useNewSessionHostNavigation(): Readonly<{
     const openHostDraft = host?.openDraft;
     const onHandedOff = host?.onHandedOff;
     const presentsInPlace = host?.createdSessionPresentation === 'inPlace';
-    const dockedDraftId = host?.kind === 'docked' && typeof host.params.draftId === 'string'
+    const docked = host?.kind === 'docked';
+    const hostDraftId = typeof host?.params.draftId === 'string'
         ? host.params.draftId : null;
 
     return React.useMemo(() => {
@@ -203,10 +217,12 @@ export function useNewSessionHostNavigation(): Readonly<{
             ...router,
             setParams: (patch: Readonly<Record<string, unknown>>) => setParams(patch ?? {}),
             push: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1]) => {
-                if (dockedDraftId) {
+                if (hostDraftId && (docked || !presentsInPlace)) {
                     const objectHref: HrefObject | null = typeof href === 'object' ? href : null;
-                    const pickerHref = objectHref?.pathname.startsWith('/new/pick/')
-                        ? { ...objectHref, params: { ...objectHref.params, newSessionHostDraftId: dockedDraftId } }
+                    const isPicker = objectHref && isNewSessionPickerSubflowPath(objectHref.pathname);
+                    if (isPicker && !docked) router.setParams({ newSessionHostDraftId: hostDraftId });
+                    const pickerHref = isPicker
+                        ? { ...objectHref, params: { ...objectHref.params, newSessionHostDraftId: hostDraftId } }
                         : href;
                     // The route is unchanged; only this host's picker-return marker is added.
                     router.push(pickerHref as Parameters<RouterLike['push']>[0], options);
@@ -241,7 +257,7 @@ export function useNewSessionHostNavigation(): Readonly<{
             navigation: embeddedNavigation,
             openDraft: (entry: NewSessionHostDraftEntry) => openHostDraft(entry),
         };
-    }, [dockedDraftId, navigation, onHandedOff, openHostDraft, presentsInPlace, router, setParams]);
+    }, [hostDraftId, docked, navigation, onHandedOff, openHostDraft, presentsInPlace, router, setParams]);
 }
 
 /** Applies a `router.setParams`-style patch: `undefined` removes a key. */

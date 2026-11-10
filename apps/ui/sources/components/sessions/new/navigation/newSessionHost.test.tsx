@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { NavigationContext } from '@react-navigation/native';
@@ -15,22 +16,29 @@ import {
     useNewSessionHostParams,
     type NewSessionEmbeddedHost,
 } from './newSessionHost';
+import { completeNewSessionPickerReturn } from './setNewSessionPickerReturnParams';
+import { getTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 
 const routeBoundary = vi.hoisted(() => ({
     params: { draftId: 'route-draft', machineId: 'route-machine' } as Record<string, string>,
     push: vi.fn(),
     replace: vi.fn(),
     setParams: vi.fn(),
+    resetParams: () => {},
 }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
+    const mock = createExpoRouterMock({
         params: () => routeBoundary.params,
         navigation: { dispatch: vi.fn(), setParams: vi.fn(), canGoBack: () => true, goBack: vi.fn() },
         router: { push: routeBoundary.push, replace: routeBoundary.replace, setParams: routeBoundary.setParams },
-    }).module;
+    });
+    routeBoundary.resetParams = mock.resetParams;
+    return mock.module;
 });
+
+beforeEach(() => routeBoundary.resetParams());
 
 function useHostSurface() {
     return {
@@ -41,6 +49,61 @@ function useHostSurface() {
 }
 
 describe('newSessionHost', () => {
+    it('returns a picker result to the original inline Home composer', async () => {
+        routeBoundary.push.mockClear();
+        routeBoundary.setParams.mockClear();
+        const originalRoute = routeBoundary.params;
+        routeBoundary.params = {};
+        const setParams = vi.fn();
+        const openDraft = vi.fn();
+        const host: NewSessionEmbeddedHost = { params: { draftId: 'inline-original' }, demanded: true,
+            setParams, openDraft, onHandedOff: vi.fn() };
+        const hook = await renderHook(useHostSurface, {
+            wrapper: ({ children }: React.PropsWithChildren) => <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>,
+        });
+        try {
+            await act(async () => hook.getCurrent().navigation.router.push({ pathname: '/settings/machines/add', params: { draftId: 'inline-original' } }));
+            expect(routeBoundary.setParams).toHaveBeenCalledWith({ newSessionHostDraftId: 'inline-original' });
+            routeBoundary.params = { newSessionHostDraftId: 'inline-original', dataId: 'returned-target', machineId: 'joined' };
+            await hook.rerender();
+            expect(setParams).toHaveBeenCalledWith(expect.objectContaining({ dataId: 'returned-target', machineId: 'joined' }));
+            expect(openDraft).not.toHaveBeenCalled();
+        } finally { routeBoundary.params = originalRoute; await hook.unmount(); }
+    });
+    it('returns from nested Add to the original composer with its selected machine and draft intact', async () => {
+        routeBoundary.push.mockClear();
+        const authoring = { prompt: 'Keep this prompt', agentType: 'claude', permissionMode: 'read-only', selectedProfileId: 'original-profile' } satisfies NewSessionData;
+        const originalDataId = storeTempData(authoring);
+        const params = { draftId: 'original', dataId: originalDataId };
+        const setParams = vi.fn((patch) => Object.assign(params, patch));
+        const openDraft = vi.fn();
+        const host: NewSessionEmbeddedHost = { kind: 'docked', params, demanded: true,
+            setParams, openDraft, onHandedOff: vi.fn() };
+        const hook = await renderHook(useHostSurface, {
+            wrapper: ({ children }: React.PropsWithChildren) => <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>,
+        });
+        try {
+            hook.getCurrent().navigation.router.push({ pathname: '/settings/machines/add', params: { draftId: 'original', dataId: originalDataId } });
+            const href = routeBoundary.push.mock.calls[0][0];
+            expect(href.params.newSessionHostDraftId).toBe('original');
+            const dispatch = vi.fn();
+            completeNewSessionPickerReturn({
+                navigation: { dispatch, getState: () => ({ index: 2, routes: [
+                    { key: 'home', name: 'index' },
+                    { key: 'add', name: 'settings/machines/add', params: href.params },
+                    { key: 'pair', name: 'settings/machines/add', params: { ...href.params, path: 'pair' } },
+                ] }) },
+                router: { replace: vi.fn() }, currentParams: href.params,
+                returnToHost: (id, patch) => { if (id !== params.draftId) return false; setParams(patch); return true; },
+                managedMachineSelection: null,
+                routeParams: { machineId: 'joined', spawnServerId: 'home' },
+            });
+            expect(params).toEqual({ draftId: 'original', dataId: expect.any(String), machineId: 'joined', spawnServerId: 'home' });
+            expect(getTempData<NewSessionData>(params.dataId)).toMatchObject(authoring);
+            expect(openDraft).not.toHaveBeenCalled();
+            expect(dispatch).toHaveBeenCalledWith({ type: 'POP', payload: { count: 2 } });
+        } finally { getTempData(originalDataId); getTempData(params.dataId); await hook.unmount(); }
+    });
     it('keeps a docked draft active when the background route loses focus', async () => {
         const navigation = createNavigationPropMock({ isFocused: () => false });
         let host: NewSessionEmbeddedHost = {
@@ -177,7 +240,7 @@ describe('newSessionHost', () => {
         expect(routeBoundary.push).not.toHaveBeenCalled();
         expect(routeBoundary.replace).not.toHaveBeenCalled();
         expect(onHandedOff).toHaveBeenCalledTimes(1);
-        expect(onHandedOff).toHaveBeenCalledWith('/session/created');
+        expect(onHandedOff).toHaveBeenCalledWith('/session/created', { opened: false });
         await hook.unmount();
     });
 
@@ -205,7 +268,7 @@ describe('newSessionHost', () => {
                 profileId: 'profile', newSessionHostDraftId: 'dock-draft',
             } }, undefined);
             hook.getCurrent().navigation.router.replace('/session/created');
-            expect(onHandedOff).toHaveBeenCalledWith('/session/created');
+            expect(onHandedOff).toHaveBeenCalledWith('/session/created', { opened: false });
             expect(routeBoundary.replace).not.toHaveBeenCalled();
             expect(routeBoundary.push).toHaveBeenCalledTimes(1);
         } finally { await hook.unmount(); }

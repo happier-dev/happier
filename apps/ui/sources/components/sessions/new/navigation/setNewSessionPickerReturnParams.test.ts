@@ -8,6 +8,7 @@ import {
     pickNewSessionRouteParams,
     resolveNewSessionPickerReturnRouteKey,
     setNewSessionPickerReturnParams,
+    completeNewSessionPickerReturn,
 } from './setNewSessionPickerReturnParams';
 
 describe('pickNewSessionRouteParams', () => {
@@ -50,6 +51,30 @@ describe('buildNewSessionPickerFallbackHref', () => {
 });
 
 describe('resolveNewSessionPickerReturnRouteKey', () => {
+    it('does not mistake Add pages carrying the composer draft for the composer', () => {
+        expect(resolveNewSessionPickerReturnRouteKey({ index: 3, routes: [
+            { key: 'composer', name: 'new/index', params: { draftId: 'original' } },
+            { key: 'picker', name: 'new/pick/machine', params: { draftId: 'original' } },
+            { key: 'add', name: 'settings/machines/add', params: { draftId: 'original' } },
+            { key: 'pair', name: 'settings/machines/add', params: { draftId: 'original', path: 'pair' } },
+        ] })).toBe('composer');
+    });
+    it('applies the joined machine to the original route and unwinds the entire Add flow', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+        completeNewSessionPickerReturn({ navigation: { dispatch, getState: () => ({ index: 3, routes: [
+            { key: 'home', name: 'index' },
+            { key: 'composer', name: 'new/index', params: { draftId: 'original' } },
+            { key: 'add', name: 'settings/machines/add', params: { draftId: 'original' } },
+            { key: 'pair', name: 'settings/machines/add', params: { draftId: 'original', path: 'pair' } },
+        ] }) }, router: { replace }, currentParams: { draftId: 'original' },
+            routeParams: { machineId: 'joined' } });
+        expect(dispatch.mock.calls).toEqual([
+            [{ type: 'SET_PARAMS', source: 'composer', payload: { params: { machineId: 'joined' } } }],
+            [{ type: 'POP', payload: { count: 2 } }],
+        ]);
+        expect(replace).not.toHaveBeenCalled();
+    });
     it('recognizes a route carrying only the exact new-session draft identity', () => {
         expect(resolveNewSessionPickerReturnRouteKey({
             index: 2,

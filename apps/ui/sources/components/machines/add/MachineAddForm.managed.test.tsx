@@ -4,17 +4,93 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
+import { getTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 
-installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+const routeBoundary = vi.hoisted(() => ({ params: {} as Record<string, string>, focused: true, dispatch: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+installApprovalCommonModuleMocks({
+    text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+    reactNavigation: async () => {
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return createReactNavigationNativeMock({ navigation: { isFocused: () => routeBoundary.focused } });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ params: () => routeBoundary.params,
+            router: { push: routeBoundary.push, replace: routeBoundary.replace },
+            navigation: { dispatch: routeBoundary.dispatch, getState: () => ({ index: 1, routes: [
+                { key: 'original-composer', name: 'new', params: { draftId: routeBoundary.params.draftId } },
+                { key: 'add', name: 'settings/machines/add', params: routeBoundary.params },
+            ] }) },
+        }).module;
+    },
+});
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // Load the real route graph outside per-interaction budgets, as the picker harness does.
 await import('./MachineAddDraftScreen');
 await import('./MachineAddForm');
-beforeEach(async () => { await harness.reset(); });
+beforeEach(async () => { routeBoundary.params = {}; routeBoundary.focused = true; routeBoundary.dispatch.mockClear(); routeBoundary.push.mockClear(); routeBoundary.replace.mockClear(); await harness.reset(); });
 afterEach(async () => { const { discardMachineAdd } = await import('./useMachineAddFlow'); await act(async () => discardMachineAdd()); standardCleanup(); });
 
 describe('Add machine Connect and Create entry', () => {
+    it('opens Create in the addressed Home while retaining a connection draft for another Home', async () => {
+        const connected = await harness.addHome({ name: 'Existing setup', serverUrl: 'https://retained-connect.example', accountId: 'owner' });
+        const target = await harness.addHome({ name: 'Notice Home', serverUrl: 'https://notice-create.example', accountId: 'owner' });
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+        const { updateMachineAddFlowDraft, readMachineAddFlowDraft } = await import('./machineAddFlowStore');
+        updateMachineAddFlowDraft(current => ({ ...current, serverId: connected, path: 'ssh',
+            sshDraft: { ...current.sshDraft, host: 'keep-this-host.example' } }));
+        routeBoundary.params = { path: 'create', serverId: target };
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { MachineProvisionerPicker } = await import('@/components/settings/machines/managed/MachineProvisionerPicker');
+        const screen = await renderScreen(<MachineAddDraftScreen />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.tree.findAllByType(MachineProvisionerPicker)[0]?.props.serverId).toBe(target));
+            expect(readMachineAddFlowDraft()).toMatchObject({ serverId: connected, sshDraft: { host: 'keep-this-host.example' } });
+            expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+    it.each([true, false])('returns an arrived machine to its original draft once and leaves a later Add open (focused initially: %s)', async focused => {
+        const target = await harness.addHome({ name: 'Build', serverUrl: 'https://composer-return.example', serverIdentityId: 'srv_composer_return', accountId: 'owner' });
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: false } }, version: 1 } });
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { NavigationContext } = await import('@react-navigation/native');
+        const renderAdd = () => <NavigationContext.Provider value={createNavigationPropMock({ isFocused: () => routeBoundary.focused })}><InjectedAuthProvider credentials={null}><MachineAddDraftScreen /></InjectedAuthProvider></NavigationContext.Provider>;
+        const authoring = { prompt: 'Keep this prompt', agentType: 'claude', permissionMode: 'read-only' } satisfies NewSessionData;
+        const dataId = storeTempData(authoring);
+        routeBoundary.params = { draftId: 'original-draft', dataId, path: 'anotherComputer' };
+        routeBoundary.focused = focused;
+        storage.getState().applyMachines([], true, { sourceServerId: target });
+        let screen = await renderScreen(renderAdd());
+        try {
+            await flushHookEffects({ cycles: 10 });
+            const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
+            expect(readMachineAddFlowDraft().startedAtMs).not.toBeNull();
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'joined', activeAt: Date.now() })], true, { sourceServerId: target }));
+            if (!focused) {
+                expect(routeBoundary.dispatch).not.toHaveBeenCalled();
+                routeBoundary.focused = true;
+                await act(async () => screen.update(renderAdd()));
+            }
+            await waitForHomeGovernance(() => expect(routeBoundary.dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_PARAMS' })));
+            const result = routeBoundary.dispatch.mock.calls.find(([action]) => action.type === 'SET_PARAMS')?.[0];
+            expect(result).toMatchObject({ source: 'original-composer', payload: { params: { machineId: 'joined', spawnServerId: resolveServerProfileScopeIdForIdentifier(target) } } });
+            expect(routeBoundary.params.draftId).toBe('original-draft');
+            expect(getTempData<NewSessionData>(result.payload.params.dataId)).toMatchObject(authoring);
+            expect(routeBoundary.push).not.toHaveBeenCalled();
+            expect(routeBoundary.replace).not.toHaveBeenCalled();
+            await screen.unmount();
+            routeBoundary.dispatch.mockClear();
+            screen = await renderScreen(renderAdd());
+            await flushHookEffects({ cycles: 10 });
+            expect(routeBoundary.dispatch).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); getTempData(dataId); }
+    });
     it('hides Create for the addressed Account while keeping connection paths available', async () => {
         const target = await harness.addHome({ name: 'Build', serverUrl: 'https://creation-disabled.example', serverIdentityId: 'srv_creation_off', accountId: 'owner' });
         harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: false } }, version: 1 } });

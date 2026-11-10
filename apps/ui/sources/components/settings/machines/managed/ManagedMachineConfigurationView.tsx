@@ -109,8 +109,10 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     initialOptionsSelectors?: Readonly<Record<string, unknown>>;
     initialEnrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     initialConnectPurpose?: string;
-    /** Composer review commits local intent; only its explicit Send admits an acquisition. */
+    /** Composer review returns intent; its creation owner admits any requested acquisition. */
     onUse?: ManagedMachineUse;
+    /** Add returns to the original composer, whose creation owner creates only the Machine. */
+    createOnUse?: boolean;
     /**
      * Opened from a composer holding a drafted prompt (58d receipt, Q2): the one primary press is "Create and start
      * a session", which uses the machine and asks the composer's own Send to run (`{ send: true }`).
@@ -124,7 +126,7 @@ const NO_PRESETS: readonly ManagedMachinePresetV1[] = [];
 
 export function ManagedMachineConfigurationView(props: ManagedMachineConfigurationViewProps) {
     // "Start from" is chosen above the per-preset draft below, so its own list stays while that draft is re-read.
-    const offersStartFrom = !props.presetOnly && !props.onUse && !!props.provisioner;
+    const offersStartFrom = !props.presetOnly && (!props.onUse || props.createOnUse === true) && !!props.provisioner;
     const serverIds = React.useMemo(() => offersStartFrom ? [props.serverId] : NO_SERVERS, [offersStartFrom, props.serverId]);
     const presets = useMachinePresets(serverIds);
     const listed = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
@@ -725,7 +727,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const input = reviewedAcquireInput();
         if (!input || !facts) return;
         const draft = createManagedMachineSelectionDraft({ selection: input.selection, receipt: facts, enrollmentIdentity: input.enrollmentIdentity });
-        if (props.startsSession) props.onUse?.(draft, { send: true }); else props.onUse?.(draft);
+        if (props.createOnUse) props.onUse?.(draft, { create: true });
+        else if (props.startsSession) props.onUse?.(draft, { send: true });
+        else props.onUse?.(draft);
     };
     const create = async () => {
         const input = reviewedAcquireInput();
@@ -804,10 +808,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             onChange: policy => setDraft(current => current ? { ...current, override: policy } : current),
             onReset: () => setDraft(current => current ? { ...current, override: undefined,
                 preset: props.presetOnly && current.preset ? { id: current.preset.id, revision: current.preset.revision, name: current.preset.name } : current.preset } : current), disabled: !catalogPlacementAvailable || !catalogProvisioner || busy } : undefined,
-        primary: { label: reviewsSetup ? t('managedMachines.receipt.reviewAndCreate') : props.presetOnly ? t('common.save') : props.onUse ? props.startsSession ? t('managedMachines.receipt.createAndStart') : t('common.use') : provisioner?.descriptor.kindTitle
+        primary: { label: reviewsSetup ? t('managedMachines.receipt.reviewAndCreate') : props.presetOnly ? t('common.save') : props.onUse && !props.createOnUse ? props.startsSession ? t('managedMachines.receipt.createAndStart') : t('common.use') : provisioner?.descriptor.kindTitle
             ? t('managedMachines.receipt.createKind', { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) }) : t('managedMachines.add.create'),
             onPress: () => { if (props.presetOnly) void save(); else if (reviewsSetup) openCreationReview(); else if (props.onUse) commitUse(); else void create(); },
-            disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create',
+            disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.createOnUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create',
             // Why the action is off, or who bills, under the action that starts the billing.
             ...(props.presetOnly ? saveUnavailableReason ? { footnote: saveUnavailableReason } : {}
                 : creationUnavailableReason ?? billingFootnote ? { footnote: creationUnavailableReason ?? billingFootnote! } : {}) },

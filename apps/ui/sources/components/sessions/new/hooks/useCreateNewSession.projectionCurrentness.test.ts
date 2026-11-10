@@ -970,7 +970,8 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             resetSessionDraftRepositoryForTests();
         }
     });
-    it('submits the authored Session continuation to managed admission before acquiring a fresh target', async () => {
+    it.each([false, true])('submits only the reviewed creation to managed admission when requested (createOnly=%s)', async (managedMachineOnly) => {
+        const { Modal } = await import('@/modal');
         const selection = await createManagedDraft();
         managedActionHttp = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://session-pane.test',
             serverIdentityId: runtime.serverIdentityId, accountId: 'account-a', machineId: 'controller',
@@ -991,11 +992,14 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         const hook = await mount(null, false, { managedMachineSelection: selection, authoringDraft,
             selectedMachineId: null, selectedMachine: null, permissionMode: 'read-only', launchUserAttemptId: 'fresh-send',
             promptStore: createNewSessionPromptStore('Submitted work'),
+            ...(managedMachineOnly ? { agentType: 'claude', backendTarget: { kind: 'agent' as const,
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } : {}),
             onManagedMachineAcquisitionChange: () => {}, onManagedMachineEnrolled: async () => { throw new Error('unexpected_enrollment'); } });
         try {
-            await act(async () => { await hook.getCurrent().handleCreateSession(); });
+            await act(async () => { await hook.getCurrent().handleCreateSession({ managedMachineOnly }); });
             expect(managedAcquireRequests).toHaveLength(1);
-            expect(managedAcquireRequests[0]).toMatchObject({ selection: selection.selection, agentStart: {
+            if (managedMachineOnly) expect(managedAcquireRequests[0]).not.toHaveProperty('agentStart');
+            else expect(managedAcquireRequests[0]).toMatchObject({ selection: selection.selection, agentStart: {
                 title: 'Submitted Session', agentTarget, profileId: 'review-profile', permissionMode: 'read-only',
                 initialInput: { text: 'Submitted work' },
                 configuration: { options: { reasoning_effort: { value: 'high', updatedAtMs: 23 } } },
@@ -1003,8 +1007,37 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             expect(managedAcquireRequests[0]).not.toHaveProperty('agentStart.executionTarget');
             expect(spawnRequests).toEqual([]);
             expect(hook.params.promptStore.getPrompt()).toBe('Submitted work');
+            if (managedMachineOnly) expect(Modal.confirm).not.toHaveBeenCalled();
             expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'failed', code: 'policy_denied_field' });
         } finally { await hook.unmount(); }
+    });
+    it.each(['', 'Keep my drafted prompt'])('creates a Machine in the composer without starting a Session or changing its prompt (%s)', async prompt => {
+        const { Modal } = await import('@/modal');
+        const selection = await createManagedDraft();
+        managedMachine = { id: 'create-only-paid', homeId: runtime.serverIdentityId, custodianAccountId: 'account-a',
+            launch: selection.receipt.launch, controller: selection.receipt.controller, enrolledMachineId: 'm1', allocation: 'bound',
+            resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: {} }, creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const onManagedMachineEnrolled = vi.fn();
+        const hook = await mount(await readCurrentProjection(), false, { managedMachineSelection: selection,
+            managedMachineAcquisition: { requestId: 'create-only', selection: selection.selection, managedId: managedMachine.id },
+            onManagedMachineAcquisitionChange: () => {}, onManagedMachineEnrolled,
+            promptStore: createNewSessionPromptStore(prompt) });
+        let creating: unknown;
+        try {
+            await act(async () => { creating = hook.getCurrent().handleCreateSession({ managedMachineOnly: true }); });
+            await vi.waitFor(() => expect(onManagedMachineEnrolled).toHaveBeenCalledWith('m1', expect.any(AbortSignal), { waitForAgent: false }));
+            await act(async () => { await creating; });
+            expect(spawnRequests).toEqual([]);
+            expect(managedAcquireRequests).toEqual([]);
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(hook.params.promptStore.getPrompt()).toBe(prompt);
+            expect(hook.params.router.replace).not.toHaveBeenCalled();
+        } finally {
+            spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
+            await act(async () => { await creating; });
+            await hook.unmount();
+        }
     });
     it.each(['approve', 'decline', 'cancel', 'establish'] as const)('continues the Composer requester enrollment question through the real managed Action (%s)', async decision => {
         const { Modal } = await import('@/modal');

@@ -50,6 +50,8 @@ import type { MachinePresetEditContinuation, MachinePresetEditDraft } from './ma
 
 const route = vi.hoisted(() => ({
   replace: vi.fn(),
+  dispatch: vi.fn(),
+  getState: vi.fn(),
   params: {} as Record<string, string>,
 }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -96,6 +98,7 @@ installApprovalCommonModuleMocks({
   router: async () =>
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
       router: route,
+      navigation: route,
       params: () => route.params,
     }).module,
 });
@@ -128,6 +131,8 @@ beforeEach(async () => {
   await harness.reset();
   resetScopedHomeActionExecutorsForTests();
   route.replace.mockReset();
+  route.dispatch.mockReset();
+  route.getState.mockReset();
   route.params = {};
   nativeBoundary.rpc.mockReset();
   clearDaemonMergedProjectionCacheForTests();
@@ -910,13 +915,14 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
 
-  it('saves a name edit on an existing Account creation preset exactly once at its revision', async () => {
+  it.each(['ready', 'unavailable', 'retired'] as const)('saves a name edit on an existing Account creation preset exactly once with credential discovery=%s', async discovery => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
       serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
       installationId: defaultController.installationId })]);
     for (const [actionId, result] of [
-      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [discovery === 'unavailable'
+        ? { ...provisioner, credentialPurposes: undefined } : provisioner] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small server', cpu: 2 }])],
     ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
@@ -924,9 +930,11 @@ describe('mounted managed configurator', () => {
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const credentials = discovery === 'retired' ? [{ purpose: { consumer: provisioner.contribution, purpose: 'native-account' },
+      account: { service: { pluginId: provisioner.contribution.pluginId, localId: 'native-account' }, accountId: 'retired' } }] : undefined;
     const preset = ManagedMachinePresetV1Schema.parse({ id: 'account-rename', homeId: 'srv_add_server', revision: 0,
       name: 'Original preset', owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
-      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Original preset', choices: { cpu: 2 } } });
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Original preset', choices: { cpu: 2 }, credentials } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
     harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: {
       ...preset, name: 'Renamed preset', revision: 1, launch: { ...preset.launch, name: 'Renamed preset' },
@@ -949,6 +957,7 @@ describe('mounted managed configurator', () => {
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
       id: preset.id, expectedRevision: 0, patch: { name: 'Renamed preset', launch: { name: 'Renamed preset' } },
     });
+    expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input.patch.launch.credentials).toEqual(credentials);
     expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
     await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
     await screen.unmount();
@@ -5857,7 +5866,8 @@ describe('mounted managed configurator', () => {
     );
     await screen.unmount();
   });
-  it('uses a reviewed one-off as composer intent without admitting a resource', async () => {
+  it.each(['use', 'create', 'route-create'] as const)('uses a reviewed one-off as composer intent without admitting a resource in the configurator (%s)', async (intent) => {
+    const createOnUse = intent !== 'use';
     const serverId = await harness.addHome({
       name: 'Compute',
       serverUrl: 'https://compute.example',
@@ -5897,8 +5907,16 @@ describe('mounted managed configurator', () => {
     const onUse = vi.fn();
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
+    const { ManagedMachineConfigurationScreen } = await import('./ManagedMachineConfigurationScreen');
+    route.params = { serverId, provisioner: buildQualifiedPluginContributionKey(provisioner.contribution),
+      machineId: 'host', installationId: 'installation', draftId: 'original-composer' };
+    route.getState.mockReturnValue({ index: 2, routes: [
+      { key: 'composer', name: 'new', params: { draftId: 'original-composer' } },
+      { key: 'add', name: 'settings/machines/add', params: route.params },
+      { key: 'configure', name: 'settings/machines/add/managed', params: route.params },
+    ] });
     const screen = await renderScreen(
-      <ManagedMachineConfigurationView
+      intent === 'route-create' ? <ManagedMachineConfigurationScreen /> : <ManagedMachineConfigurationView
         serverId={serverId}
         provisioner={buildQualifiedPluginContributionKey(
           provisioner.contribution,
@@ -5908,6 +5926,7 @@ describe('mounted managed configurator', () => {
           installationId: 'installation',
         }}
         onUse={onUse}
+        createOnUse={createOnUse}
       />,
     );
     await waitForHomeGovernance(() =>
@@ -5918,8 +5937,11 @@ describe('mounted managed configurator', () => {
       ).toBeGreaterThan(0),
     );
     await act(async () => screen.pressByTestId('managed-config.sizes:small'));
-    await act(async () => screen.pressByTestId('managed-config.use'));
-    expect(onUse).toHaveBeenCalledWith(
+    await act(async () => screen.pressByTestId(createOnUse ? 'managed-config.create' : 'managed-config.use'));
+    const returned = intent === 'route-create' ? route.dispatch.mock.calls.find(([action]) => action.type === 'SET_PARAMS')?.[0] : null;
+    const { peekTempData } = await import('@/utils/sessions/tempDataStore');
+    const data = returned ? peekTempData<import('@/utils/sessions/tempDataStore').NewSessionData>(returned.payload.params.dataId) : null;
+    expect(intent === 'route-create' ? data?.managedMachineSelection : onUse.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         selection: {
           kind: 'one-off',
@@ -5938,6 +5960,12 @@ describe('mounted managed configurator', () => {
         receipt: expect.objectContaining({ optionStatus: 'current' }),
       }),
     );
+    expect(intent === 'route-create' ? data?.managedMachineUseOptions : onUse.mock.calls[0]?.[1]).toEqual(createOnUse ? { create: true } : undefined);
+    if (intent === 'route-create') {
+      expect(returned?.source).toBe('composer');
+      expect(route.dispatch).toHaveBeenCalledWith({ type: 'POP', payload: { count: 2 } });
+      expect(route.replace).not.toHaveBeenCalled();
+    }
     expect(
       harness.requests.some((request) =>
         request.path.endsWith('machines.managed.acquire'),

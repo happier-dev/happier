@@ -38,7 +38,7 @@ import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisCompute
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
+import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -105,6 +105,7 @@ type MachineAddFormProps = Readonly<{
     canCreate?: boolean;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
+    onSelectProvisioner?: (selection: ManagedProvisionerSelection) => void;
     /** `page` on a phone: push the chosen way as its own page (the route's `path`). */
     onOpenWay?: (way: MachineAddRoutePath) => void;
     /** `page` on a phone: the way this pushed page shows (the route's `path`); absent, the page lists the ways. */
@@ -168,7 +169,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // The bar names ways in only (lab af-add): which computer runs a computer-created VM is the picker's
     // to say, on that section, and Account-created machines name none.
     const pane = showCreate || active === null
-        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} />
+        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} />
         : <MachineAddPane flow={flow} pathId={active} onPage={props.layout === 'page'} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
@@ -197,7 +198,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     if (pushes) {
         const opened = props.openedWay === 'create' ? (offerCreate ? 'create' : null)
             : props.openedWay && paths.some((path) => path.id === props.openedWay) ? props.openedWay : null;
-        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} /></View>;
+        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} /></View>;
         if (opened) {
             return (
                 <View testID={props.testID}>

@@ -266,7 +266,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const startWatching = React.useCallback(() => {
         const current = readMachineAddFlowDraft();
         if (current.path && current.serverId && paths.some((candidate) => candidate.id === current.path && candidate.runs === 'command')) beginMachineAddWatch(current.serverId, current.path);
-    }, [paths]);
+    }, [paths, draft.path, draft.serverId]);
     const startThisComputer = React.useCallback(() => {
         if (chosen?.id !== 'thisComputer' || chosen.runs !== 'task' || chosen.connectedMachineId || !profile || !isActiveHome
             || !sshActions.ready || hasRunningTask() || sshActions.approval.approvalPending) return;

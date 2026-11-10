@@ -233,6 +233,8 @@ export type TemporaryComputerCreatorSettlement = Readonly<{
 }>;
 
 export type HandleCreateSessionOptions = Readonly<{
+    /** Create the reviewed Machine and keep this composer draft without starting a Session. */
+    managedMachineOnly?: boolean;
     /** What follows this Send, overriding the "After sending" setting. */
     afterSend?: NewSessionAfterSendMode;
     managedMachineRetryInstallation?: boolean;
@@ -400,8 +402,8 @@ export function useCreateNewSession(params: Readonly<{
     managedMachineSelection?: ManagedMachineSelectionDraft | null;
     managedMachineAcquisition?: ManagedMachineAcquisitionDraft | null;
     onManagedMachineAcquisitionChange?: (value: ManagedMachineAcquisitionDraft | null) => void;
-    /** Resolves only after the enrolled target's own authoritative projection is ready. */
-    onManagedMachineEnrolled?: (machineId: string, signal: AbortSignal) => Promise<void>;
+    /** Session continuation waits for the enrolled Agent; Machine-only creation just adopts the target. */
+    onManagedMachineEnrolled?: (machineId: string, signal: AbortSignal, options?: Readonly<{ waitForAgent?: boolean }>) => Promise<void>;
     onManagedMachineDeleteRequested?: () => void;
 
     setIsCreating: (v: boolean) => void;
@@ -691,6 +693,7 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
         let current = latestParamsRef.current;
+        const createsMachineOnly = opts?.managedMachineOnly === true && !!current.managedMachineSelection;
         // Launch progress is published only onto the draft this Send submitted (never a renewed host draft).
         const submittedLaunch = createSubmittedDraftLaunchPublication<NewSessionLaunchAttempt>({
             submittedDraftId: current.draftId ?? null,
@@ -780,13 +783,13 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
         try {
-            current.requireConnectedAccountDefaultsReady?.();
+            if (!createsMachineOnly) current.requireConnectedAccountDefaultsReady?.();
         } catch {
             Modal.alert(t('common.error'), t('common.unavailable'));
             reportAfterCreatedSettlement({ status: 'rejected' });
             return;
         }
-        if (!canCreateSessionWithInitialAccess(current.authoringDraft?.access, collaborationAvailabilityRef.current)) {
+        if (!createsMachineOnly && !canCreateSessionWithInitialAccess(current.authoringDraft?.access, collaborationAvailabilityRef.current)) {
             Modal.alert(t('common.error'), t('session.collaboration.accessUnavailableReason'));
             reportAfterCreatedSettlement({ status: 'rejected' });
             return;
@@ -862,16 +865,16 @@ export function useCreateNewSession(params: Readonly<{
                 managedAcquisitionRef.current = acquisition;
                 current.onManagedMachineAcquisitionChange(acquisition);
                 current.onLaunchUserAttemptIdChange?.(acquisition.requestId);
-                if (!acquisition.managedId && !submitted.authoringDraft) {
+                if (!createsMachineOnly && !acquisition.managedId && !submitted.authoringDraft) {
                     progress({ kind: 'failed', code: 'managed_continuation_unavailable' });
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
-                if (!acquisition.managedId && (!await collectAgentInstallConsent(managedDraft.receipt.launch.name) || !isCurrent())) {
+                if (!createsMachineOnly && !acquisition.managedId && (!await collectAgentInstallConsent(managedDraft.receipt.launch.name) || !isCurrent())) {
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
-                const preparedOrganizationPlacement = !acquisition.managedId ? await prepareNewSessionSpaceMembership({
+                const preparedOrganizationPlacement = !createsMachineOnly && !acquisition.managedId ? await prepareNewSessionSpaceMembership({
                     spaceMembership: submitted.spaceMembership,
                     organizationPlacement: submitted.authoringDraft?.organizationPlacement ?? { folderId: null, tagIds: [] },
                     scope, signal: cancellation.signal,
@@ -880,7 +883,7 @@ export function useCreateNewSession(params: Readonly<{
                 const result = await runManagedMachineCreation({
                     draft: managedDraft, acquisition, scope, signal: cancellation.signal, isCurrent,
                     teamCredentialPresentation: current.teamCredentialPresentation,
-                    ...(!acquisition.managedId && submitted.authoringDraft ? {
+                    ...(!createsMachineOnly && !acquisition.managedId && submitted.authoringDraft ? {
                         agentStart: buildManagedAcquireAgentStartV1FromAuthoringDraft({
                             draft: { ...submitted.authoringDraft, organizationPlacement: preparedOrganizationPlacement,
                                 sessionName: submittedSessionName,
@@ -943,6 +946,10 @@ export function useCreateNewSession(params: Readonly<{
                 managedCreation = { homeId: result.machine.homeId, managedId: result.machine.id,
                     controller: result.machine.controller };
                 managedAgentUpdate = result.agentUpdate;
+                if (createsMachineOnly) {
+                    await onManagedMachineEnrolled(result.machine.enrolledMachineId, cancellation.signal, { waitForAgent: false });
+                    return;
+                }
                 await onManagedMachineEnrolled(result.machine.enrolledMachineId, cancellation.signal);
                 const enrolled = latestParamsRef.current;
                 if (!isCurrent() || enrolled.selectedMachineId !== result.machine.enrolledMachineId

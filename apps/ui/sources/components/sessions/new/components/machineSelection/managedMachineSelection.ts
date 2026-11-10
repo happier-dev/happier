@@ -15,8 +15,8 @@ export {
     type ManagedMachineSelectionDraft,
 } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
-/** A reviewed receipt may continue through the composer's ordinary Send owner. */
-export type ManagedMachineUseOptions = Readonly<{ send?: boolean }>;
+/** A reviewed receipt may continue through the composer's ordinary creation owner. */
+export type ManagedMachineUseOptions = Readonly<{ send?: boolean; create?: boolean }>;
 export type ManagedMachineUse = (draft: ManagedMachineSelectionDraft, options?: ManagedMachineUseOptions) => void;
 
 /** Preset offers are presentation, never enrolled Machines or published Runner artifacts. */

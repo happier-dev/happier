@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { Modal } from '@/modal';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -68,11 +68,13 @@ vi.mock('socket.io-client', async (importOriginal) => (
 // Only platform/navigation, secure storage, HTTP, Socket.IO and machine RPC
 // boundaries are replaced. The complete launcher and all domain owners stay real.
 const authoringRoute = vi.hoisted(() => ({
+    prompt: 'hello' as string | undefined,
     machineId: 'credential-devbox' as string | undefined,
     agentType: 'claude' as string | undefined,
     directory: '/repo' as string | undefined,
     backendTarget: undefined as string | undefined,
     backendTargetKey: undefined as string | undefined,
+    dataId: undefined as string | undefined,
 }));
 installNewSessionScreenModelCommonModuleMocks({ storage: async (importOriginal) => importOriginal(),
     text: async () => vi.importActual<typeof import('@/text')>('@/text'),
@@ -117,7 +119,7 @@ function nativeFacts(status: 'signedIn' | 'signedOut') {
 afterEach(async () => { await standardCleanup(); await mountedConnection?.dispose(); mountedConnection = null;
     mountedBridge?.dispose(); mountedBridge = null;
     resetTeamsSnapshotsForTests();
-    rpc.mockReset(); storage.setState(initialState, true); authoringRoute.directory = '/repo'; authoringRoute.machineId = 'credential-devbox'; });
+    rpc.mockReset(); storage.setState(initialState, true); authoringRoute.directory = '/repo'; authoringRoute.machineId = 'credential-devbox'; authoringRoute.dataId = undefined; authoringRoute.prompt = 'hello'; });
 
 describe('New Session selected credential launch gate', () => {
     it('does not probe native suggestions after inherited purpose authority withdraws', async () => {
@@ -595,6 +597,9 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         profilesPresentationEnabled?: boolean;
         seedProfile?: boolean;
         actionDefault?: NewSessionDraft['actionDefault'];
+        actionsSettings?: import('@happier-dev/protocol/actions/actionSettings').ActionsSettingsV1;
+        credentials?: import('@/auth/storage/tokenStorage').AuthCredentials;
+        externalActionRequest?: (request: URL, init?: RequestInit) => Promise<Response | null>;
     }>) {
         await prepareSessionDraftPersistenceStorage();
         mountedBridge = await loadSyncSingletonForTests();
@@ -648,8 +653,11 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             complete: true, nextCursor: null, referenceGuardRevision: 1, transferControl: transfer, diagnostics: [],
         });
         const connection = await restoreServerAccountForTest({ serverUrl: `https://${accountId}.test`, accountId,
+            credentials: input.credentials,
             serverIdentityId: input.serverIdentityId,
             request: async (request, init) => {
+                const actionResponse = await input.externalActionRequest?.(new URL(String(request)), init);
+                if (actionResponse) return actionResponse;
                 const memoryResponse = await authoringMemory.handle(request, init);
                 if (memoryResponse) return memoryResponse;
                 const path = new URL(String(request)).pathname;
@@ -659,7 +667,8 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 if (path === '/v1/features') return Response.json(buildServerFeaturesResponse());
                 if (path === '/v2/account/settings') return Response.json({ version: 1,
                     content: { t: 'plain', v: { useProfiles: input.profilesPresentationEnabled ?? Boolean(input.profile || input.rememberedProfile), useEnhancedSessionWizard: false,
-                        lastUsedAgent: 'claude', lastUsedBackendTarget: input.target } } });
+                        lastUsedAgent: 'claude', lastUsedBackendTarget: input.target,
+                        ...(input.actionsSettings ? { actionsSettingsV1: input.actionsSettings } : {}) } } });
                 if (path === ACP_CATALOG_ROWS_ROUTE_V1) {
                     if (acpPhase === 'loading') await acpRead.promise;
                     if (acpPhase === 'unavailable') return Response.json({ error: 'unavailable' }, { status: 503 });
@@ -677,7 +686,8 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'claude', lastUsedBackendTarget: input.target });
         storage.setState({ settingsScope: scope, profileScope: scope, profile: AccountProfileSchema.parse({ id: accountId }),
             settings: { ...settingsDefaults, useEnhancedSessionWizard: false, useProfiles: input.profilesPresentationEnabled ?? Boolean(input.profile || input.rememberedProfile),
-                lastUsedAgent: 'claude', lastUsedBackendTarget: input.target } });
+                lastUsedAgent: 'claude', lastUsedBackendTarget: input.target,
+                ...(input.actionsSettings ? { actionsSettingsV1: input.actionsSettings } : {}) } });
         storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
         observeMachinePresenceForTest(scope, [machine.id]);
         const agentCapabilities = { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } };
@@ -861,6 +871,123 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 expect(launches).toEqual([]);
             }
         } finally { await hook.unmount(); }
+    });
+
+    it('consumes Add Create once in the original composer without sending its retained prompt', async () => {
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { installRealActionExecutorModuleLoader, createServedHomeAccountToken } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+        const { ManagedAcceptedV1Schema, managedMachineActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { storeTempData } = await import('@/utils/sessions/tempDataStore');
+        const { NewSessionEmbeddedHostProvider, mergeNewSessionHostParams } = await import('@/components/sessions/new/navigation/newSessionHost');
+        const restoreExecutor = await installRealActionExecutorModuleLoader();
+        onTestFinished(restoreExecutor);
+        const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'] } });
+        const acquired: unknown[] = [];
+        const admission = createDeferred<void>();
+        onTestFinished(() => admission.resolve());
+        let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | null = null;
+        const guest = createMachineFixture({ id: 'created-guest', activeAt: Date.now() });
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://catalog-authoring-create-return.test', serverIdentityId: 'srv_create_return',
+            accountId: 'catalog-authoring-create-return', machineId: 'credential-devbox', installationId: 'installation',
+            actionId: 'machines.managed.acquire', tokenEpoch: 0,
+            execute: async input => {
+                acquired.push(input);
+                await admission.promise;
+                return ManagedAcceptedV1Schema.parse({ managedId: 'created-managed' });
+            },
+        });
+        const fixture = await restoreCatalogAuthoringFixture({ name: 'create-return', target: bundledTarget,
+            profile: 'bundled-only', serverIdentityId: 'srv_create_return', actionsSettings,
+            credentials: { token: createServedHomeAccountToken('catalog-authoring-create-return', true) },
+            externalActionRequest: async (request, init) => {
+                if (request.pathname === managedMachineActionEndpointPathV1('machines.managed.get')) {
+                    if (!managed) throw new Error('Expected admitted managed Machine');
+                    return Response.json(managed);
+                }
+                if (request.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
+                    return createMachineReadBatchResponseFixture(init.body, id => id === guest.id
+                        ? createPlainMachineRowFixture({ id, accountId: 'catalog-authoring-create-return', machine: guest })
+                        : id === boundary.machine.id ? boundary.machine : null);
+                }
+                if (request.pathname === `/v1/machines/${guest.id}`) return Response.json({ machine:
+                    createPlainMachineRowFixture({ id: guest.id, accountId: 'catalog-authoring-create-return', machine: guest }) });
+                return boundary.handle(request, init);
+            } });
+        authoringRoute.prompt = undefined;
+        authoringRoute.machineId = undefined;
+        authoringRoute.directory = undefined;
+        const selection = createManagedMachineSelectionDraft({
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            selection: { kind: 'one-off', homeId: fixture.scope.serverId,
+                launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'credential-devbox', installationId: 'installation' },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            receipt: { launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'credential-devbox', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        managed = ManagedMachineV1Schema.parse({ id: 'created-managed', homeId: fixture.scope.serverId,
+            custodianAccountId: fixture.scope.accountId, launch: selection.receipt.launch,
+            controller: selection.receipt.controller, enrolledMachineId: guest.id, allocation: 'bound',
+            resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const retained = readNewSessionDraftFromRepository(fixture);
+        if (!retained) throw new Error('Expected original composer draft');
+        writeNewSessionDraftToRepository({ ...fixture, draft: { ...retained, input: 'Keep the original drafted prompt',
+            selectedPath: '/authored/original', permissionMode: 'read-only' } });
+        const openDraft = vi.fn();
+        let host: import('@/components/sessions/new/navigation/newSessionHost').NewSessionEmbeddedHost = {
+            kind: 'docked', demanded: true, params: { draftId: fixture.draftId, spawnServerId: fixture.scope.serverId },
+            setParams: patch => { host = { ...host, params: mergeNewSessionHostParams(host.params, patch) }; },
+            openDraft, onHandedOff: vi.fn() };
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }), {
+            wrapper: ({ children }: React.PropsWithChildren) => <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>,
+        });
+        try {
+            await vi.waitFor(() => {
+                const model = hook.getCurrent();
+                if (model.variant !== 'simple') throw new Error('Expected original simple composer');
+                expect(model.simpleProps.canCreate).toBe(true);
+                expect(model.simpleProps.promptStore.getPrompt()).toBe('Keep the original drafted prompt');
+                expect(model.simpleProps.selectedProfileId).toBe(fixture.profileId);
+            });
+            const returnedDataId = storeTempData({ managedMachineSelection: selection, managedMachineUseOptions: { create: true } });
+            host.setParams({ dataId: returnedDataId,
+                machineId: undefined, spawnServerId: fixture.scope.serverId });
+            await hook.rerender();
+            await vi.waitFor(() => expect(acquired).toHaveLength(1));
+            expect(acquired[0]).not.toHaveProperty('agentStart');
+            expect(hook.getCurrent().managedMachineDraft?.progress).toMatchObject({ kind: 'acquiring' });
+            await act(async () => { admission.resolve(); });
+            await vi.waitFor(() => {
+                const model = hook.getCurrent();
+                if (model.variant !== 'simple') throw new Error('Expected original simple composer');
+                expect(model.simpleProps.selectedMachineId).toBe(guest.id);
+            });
+            await flushHookEffects();
+            expect(acquired).toHaveLength(1);
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected original simple composer');
+            expect(model.simpleProps.promptStore.getPrompt()).toBe('Keep the original drafted prompt');
+            expect(model.simpleProps.agentType).toBe('claude');
+            expect(model.simpleProps.selectedProfileId).toBe(fixture.profileId);
+            expect(model.simpleProps.selectedPath).toBe('/authored/original');
+            await vi.waitFor(() => expect(readNewSessionDraftFromRepository(fixture)?.selectedMachineId).toBe(guest.id));
+            expect(readNewSessionDraftFromRepository(fixture)?.permissionMode).toBe('read-only');
+            expect(openDraft).not.toHaveBeenCalled();
+            expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW
+                || request.payload?.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+        } finally {
+            admission.resolve();
+            await hook.unmount();
+            authoringRoute.dataId = undefined;
+        }
     });
 
     it('recovers a managed draft and its authored folder through a local Home profile alias', async () => {

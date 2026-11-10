@@ -22,6 +22,11 @@ export function beginMachineAddWatch(serverId: string, path: MachineAddPathId): 
     updateMachineAddFlowDraft((draft) => draft.startedAtMs !== null ? draft : { ...draft, serverId, path, baseline, startedAtMs: Date.now() });
 }
 
+/** Consuming an arrival ends its watch without canceling setup that may still be finishing. */
+export function completeMachineAddWatch(): void {
+    updateMachineAddFlowDraft(draft => ({ ...draft, startedAtMs: null, baseline: null }));
+}
+
 /** The retained start promise is the one task-lifetime authority, independent of its presenter. */
 export function startMachineAddTask(kind: 'thisComputer' | 'ssh', runner: SystemTaskRunner,
     start: (isCurrent: () => boolean) => Promise<string | null>, observeCompletion?: MachineAddTaskHandle['observeCompletion'],

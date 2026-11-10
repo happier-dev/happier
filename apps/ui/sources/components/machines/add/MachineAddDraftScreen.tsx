@@ -1,6 +1,9 @@
 import * as React from 'react';
+import { useNavigation } from 'expo-router';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
+import { buildNewSessionPickerSubflowHref, completeNewSessionPickerReturn, hasNewSessionPickerContinuation, pickNewSessionRouteParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
-import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { MACHINES_ADD_SETTINGS } from '@/components/settings/machines/machinesAddSettings';
 import { MACHINES_COLLECTION_ROOT, buildMachineAddHref, type MachineAddRoutePath } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -23,6 +26,8 @@ import { readMachineAddDevice } from './useMachineAddPaths';
 import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { buildManagedMachineConfigurationRoute } from '@/components/settings/machines/managed/managedMachineConfigurationRoute';
+import { completeMachineAddWatch } from './machineAddTaskLifetime';
 
 /**
  * Settings → Machines → the machine being added (lab `add-flows` M4/M5): the collection's draft, titled
@@ -31,7 +36,20 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
  */
 export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen() {
     const router = useRouter();
-    const params = useLocalSearchParams<{ path?: string | string[] }>();
+    const navigation = useNavigation();
+    const returnToHost = useNewSessionPickerReturnHost();
+    const params = useLocalSearchParams<{ path?: string | string[]; draftId?: string; newSessionHostDraftId?: string }>();
+    const returning = hasNewSessionPickerContinuation(params);
+    const focused = useIsFocused();
+    const returnToComposer = React.useCallback((machine?: Readonly<{ machineId: string; serverId: string }>) => {
+        if (machine) completeMachineAddWatch();
+        completeNewSessionPickerReturn({ navigation, router, returnToHost,
+            currentParams: pickNewSessionRouteParams(params),
+            ...(machine ? { managedMachineSelection: null } : {}),
+            routeParams: machine ? { machineId: machine.machineId, spawnServerId: machine.serverId,
+                machinePoolId: undefined, directory: undefined, path: undefined } : {},
+        });
+    }, [navigation, router, returnToHost, params]);
     // The machine joins the Home this device uses (the flow's default target).
     const serverId = useMachineAddFlowServerId();
     const homeName = resolveHomeDisplayName(getServerProfileById(serverId));
@@ -57,12 +75,18 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         if (result !== true) fireAndForget(result, { tag });
     }, [router]);
     // A phone pushes the chosen way as its own page; that page's `path` says which (58d §D2 phone push).
-    const openWay = React.useCallback((way: MachineAddRoutePath) => navigate(buildMachineAddHref({ path: way }), 'MachineAddDraftScreen.openWay', false), [navigate]);
-    const leave = React.useCallback(() => navigate(MACHINES_COLLECTION_ROOT, 'MachineAddDraftScreen.leave', true), [navigate]);
+    const openWay = React.useCallback((way: MachineAddRoutePath) => navigate(returning
+        ? buildNewSessionPickerSubflowHref('/settings/machines/add', params, { path: way })
+        : buildMachineAddHref({ path: way }), 'MachineAddDraftScreen.openWay', false), [navigate, returning, params]);
+    const leave = React.useCallback(() => {
+        if (returning) returnToComposer();
+        else navigate(MACHINES_COLLECTION_ROOT, 'MachineAddDraftScreen.leave', true);
+    }, [navigate, returning, returnToComposer]);
     const discard = React.useCallback(async () => {
         if (await flow.discard()) leave();
     }, [flow.discard, leave]);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
+        if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
         seedAndOpenNewSession({
@@ -73,7 +97,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                 pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
             }, 'MachineAddDraftScreen.startSession', false),
         });
-    }, [navigate]);
+    }, [navigate, returning, returnToComposer]);
 
     return (
         <ItemList keyboardShouldPersistTaps="handled">
@@ -105,6 +129,10 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                         onOpenWay={openWay}
                         onClose={discard}
                         onStartSession={startSession}
+                        onArrived={returning && focused ? returnToComposer : undefined}
+                        onSelectProvisioner={returning ? selection => navigate(buildNewSessionPickerSubflowHref(
+                            buildManagedMachineConfigurationRoute(selection), params,
+                        ), 'MachineAddDraftScreen.configure', false) : undefined}
                     />
             </SettingAnchor>
         </ItemList>
