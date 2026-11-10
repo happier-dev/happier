@@ -25,6 +25,9 @@ export function WorkflowDefaultEngineControls(
     onChange: (next: WorkflowEditorDraft) => void;
     editable: boolean;
     facts?: SessionAuthoringControlFacts;
+    /** `fields`: the phone's value row (a titled field select); the chip line otherwise. */
+    presentation?: 'chips' | 'fields';
+    engineFieldTitle?: string | null;
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
@@ -76,6 +79,8 @@ export function WorkflowDefaultEngineControls(
   );
   return (
     <SessionAuthoringControls
+      {...(props.presentation === undefined ? {} : { presentation: props.presentation })}
+      {...(props.engineFieldTitle === undefined ? {} : { engineFieldTitle: props.engineFieldTitle })}
       disabled={!editable}
       fields={ENGINE_FIELDS}
       values={values}

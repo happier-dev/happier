@@ -68,7 +68,7 @@ describe('Workflow editor reviewed-copy disclosure', () => {
         expect(screen.findHostByTestId('workflow-editor-validity')?.props.role).toBe('button');
         expect(screen.getTextContent()).toContain('Write what you should check or decide here.');
     });
-    it.each(['notSaved', 'unsaved', 'failed'] as const)('offers Add and Save in the phone command bar for a %s draft', async (kind) => {
+    it.each(['notSaved', 'unsaved', 'failed'] as const)('offers Add and Save on a phone without a command bar for a %s draft', async (kind) => {
         nativeWindow.width = 390;
         const onSave = vi.fn();
         const screen = await renderScreen(<AppPaneProvider><WorkflowEditorBody
@@ -78,9 +78,10 @@ describe('Workflow editor reviewed-copy disclosure', () => {
             machineName={null} selectedBlockId={null} onSelectBlock={vi.fn()} onCustomizeBlock={vi.fn()}
             composerScope={{ kind: 'machine', machineId: null }} view="steps" onChangeView={vi.fn()}
         /></AppPaneProvider>);
-        const bar = screen.findByTestId('workflow-editor-phone-bar');
-        expect(bar?.findAll((node) => typeof node.type === 'string' && node.props.testID === 'workflow-editor-phone-add')).not.toHaveLength(0);
-        expect(bar?.findAll((node) => typeof node.type === 'string' && node.props.testID === 'workflow-editor-phone-save')).not.toHaveLength(0);
+        // The shell's tab bar keeps the bottom: Add ends the document and Save is the save line's own action.
+        expect(screen.findByTestId('workflow-editor-phone-bar')).toBeNull();
+        expect(screen.findByTestId('workflow-editor-add-root')).not.toBeNull();
+        if (kind === 'unsaved') expect(screen.findByTestId('workflow-editor-save')).not.toBeNull();
     });
     it.each([400, 1200])('keeps the review disclosure in the page scroll at width %s', async (width) => {
         nativeWindow.width = width;

@@ -35,7 +35,7 @@ describe('DESIGN-12 editor truthfulness in the real workspace', () => {
             await page.evaluate(phone => (window as unknown as Harness).editorHarness.mount(phone, 'light', 'wait'), phone);
             await page.getByTestId('workflow-editor').waitFor();
             expect(await page.getByTestId(phone ? 'workflow-editor-agent-row' : 'workflow-editor-header-engine-agentTarget').count()).toBe(0);
-            await page.getByTestId(phone ? 'workflow-editor-phone-add' : 'workflow-editor-add-root').click();
+            await page.getByTestId('workflow-editor-add-root').click();
             await page.getByRole('option', { name: /Agent step/ }).click();
             await expect.poll(() => page.getByTestId(phone ? 'workflow-editor-agent-row' : 'workflow-editor-header-engine-agentTarget').count()).toBe(1);
         } finally { await browser.close(); }
@@ -77,7 +77,7 @@ describe('DESIGN-12 editor truthfulness in the real workspace', () => {
                 const stem = `editor-${state}-${phone ? '390' : '1440'}-${theme}`;
                 await page.screenshot({ path: join(directory, `${stem}.png`) });
                 if (state === 'wait') {
-                    await page.getByTestId(phone ? 'workflow-editor-phone-add' : 'workflow-editor-add-root').click();
+                    await page.getByTestId('workflow-editor-add-root').click();
                     const agentOption = page.getByRole('option', { name: /Agent step/ });
                     await agentOption.waitFor();
                     // The real popover fades in; capture its settled surface, not a mid-animation frame.

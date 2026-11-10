@@ -1476,8 +1476,8 @@ describe('workflow editor body', () => {
         viewport.window = { width: 390, height: 844 };
         getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiMultiPanePanelsEnabled: false } });
         await screen.update(React.cloneElement(element));
-        // Recomposed as the phone page (value rows and the bottom bar) without remounting the document.
-        expect(screen.findHostByTestId('workflow-editor-phone-bar')).not.toBeNull();
+        // Recomposed as the phone page (value rows, Add at the document's end) without remounting the document.
+        expect(screen.findHostByTestId('workflow-editor-where-row')).not.toBeNull();
         expect(screen.findAllByType(KeyboardAwareScrollView as never)).toHaveLength(1);
         expect(screen.findAllByType(KeyboardAwareScrollView as never)[0] === firstScroll).toBe(true);
         expect(cardNodes.length).toBe(cardCount);
@@ -1486,7 +1486,7 @@ describe('workflow editor body', () => {
         viewport.window = { width: 1440, height: 1000 };
         getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiMultiPanePanelsEnabled: true } });
         await screen.update(React.cloneElement(element));
-        expect(screen.findHostByTestId('workflow-editor-phone-bar')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-where-row')).toBeNull();
         expect(screen.findAllByType(KeyboardAwareScrollView as never)[0] === firstScroll).toBe(true);
         expect(cardNodes.length).toBe(cardCount);
         expect(currentAnchor() === firstCard).toBe(true);
@@ -2123,7 +2123,7 @@ describe('workflow editor body', () => {
         expect(undo).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the phone bottom bar above the floating page navigation instead of under it', async () => {
+    it('ends the phone page above the floating tab bar instead of under it', async () => {
         viewport.window = { width: 390, height: 700 };
         paneState.detailsAvailable = false;
         const harness = await loadHarness();
@@ -2133,16 +2133,19 @@ describe('workflow editor body', () => {
             <SessionCockpitBottomChromeHeightContext.Provider value={84}>{children}</SessionCockpitBottomChromeHeightContext.Provider>;
         const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } },
             { wrapper: floatingNavigation });
-        const bar = screen.findHostByTestId('workflow-editor-phone-bar');
-        expect(Number(StyleSheet.flatten(bar?.props.style)?.paddingBottom)).toBeGreaterThanOrEqual(84);
+        const { KeyboardAwareScrollView } = await import('@/components/ui/keyboardAvoidance/KeyboardAwareScrollView');
+        const scroll = screen.findAllByType(KeyboardAwareScrollView as never)[0];
+        expect(Number(StyleSheet.flatten(scroll?.props.contentContainerStyle)?.paddingBottom)).toBeGreaterThanOrEqual(84);
     });
 
-    it('recomposes on a phone: the name stays in the page, value rows, Steps | Flow and a bottom bar', async () => {
+    it('recomposes on a phone: the name stays in the page, value rows, Steps | Flow, and the tab bar keeps the bottom', async () => {
         viewport.window = { width: 390, height: 700 };
         paneState.detailsAvailable = false;
         const harness = await loadHarness();
         const { KeyboardAwareScrollView } = await import('@/components/ui/keyboardAvoidance/KeyboardAwareScrollView');
-        const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } });
+        const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' },
+            projectMachines: [{ id: 'machine-1', metadata: { displayName: 'Mac Studio', homeDir: '/Users/me' } }],
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/app' }, onChangeProjectTarget: () => {} });
 
         expect(screen.findAllByType(KeyboardAwareScrollView as never)).toHaveLength(1);
         // The same pane host as a wide page (one tree across widths), without side slots on a phone.
@@ -2157,25 +2160,25 @@ describe('workflow editor body', () => {
             'workflow-editor-steps-presentation',
         ];
         expect(renderedOrder(screen, order)).toEqual(order);
-        const bar = screen.findHostByTestId('workflow-editor-phone-bar');
-        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-run-now').length).toBeGreaterThan(0);
-        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-save').length).toBeGreaterThan(0);
-        // The bar is Add · Save · Run now (07 item 21); Run now stays its one primary.
-        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-save').some((node) => node.props.display === 'secondary')).toBe(true);
-        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-run-now').some((node) => node.props.display === 'secondary')).toBe(false);
-        await screen.pressByTestIdAsync('workflow-editor-where-row');
-        expect(screen.visibleModals()).toHaveLength(1);
-        // One Add: the bar's. The document ends without a second, identical Add (lab P1).
-        expect(bar?.findAll((node) => node.props?.testID === 'workflow-editor-phone-add').length).toBeGreaterThan(0);
-        expect(screen.findHostByTestId('workflow-editor-add-root')).toBeNull();
+        // No page bar of its own, so the shell's tab bar keeps the bottom (owner 2026-11-10, item 25).
+        expect(screen.findHostByTestId('workflow-editor-phone-bar')).toBeNull();
+        // Run now stays the page's one primary, carried by the navigation header on a phone.
+        const { NavigationHeaderActions } = await import('@/components/ui/layout/NavigationHeaderActions');
+        expect(screen.findAllByType(NavigationHeaderActions).flatMap((node) => node.props.primary ? [node.props.primary.testID] : []))
+            .toEqual(['workflow-editor-run-now']);
+        // Save is the save line's own action; Add ends the document, as on a wide page.
+        expect(screen.findHostByTestId('workflow-editor-save')).not.toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-add-root')).not.toBeNull();
+        // Where it runs and Agent and model are chosen in place (owner 25): the Where owner's field and the
+        // shared engine field, never a detour through Workflow settings.
+        await screen.pressByTestIdAsync('workflow-editor-machine-row');
+        expect(screen.visibleModals()).toHaveLength(0);
+        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
         // Agent and model is a value row like Where and Triggers (04 §4.10), not a chip inside a row.
         const agentRow = screen.findByTestId('workflow-editor-agent-row');
         expect(agentRow?.findAll((node) => node.props?.testID === 'workflow-editor-header-engine')).toHaveLength(0);
+        expect(agentRow?.findAll((node) => node.props?.testID === 'workflow-editor-agent-agentTarget-row').length).toBeGreaterThan(0);
         await screen.unmount();
-        // Pressed on a fresh page, it opens the settings where its field is, as Where does.
-        const fresh = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } });
-        await fresh.pressByTestIdAsync('workflow-editor-agent-row');
-        expect(fresh.visibleModals()).toHaveLength(1);
     });
 
     it.each([
@@ -2371,14 +2374,15 @@ describe('workflow editor body', () => {
         expect(announcementWrites).not.toHaveBeenCalled();
     });
 
-    it('keeps built-in Duplicate beside the primary in the phone bar, not under the value sheet', async () => {
+    it('keeps built-in Duplicate in the phone page header, not in a bar of its own', async () => {
         viewport.window = { width: 390, height: 700 };
         paneState.detailsAvailable = false;
         const harness = await loadHarness();
         const duplicate = vi.fn();
         const screen = await renderBody(harness, { documentPresentation: { editable: false }, onRunNow: vi.fn(), onDuplicate: duplicate });
-        const bar = screen.findHostByTestId('workflow-editor-phone-bar');
-        expect(bar?.findAll((node) => node.props.testID === 'workflow-editor-duplicate').length).toBeGreaterThan(0);
+        expect(screen.findHostByTestId('workflow-editor-phone-bar')).toBeNull();
+        const header = screen.findHostByTestId('workflow-editor-header');
+        expect(header?.findAll((node) => node.props.testID === 'workflow-editor-duplicate').length).toBeGreaterThan(0);
         await screen.pressByTestIdAsync('workflow-editor-duplicate');
         expect(duplicate).toHaveBeenCalledOnce();
         expect(screen.findByTestId('workflow-editor-save-status')).toBeNull();
