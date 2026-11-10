@@ -765,6 +765,20 @@ describe('Work and Coach widget bodies', () => {
     await screen.pressByTestIdAsync('value.autopsy.turns.more.toggle');
     expect(turns()).toHaveLength(12);
   });
+  it('leads a long Session\'s witnessed phases in time order and folds the rest behind Show all · N (sweep 1110 item 16)', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
+    const howYouWork = resolveUsageHowYouWork({ period: { startMs: 0, endMs: 100_000 }, timeZoneOffsetMinutes: 0,
+      detail: { status: 'partial', phaseEvents: [], facts: Array.from({ length: 12 }, (_, index) => (
+        { workId: JSON.stringify(['s1', `t${index}`]), evidenceId: `t${index}`, agentId: 'claude', machineId: 'machine', kind: 'busy' as const,
+          startMs: index * 1000, endMs: index * 1000 + 500 })) } });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery, howYouWork }} id="usage_session_value" testID="value" />);
+    const phases = () => screen.findAllByType(IntervalTimeline).find(node => node.props.testID === 'value.autopsy.phases')!.props.intervals;
+    expect(phases()).toHaveLength(6);
+    expect(phases().map((interval: { start: number }) => interval.start)).toEqual([0, 1000, 2000, 3000, 4000, 5000]);
+    await screen.pressByTestIdAsync('value.autopsy.phases.more.toggle');
+    expect(phases().length).toBeGreaterThanOrEqual(12);
+  });
   it('retains exact Autopsy summary and mixed-basis turn amounts behind their compact values', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', costBasis: 'auto' });
     const reported = { ...contribution('eur-exact', 's1', 't1'),

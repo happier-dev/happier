@@ -73,6 +73,9 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   const drawn = projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account));
   const unreadCount = projection.accounts.length - drawn.length;
   const noPriceOnce = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null);
+  // Rows with no ended window yet say so once under the list, not on every row (sweep 1110 item 19).
+  const noneEndedOnce = drawn.filter((account) => account.read?.current
+    && summarizeUsagePlanFit(account, target).observed === 0).length > 1;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
   return (
     <View style={styles.body} testID={`${props.testID}.planFit`}>
@@ -89,13 +92,15 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
             onSettled={props.model.refresh}
             insights={insightsOf(account)}
             noPriceSaidOnce={noPriceOnce}
+            noneEndedSaidOnce={noneEndedOnce}
             testID={`${props.testID}.plan.${account.accountId}`}
           />
         ))}
       </View>
-      {noPriceOnce || unreadCount > 0 ? (
+      {noPriceOnce || noneEndedOnce || unreadCount > 0 ? (
         <Text testID={`${props.testID}.once`} style={[styles.quiet, text.detail]}>
           {[noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
+            noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
             unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null].filter(Boolean).join(' · ')}
         </Text>
       ) : null}
@@ -144,6 +149,8 @@ function PlanRow(
     insights?: UsagePlanInsights['accounts'][number];
     /** Every row lacks a price and the list says so once; the row stays quiet about it. */
     noPriceSaidOnce?: boolean;
+    /** Several rows have no ended window yet and the list says so once; the row stays quiet about it. */
+    noneEndedSaidOnce?: boolean;
   }>,
 ) {
   const { account, nowMs } = props;
@@ -253,7 +260,8 @@ function PlanRow(
   const secondary = [
     keyFact === null && !props.noPriceSaidOnce ? t('usage.board.plans.planNoPriceShort') : null,
     renewalKnown ? periodText : null,
-    fitWindow, verdict ?? (fit.observed === 0 ? t('usage.board.plans.fitNoneEnded') : null),
+    verdict ? fitWindow : null,
+    verdict ?? (fit.observed === 0 && !props.noneEndedSaidOnce ? [fitWindow, t('usage.board.plans.fitNoneEnded')].filter(Boolean).join(' · ') : null),
   ].filter(Boolean).join(' · ');
   return (
     <View

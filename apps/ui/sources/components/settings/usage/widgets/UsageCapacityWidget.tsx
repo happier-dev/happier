@@ -21,6 +21,7 @@ import {
   type UsageResetCelebrationWindow,
 } from './UsageResetCelebration';
 import {
+  UsageShowAllRows,
   useUsagePluginTheme,
   usageUnreadAccountsLabel,
   type UsageBodyProps,
@@ -58,6 +59,11 @@ const POOLED_SEGMENT_MIN_WIDTH_PX = 64;
  * the accounts are listed one row each beneath it.
  */
 const POOLED_COLUMN_LABEL_MIN_WIDTH_PX = 120;
+/**
+ * Listed beneath the pooled bar, Capacity beside other widgets stays compact (lab `d2top-A`): the accounts with
+ * the least left lead and the rest fold behind Show all, so the column never outgrows the chart beside it.
+ */
+const POOLED_LIST_LEADING_ROWS = 3;
 /**
  * Beside other widgets (Overview, Settings › Overview, a Home tile) Capacity is one pooled bar with each
  * account's figure under its segment (lab `d2top-A`, `wgusage-CD`); at full width (Plans) each account
@@ -417,6 +423,14 @@ function CapacityPooledBar(props: Readonly<{
   /** Too narrow for a label under each segment: the accounts are listed beneath the one bar, a row each. */
   listed: boolean;
 }>) {
+  const [expanded, setExpanded] = React.useState(false);
+  const listedCells = React.useMemo(() => {
+    if (!props.listed) return [];
+    const left = (cell: Cell) => cell.account.headline?.remainingFraction ?? Number.POSITIVE_INFINITY;
+    return props.runs.flatMap((run) => run.cells.map((cell) => ({ run, cell })))
+      .sort((a, b) => left(a.cell) - left(b.cell));
+  }, [props.listed, props.runs]);
+  const hidden = expanded ? 0 : Math.max(0, listedCells.length - POOLED_LIST_LEADING_ROWS);
   const label = (run: Run, cell: Cell, listed: boolean) => (
     <CapacityCell key={`${runKey(run)}:${cell.account.key}`} cell={cell} name={props.nameOf(cell.account)} nowMs={props.nowMs}
       pooled staleSaidOnce={props.staleSaidOnce} lone={props.lone} {...(listed ? { listed } : {})} testID={`${props.testID}.cell.${cell.account.accountId}`} />
@@ -445,9 +459,11 @@ function CapacityPooledBar(props: Readonly<{
       </View>
       {props.listed ? (
         <View style={styles.pooledList} accessibilityRole="list" testID={`${props.testID}.accounts`}>
-          {props.runs.flatMap((run) => run.cells.map((cell) => label(run, cell, true)))}
+          {(hidden > 0 ? listedCells.slice(0, POOLED_LIST_LEADING_ROWS) : listedCells).map(({ run, cell }) => label(run, cell, true))}
         </View>
       ) : null}
+      {props.listed ? <UsageShowAllRows label={t('usage.widgets.usage_capacity')} total={listedCells.length} hidden={hidden}
+        expanded={expanded} onToggle={() => setExpanded(value => !value)} testID={`${props.testID}.accounts.more`} /> : null}
     </>
   );
 }

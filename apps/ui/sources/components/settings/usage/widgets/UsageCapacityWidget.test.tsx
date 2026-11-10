@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { HappierListOverflowFooter } from '@happier-dev/plugin-ui/presentation';
 import * as pageAggregation from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import * as usageCost from '@happier-dev/protocol/usage/usageCost';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -494,6 +495,43 @@ it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', fals
   expect(screen.findHostByTestId('capacity.pooled') !== null).toBe(pooled);
   // A bar too narrow for a label under each segment stays one bar; its accounts are listed beneath it instead.
   expect(screen.findHostByTestId('capacity.accounts') !== null).toBe(listed);
+});
+
+it('lists only the tightest accounts under a narrow pooled bar and folds the rest behind Show all · N (sweep 1110 item 15)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const used = [10, 95, 20, 80, 30, 90, 40, 50];
+  const quota = used.map((usedPct, index) => {
+    const accountId = `acct${index}`;
+    const recordKey = { providerId: 'anthropic', accountSubjectId: accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId }, bindingKind: 'account' },
+      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: accountId },
+        observedAtMs: Date.now(), fetchedAtMs: Date.now(), staleAfterMs: 60_000,
+        source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null,
+        meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
+          unit: 'count', status: 'ok', resetsAt: Date.now() + 86_400_000, resetAtMs: Date.now() + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  });
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+  const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
+    freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'regular' },
+      geometry: { width: 520, height: 320 } }}>
+      <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>);
+  const listedCells = () => used.map((_, index) => `acct${index}`).filter(id => screen.findHostByTestId(`capacity.cell.${id}`) !== null);
+  expect(screen.findHostByTestId('capacity.accounts')).not.toBeNull();
+  // The accounts with the least left lead; the roomy rest wait behind the one show-all footer.
+  expect(listedCells().sort()).toEqual(['acct1', 'acct3', 'acct5']);
+  // The rest are one Show all · 8 away (the toggle's command dispatch is the mounted-command owner's contract).
+  const footer = screen.findAllByType(HappierListOverflowFooter).find(node => node.props.testID === 'capacity.accounts.more');
+  expect(footer?.props).toMatchObject({ total: 8, hidden: 5, expanded: false });
 });
 
 it.each(['pending', 'not_loaded'] as const)('shows an observed headline with first-read progress (%s) and replaces it when a tighter account answers', async status => {

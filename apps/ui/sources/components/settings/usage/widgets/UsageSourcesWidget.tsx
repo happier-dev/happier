@@ -26,6 +26,8 @@ import {
 } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
+import { useReportUsageBodySettled } from './usageBodyHeightMemory';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -156,6 +158,8 @@ export function UsageSourcesMachines(
   const states = stateProjection?.lifetime === props.lifetime && stateProjection.key === projectionKey ? stateProjection.states : null;
   const countIn = (state: UsageSourcesMachineState) => online.filter(machine => (states?.get(machine.id)?.state ?? 'looking') === state).length;
   const emptyCount = countIn('none');
+  // Every online machine has answered (or failed): the dispatch's cold-load floor gives way to the drawn list.
+  useReportUsageBodySettled(online.length === 0 || states !== null && countIn('looking') === 0);
   const unreadable = online.filter(machine => states?.get(machine.id)?.state === 'unreadable');
   // The server disclosure is said once for the page, beside the sources it governs.
   const consentable = online.some(machine => states?.get(machine.id)?.consentable === true);
@@ -447,7 +451,8 @@ function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder
       <View style={styles.sourceMark}><UsageAgentMark agentId={props.agentId} serverId={props.serverId} /></View>
       <View style={styles.sourceBody}>
         <Text style={styles.sourceTitle} numberOfLines={1}>{props.agent}</Text>
-        <Text style={styles.sourceSubtitle} numberOfLines={1}>{props.folder}</Text>
+        {/* Same-name folders differ at their end ("…-acct-a", "…-acct-b"): the path gives up its middle. */}
+        <MiddleEllipsisText style={styles.sourceSubtitle} value={props.folder} />
         {props.children}
       </View>
     </>

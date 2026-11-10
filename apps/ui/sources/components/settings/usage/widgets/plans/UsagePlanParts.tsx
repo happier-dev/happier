@@ -470,6 +470,8 @@ const styles = StyleSheet.create((theme) => ({
     alignSelf: 'flex-start',
     borderRadius: theme.borderRadius.sm,
   },
+  disclosureLabel: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s6, flexShrink: 1, minWidth: 0 },
+  disclosureTitle: { flexShrink: 0 },
   disclosureBody: { paddingTop: theme.space.s8 },
   rank: {
     minWidth: 18,
@@ -569,8 +571,11 @@ export function UsagePlanDisclosure(
             size={12}
             reducedMotion={reducedMotion}
           />
-          <Text style={[styles.sectionTitle, text.title]}>{props.title}</Text>
-          {props.meta ? <Text style={[styles.sectionMeta, text.detail]}>{props.meta}</Text> : null}
+          {/* The title never wraps beside its meta: where both do not fit (a phone) the meta moves beneath it. */}
+          <View style={styles.disclosureLabel}>
+            <Text style={[styles.sectionTitle, styles.disclosureTitle, text.title]} numberOfLines={1}>{props.title}</Text>
+            {props.meta ? <Text style={[styles.sectionMeta, text.detail]}>{props.meta}</Text> : null}
+          </View>
         </HappierPressable>
       )}
     >

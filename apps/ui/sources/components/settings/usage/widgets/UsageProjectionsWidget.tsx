@@ -411,7 +411,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             unknownLabel="—"
             valuesLabel={t('usage.showAll')}
             valuesCollapseLabel={t('usage.showLess')}
-            summary={[planWindowStatement(focus.window, nowMs).text, range].filter(Boolean).join(' · ')}
+            // The range is said once, by its own line under the chart.
+            summary={planWindowStatement(focus.window, nowMs).text}
             showAxis={!tile}
             showScaleValues={!tile}
             showLegend={!tile}

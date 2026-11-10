@@ -104,6 +104,7 @@ export function UsageWorkAutopsy(
   const details = useUsageChartDetails(`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.costOverTime')}`,
     selected !== null && Boolean(autopsy?.costTimeline.length) && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
   const [turnsExpanded, setTurnsExpanded] = React.useState(false);
+  const [phasesExpanded, setPhasesExpanded] = React.useState(false);
   if (!selected) return null;
   const turns = autopsy?.turns ?? [];
   // A turn is named by its place in the witnessed order, never by its raw id.
@@ -207,6 +208,8 @@ export function UsageWorkAutopsy(
   const largestShare = largest && autopsy?.amount ? Math.round((largest.amount! / autopsy.amount) * 100) : null;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
   const shownTurns = leadingUsageRows(ranked, turnsExpanded);
+  // Phases keep their witnessed order and the Session's whole extent; a long Session leads with its first ones (sweep 1110 item 16).
+  const shownPhases = leadingUsageRows(intervals, phasesExpanded);
   // What every turn shares is said once in the summary, not on each row.
   const identities = new Set(turns.map(identityLine));
   const sharedIdentity = identities.size === 1 ? [...identities][0]! : null;
@@ -244,12 +247,15 @@ export function UsageWorkAutopsy(
             ) : null}
           </View>
           <View style={styles.outcome}>
+            {/* The marks lead the line's first row; the outcome text wraps beside them, never below a lone glyph. */}
+            <View style={[styles.outcomeMarks, { height: caption.lineHeight }]}>
             <UsageWorkMarks
               agentIds={autopsy.agentIds}
               providers={autopsy.providers}
               serverId={props.serverId}
               testID={props.testID}
             />
+            </View>
             <Text style={[styles.outcomeText, caption]}>
               {[
                 `${t('usage.board.work.linkedOutcome')}: ${
@@ -358,7 +364,7 @@ export function UsageWorkAutopsy(
             theme={theme}
             label={t('usage.board.work.phases')}
             testID={`${props.testID}.phases`}
-            intervals={intervals}
+            intervals={shownPhases.rows}
             domain={domain}
             size={width !== undefined && width < PLOT_MIN_WIDTH_PX ? 'tile' : 'full'}
             formatValue={(value) => formatUsageDuration(value - domain.start)}
@@ -366,6 +372,9 @@ export function UsageWorkAutopsy(
             endLabel={t('usage.board.howYouWork.ended')}
             unknownLabel={t('usage.board.howYouWork.notRecorded')}
           />
+          <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.phases')}`}
+            total={intervals.length} hidden={shownPhases.hidden} expanded={phasesExpanded}
+            onToggle={() => setPhasesExpanded(value => !value)} testID={`${props.testID}.phases.more`} />
           {phases?.unknownEndCount ? (
             <Text style={[styles.note, caption]} testID={`${props.testID}.unknownEnds`}>
               {t('usage.board.howYouWork.unknownEnds', { count: phases.unknownEndCount })} ·{' '}
@@ -388,8 +397,9 @@ const styles = StyleSheet.create((theme) => ({
   body: { gap: 14, minWidth: 0 },
   summary: { gap: theme.space.s10, minWidth: 0 },
   facts: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s32, rowGap: theme.space.s12 },
-  outcome: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s8, rowGap: theme.space.s4 },
-  outcomeText: { ...Typography.default(), color: theme.colors.text.secondary, flexShrink: 1 },
+  outcome: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.s8 },
+  outcomeMarks: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  outcomeText: { ...Typography.default(), color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
   section: {
     gap: theme.space.s10,
     paddingTop: 14,

@@ -445,13 +445,15 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
-          shows the selected view without the chooser and its + (D23): arranging dashboards is desktop work. */}
-      {session || phone ? null : <WidgetAreaLayoutBar
+          keeps choosing a view but not arranging one (D23): no + and no ⋯ (rename, reorder, delete). */}
+      {session ? null : <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}
-        onCreate={bar.create}
-        actions={bar.personalActions}
+        onCreate={phone ? null : bar.create}
+        actions={phone ? null : bar.personalActions}
+        // Under the page's own "Usage" title the phone's view name speaks at the section step.
+        heading={phone ? 'section' : 'page'}
         // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
         testID="usage-views"

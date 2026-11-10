@@ -640,19 +640,23 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
     },
+    // Identity first: the email gives up its room before the plan, and both before the account's name.
     accountLabel: {
         flexShrink: 1,
+        minWidth: 0,
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.primary,
     },
     plan: {
-        flexShrink: 0,
+        flexShrink: 10,
+        minWidth: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
     email: {
         marginLeft: 'auto',
-        flexShrink: 1,
+        flexShrink: 100,
+        minWidth: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
         textAlign: 'right',

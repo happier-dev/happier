@@ -102,6 +102,8 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               caption={[
                 fact.amountUsd === null
                   ? t('usage.board.page.factUnpricedOverlap')
+                  // Money with no counted tokens (an Agent that reports cost only) has no token line, never "— tokens".
+                  : fact.tokens.total === null ? null
                   : fact.kind === 'api_equivalent'
                     ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(fact.tokens.total) })
                     : t('usage.board.page.factTokens', {
