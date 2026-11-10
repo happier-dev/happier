@@ -4,12 +4,13 @@ import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import type { ManagedMachinePresetCreationV1, ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { buildManagedMachineSelectionOffers } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
+import { useManagedMachineSelectionOffers } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 import { useMachinePreset, useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -59,10 +60,15 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             && placement.homeId === preset.homeId && placement.presetId === preset.id) return;
         state.save(withPlacement(state.defaults, { kind: 'preset', homeId: preset.homeId, presetId: preset.id }));
     });
-    const offers = React.useMemo(() => homeId ? buildManagedMachineSelectionOffers({
-        homeId, presets: presetRows, oneOffTitle: t('managedMachines.picker.oneOff'), onConfigure: choosePreset,
-        // Only saved preset identities can be persisted as member defaults; one-off reviews cannot.
-    }).filter(offer => offer.kind === 'preset') : [], [homeId, presetRows, choosePreset]);
+    // The closed field shows its selected record through the same offer, so it reads as the open list does.
+    const selectedPreset = selectedRecord.state.value;
+    const offerPresets = React.useMemo(() => open ? presetRows : selectedPreset ? [selectedPreset] : EMPTY_PRESETS,
+        [open, presetRows, selectedPreset]);
+    const { binding } = useServerCredentialAccountScopeBinding(state.serverId);
+    const allOffers = useManagedMachineSelectionOffers({ homeId, binding, serverId: state.serverId,
+        presets: offerPresets, machines, configure: choosePreset });
+    // Only saved preset identities can be persisted as member defaults; one-off reviews cannot.
+    const offers = React.useMemo(() => allOffers.filter(offer => offer.kind === 'preset'), [allOffers]);
     const selectedPresetTitle = placement?.kind === 'preset' ? offers.find(offer =>
         offer.homeId === placement.homeId && offer.presetId === placement.presetId)?.title
         ?? selectedRecord.state.value?.name : undefined;
@@ -90,7 +96,8 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             includeSelectedUnavailableMachine
             noItemsMessage={presetState?.loading ? t('common.loading') : undefined}
             dropdownTitle={t('teams.settings.memberDefaults.machine')}
-            dropdownSubtitle={[selectedPresetTitle ?? unseen, note].filter(Boolean).join(' ') || undefined}
+            // The field names the selection; the line beneath carries only what the field cannot.
+            dropdownSubtitle={[unseen, note].filter(Boolean).join(' ') || undefined}
             dropdownTestID={props.testID}
             testIdPrefix={props.testID}
             dropdownClearOption={{

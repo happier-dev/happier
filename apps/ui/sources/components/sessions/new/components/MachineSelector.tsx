@@ -287,11 +287,13 @@ export function MachineSelector({
         const machineItems = favoriteGroupPlacement === 'beforeRecent'
             ? [...favoriteItems, ...recentItems, ...allItems]
             : [...recentItems, ...favoriteItems, ...allItems];
+        // Presets read as New Session's "New machine" group: their mark (else the stack glyph) and where they run.
         return [...machineItems, ...managedOffers.map(offer => ({
             id: offer.id,
             title: offer.title,
             subtitle: [offer.subtitle, offer.unavailableText].filter(Boolean).join(' ') || undefined,
-            icon: offer.mark,
+            category: t('newSession.managedMachine.title'),
+            icon: offer.mark ?? <Icon name="stack" size={20} color={theme.colors.text.secondary} />,
             disabled: offer.disabled,
         }))];
     }, [
@@ -305,6 +307,7 @@ export function MachineSelector({
         recentSectionTitle,
         showFavorites,
         showRecent,
+        theme.colors.text.secondary,
         toDropdownItem,
         visibleAllMachines,
         visibleRecentMachinesWithoutFavorites,
@@ -341,7 +344,7 @@ export function MachineSelector({
                     search={showSearch}
                     searchPlaceholder={searchPlaceholder}
                     emptyLabel={noItemsMessage}
-                    showCategoryTitles={showFavorites || showRecent || visibleAllMachines.some((machine) => machine.isShared)}
+                    showCategoryTitles={showFavorites || showRecent || managedOffers.length > 0 || visibleAllMachines.some((machine) => machine.isShared)}
                     matchTriggerWidth
                     connectToTrigger
                     popoverBoundaryRef={popoverBoundaryRef}
