@@ -8,9 +8,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
-import { NavigationHeaderActions } from '@/components/ui/layout/NavigationHeaderActions';
-import { HEADER_ACTIONS_GAP_PX } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -60,7 +57,6 @@ import { useConnectedServicesIndex, type ConnectedServicesGatewayRow } from '../
 import {
     CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE,
     CONNECTED_SERVICES_COLLECTION_ROUTE,
-    CONNECTED_SERVICES_OVERVIEW_ROUTE,
     buildCredentialsSecretRoute,
     resolveConnectedServicesSelection,
     type ConnectedServicesSelection,
@@ -117,10 +113,6 @@ export type ConnectedServicesRailViewProps = Readonly<{
     /** "+" on Pools (a menu of services when there are several); absent when no service can hold one. */
     renderNewPool?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     onOpenAgentSignIn: () => void;
-    /** The phone's collection list (it is the page, lab `s2svc:listP`): a row out to All services at the foot. */
-    onOpenOverview?: (() => void) | null;
-    /** `page`: the list is the phone's page under the navigation bar; `rail` (default): the column beside a detail. */
-    variant?: 'rail' | 'page';
     /** Gateways that draw on these subscriptions; each opens its one page (shared with Providers). */
     gateways?: readonly ConnectedServicesGatewayRow[];
     /** The Account catalog is still loading: the group holds one quiet row in its place. */
@@ -152,7 +144,6 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
     const agentSheets = model.sheets.filter((sheet) => sheet.section === 'agents');
     const pooled = agentSheets.flatMap((sheet) => sheet.pools.map((pool) => ({ sheet, pool })));
     const accountCount = model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
-    const page = props.variant === 'page';
 
     const draftTitles = useCollectionDraftTitle();
     const [query, setQuery] = React.useState('');
@@ -337,12 +328,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         );
     };
 
-    // On the phone page the navigation bar names the parent and holds the "+" (lab `s2svc:listP`); the
-    // privacy eye becomes a checked row of the bar's menu. Beside a detail they stay in the list's head.
-    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
-    const barOwnsActions = page && chromeShowsTitle;
-    // "+" opens the add menu (or connects a service when no menu is supplied). In the bar it sits beside the
-    // page's folded menu, and their finger frames split the bar's action gap.
+    // "+" opens the add menu (or connects a service when no menu is supplied).
     const { renderConnect, onConnect, identitiesHidden, onSetIdentitiesHidden } = props;
     const connect = React.useMemo(() => {
         const trigger = (onPress: () => void) => (
@@ -352,34 +338,21 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 accessibilityLabel={t('connectedServicesCollection.connectService')}
                 tooltip={t('connectedServicesCollection.connectService')}
                 variant="plain"
-                interactiveTargetGapPx={barOwnsActions ? HEADER_ACTIONS_GAP_PX : undefined}
                 onPress={onPress}
             />
         );
         return renderConnect ? renderConnect(trigger) : trigger((event?: GestureResponderEvent) => onConnect(resolvePressTriggerAnchor(event)));
-    }, [barOwnsActions, onConnect, renderConnect]);
-    const barPrivacy = React.useMemo(() => barOwnsActions ? (
-        <ToolbarButton
-            testID="connected-services-rail:privacy"
-            label={t('sidebarFooter.hideAccountIdentities')}
-            active={identitiesHidden}
-            onPress={() => { void onSetIdentitiesHidden(!identitiesHidden); }}
-        />
-    ) : null, [barOwnsActions, identitiesHidden, onSetIdentitiesHidden]);
+    }, [onConnect, renderConnect]);
     const filterInHead = accountCount > 0 && !searchable;
-    const header = barOwnsActions && !filterInHead ? undefined : (
+    const header = (
         <View style={styles.headerActions}>
             {filterInHead ? columnFilter.filterButton : null}
-            {barOwnsActions ? null : (
-                <>
-                    <ConnectedAccountPrivacyToggle
-                        testID="connected-services-rail:privacy"
-                        hidden={identitiesHidden}
-                        onChange={onSetIdentitiesHidden}
-                    />
-                    {connect}
-                </>
-            )}
+            <ConnectedAccountPrivacyToggle
+                testID="connected-services-rail:privacy"
+                hidden={identitiesHidden}
+                onChange={onSetIdentitiesHidden}
+            />
+            {connect}
         </View>
     );
 
@@ -394,21 +367,9 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         ? agentSheets.find((sheet) => sheet.serviceKey === selection.serviceKey) ?? null
         : null;
 
-    // The way out to the settings of what the column lists. On the phone page it ends the scrolling
-    // list (a pinned footer would sit under the floating tab bar), with All services before it.
+    // The way out to the settings of what the column lists, pinned under the column.
     const wayOut = (
         <>
-            {props.onOpenOverview ? (
-                <Item
-                    testID="connected-services-rail:overview"
-                    title={t('connectedServicesCollection.overviewRow')}
-                    icon={<Icon name="squares-four" size={18} color={theme.colors.text.secondary} />}
-                    density="compact"
-                    showChevron
-                    pressableStyle={collectionListStyles.row}
-                    onPress={props.onOpenOverview}
-                />
-            ) : null}
             <Item
                 testID="connected-services-rail:agent-sign-in"
                 title={t('connectedServicesCollection.agentSignInTitle')}
@@ -421,11 +382,9 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
             />
         </>
     );
-    // The phone's navigation bar already names the page (accepted refinement of the lab's large title).
 
     return (
         <>
-        {barOwnsActions ? <NavigationHeaderActions primary={null} actions={barPrivacy} trailing={connect} /> : null}
         <CollectionList
             testID="connected-services-rail"
             title={t('connectedServicesCollection.indexTitle')}
@@ -439,16 +398,14 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 trailing: columnFilter.filterButton,
                 anchorRef: columnFilter.searchAnchorRef,
             } : null}
-            footer={page ? null : wayOut}
+            footer={wayOut}
         >
             {/* Beside a detail, the way back to the overview leads the column (lab `cr` aRail), as on Providers. */}
-            {page ? null : (
-                <CollectionIndexRow
-                    testID="connected-services-rail:overview-row"
-                    selected={selection.kind === 'index'}
-                    onPress={props.onOpenIndex}
-                />
-            )}
+            <CollectionIndexRow
+                testID="connected-services-rail:overview-row"
+                selected={selection.kind === 'index'}
+                onPress={props.onOpenIndex}
+            />
             {visibleAgentServices.length > 0 || draftOnlySection === 'agents' ? (
                 <>
                     {/* Open lists show their rows, so the label adds no count (owner 11-01); it is the first group under the
@@ -602,12 +559,6 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                     ))}
                 </>
             ) : null}
-            {page ? (
-                <>
-                    <CollectionListGroupLabel title={t('common.more')} />
-                    {wayOut}
-                </>
-            ) : null}
             {columnFilter.editorOverlay}
         </CollectionList>
         </>
@@ -752,10 +703,7 @@ export const RailAccountMeta = React.memo(function RailAccountMeta(props: Readon
 });
 
 /** The rail beside the collection's detail; it reads while the Connected services navigator is focused. */
-export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(props: Readonly<{
-    /** `page`: the list is the phone's Connected services page; it pushes each entity and All services. */
-    variant?: 'rail' | 'page';
-}>) {
+export const ConnectedServicesRail = React.memo(function ConnectedServicesRail() {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
     const pathname = usePathname();
@@ -845,8 +793,6 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
             )}
             onOpenPool={(sheet, groupId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'group', groupId }), 'ConnectedServicesRail.pool')}
             onOpenAgentSignIn={() => open(CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE, 'ConnectedServicesRail.agentSignIn')}
-            variant={props.variant}
-            onOpenOverview={props.variant === 'page' ? () => open(CONNECTED_SERVICES_OVERVIEW_ROUTE as never, 'ConnectedServicesRail.overview') : null}
             gateways={gateways ?? undefined}
             gatewaysLoading={gatewaysLoading}
             gatewaysUnavailable={gatewaysUnavailable}

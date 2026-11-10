@@ -294,25 +294,6 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
         expect(screen.findByTestId('connected-services-rail:add-gateway')).toBeNull();
     });
 
-    it('on the phone page hands "+" and the privacy eye to the navigation bar, leaving the list without a head row', async () => {
-        const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
-        const phone = await render({ variant: 'page' }, (view) => <NavigationTitleChromeProvider showsTitle>{view}</NavigationTitleChromeProvider>);
-        // The navigation bar publisher (its props: no primary, the folded actions, the trailing trigger).
-        const bar = phone.root.findAll((node) => node.props.primary === null && node.props.trailing !== undefined)[0];
-        expect(bar).toBeDefined();
-        const trailing = await renderScreen(bar!.props.trailing as React.ReactElement);
-        expect(trailing.findByTestId('connected-services-rail:connect')).not.toBeNull();
-        // The eye becomes a checked row of the bar's menu (a folded toolbar operation).
-        expect(bar!.props.actions.props).toMatchObject({ testID: 'connected-services-rail:privacy', active: false });
-        // The list itself draws neither control a second time.
-        expect(phone.findByTestId('connected-services-rail:connect')).toBeNull();
-        expect(phone.findByTestId('connected-services-rail:privacy')).toBeNull();
-        // Beside a detail (no navigation title), the list's head keeps both.
-        const wide = await render();
-        expect(wide.findByTestId('connected-services-rail:connect')).not.toBeNull();
-        expect(wide.findByTestId('connected-services-rail:privacy')).not.toBeNull();
-    });
-
     it('names accounts through the privacy presenter: an address used as a name is masked when identities are hidden', async () => {
         const screen = await render({
             present: (input) => presentConnectedAccountIdentity({ ...input, hidden: true, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null }),

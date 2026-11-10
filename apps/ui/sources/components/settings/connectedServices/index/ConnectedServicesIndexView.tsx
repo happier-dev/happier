@@ -121,7 +121,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     // A service's diagnostics are its plugin's: Details opens that plugin's page, where they are read in full.
     const openDiagnostics = (sheet: ConnectedServicesIndexSheet) => router.push(buildPluginDetailRoute('settings', sheet.service.pluginId));
     const { model, labelsByKey, present } = props;
-    const grid = !props.compact && props.presentation === 'grid';
+    // Cards on every width, a phone included (R7); the device's view decides.
+    const grid = props.presentation === 'grid';
     // Only declared Agent usage places a service under Agent sign-in; unknown accounts stay visible with tools.
     const agentSheets = model.sheets.filter((sheet) => sheet.section === 'agents');
     const toolSheets = model.sheets.filter((sheet) => sheet.section !== 'agents');

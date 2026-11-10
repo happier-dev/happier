@@ -47,7 +47,6 @@ import { ConnectedServicesGatewaysGroup, useConnectedServicesGatewaysUnavailable
 import { ConnectedServicesIndexView, type ConnectedServicesIndexPresentation } from './index/ConnectedServicesIndexView';
 import { NewPoolMenu, selectNewPoolServices } from './collection/NewPoolMenu';
 import { ConnectedServicesAddMenu } from './collection/ConnectedServicesAddMenu';
-import { ConnectedServicesRail } from './collection/ConnectedServicesRail';
 import { CredentialsSecretsGroup } from './index/CredentialsSecretsGroup';
 import { CredentialsComposerGaugesGroup } from './index/CredentialsComposerGaugesGroup';
 import { ConnectedServiceMark } from './ConnectedServiceMark';
@@ -78,14 +77,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
 }> = {}) {
   const presented = useLayoutPresentationActive();
   const [setupOpen, setSetupOpen] = React.useState(false);
-  const root = resolveConnectedServicesIndexRoot(useHappierCollectionIndexView(), useLocalSearchParams());
-  if (root === 'pending') return null;
-  // Where no rail shows, the page is the collection list itself (lab `s2svc:listP`); All services is pushed.
-  if (root === 'list' && !setupOpen && !connectRequest) {
-    return <RetainedPanelSurface isActive={presented} suspendWhenHidden>
-      <ConnectedServicesRail variant="page" />
-    </RetainedPanelSurface>;
-  }
+  if (resolveConnectedServicesIndexRoot(useHappierCollectionIndexView()) === 'pending') return null;
   // The passive index can park, but a live inline sign-in owns layout-effect
   // cancellation and must remain connected until its existing setup owner closes it.
   return <RetainedPanelSurface isActive={presented} suspendWhenHidden={!setupOpen}>

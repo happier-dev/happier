@@ -536,8 +536,41 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
         );
     }
 
-    // A phone's page is the rail's own list under a large title with its count (lab sfcols:provP). The
-    // machine chip says which machine "On machines" reads, so it stays reachable where no rail shows.
+    // Standalone, the collection is a Settings page (R6, phone-system lab p4 provA): the page's tools, then each
+    // provider as a row of its section's sheet, as on the home beside the rail. The machine chip says which machine
+    // "On machines" reads, so it stays reachable where no rail shows. The found view keeps the column's rows.
+    const pageSections = showFound ? rows : (
+        <>
+            {draftOpen ? <ProviderDraftRow /> : null}
+            {notice}
+            {firstLoad ? <ProviderRailSkeleton /> : null}
+            {noMatches ? <Item mode="info" title={t('settingsProviders.searchEmptyTitle')} /> : null}
+            <SettingAnchor setting={PROVIDERS_SETTINGS.settings.connections}>
+                {homeProviders.length > 0 ? (
+                    <ItemGroup testID="settings-providers-page.providers" title={t('settingsProviders.configuredTitle')}>
+                        {homeProviders.map(renderHomeConnectionRow)}
+                    </ItemGroup>
+                ) : null}
+            </SettingAnchor>
+            {homeHasGateways ? (
+                <ItemGroup
+                    testID="settings-providers-page.gateways"
+                    title={t('settingsProvidersCollection.gateway.railGroup')}
+                    description={t('settingsProvidersCollection.gateway.managedFromConnectedServices')}
+                >
+                    {shownConnections.filter(row => row.gateway).map(renderHomeConnectionRow)}
+                </ItemGroup>
+            ) : null}
+            <TeamCredentialCatalogSettingsGroup
+                title={t('teams.credentials.providedByTeams')}
+                sourceKind="provider"
+                catalog={teamCredentialCatalog}
+                onRetry={teamCredentialCatalog.reload}
+                onOpen={openTeamResource}
+            />
+            {failure}
+        </>
+    );
     return (
         <SettingsCollectionPage
             testID="settings-providers-page"
@@ -564,7 +597,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                     strip={home ? null : filter.tokenRow}
                     search={!home && searchable ? { ...search, trailing: filter.filterButton, anchorRef: filter.searchAnchorRef } : null}
                     filters={filters}
-                    scrollContent={<>{rows}{home ? null : filter.editorOverlay}</>}
+                    scrollContent={<>{pageSections}{home ? null : filter.editorOverlay}</>}
                 />
             </SettingSection>
             {/* Where no home stands beside a rail, the page still invites the providers to connect (lab tp:providers). */}

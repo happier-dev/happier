@@ -6,6 +6,7 @@ import { HappierPressable, resolveHappierCollectionTitleAccessoryFits } from '@h
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { useHeaderActionGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { SelectionListFilterChip, type SelectionListFilter } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -206,6 +207,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
     // title with the column's controls as on a wide column, then spaces and chips on one line (lab `mnSessions` A).
     const shellNavRow = usePhoneTabNavRow();
     const navRow = props.presentation === 'runs' ? null : shellNavRow;
+    const headerGlyphPx = useHeaderActionGlyphSize(ICON_SIZE.sm);
     const columnControls = (
         <>
             {props.presentation === 'runs' || !layoutSegmentFits ? null : <View testID="session-list-layout-slot" onLayout={handleLayoutSegmentLayout}>
@@ -217,7 +219,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                 tooltip={t(sessionListSubjectCopyKey('sessionsList.searchSessions', props.subject))}
                 variant="plain"
                 size={SESSION_LIST_COLUMN_METRICS.iconButtonSizePx}
-                iconSize={ICON_SIZE.sm}
+                iconSize={headerGlyphPx}
                 interactiveTargetGapPx={SESSION_LIST_COLUMN_METRICS.iconButtonGapPx}
                 selected={searchIsOpen}
                 controlRef={handleToggleRef}

@@ -94,7 +94,7 @@ export type PageHeaderProps = Readonly<{
      * (`wrap`); keep them on it (`inline`); or hang the mark and controls from the title's line with
      * the description and facts beneath at full width (`hang`).
      */
-    actionsLayout?: 'wrap' | 'inline' | 'hang';
+    actionsLayout?: 'wrap' | 'inline' | 'hang' | 'shrink';
     /**
      * A status line under the actions (a save state and validity readout). It is the actions' own
      * row, as wide as they are, so its changing words never reflow the title.

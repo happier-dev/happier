@@ -60,26 +60,13 @@ function readParam(params: Params, name: string): string | null {
 }
 
 /**
- * What the index route shows. Beside the rail it is the designed overview (All services); where no rail
- * shows it is the collection list itself, as on every other column (lab `s2svc:listP`), and the overview
- * is one push away (`?view=all`). Set-up links and a just-settled account land on the overview, which
- * owns those flows.
+ * What the index route shows: the designed overview (Settings sections; cards or a list, per the device's view),
+ * beside the rail and where no rail shows alike (R6/R7). Nothing until the layout is measured.
  */
-export function resolveConnectedServicesIndexRoot(
-    indexView: 'pending' | 'land' | 'list',
-    params: Params,
-): 'pending' | 'list' | 'overview' {
-    if (indexView === 'pending') return 'pending';
-    if (indexView === 'land') return 'overview';
-    const overview = readParam(params, 'view') === 'all'
-        || readParam(params, 'connect') !== null
-        || readParam(params, 'connectedService') !== null
-        || readParam(params, 'connectedAccount') !== null;
-    return overview ? 'overview' : 'list';
+export function resolveConnectedServicesIndexRoot(indexView: 'pending' | 'land' | 'list'): 'pending' | 'overview' {
+    return indexView === 'pending' ? 'pending' : 'overview';
 }
 
-/** The overview of every service, pushed from the phone's collection list. */
-export const CONNECTED_SERVICES_OVERVIEW_ROUTE = `${CONNECTED_SERVICES_COLLECTION_ROUTE}?view=all`;
 
 /** The nested stack screen at `pathname` (registry-owned), so the phone header follows it. */
 export function resolveConnectedServicesChildRoute(pathname: string): string {

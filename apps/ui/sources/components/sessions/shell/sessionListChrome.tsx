@@ -49,6 +49,7 @@ import { useWorkspaceFavicon } from './useWorkspaceFavicon';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { useHeaderActionGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { useSessionListViewOptionWriter } from './useSessionListViewOptionWriter';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -299,6 +300,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         if (itemId.startsWith('layout:')) yieldLayoutIntent();
         setMenuOpen(false);
     }, [applyViewOption, openNewSection, organize, props, router, yieldLayoutIntent]);
+    const headerGlyphPx = useHeaderActionGlyphSize(ICON_SIZE.sm);
 
     return (
         <DropdownMenu
@@ -327,7 +329,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                     tooltipHidden={menuOpen}
                     variant="plain"
                     size={SESSION_LIST_COLUMN_METRICS.iconButtonSizePx}
-                    iconSize={ICON_SIZE.sm}
+                    iconSize={headerGlyphPx}
                     interactiveTargetGapPx={SESSION_LIST_COLUMN_METRICS.iconButtonGapPx}
                     expanded={menuOpen}
                     hasPopup="menu"

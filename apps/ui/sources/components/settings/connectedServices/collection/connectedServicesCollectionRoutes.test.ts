@@ -66,15 +66,11 @@ describe('resolveConnectedServicesSelection', () => {
 });
 
 describe('resolveConnectedServicesIndexRoot', () => {
-    it('makes the collection list the phone root and keeps All services one push away (lab s2svc:listP)', async () => {
+    it('makes the Settings overview the phone root, in the device\'s cards or list view (R6/R7)', async () => {
         const { resolveConnectedServicesIndexRoot } = await import('./connectedServicesCollectionRoutes');
-        expect(resolveConnectedServicesIndexRoot('list', {})).toBe('list');
-        expect(resolveConnectedServicesIndexRoot('list', { view: 'all' })).toBe('overview');
-        // Beside the rail the index is the designed overview; before the first measurement, nothing.
-        expect(resolveConnectedServicesIndexRoot('land', {})).toBe('overview');
-        expect(resolveConnectedServicesIndexRoot('pending', {})).toBe('pending');
-        // A set-up link or a just-settled account still lands on the overview that owns those flows.
-        expect(resolveConnectedServicesIndexRoot('list', { connect: '1' })).toBe('overview');
-        expect(resolveConnectedServicesIndexRoot('list', { connectedService: 'openai-codex', connectedAccount: 'work' })).toBe('overview');
+        expect(resolveConnectedServicesIndexRoot('list')).toBe('overview');
+        expect(resolveConnectedServicesIndexRoot('land')).toBe('overview');
+        // Before the first measurement, nothing.
+        expect(resolveConnectedServicesIndexRoot('pending')).toBe('pending');
     });
 });

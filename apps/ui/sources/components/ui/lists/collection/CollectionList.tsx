@@ -16,6 +16,7 @@ import {
     useHappierCollectionDraftRowTitle,
     type HappierCollectionDraftTitleStore,
     type HappierCollectionListHost,
+    type HappierCollectionListTextRole,
     type HappierCollectionListProps,
     type HappierCollectionRowRole,
 } from '@happier-dev/plugin-ui/presentation';
@@ -23,6 +24,7 @@ import {
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { useHeaderActionGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -157,20 +159,22 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-const textRoleStyles = {
-    title: styles.title,
-    count: styles.count,
-    subtitle: styles.subtitle,
-    groupTitle: styles.groupTitle,
-    subgroupTitle: styles.groupTitle,
-    groupHeading: styles.groupHeading,
-    groupCount: styles.groupCount,
-} as const;
+// The host's text roles name their styles; each Text reads `styles` while it renders, so Unistyles keeps it bound to
+// the current theme (a style object captured at module scope keeps the theme it was first read under on native).
+const textRoleStyleKeys = {
+    title: 'title',
+    count: 'count',
+    subtitle: 'subtitle',
+    groupTitle: 'groupTitle',
+    subgroupTitle: 'groupTitle',
+    groupHeading: 'groupHeading',
+    groupCount: 'groupCount',
+} as const satisfies Readonly<Record<HappierCollectionListTextRole, keyof typeof styles>>;
 
-function createCollectionListText(roleStyles: Readonly<Record<keyof typeof textRoleStyles, React.ComponentProps<typeof Text>['style']>>): HappierCollectionListHost['Text'] {
+function createCollectionListText(roleStyleKeys: Readonly<Record<HappierCollectionListTextRole, keyof typeof styles>>): HappierCollectionListHost['Text'] {
     return (props) => (
         <Text
-            style={roleStyles[props.role]}
+            style={styles[roleStyleKeys[props.role]]}
             {...(props.numberOfLines === undefined ? {} : { numberOfLines: props.numberOfLines })}
             {...(props.accessibilityRole === undefined ? {} : { accessibilityRole: props.accessibilityRole })}
             {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -181,7 +185,7 @@ function createCollectionListText(roleStyles: Readonly<Record<keyof typeof textR
 }
 
 const collectionListHost: HappierCollectionListHost = {
-    Text: createCollectionListText(textRoleStyles),
+    Text: createCollectionListText(textRoleStyleKeys),
     Scroller: (props) => <ItemList presentation="grouped" style={props.style as StyleProp<ViewStyle>}>{props.children}</ItemList>,
     SearchField: (props) => (
         <CompactSearchField
@@ -196,21 +200,26 @@ const collectionListHost: HappierCollectionListHost = {
         />
     ),
     // A column's Search icon, drawn like the Sessions header's and the filter beside it; selected while open.
-    SearchToggle: (props) => (
+    SearchToggle: (props) => <CollectionSearchToggle {...props} />,
+    surfaceStyle: styles.surface,
+    useGroupGlyphColor: useCollectionListGroupGlyphColor,
+};
+
+function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>>) {
+    const glyphPx = useHeaderActionGlyphSize(ICON_SIZE.sm);
+    return (
         <IconButton
             {...(props.testID === undefined ? {} : { testID: props.testID })}
             accessibilityLabel={props.accessibilityLabel}
             tooltip={props.accessibilityLabel}
             variant="plain"
-            iconSize={ICON_SIZE.sm}
+            iconSize={glyphPx}
             selected={props.open}
             iconName="magnifying-glass"
             onPress={props.onPress}
         />
-    ),
-    surfaceStyle: styles.surface,
-    useGroupGlyphColor: useCollectionListGroupGlyphColor,
-};
+    );
+}
 
 /** A group label's own glyphs (its disclosure chevron): the quiet tertiary ink of its count. */
 function useCollectionListGroupGlyphColor(): string {
@@ -222,7 +231,7 @@ const collectionListPlaneHost: HappierCollectionListHost = { ...collectionListHo
 /** A list on a phone: its group labels read as section labels (`groupTitleTouch`). */
 const collectionListTouchHost: HappierCollectionListHost = {
     ...collectionListHost,
-    Text: createCollectionListText({ ...textRoleStyles, groupTitle: styles.groupTitleTouch, subgroupTitle: styles.subgroupTitleTouch }),
+    Text: createCollectionListText({ ...textRoleStyleKeys, groupTitle: 'groupTitleTouch', subgroupTitle: 'subgroupTitleTouch' }),
 };
 
 const collectionListPhonePageHost: HappierCollectionListHost = {

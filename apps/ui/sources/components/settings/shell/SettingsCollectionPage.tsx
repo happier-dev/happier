@@ -27,6 +27,8 @@ export const SettingsCollectionPage = React.memo(function SettingsCollectionPage
                 alwaysShowTitle
                 titleAccessory={props.count !== null && props.count > 0 ? <TitleCount count={props.count} /> : undefined}
                 actionsPlacement="page"
+                // The title, the Machine chooser, filters and "+" share one line; the chooser truncates (R8).
+                actionsLayout="shrink"
                 actions={props.actions}
             />
             <CollectionPageToolsInsetContext.Provider value={HAPPIER_PAGE_METRICS.sheetInsetPx}>

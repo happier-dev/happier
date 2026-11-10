@@ -193,6 +193,8 @@ describe('ConnectedServicesSettingsView row presentation', () => {
     }, 180_000);
 
     beforeEach(() => {
+        // These cases read the list presentation; a device that never chose shows cards (R7).
+        storage.getState().applyLocalSettings({ connectedServicesIndexViewV1: 'list' });
         connectedServicesModuleState.searchParams = { view: 'all' };
         registryState.status = 'ready';
         registryState.errorReason = null;

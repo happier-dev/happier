@@ -427,14 +427,18 @@ const subtitleStyle: ViewStyle = {
 const searchStyle: HappierPortableStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
 const untitledSearchStyle: HappierPortableStyle = { ...searchStyle, marginTop: M.headerPaddingTop };
 const filtersStyle: ViewStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
+// Leading an untitled list (a page under its own header), the view switch keeps the search field's air above it
+// rather than touching the header (D12).
+const untitledFiltersStyle: ViewStyle = { ...filtersStyle, marginTop: M.headerPaddingTop };
 /** The tools' margins: the column's shared constants, or a page's own gutter (stable while it holds). */
 function useToolsStyles(insetPx: number | undefined) {
   return useMemo(() => insetPx === undefined
-    ? { search: searchStyle, untitledSearch: untitledSearchStyle, filters: filtersStyle }
+    ? { search: searchStyle, untitledSearch: untitledSearchStyle, filters: filtersStyle, untitledFilters: untitledFiltersStyle }
     : {
       search: { ...searchStyle, marginHorizontal: insetPx },
       untitledSearch: { ...untitledSearchStyle, marginHorizontal: insetPx },
       filters: { ...filtersStyle, marginHorizontal: insetPx },
+      untitledFilters: { ...untitledFiltersStyle, marginHorizontal: insetPx },
     }, [insetPx]);
 }
 // The strip starts on the title's text edge (its first tab under the title's first letter), like Sessions.
@@ -589,7 +593,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           {...(searchCollapses && searchOpened ? { autoFocus: true } : {})}
         />
       ) : null}
-      {showFilters ? <View style={tools.filters}>{props.filters!.content}</View> : null}
+      {showFilters ? <View style={showHeader || (props.search && searchOpen) || props.strip ? tools.filters : tools.untitledFilters}>{props.filters!.content}</View> : null}
       {props.scrollContent !== undefined ? props.scrollContent : (
         <Scroller style={[scrollerStyle, host.surfaceStyle]}>
           {props.children}
