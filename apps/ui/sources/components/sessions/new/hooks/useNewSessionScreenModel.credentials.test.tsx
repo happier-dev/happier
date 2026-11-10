@@ -59,6 +59,7 @@ import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixture
 import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { applyTeamProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -591,6 +592,9 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         includeCodex?: boolean;
         serverIdentityId?: string;
         isolated?: boolean;
+        profilesPresentationEnabled?: boolean;
+        seedProfile?: boolean;
+        actionDefault?: NewSessionDraft['actionDefault'];
     }>) {
         await prepareSessionDraftPersistenceStorage();
         mountedBridge = await loadSyncSingletonForTests();
@@ -654,7 +658,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
                 if (machineRead) return machineRead;
                 if (path === '/v1/features') return Response.json(buildServerFeaturesResponse());
                 if (path === '/v2/account/settings') return Response.json({ version: 1,
-                    content: { t: 'plain', v: { useProfiles: Boolean(input.profile || input.rememberedProfile), useEnhancedSessionWizard: false,
+                    content: { t: 'plain', v: { useProfiles: input.profilesPresentationEnabled ?? Boolean(input.profile || input.rememberedProfile), useEnhancedSessionWizard: false,
                         lastUsedAgent: 'claude', lastUsedBackendTarget: input.target } } });
                 if (path === ACP_CATALOG_ROWS_ROUTE_V1) {
                     if (acpPhase === 'loading') await acpRead.promise;
@@ -672,7 +676,7 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         const scope = { serverId: resolveServerProfileScopeId(connection.home), accountId };
         rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'claude', lastUsedBackendTarget: input.target });
         storage.setState({ settingsScope: scope, profileScope: scope, profile: AccountProfileSchema.parse({ id: accountId }),
-            settings: { ...settingsDefaults, useEnhancedSessionWizard: false, useProfiles: Boolean(input.profile || input.rememberedProfile),
+            settings: { ...settingsDefaults, useEnhancedSessionWizard: false, useProfiles: input.profilesPresentationEnabled ?? Boolean(input.profile || input.rememberedProfile),
                 lastUsedAgent: 'claude', lastUsedBackendTarget: input.target } });
         storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
         observeMachinePresenceForTest(scope, [machine.id]);
@@ -730,7 +734,8 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             selectedPath: '/repo', targetServerId: scope.serverId,
             ...(input.target.kind === 'agent' ? { agentTarget: input.target } : { backendTarget: input.target }),
             agentType: 'claude', acpSessionModeId: null,
-            selectedProfileId: input.profile ? profileId : null, selectedSecretId: null,
+            selectedProfileId: input.profile && input.seedProfile !== false ? profileId : null, selectedSecretId: null,
+            ...(input.actionDefault ? { actionDefault: input.actionDefault } : {}),
             permissionMode: 'default', updatedAt: 1 } });
         return {
             scope, draftId, profileId, home: connection.home,
@@ -1043,6 +1048,51 @@ describe('New Session ACP catalog authority and retained authoring', () => {
             }
             expect(storage.getState().authoringMemory.lastUsedProfile).toBe('deleted-profile');
         } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        { surface: 'seeded-profile', seedDraft: true, seedProfile: true, configuredAction: false, contextual: true, presentationEnabled: false },
+        { surface: 'configured-action', seedDraft: true, seedProfile: false, configuredAction: true, contextual: true, presentationEnabled: false },
+        { surface: 'ordinary-remembered', seedDraft: false, seedProfile: false, configuredAction: false, contextual: false, presentationEnabled: false },
+        { surface: 'ordinary-remembered-enabled', seedDraft: false, seedProfile: false, configuredAction: false, contextual: true, presentationEnabled: true },
+        { surface: 'explicit-clear', seedDraft: true, seedProfile: false, configuredAction: false, contextual: true, presentationEnabled: true },
+    ])('keeps explicit Profile authoring with presentation disabled or explicitly cleared: $surface', async (scenario) => {
+        const fixture = await restoreCatalogAuthoringFixture({ name: `presentation-${scenario.surface}`, target: bundledTarget,
+            profile: 'bundled-only', rememberedProfile: 'available', profilesPresentationEnabled: scenario.presentationEnabled,
+            seedDraft: scenario.seedDraft, seedProfile: scenario.seedProfile,
+            ...(scenario.configuredAction ? { actionDefault: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: 'fix-check',
+                label: 'Fix check', launchMode: 'review' as const } } : {}),
+        });
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: fixture.draftId }));
+        const current = () => {
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected simple launcher');
+            return model;
+        };
+        try {
+            expect(current().simpleProps.useProfiles).toBe(scenario.contextual);
+            expect(current().simpleProps.selectedProfileId).toBe(scenario.seedProfile || (!scenario.seedDraft && scenario.presentationEnabled)
+                ? fixture.profileId : null);
+            if (scenario.contextual) {
+                const renderContent = current().simpleProps.profilePopover?.renderContent;
+                if (typeof renderContent !== 'function') throw new Error('Expected contextual Profile picker');
+                const content = renderContent({ maxHeight: 560, requestClose: () => {} });
+                if (!React.isValidElement<React.ComponentProps<typeof import('../components/NewSessionProfilePopoverBrowserContent').NewSessionProfilePopoverBrowserContent>>(content)) {
+                    throw new Error('Expected real Profile picker content');
+                }
+                const props = content.props.profilesListProps;
+                const profile = props.customProfiles?.find(profile => profile.id === fixture.profileId);
+                const onPressProfile = props.onPressProfile;
+                if (!profile || !onPressProfile) throw new Error('Expected available Profile');
+                await act(async () => { await onPressProfile(profile); });
+                expect(current().simpleProps.selectedProfileId).toBe(fixture.profileId);
+                if (scenario.seedDraft) {
+                    await vi.waitFor(() => expect(readNewSessionDraftFromRepository(fixture)?.selectedProfileId).toBe(fixture.profileId));
+                }
+            }
+            expect(storage.getState().settings.useProfiles).toBe(scenario.presentationEnabled);
+            expect(fixture.accountSettingsWrites()).toBe(0);
+        } finally { await hook.unmount(); }
     });
 
     it('keeps explicit Default Environment and Profile selections through remembered-choice refreshes', async () => {
