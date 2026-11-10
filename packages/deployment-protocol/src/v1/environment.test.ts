@@ -2,11 +2,43 @@ import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentV1, createDeploymentTargetLinkV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema, EnvironmentSecretBindingV1Schema,
-    createOwnServerEnvironmentConfigurationV1, resolveDeploymentStoredDefinitionRevisionV1 } from './environment.js';
+    createOwnServerEnvironmentConfigurationV1, applyOwnServerEnvironmentConfigurationPatchV1, resolveDeploymentStoredDefinitionRevisionV1,
+    readRetainedOperationalEnvironmentBindingGrantsV1 } from './environment.js';
 import { DeploymentV1Schema, OwnServerDeploymentInputBasisV1Schema } from './deployment.js';
 import { DeploymentTargetLinkV1Schema } from './target.js';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 describe('multi-Machine deployment contracts', () => {
+    it('admits backup binding edits only through the credential binding writer', () => {
+        const source = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 1 };
+        const backup = EnvironmentSecretBindingV1Schema.parse({ purpose: 'backupDestination', configKey: 'destination',
+            role: 'repositoryPassword', source });
+        const data = EnvironmentSecretBindingV1Schema.parse({ purpose: 'dataRole', targetLinkId: 'managed-database', role: 'readOnlyPassword', source });
+        const input = { previousBindings: [backup, data],
+            bindings: [{ ...backup, source: { ...source, resourceRevision: 2 } }, data], existingGrants: [] };
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1(input)).toBeNull();
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings' })).toEqual([]);
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings', bindings: [backup] })).toBeNull();
+    });
+    it('admits service role edits only through the explicit binding writer while retaining managed-role custody', () => {
+        const source = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('role-credential'), resourceRevision: 1 };
+        const service = EnvironmentSecretBindingV1Schema.parse({ purpose: 'dataRole', service: 'postgres', role: 'readOnlyPassword', source });
+        const managed = EnvironmentSecretBindingV1Schema.parse({ purpose: 'dataRole', targetLinkId: 'managed-data', role: 'readOnlyPassword', source });
+        const input = { previousBindings: [service, managed], bindings: [managed], existingGrants: [] };
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1(input)).toBeNull();
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings' })).toEqual([]);
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, bindings: [service], writer: 'bindings' })).toBeNull();
+    });
+    it('removes a configured migration without resetting the other saved policies', () => {
+        const current = createOwnServerEnvironmentConfigurationV1({ rollout: 'startFirst', autoRestorePreviousRelease: false,
+            migration: { service: 'app', argv: ['migrate'], pendingCheck: { argv: ['pending'] } },
+            backupBeforeMigration: false, migrationFailurePolicy: 'rollbackCodeOnly' });
+        const next = applyOwnServerEnvironmentConfigurationPatchV1(current, { migration: null });
+        expect(next).toEqual({ rollout: 'startFirst', autoRestorePreviousRelease: false, backupBeforeMigration: false,
+            migrationFailurePolicy: 'rollbackCodeOnly', serviceExports: [] });
+        expect(DeploymentEnvironmentContentV1Schema.shape.ownServer.parse(next)).toEqual(next);
+        expect(applyOwnServerEnvironmentConfigurationPatchV1(next, { backupBeforeMigration: true })?.migration).toBeUndefined();
+    });
     it('advances the stored source revision when only a public file changes', () => {
         const document = 'services: {app: {image: app:1}}';
         const previous = { kind: 'stored' as const, document, profiles: [], services: ['app'], contentRevision: 2,

@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, OwnServerEnvironmentMigrationPolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -27,7 +27,7 @@ export type { DeploymentCreationDefaultsV1, ProjectDeploymentDefaultsV1, Project
 export type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 export { DeploymentRepositoryComposeV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export const DeploymentEnvironmentDefinitionV1Schema = z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('repository'), ref: text, compose: z.optional(DeploymentRepositoryComposeV1Schema) }),
+    DeploymentRepositoryDefinitionV1Schema,
     DeploymentStoredDefinitionV1Schema,
 ]);
 export type DeploymentEnvironmentDefinitionV1 = z.infer<typeof DeploymentEnvironmentDefinitionV1Schema>;
@@ -52,14 +52,9 @@ export function resolveDeploymentStoredDefinitionRevisionV1(
     return previous.contentRevision + (unchanged ? 0 : 1);
 }
 
-const migrationArgv = z.array(z.string()).check(z.minLength(1),
-    z.refine(argv => (argv[0]?.trim().length ?? 0) > 0, { message: 'A migration command requires an executable.' }));
 export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
     ...OwnServerEnvironmentReleasePolicyV1Schema.shape,
-    migration: z.optional(z.strictObject({ service: text, argv: migrationArgv,
-        pendingCheck: z.optional(z.strictObject({ argv: migrationArgv })) })),
-    backupBeforeMigration: z.optional(z.boolean()),
-    migrationFailurePolicy: z.optional(z.enum(['ask', 'restoreBackupAndRollbackCode', 'rollbackCodeOnly'])),
+    ...OwnServerEnvironmentMigrationPolicyV1Schema.shape,
     serviceExports: z.optional(DeploymentServiceExportsV1Schema),
 });
 export type OwnServerEnvironmentConfigurationV1 = z.infer<typeof OwnServerEnvironmentConfigurationV1Schema>;
@@ -80,10 +75,15 @@ export function createOwnServerEnvironmentConfigurationV1(
 
 /** Policy and private export authoring share one partial-update/default rule. */
 export function applyOwnServerEnvironmentConfigurationPatchV1(current: OwnServerEnvironmentConfigurationV1 | undefined,
-    patch: Partial<OwnServerEnvironmentConfigurationV1>): OwnServerEnvironmentConfigurationV1 | undefined {
-    const selected = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
-    return current ? { ...current, ...selected }
+    patch: Omit<Partial<OwnServerEnvironmentConfigurationV1>, 'migration'> & {
+        migration?: OwnServerEnvironmentConfigurationV1['migration'] | null;
+    }): OwnServerEnvironmentConfigurationV1 | undefined {
+    const selected = Object.fromEntries(Object.entries(patch).filter(([key, value]) => value !== undefined
+        && !(key === 'migration' && value === null)));
+    const next = current ? { ...current, ...selected }
         : Object.keys(selected).length ? createOwnServerEnvironmentConfigurationV1(selected) : undefined;
+    if (next && patch.migration === null) delete next.migration;
+    return next;
 }
 
 export const DeploymentEnvironmentContentV1Schema = z.strictObject({
@@ -101,10 +101,15 @@ export const DeploymentEnvironmentContentV1Schema = z.strictObject({
 { message: 'Binding purpose identities must be unique.' }));
 export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmentContentV1Schema>;
 
-/** Other purpose rows belong to their addressed operational owner. */
-export function isEnvironmentSecretBindingManagedByBindingsWriterV1(binding: EnvironmentSecretBindingV1):
-    binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' | 'registry' }> {
-    return binding.purpose === 'variable' || binding.purpose === 'registry';
+/** The credential writer also authors backup and self-hosted role references. Combined definition
+ * updates preserve them, alongside the other operational owners' rows. */
+export function isEnvironmentSecretBindingManagedByBindingsWriterV1(binding: EnvironmentSecretBindingV1,
+    writer: 'environment' | 'bindings' | 'variables' = 'environment'):
+    binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' | 'registry' | 'backupDestination' }>
+        | Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole'; service: string }> {
+    return binding.purpose === 'variable' || writer !== 'variables' && binding.purpose === 'registry'
+        || writer === 'bindings' && (binding.purpose === 'backupDestination'
+            || binding.purpose === 'dataRole' && 'service' in binding);
 }
 
 /** A combined definition update carries existing operational custody without authoring it. */
@@ -112,9 +117,11 @@ export function readRetainedOperationalEnvironmentBindingGrantsV1(input: Readonl
     previousBindings: readonly EnvironmentSecretBindingV1[];
     bindings: readonly EnvironmentSecretBindingV1[];
     existingGrants: readonly MachineSecretGrantV1[];
+    /** Only the explicit credential writer may edit backup and self-hosted role references. */
+    writer?: 'environment' | 'bindings' | 'variables';
 }>): readonly MachineSecretGrantV1[] | null {
     const operational = (bindings: readonly EnvironmentSecretBindingV1[]) => bindings
-        .filter(binding => !isEnvironmentSecretBindingManagedByBindingsWriterV1(binding))
+        .filter(binding => !isEnvironmentSecretBindingManagedByBindingsWriterV1(binding, input.writer))
         .sort((left, right) => environmentSecretBindingIdentityV1(left).localeCompare(environmentSecretBindingIdentityV1(right)));
     const previous = operational(input.previousBindings);
     if (!sameStrictJsonValue(previous, operational(input.bindings))) return null;

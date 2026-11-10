@@ -42,9 +42,12 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
     }, async (request, reply) => {
         // Authentication already verified the exact native or generic child
         // purpose. A caller-authored header is not an admitted child result.
-        const native = readDeploymentExecutionBindingFromRequest(request)?.deploymentNativeAdmission;
+        const binding = readDeploymentExecutionBindingFromRequest(request);
+        const native = binding?.deploymentNativeAdmission;
+        const readAdmission = binding?.deploymentReadAdmission;
+        const admittedDataQuery = readAdmission?.actionId === 'deployments.data.query' ? readAdmission : undefined;
         const admittedBackup = native && 'kind' in native && (native.kind === 'restore' || native.kind === 'backup') ? native : undefined;
-        if (request.authTokenKind === 'api_token' && !admittedBackup && !request.externalActionDeploymentChildSigner
+        if (request.authTokenKind === 'api_token' && !admittedBackup && !admittedDataQuery && !request.externalActionDeploymentChildSigner
             && !(request.externalActionReviewedChildAdmission?.actionId === 'deployments.bindings.set'
                 && request.externalActionReviewedChildAdmission.environmentId === request.params.environmentId)) {
             return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
@@ -56,7 +59,8 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
             return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
         }
         const value = await inReadSnapshot(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, request.userId,
-            request.body, readTeamOperationAuthenticationFromRequest(request), request.externalActionDeploymentChildAdmission, admittedBackup));
+            request.body, readTeamOperationAuthenticationFromRequest(request), request.externalActionDeploymentChildAdmission,
+            admittedBackup, admittedDataQuery));
         const status = value.ok ? 200 : value.error === 'deployment_access_denied' ? 403
             : value.error === 'deployment_conflict' ? 409 : value.error === 'deployment_invalid' ? 400 : 404;
         return reply.code(status).send(value);

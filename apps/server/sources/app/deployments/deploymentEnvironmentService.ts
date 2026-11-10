@@ -13,7 +13,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
     normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
     type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1,
     type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/deployment-protocol';
-import { prepareDeploymentBackupRetentionV1, projectEnvironmentSecretBindingRequiredUsesV1,
+import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx, validateSavedSecretResourceReferenceCapturesV1,
@@ -27,13 +27,13 @@ import type { Tx } from '@/storage/inTx';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment,
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission, type DeploymentFailure } from './deploymentAdmission';
-import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
+import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { linkDeploymentTargetForAdmittedEnvironmentInTx } from './deploymentTargetLinkService';
+import { linkDeploymentTargetForAdmittedEnvironmentInTx, readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
 import { admitDeploymentDeployerPrincipalsInTx, replaceDeploymentDeployerPrincipalsInTx, sameDeploymentDeployerPrincipals } from './deploymentEnvironmentDeployers';
 import { admitPreviewEnvironmentRelationInTx } from './previewEnvironmentRelation';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
@@ -57,14 +57,30 @@ export async function lockDeploymentEnvironmentInTx(tx: Tx, environmentId: strin
     // SQLite's existing serialized writer transaction owns its write exclusion.
 }
 
-export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{ deployers?: readonly Readonly<{ principalKind: string; principalId: string }>[] }>, serverId: string, admission: DeploymentSourceAdmission) {
+/** A named data companion inherits the template of its one persisted preview relation. */
+export function readDeploymentPreviewTemplateEnvironmentId(row: Readonly<{
+    previewTemplateEnvironmentId: string | null;
+    previewCompanionOfEnvironmentId?: string | null;
+    previewCompanionOfEnvironment?: Readonly<{ previewTemplateEnvironmentId: string | null }> | null;
+}>): string | undefined {
+    return (row.previewCompanionOfEnvironmentId
+        ? row.previewCompanionOfEnvironment?.previewTemplateEnvironmentId
+        : row.previewTemplateEnvironmentId) ?? undefined;
+}
+
+export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{
+    deployers?: readonly Readonly<{ principalKind: string; principalId: string }>[];
+    previewCompanionOfEnvironment?: Readonly<{ previewTemplateEnvironmentId: string | null }> | null;
+}>, serverId: string, admission: DeploymentSourceAdmission) {
     const canDeploy = canDeployDeploymentEnvironment(admission, row);
+    const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(row);
     return DeploymentEnvironmentHeaderV1Schema.parse({
         v: 1, id: row.id, serverId, projectSourceId: row.projectSourceId, revision: row.revision,
         owner: admission.owner, protection: row.protection,
         purpose: row.purpose, deployerMode: row.deployerMode,
-        ...(row.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: row.previewTemplateEnvironmentId,
-            previewRepositoryId: row.previewRepositoryId, previewPullRequestId: row.previewPullRequestId,
+        ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
+        ...(row.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: row.previewCompanionOfEnvironmentId } : {}),
+        ...(row.purpose === 'preview' ? { previewRepositoryId: row.previewRepositoryId, previewPullRequestId: row.previewPullRequestId,
             previewTargetLinkId: row.previewTargetLinkId } : {}),
         ...(row.deployers ? { deployerPrincipals: row.deployers.map(({ principalKind, principalId }) => ({ principalKind, principalId })) } : {}),
         controllerMachineId: row.controllerMachineId,
@@ -88,7 +104,8 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     acceptedRead?: Readonly<{ environmentId: string }>,
 ) {
     const row = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId },
-        include: { deployers: { select: { principalKind: true, principalId: true } } } });
+        include: { deployers: { select: { principalKind: true, principalId: true } },
+            previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
     if (!row) return deploymentFailure('deployment_unavailable');
     if (acceptedRead?.environmentId === row.id) {
         const custody = await readProjectSourceCustodyInTx(tx, row.projectSourceId);
@@ -134,7 +151,8 @@ export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
         where: { id: row.runtimeTargetLinkId, environmentId: row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
-    const machineIds = [...new Set([...(link?.machines.map(member => member.machineId) ?? []),
+    const runtimeMembers = link ? readDeploymentTargetRuntimeInstallations(link) : [];
+    const machineIds = [...new Set([...runtimeMembers.map(member => member.machineId),
         ...(row.buildMachineId ? [row.buildMachineId] : [])])];
     const installations = new Map<string, { machineId: string; installationId: string }>();
     for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1 })) {
@@ -145,9 +163,9 @@ export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
             installations.set(machine.id, { machineId: machine.id, installationId: machine.installationId });
         }
     }
-    const runtimeInstallations = !row.runtimeTargetLinkId ? [] : link && link.machines.length > 0 && link.machines.every(member =>
+    const runtimeInstallations = !row.runtimeTargetLinkId ? [] : runtimeMembers.length > 0 && runtimeMembers.every(member =>
         installations.get(member.machineId)?.installationId === member.installationId)
-        ? link.machines.map(member => installations.get(member.machineId)!) : null;
+        ? runtimeMembers.map(member => installations.get(member.machineId)!) : null;
     const registryIds = [...new Set(captures.flatMap(capture => capture.requiredBindings?.flatMap(binding =>
         binding.purpose === 'registry' ? [binding.targetLinkId] : []) ?? []))];
     const currentRegistryTargetLinkIds: string[] = [];
@@ -393,13 +411,6 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
                 throw error;
             }
         }
-        let desiredBackup = reconciled.backup;
-        if (contentWriter === 'environment' && input.patch?.backupRetention) {
-            const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: desiredBackup,
-                ...input.patch.backupRetention });
-            if (!prepared.ok) return deploymentFailure('deployment_conflict');
-            desiredBackup = prepared.configuration;
-        }
         definitionChanged = contentWriter === 'environment' && !isDeepStrictEqual(previous.content, content.content);
         const native = executionBinding?.deploymentNativeAdmission;
         // Authentication admitted this exact prepared private edit; opaque and plain content share that owner.
@@ -412,8 +423,7 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
                 || !isDeepStrictEqual(reconciled.template, content.content.template)
                 || (!admittedPreparedContent && !isDeepStrictEqual(desiredOwnServer, content.content.ownServer))
                 || (!admittedPreparedContent && !isDeepStrictEqual(previous.content.previewTemplate, content.content.previewTemplate))
-                || ((!admittedPreparedContent || input.patch?.backupRetention !== undefined)
-                    && !isDeepStrictEqual(desiredBackup, content.content.backup))) return deploymentFailure('deployment_conflict');
+                || !isDeepStrictEqual(reconciled.backup, content.content.backup)) return deploymentFailure('deployment_conflict');
         } else if (contentWriter === 'backup') {
             if (!isDeepStrictEqual({ ...previous.content, backup: undefined }, { ...content.content, backup: undefined })) {
                 return deploymentFailure('deployment_conflict');
@@ -525,7 +535,25 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
+    const platformVariables = link?.sourceKind === 'plugin' && !placement;
+    const linkCandidate = input.targetLinkContent;
+    if (platformVariables && !linkCandidate || linkCandidate && (!platformVariables || !link
+        || linkCandidate.targetLinkId !== link.id || linkCandidate.expectedTargetLinkRevision !== link.revision
+        || link.detachedAt !== null)) return deploymentFailure('deployment_conflict');
+    if (linkCandidate && link) {
+        const candidate = await readPlainDeploymentTargetLinkContentInTx(tx, actorAccountId, loaded.admission.owner, linkCandidate);
+        if (!candidate.ok) return candidate;
+        const previous = await readPlainDeploymentTargetLinkContentInTx(tx, actorAccountId, loaded.admission.owner, link);
+        if (!previous.ok) return previous;
+        if (candidate.content) {
+            if (!previous.content) return deploymentFailure('deployment_content_unavailable');
+            const { ownedVariables: _old, ...oldIdentity } = previous.content;
+            const { ownedVariables: _new, ...newIdentity } = candidate.content;
+            if (!isDeepStrictEqual(oldIdentity, newIdentity)) return deploymentFailure('deployment_conflict');
+        }
+    }
     const buildMachineId = placement?.buildMachineId ?? loaded.row.buildMachineId;
+    const runtimeInstallations = link ? readDeploymentTargetRuntimeInstallations(link) : [];
     const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
     if (!preparedContent.ok) return preparedContent;
     const previous = isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input)) ? preparedContent
@@ -536,10 +564,32 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         return deploymentFailure('deployment_conflict');
     }
     const existingGrants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id });
+    // Retained identities come from stored custody, independently of caller seals.
+    const previousBindingCaptures = previous.content ? captureDeploymentBindingSavedSecretRevisionsV1(previous.content.bindings)
+        : readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? [];
+    if (platformVariables && previous.content === null && previousBindingCaptures.some(capture => !capture.requiredBindings))
+        return deploymentFailure('deployment_conflict');
+    const nonVariableCaptures = (captures: typeof input.referencedSavedSecretRevisions) =>
+        normalizeDeploymentBindingSavedSecretRevisionsV1(captures.flatMap(capture => {
+            const requiredBindings = capture.requiredBindings?.filter(binding => binding.purpose !== 'variable') ?? [];
+            return requiredBindings.length ? [{ ...capture, requiredBindings }] : [];
+        }));
+    const retainedCaptures = platformVariables ? nonVariableCaptures(previousBindingCaptures) : [];
+    if (platformVariables && !isDeepStrictEqual(retainedCaptures, nonVariableCaptures(input.referencedSavedSecretRevisions)))
+        return deploymentFailure('deployment_conflict');
+    const retainedPlatformGrants = platformVariables ? existingGrants.filter(grant => grant.kind === 'secret'
+        && retainedCaptures.some(capture => capture.resourceId === grant.resourceId
+            && capture.revision === grant.resourceRevision)) : [];
+    if (platformVariables) {
+        // Keep caller duplicates visible to the existing subject uniqueness check.
+        input = { ...input, grants: [...retainedPlatformGrants.filter(retained => !input.grants.some(grant =>
+            machineSecretGrantSubjectKey(grant) === machineSecretGrantSubjectKey(retained))), ...input.grants] };
+    }
     const retainedGrants = preparedContent.content && previous.content
         ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: previous.content.bindings,
-            bindings: preparedContent.content.bindings, existingGrants })
+            bindings: preparedContent.content.bindings, existingGrants, writer: platformVariables ? 'variables' : placement ? 'environment' : 'bindings' })
         // Opaque binding semantics belong to the admitted content owner. Existing exact seals add no delivery authority.
+        : platformVariables ? retainedPlatformGrants
         : existingGrants.filter(existing => input.grants.some(grant => isDeepStrictEqual(existing, grant)));
     if (retainedGrants === null) return deploymentFailure('deployment_conflict');
     const retainedSubjects = new Map(retainedGrants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
@@ -553,8 +603,9 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (subjects.has(key)) return deploymentFailure('deployment_conflict');
         subjects.add(key);
         const retained = retainedSubjects.get(key);
-        if (retained && !isDeepStrictEqual(retained, grant)) return deploymentFailure('deployment_conflict');
-        const runtime = link?.machines.some(member => member.machineId === grant.machineId && member.installationId === grant.installationId);
+        if (platformVariables ? !retained || !isDeepStrictEqual(retained, grant)
+            : retained && !isDeepStrictEqual(retained, grant)) return deploymentFailure('deployment_conflict');
+        const runtime = runtimeInstallations.some(member => member.machineId === grant.machineId && member.installationId === grant.installationId);
         const build = buildMachineId === grant.machineId;
         if (!retained && (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build : !runtime && !build)) {
             return deploymentFailure('deployment_conflict');
@@ -592,13 +643,20 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 if (previous !== undefined && previous !== binding.source.resourceRevision) return deploymentFailure('deployment_conflict');
                 contentReferences.set(resourceId, binding.source.resourceRevision);
             }
-            if (!isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) continue;
+            if (platformVariables && binding.purpose !== 'variable') continue;
+            if (!isEnvironmentSecretBindingManagedByBindingsWriterV1(binding, placement ? 'environment' : 'bindings')) continue;
             if (binding.purpose === 'registry') registryTargetIds.add(binding.targetLinkId);
-            const needsBuild = binding.purpose === 'registry' ? buildMachineId !== null : binding.phase === 'build';
+            if (platformVariables && binding.purpose === 'variable') continue;
+            const needsBuild = binding.purpose === 'registry' ? buildMachineId !== null
+                : binding.purpose === 'variable' && binding.phase === 'build';
             if (needsBuild && !buildRecipient) return deploymentFailure('deployment_conflict');
-            const destinations = binding.purpose === 'variable'
-                ? binding.phase === 'runtime' ? link?.machines ?? [] : buildRecipient ? [buildRecipient] : []
-                : [...link?.machines ?? [], ...(buildRecipient ? [buildRecipient] : [])];
+            const destinations = binding.purpose === 'dataRole'
+                ? runtimeInstallations.filter(member => input.grants.some(grant => grant.kind === 'secret'
+                    && grant.resourceId === resourceId && grant.resourceRevision === binding.source.resourceRevision
+                    && grant.machineId === member.machineId && grant.installationId === member.installationId))
+                : environmentSecretBindingInstallationsV1<{ machineId: string; installationId: string }>(binding,
+                    { runtimeInstallations, buildInstallation: buildRecipient }) ?? [];
+            if (binding.purpose === 'dataRole' && destinations.length === 0) return deploymentFailure('deployment_conflict');
             for (const destination of destinations) {
                 const common = { v: 1 as const, environmentId: loaded.row.id,
                     machineId: destination.machineId, installationId: destination.installationId };
@@ -688,13 +746,18 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     }
     const principalsChanged = placement?.deployerPrincipals !== undefined
         && !sameDeploymentDeployerPrincipals(loaded.row.deployers, placement.deployerPrincipals);
-    if (!grantsChanged && !principalsChanged && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
+    if (!linkCandidate && !grantsChanged && !principalsChanged && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
         && (placement?.protection ?? loaded.row.protection) === loaded.row.protection
         && buildMachineId === loaded.row.buildMachineId
         && (placement?.edgeMachineId === undefined || placement.edgeMachineId === loaded.row.edgeMachineId)
         && isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input))
         && isDeepStrictEqual(loaded.row.referencedSavedSecretRevisions, referencedSavedSecretRevisions)) {
         return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision };
+    }
+    if (linkCandidate && link) {
+        const updated = await tx.deploymentTargetLink.updateMany({ where: { id: link.id, revision: link.revision },
+            data: { ...deploymentContentReference(linkCandidate), revision: { increment: 1 } } });
+        if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision },
         data: { ...deploymentContentReference(input), ...(placement ? { buildMachineId,
