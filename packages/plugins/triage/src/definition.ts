@@ -10,10 +10,12 @@ import { createTriageCompletePullRequestLinkActionHandler,
   TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1 } from './actions/completePullRequestLink.js';
 import {
   definePlugin,
+  type DefinedPlugin,
   PluginSearchQueryV1Schema,
   PluginSearchResultV1Schema,
   PluginWorkItemTransitionInputV1Schema,
 } from '@happier-dev/plugin-sdk';
+import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1, transitionTriageWorkItem } from './workItems/runtime.js';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
@@ -217,7 +219,7 @@ export { TRIAGE_DISPLAY_NAME };
  * no Triage registration is written by hand.
  */
 function createTriagePlugin() {
-  return definePlugin({
+  const plugin = definePlugin({
     id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     version: '0.0.0',
     displayName: 'PRs, Issues & Tasks',
@@ -660,7 +662,7 @@ function createTriagePlugin() {
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,
         resultSchema: TriageRunConfiguredActionResultV1Schema,
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageRunConfiguredActionHandler(),
       },
       [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
@@ -822,7 +824,7 @@ function createTriagePlugin() {
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
         dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
+        confirmationWhen: { presentUserUi: { op: 'eq', path: 'kind', value: 'saveDefaults' } },
         confirmation: {
           title: 'Apply this configured-action change?',
           body: 'This adds, changes, removes, enables, disables, reorders, or restores the default entry actions in this Happier Account.',
@@ -1129,10 +1131,16 @@ function createTriagePlugin() {
       },
     },
   });
+  const declaredPlugin: DefinedPlugin<
+    typeof TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    typeof plugin.actionContracts,
+    DefinedContributionPointProtocolMap<typeof PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS>
+  > = plugin;
+  return declaredPlugin;
 }
 
 /** The one Triage plugin value: manifest, activation and contribution points. */
-export const TRIAGE_PLUGIN = createTriagePlugin();
+export const TRIAGE_PLUGIN: ReturnType<typeof createTriagePlugin> = createTriagePlugin();
 
 /**
  * The exact target-owned point used to observe admitted V1 source

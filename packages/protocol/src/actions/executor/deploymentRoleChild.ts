@@ -355,7 +355,8 @@ export function createHostReviewedChildPortV1(params: Readonly<{
   policies?: readonly HostReviewedChildPolicyV1[];
   reviewAdmitted?: true;
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
-  execute(input: unknown, context: ActionExecutorContext, actionId: ActionId): Promise<ActionExecuteResult>;
+  /** Parent-only review ports have no prepared child execution. */
+  execute?: (input: unknown, context: ActionExecutorContext, actionId: ActionId) => Promise<ActionExecuteResult>;
 }>): HostReviewedChildPortV1 {
   const plan = params.plan;
   const parent = { actionId: params.actionId, input: projectNativeJsonValueForTransport(params.input) as Record<string, JsonValue> };
@@ -371,7 +372,8 @@ export function createHostReviewedChildPortV1(params: Readonly<{
     ...(plan ? { preparedChildren: plan.children.flatMap(child => child.input === undefined ? []
       : [{ action: child.action, role: child.role, input: child.input }]) } : {}),
     invoke: async request => {
-      if (!plan) return denied();
+      const execute = params.execute;
+      if (!plan || !execute) return denied();
       const matches = plan.children.flatMap((child, index) => child.role === request.role
         && sameStrictJsonValue(child.action, request.action)
         && (child.input === undefined || sameStrictJsonValue(child.input, request.input))
@@ -384,7 +386,7 @@ export function createHostReviewedChildPortV1(params: Readonly<{
         ...(params.receivingAdmission ? { receivingAdmission: params.receivingAdmission } : {}),
         ...(environmentId ? { environmentId } : {}),
         admittedReview: params.policies?.[matches[0]!],
-        execute: (input, context, actionId) => params.execute(input, { ...context, hostReviewedChild: port }, actionId) });
+        execute: (input, context, actionId) => execute(input, { ...context, hostReviewedChild: port }, actionId) });
     },
   };
   return port;

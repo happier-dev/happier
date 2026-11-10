@@ -6,7 +6,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { ActionDefinitionV1 } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHostReviewedChildPortV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -118,6 +118,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
+    const approvalContext = { ...context };
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
     const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1
       || context.presentUserApproval?.actionId === ACTION_INVOKE_ACTION_ID_V1;
@@ -171,7 +172,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(messageActionReference ? { messageActionReference } : {}),
         ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
         ...(resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope } : {}),
-        approvalContext: context,
+        approvalContext,
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
@@ -184,7 +185,14 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           const digest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: request.action.pluginId,
             pluginVersion: request.action.pluginVersion, sourceCustody: request.action.sourceCustody,
             declaration: request.action.accountActionDeclaration });
-          if (admitAccountActionInvokeConfirmationV1(wrapper, context, digest)) return { status: 'approved', fingerprint: request.fingerprint };
+          if (admitAccountActionInvokeConfirmationV1(wrapper, context, digest)) {
+            // Retain the native review at its admission owner. Nested Actions
+            // keep plugin authority and consume this existing private parent.
+            approvalContext.hostReviewedChild ??= createHostReviewedChildPortV1({
+              actionId: ACTION_INVOKE_ACTION_ID_V1, input: wrapper, context: approvalContext, reviewAdmitted: true,
+            });
+            return { status: 'approved', fingerprint: request.fingerprint };
+          }
           if (hasCarriedConsent) return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
           return input.requestCurrentIntent ? await input.requestCurrentIntent(request)
             : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
