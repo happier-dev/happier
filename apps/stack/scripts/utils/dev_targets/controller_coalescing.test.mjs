@@ -75,7 +75,7 @@ test('edited contract', async () => {
 });
 
 // Short prefixes keep Unix socket paths valid under worker TMPDIRs.
-for (const outcome of ['success', 'failure', 'signal']) test(`queued controller followers progress after leader ${outcome} with inherited output`, {
+for (const outcome of ['success', 'failure', 'signal', 'interrupt']) test(`queued controller followers progress after leader ${outcome} with inherited output`, {
   timeout: 15000, skip: process.platform !== 'linux',
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'cf-' });
@@ -142,9 +142,9 @@ socket.resume();
   assert.equal(before.runningDispatches, 1);
   assert.equal(before.queuedFollowers, 1);
   const followerConnection = nextConnection();
-  if (outcome === 'signal') process.kill(dispatchPids[0], 'SIGKILL');
+  if (outcome === 'signal' || outcome === 'interrupt') process.kill(dispatchPids[0], outcome === 'signal' ? 'SIGKILL' : 'SIGINT');
   else leader.write('finish');
-  assert.equal(await first.result, outcome === 'signal' ? 137 : outcome === 'success' ? 0 : 7);
+  assert.equal(await first.result, outcome === 'signal' ? 137 : outcome === 'interrupt' ? 130 : outcome === 'success' ? 0 : 7);
   const promoted = await followerConnection;
   const after = status();
   dispatchPids = [...dispatchPids, ...after.dispatchPids];
@@ -154,6 +154,18 @@ socket.resume();
   await follower.started;
   promoted.write('finish');
   assert.equal(await follower.result, outcome === 'success' ? 0 : 7);
+  if (outcome === 'failure') {
+    // An attachment after terminal publication must start fresh rather than
+    // wait on the failed leader or its already-finished successor.
+    const lateConnection = nextConnection();
+    const late = start();
+    const lateSocket = await lateConnection;
+    dispatchPids.push(...status().dispatchPids);
+    await late.started;
+    lateSocket.write('finish');
+    assert.equal(await late.result, 7);
+    assert.equal(connections.length, 3);
+  }
 });
 
 for (const scenario of ['remote', 'fallback-broker', 'fallback-caller']) test(scenario === 'remote'
@@ -245,7 +257,7 @@ esac
   assert.equal(stdout, 'native-probe-dispatched\n');
 });
 
-for (const exitKind of ['payload', 'broker']) test(`controller lifetime settles after ${exitKind === 'broker' ? 'broker SIGKILL' : 'a local exec completes'}`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+for (const exitKind of ['payload', 'broker', 'broker-interrupt']) test(`controller lifetime settles after ${exitKind === 'payload' ? 'a local exec completes' : exitKind === 'broker' ? 'broker SIGKILL' : 'broker SIGINT'}`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'cl-' });
   const payload = fixture.path('payload.cjs');
   const gatePath = fixture.path('gate.sock');
@@ -289,11 +301,11 @@ socket.resume();
     await rm(status.socketPath + '.lock', { force: true });
   });
   const closed = new Promise(resolveClose => socket.once('close', resolveClose));
-  if (exitKind === 'broker') {
+  if (exitKind !== 'payload') {
     // The fixture owns this private repo and the exact observed broker PID.
-    process.kill(status.pid, 'SIGKILL');
+    process.kill(status.pid, exitKind === 'broker' ? 'SIGKILL' : 'SIGINT');
   } else socket.end();
-  assert.equal(await exited, exitKind === 'broker' ? 1 : 7, stderr);
+  assert.equal(await exited, exitKind === 'payload' ? 7 : 1, stderr);
   t.diagnostic(`private ${exitKind} exit observed; awaiting native job socket closure`);
   await closed;
   settled = true;
