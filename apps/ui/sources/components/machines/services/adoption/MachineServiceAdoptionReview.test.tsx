@@ -22,6 +22,7 @@ const { MachineServiceAdoptionReview } = await import('./MachineServiceAdoptionS
 const { canAdoptMachineService } = await import('./machineServiceAdoptionPresentation');
 const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { MachineServicePage } = await import('../MachineServicePage');
+const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
 
 let serverId: string;
 const machineId = 'adopt-machine';
@@ -115,9 +116,13 @@ it('keeps a partial adoption in its own words and continues it with Try again', 
 it('leads a watched Compose project\'s page with Adopt and says what watching cannot do, never for a deployed one', async () => {
   machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) =>
     method === RPC_METHODS.MACHINES_SERVICE_DETAIL ? { kind: 'service', service: row() } : { kind: 'unavailable', reason: 'machine_unreachable' });
-  const page = (service: ReturnType<typeof row>) => <MachineServicePage serverId={serverId} machineId={machineId} machineName="shop-prod"
-    serviceId={service.serviceId} service={service} list="listed" online readAt={1} refreshing={false} onRetry={() => {}}
-    active onBack={() => {}} />;
+  const page = (service: ReturnType<typeof row>) => (
+    <AccountNoticeInvestigationBoundary>
+      <MachineServicePage serverId={serverId} machineId={machineId} machineName="shop-prod"
+        serviceId={service.serviceId} service={service} list="listed" online readAt={1} refreshing={false} onRetry={() => {}}
+        active onBack={() => {}} />
+    </AccountNoticeInvestigationBoundary>
+  );
   const screen = await renderScreen(page(row()));
   await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-adopt')).not.toBeNull());
   expect(screen.getTextContent()).toContain(t('machineServices.adopt.watchedNote', { service: 'analytics' }));

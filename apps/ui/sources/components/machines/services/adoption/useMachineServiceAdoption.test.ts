@@ -5,6 +5,7 @@ import type { MachineServiceAdoptResultV1 } from '@happier-dev/protocol/local/se
 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
 // Only the Machine RPC transport is substituted: the Action front door, executor, admission and the hook stay real.
@@ -16,6 +17,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
+// Match app startup before loading a consumer of the real Account/Action runtime.
+await loadSyncSingletonForTests();
 const { useMachineServiceAdoption } = await import('./useMachineServiceAdoption');
 
 let serverId: string;
