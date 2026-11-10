@@ -1,4 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Static Session consumers load the shared Socket SDK before fixture installation.
+vi.mock('socket.io-client', async importOriginal => (
+  await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')
+).createSessionOpsSocketIoClientBoundary(importOriginal));
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
