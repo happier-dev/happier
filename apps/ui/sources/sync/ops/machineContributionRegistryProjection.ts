@@ -1002,6 +1002,7 @@ export async function machinePluginStructuredMessageActionExecute(
             accountId: opts.accountLifetime?.scope.accountId,
             ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            requestId: payload.requestId,
             payload,
             onIssued,
         });

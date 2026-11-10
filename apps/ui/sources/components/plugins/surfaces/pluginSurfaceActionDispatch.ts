@@ -2355,10 +2355,10 @@ async function executeContributedAction(
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return failure('unavailable', 'plugin_action_origin_unavailable');
     const execute = binding.execute ?? machinePluginStructuredMessageActionExecute;
-    // The admitted projection owns whether this invocation can produce a daemon
-    // operation at all; a declaration-free Action still carries no request id.
+    // Every invocation retains the host's request identity for diagnostics and
+    // approval custody. Only declared operations establish progress observation.
     const admittedOperation = input.readObservation ? undefined : projectedAction.operation;
-    const admittedRequestId = admittedOperation ? input.actionRequestId : undefined;
+    const admittedRequestId = input.actionRequestId;
     if (admittedOperation && admittedRequestId) {
         input.onDaemonActionOperationAdmitted?.(admittedOperation);
     }

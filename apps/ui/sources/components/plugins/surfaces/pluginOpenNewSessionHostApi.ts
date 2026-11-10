@@ -1,7 +1,6 @@
 import {
     PluginUiOpenNewSessionRequestV1Schema,
     PluginUiPreparedReviewWorkspaceResultV1Schema,
-    PluginUiHostApiErrorCodeV1Schema,
     PluginUiSelectActionInputResultV1Schema,
     pluginUiSelectedActionInputMatchesOperation,
     type PluginUiHostApiErrorCodeV1,
@@ -17,6 +16,7 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import {
     createPluginSurfaceHostApiError,
+    readPluginSurfaceHostApiErrorPayload,
     type PluginSurfaceHostApiMethodHandler,
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
@@ -57,14 +57,6 @@ function isJsonRecord(value: PluginUiJsonValueV1): value is Readonly<Record<stri
 function readPreparedRepositoryPath(value: PluginUiJsonValueV1): string | null {
     const prepared = PluginUiPreparedReviewWorkspaceResultV1Schema.safeParse(value);
     return prepared.success ? prepared.data.repositoryPath : null;
-}
-
-function asHostApiFailure(value: PluginUiJsonValueV1): PluginUiJsonValueV1 | null {
-    if (!isJsonRecord(value)) return null;
-    return PluginUiHostApiErrorCodeV1Schema.safeParse(value.code).success
-        && Array.isArray(value.diagnostics)
-        ? value
-        : null;
 }
 
 /**
@@ -135,8 +127,7 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                     targetedOperation: operation,
                     selectedActionInput: selected.data,
                 });
-                const actionFailure = asHostApiFailure(result);
-                if (actionFailure !== null) return actionFailure;
+                if (readPluginSurfaceHostApiErrorPayload(result) !== null) return result;
                 const repositoryPath = readPreparedRepositoryPath(result);
                 if (repositoryPath === null) {
                     // The selected contribution has already parsed its result.

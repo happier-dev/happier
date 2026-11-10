@@ -5047,6 +5047,62 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
+    it.each(['unavailable', 'filesystem_identity_custody_unavailable'])(
+        'retains preparation refusal %s through the real Action dispatcher and New Session settlement', async code => {
+            const { createPluginOpenNewSessionHostApiHandler } = await import('./pluginOpenNewSessionHostApi');
+            const { settlePluginSurfaceHostApiRequest } = await import('./createPluginSurfaceHostApi');
+            const accountLifetime = clientAccountLifetime();
+            const activation = createClientActionActivation({ accountLifetime, localId: 'prepare-review-workspace',
+                // This is the fixture plugin's actual declared handler, invoked through its registered runtime.
+                handler: async () => { throw new PluginError({ code, retryable: false,
+                    details: { layer: 'policy', phase: 'admission' },
+                    diagnostics: [{ code: 'filesystem_identity_custody_unavailable', severity: 'error' }] }); },
+            });
+            const operation = {
+                point: { pointId: 'review', protocol: { id: 'review', version: 1 } },
+                contributor: { pluginId: CALLER_PLUGIN_ID, contributionId: 'review-source',
+                    occurrenceId: activation.action.occurrenceId, sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY },
+                role: 'prepareReviewWorkspace', action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+            } as const;
+            const selected = { kind: 'submitted' as const, action: operation.action, input: {},
+                selection: { target: { pluginId: CALLER_PLUGIN_ID, sourceCustody: TARGET_SOURCE_CUSTODY },
+                    point: operation.point, contributor: { pluginId: operation.contributor.pluginId,
+                        contributionId: operation.contributor.contributionId, sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY } },
+                connectedAccount: { kind: 'none' as const },
+                presentation: { connectedAccountLabel: null, machineDisplayName: 'Development Mac' },
+            };
+            const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
+                callerBinding: mountedCallerBinding(), callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                targetSourceCustody: TARGET_SOURCE_CUSTODY,
+                resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+                createOpenNewSession: executeSelectedOperation => createPluginOpenNewSessionHostApiHandler({
+                    pluginId: CALLER_PLUGIN_ID, accountLifetime, isCurrent: () => true,
+                    executionTarget: { serverId: accountLifetime.scope.serverId, machineId: 'machine-client-action' },
+                    executeSelectedOperation,
+                }),
+            });
+            newSessionNavigation.mockReset();
+            try {
+                await activation.composition.reconcile([activation.activation]);
+                const request = { ...executeActionRequest({ checkoutIntent: 'preparedReviewWorkspace' }),
+                    method: 'openNewSession' as const };
+                const response = await settlePluginSurfaceHostApiRequest(request, () => api.handleRequest(request, {
+                    targetedOperation: operation, selectedActionInput: selected,
+                }));
+                expect(response).toMatchObject({ kind: 'error', requestId: request.requestId,
+                    payload: { code, layer: 'policy', phase: 'admission', retryable: false,
+                        diagnostics: ['filesystem_identity_custody_unavailable'] } });
+                expect(network.requests).toContainEqual(expect.objectContaining({
+                    method: RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ,
+                    payload: expect.objectContaining({ qualifiedActionId: `${CALLER_PLUGIN_ID}/${activation.action.id}` }),
+                }));
+                expect(newSessionNavigation).not.toHaveBeenCalled();
+            } finally {
+                api.dispose?.(); await activation.composition.unload(); accountLifetime.retire();
+            }
+        },
+    );
+
     it('opens the canonical New Session draft from an unmounted client Action', async () => {
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
         await prepareSessionDraftPersistenceStorage();
@@ -8136,6 +8192,7 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
         expect(executeHostAction).not.toHaveBeenCalled();
         expect(contributedActionExecute).toHaveBeenCalledWith('machine-composed', {
             serverId: 'server-composed',
+            requestId: expect.any(String),
             expectedContributorOccurrenceId: 'occurrence-acme.reviewer',
             qualifiedActionId: 'acme.reviewer/refresh-index',
             isCurrent: expect.any(Function),
@@ -8191,6 +8248,7 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
         expect(emittedTargetedOperations).toEqual([COMPOSED_TARGETED_OPERATION]);
         expect(contributedActionExecute).toHaveBeenCalledWith('machine-composed', {
             serverId: 'server-composed',
+            requestId: expect.any(String),
             expectedContributorOccurrenceId: 'occurrence-acme.reviewer',
             qualifiedActionId: 'acme.reviewer/prepare-v1',
             isCurrent: expect.any(Function),
@@ -8221,6 +8279,7 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
         expect(executeHostAction).not.toHaveBeenCalled();
         expect(contributedActionExecute).toHaveBeenCalledWith('machine-composed', {
             serverId: 'server-composed',
+            requestId: expect.any(String),
             expectedContributorOccurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
             isCurrent: expect.any(Function),
             qualifiedActionId: `${CALLER_PLUGIN_ID}/refresh-index`,
@@ -8405,6 +8464,26 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
         return { ...adapter, requests };
     }
 
+    it('correlates a declaration-free daemon refusal with the Request ID exposed by the native API', async () => {
+        let daemonRequest: ReturnType<typeof DaemonPluginStructuredMessageActionExecuteRequestSchema.parse> | undefined;
+        // The physical daemon RPC is the boundary; the public adapter, dispatcher and serializer stay real.
+        daemonRpc.mockImplementationOnce(async (request: { payload: unknown }) => {
+            daemonRequest = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
+            return { ok: false, code: 'plugin_action_current_intent_mismatch' };
+        });
+        const adapter = createReactNativeSurface({
+            executeHostAction: async () => ({ ok: true, result: null }),
+            contributedActionExecute: machinePluginStructuredMessageActionExecute,
+        });
+        try {
+            const refusal: unknown = await adapter.api.executeAction('refresh-index', { reason: 'correlation' })
+                .catch(error => error);
+            expect(refusal).toMatchObject({ details: { requestId: adapter.requests[0]?.requestId },
+                diagnostics: [{ code: 'plugin_action_current_intent_mismatch' }] });
+            expect(daemonRequest).toMatchObject({ requestId: adapter.requests[0]?.requestId });
+        } finally { adapter.dispose(); }
+    });
+
     it('carries both branches from the React Native public API with the host stamps intact', async () => {
         const executeHostAction = vi.fn<PluginSurfaceHostActionExecute>(async () => ({ ok: true as const, result: { reloaded: true } }));
         const contributedActionExecute = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
@@ -8452,6 +8531,7 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
             .resolves.toEqual({ refreshed: true });
         expect(contributedActionExecute).toHaveBeenCalledWith('machine-rn', {
             serverId: 'server-rn',
+            requestId: adapter.requests[2]?.requestId,
             isCurrent: expect.any(Function),
             expectedContributorOccurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
             qualifiedActionId: `${CALLER_PLUGIN_ID}/refresh-index`,

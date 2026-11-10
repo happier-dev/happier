@@ -501,6 +501,25 @@ describe('machine contribution registry projection ops', () => {
         },
     );
 
+    it('carries each initiating Action request identity into the real RPC envelope and operation payload', async () => {
+        network.setRpcAckResponder(async () => ({ ok: true, result: { ok: true, result: { ready: true } } }));
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        const requestIds = ['ui-action-root', 'ui-action-root:prepare-review-workspace'];
+        for (const requestId of requestIds) {
+            await expect(machinePluginStructuredMessageActionExecute('machine-1', {
+                serverId: serverAId, qualifiedActionId: 'acme.preview/refresh', executionSurface: 'ui',
+                expectedContributorOccurrenceId: 'occurrence-a', invocation: mountedActionInvocation, requestId,
+            })).resolves.toEqual({ supported: true, result: { ok: true, result: { ready: true } } });
+        }
+        const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+        const packets = network.socketBoundaries.flatMap(({ socket }) => socket.emitWithAck.mock.calls)
+            .filter(([event]) => event === SOCKET_RPC_EVENTS.CALL).map(([, packet]) => packet);
+        expect(packets).toEqual(requestIds.map(requestId => expect.objectContaining({
+            requestId,
+            params: expect.objectContaining({ requestId, invocation: mountedActionInvocation }),
+        })));
+    });
+
     it('cancels only the issued Action occurrence and keeps a successor Action live', async () => {
         const answers = new Map<string, (response: unknown) => void>();
         network.setRpcAckResponder(async ({ payload }) => {
