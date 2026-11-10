@@ -8,6 +8,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useActivityOverviewSummary } from './useActivityOverview';
 import { usePendingNavigationOverview } from './usePendingNavigationOverview';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 // React Native is the platform boundary; the store, the Activity source, address and attention owners stay real.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -40,7 +41,7 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
         vi.useRealTimers();
     });
 
-    it('re-reads only the changed Session for every mounted summary and pending reader', async () => {
+    it('muse.experience.pc13 re-reads only the changed Session and commits no attention reader for an unrelated update', async () => {
         const previousStackLimit = Error.stackTraceLimit;
         Error.stackTraceLimit = 80;
         // Count this corridor's row reads (selector, address owner, classifiers), not other subscribers'.
@@ -68,16 +69,16 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
         }, true);
 
         const read: Record<string, { needsYou?: number; pending?: number }> = {};
-        let renders = 0;
+        const commits = createRenderCommitCounter();
         function Summary(props: Readonly<{ name: string }>) {
+            useRenderCommitCounter(commits);
             read[props.name] = { needsYou: useActivityOverviewSummary().needsYouCount };
-            renders += 1;
             return null;
         }
         function Pending(props: Readonly<{ name: string; sessionId: string }>) {
+            useRenderCommitCounter(commits);
             const address = React.useMemo(() => ({ serverId: 'server-a', sessionId: props.sessionId }), [props.sessionId]);
             read[props.name] = { pending: usePendingNavigationOverview(address, true).count };
-            renders += 1;
             return null;
         }
         await renderScreen(<>
@@ -90,7 +91,7 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
             // One Session starts waiting on the person.
             const waiting = permissionSession('scale-42');
             rowReads = 0;
-            renders = 0;
+            commits.reset();
             await act(async () => storage.setState({
                 sessions: { ...sessions, [waiting.id]: waiting },
                 sessionListRowsByServerId: { 'server-a': countRows({ ...rows, [waiting.id]: buildSessionListRenderableFromSession(waiting) }) },
@@ -98,19 +99,19 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
             }));
             expect(read).toEqual({ rail: { needsYou: 2 }, status: { needsYou: 2 }, header: { pending: 2 }, composer: { pending: 1 } });
             // Two reads per shared projection (address owner + classifier) for 4 mounted readers of 1,000 Sessions.
-            expect({ rowReads, renders }).toEqual({ rowReads: 4, renders: 3 });
+            expect({ rowReads, ...commits.read() }).toEqual({ rowReads: 4, renders: 3, commits: 3 });
 
             // A row write that changes nothing either projection shows renders no reader.
             const touched = { ...sessions['scale-43']!, seq: (sessions['scale-43']!.seq ?? 0) + 1 };
             const latestRows = storage.getState().sessionListRowsByServerId['server-a']!;
             rowReads = 0;
-            renders = 0;
+            commits.reset();
             await act(async () => storage.setState({
                 sessions: { ...storage.getState().sessions, [touched.id]: touched },
                 sessionListRowsByServerId: { 'server-a': countRows({ ...latestRows, [touched.id]: buildSessionListRenderableFromSession(touched) }) },
                 sessionListRenderableDelta: { revision: 102, changedSessionIds: [touched.id], removedSessionIds: [], rebuiltSessionListIndex: false },
             }));
-            expect({ rowReads, renders }).toEqual({ rowReads: 4, renders: 0 });
+            expect({ rowReads, ...commits.read() }).toEqual({ rowReads: 4, renders: 0, commits: 0 });
         } finally {
             Error.stackTraceLimit = previousStackLimit;
         }

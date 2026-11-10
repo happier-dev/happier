@@ -1359,6 +1359,35 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect((statusPill as any)?.props?.isPulsing).toBe(true);
     });
 
+    it('muse.experience.pc10 lists once on open, once per page, and never after closing', async () => {
+        candidatesListSpy.mockResolvedValueOnce({ ok: true, candidates: [{
+            remoteSessionId: 'native-first', title: 'First native Session', updatedAtMs: 1_700_000_000_000,
+            activity: 'idle',
+        }], nextCursor: 'native-next-page' }).mockResolvedValueOnce({ ok: true, candidates: [{
+            remoteSessionId: 'native-second', title: 'Second native Session', updatedAtMs: 1_700_000_000_001,
+            activity: 'idle',
+        }], nextCursor: null });
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId('direct-session-candidate:native-first')).not.toBeNull();
+        });
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
+        await act(async () => { legendListState.props?.onEndReached?.(); });
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId('direct-session-candidate:native-second')).not.toBeNull();
+        });
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
+        expect(candidatesListSpy).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'native-next-page' }),
+            expect.objectContaining({ requestId: expect.any(String) }));
+        await screen.unmount();
+        await act(async () => { fixtureStorage.setState({ lastSyncAt: Date.now() }); });
+        await flushHookEffects();
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('hides internal threads by default and reveals them, labelled with their parent, from the Sub-agent threads filter', async () => {
         const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
         const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
