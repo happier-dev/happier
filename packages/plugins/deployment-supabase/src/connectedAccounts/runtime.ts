@@ -3,7 +3,7 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterializa
 
 const origin = 'https://api.supabase.com';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
-const diagnostic = (code: string) => ({ code, severity: 'error' as const, message: code });
+const diagnostic = (code: string) => ({ code, severity: 'error' as const });
 const tokenValid = (token: unknown): token is string => typeof token === 'string' && token.length > 0 && !/\s/u.test(token);
 async function probe(token: string, context: Context, signal: AbortSignal) {
   const slug = context.configuration.values.organizationSlug;

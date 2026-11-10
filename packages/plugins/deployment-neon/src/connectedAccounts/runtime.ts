@@ -3,7 +3,7 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterializa
 
 const origin = 'https://console.neon.tech';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
-const diagnostic = (code: string) => ({ code, severity: 'error' as const, message: code });
+const diagnostic = (code: string) => ({ code, severity: 'error' as const });
 function validToken(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 && !/[\r\n]/u.test(value); }
 async function probe(token: string, context: Context, signal: AbortSignal) {
   const { organizationId, projectId } = context.configuration.values;

@@ -370,6 +370,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             if ((errorLike.status === 'rejected' || errorLike.status === 'unavailable')
                 && errorLike.diagnostic !== null && typeof errorLike.diagnostic === 'object'
                 && 'message' in errorLike.diagnostic && typeof errorLike.diagnostic.message === 'string'
+                && (!('code' in errorLike.diagnostic) || errorLike.diagnostic.message.trim() !== errorLike.diagnostic.code)
                 && errorLike.diagnostic.message.trim()) return errorLike.diagnostic.message;
             if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
             if (errorLike.status === 'unavailable') {

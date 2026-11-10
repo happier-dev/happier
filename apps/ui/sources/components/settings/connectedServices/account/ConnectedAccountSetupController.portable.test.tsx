@@ -29,8 +29,6 @@ const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     Platform: { get OS() { return 'web'; } },
 }));
-// Native vendor HTTP remains the same external transport boundary as the Home fixture.
-vi.mock('expo/fetch', () => ({ fetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init) }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
@@ -130,23 +128,6 @@ const claudeDeclaration = await projectBundledPluginUiDeclaration({ packageName:
 packaged.declarations[packaged.declarations.length - 1] = {
     ...await projectBundledPluginUiFirstPaintDeclaration(claudeDeclaration), loadDeclaration: async () => claudeDeclaration,
 };
-const databaseServices = [
-    { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, packageFolder: 'deployment-neon', configurationField: 'organizationId',
-        responseStatus: 503, code: 'neon_unavailable', messageKey: 'connectedServices.errors.accountAuthenticationUnavailable', recovery: 'retry' },
-    { service: { pluginId: 'happier.deploy.supabase', localId: 'supabase' }, packageFolder: 'deployment-supabase', configurationField: 'organizationSlug',
-        responseStatus: 401, code: 'supabase_invalid_token', messageKey: 'connectedServices.errors.accountAuthenticationRejected', recovery: 'edit' },
-] as const;
-for (const database of databaseServices) {
-    const module = database.packageFolder === 'deployment-neon'
-        ? await import('../../../../../../../packages/plugins/deployment-neon/src/manifest')
-        : await import('../../../../../../../packages/plugins/deployment-supabase/src/manifest');
-    const manifest = PluginPortableReleaseManifestV1Schema.parse(module.PLUGIN_MANIFEST);
-    const descriptor = manifest.contributes.connectedAccountDescriptors?.find(row => row.id === database.service.localId);
-    if (!descriptor?.authentication.account) throw new Error('Missing database Account authentication declaration');
-    await prepareAuthenticationInventory(packaged, { manifest, target: descriptor.authentication.account,
-        projectPath: `packages/plugins/${database.packageFolder}`, entryPath: `packages/plugins/${database.packageFolder}/src/accountRuntime.ts`,
-        packageName: `@happier-dev/plugins-${database.packageFolder}` });
-}
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 
@@ -311,31 +292,6 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         get creates() { return creates; },
         get machineReads() { return machineReads; }, get machineRpcs() { return machineRpcs; } };
 }
-
-it.each(databaseServices)('localizes $code from the actual Account authentication runtime', async database => {
-    // Supabase declares browser HTTP unreachable; its Account runtime runs on native clients.
-    const fixture = await restorePortableFixture(database.service, false, undefined, false, undefined, database.responseStatus);
-    vi.spyOn((await import('react-native')).Platform, 'OS', 'get').mockReturnValue('ios');
-    expect(await (await import('@/utils/system/runtimeFetch')).readRuntimeFetchHost('https://portable-controller.test')).toBe('native');
-    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={database.service}
-        modeId="token" onCancel={() => {}} />);
-    try {
-        await vi.waitFor(() => expect(screen.findHostByTestId(`connected-account-configuration:${database.configurationField}`), screen.getTextContent()).not.toBeNull());
-        await act(async () => {
-            screen.changeTextByTestId(`connected-account-configuration:${database.configurationField}`, 'org-example');
-            screen.changeTextByTestId('connected-account-manual:token', 'constructed-database-token');
-        });
-        await screen.pressByTestIdAsync('connected-account-manual:submit');
-        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
-        expect(fixture.vendorRequests).toEqual([database.service.localId === 'neon'
-            ? 'https://console.neon.tech/api/v2/organizations/org-example' : 'https://api.supabase.com/v1/organizations']);
-        expect(screen.getTextContent()).toContain(t(database.messageKey));
-        expect(screen.getTextContent()).not.toContain(database.code);
-        expect(screen.getTextContent()).toContain(t(`common.${database.recovery}`));
-        await screen.pressByTestIdAsync('connected-account:error-details-toggle');
-        expect(screen.getTextContent()).toContain(database.code);
-    } finally { await screen.unmount(); }
-});
 
 it.each([false, true])('explains Claude browser OAuth needs an available Machine (retained offline selection: %s)', async retainedSelection => {
     const fixture = await restorePortableFixture(claude, false, undefined, true);

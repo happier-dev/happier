@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import { neonPortableRuntime } from '../../../../../../packages/plugins/deployment-neon/src/connectedAccounts/runtime';
+import { supabasePortableRuntime } from '../../../../../../packages/plugins/deployment-supabase/src/connectedAccounts/runtime';
 
 import {
   readConnectedServiceSettingsErrorCode,
@@ -11,6 +15,36 @@ import {
 } from './connectedServiceSettingsErrors';
 
 describe('connected-service settings errors', () => {
+  it.each([
+    { runtime: neonPortableRuntime, pluginId: 'happier.deploy.neon', localId: 'neon', values: { organizationId: 'org-example' },
+      status: 503, code: 'neon_unavailable', key: 'connectedServices.errors.accountAuthenticationUnavailable', recovery: 'retry' },
+    { runtime: supabasePortableRuntime, pluginId: 'happier.deploy.supabase', localId: 'supabase', values: { organizationSlug: 'org-example' },
+      status: 401, code: 'supabase_invalid_token', key: 'connectedServices.errors.accountAuthenticationRejected', recovery: 'edit' },
+  ] as const)('presents the actual $localId authentication producer refusal', async row => {
+    const http = createPluginHttpFixture({ async request() {
+      return { status: row.status, headers: {}, body: new Uint8Array() };
+    } });
+    // Only HTTP is used by these refusals; all other external host services fail loudly.
+    const services = new Proxy({ http } as ConnectedAccountAuthenticationContext['services'], {
+      get(target, key) { if (key === 'http') return target.http; throw new Error('Unexpected host service'); },
+    });
+    const service = { pluginId: row.pluginId, localId: row.localId };
+    const context = {
+      plugin: { id: row.pluginId, version: '0.0.0' }, contribution: { id: row.localId, qualifiedId: `${row.pluginId}/${row.localId}` },
+      surface: 'ui', invokedAtMs: 1, service, signal: new AbortController().signal, services,
+      attempt: { kind: 'connect', attemptId: 'diagnostic-fixture' },
+      configuration: { target: { kind: 'attempt', service, modeId: 'token', attemptId: 'diagnostic-fixture' },
+        revision: 'config-1', values: row.values, async getSecret() { return null; } },
+      attemptCredentials: { async get() { return null; }, async set() { throw new Error('Refusal must not save credentials'); }, async delete() {} },
+    } satisfies ConnectedAccountAuthenticationContext;
+    const mode = row.runtime.authentication.modes.token;
+    if (!mode || mode.kind !== 'manual') throw new Error('Missing manual authentication');
+    const result = await mode.complete({ fields: { token: 'dummy-diagnostic-fixture' } }, context);
+    expect(resolveConnectedServiceSettingsErrorMessage(result)).toBe(t(row.key));
+    expect(readConnectedServiceSettingsErrorDetailsCode(result)).toBe(row.code);
+    expect(resolveConnectedServiceSettingsErrorRecovery(result)).toBe(row.recovery);
+  });
+
   it.each([
     ['reconnectRequired', 'accountAuthenticationRestartRequired'],
     ['outcomeUnknown', 'accountStateUncertain'],
@@ -112,6 +146,16 @@ describe('connected-service settings errors', () => {
     expect(resolveConnectedServiceSettingsErrorMessage(new Error('private transport prose')))
       .toBe(t('connectedServices.errors.generic'));
     expect(resolveConnectedServiceSettingsErrorRecovery({ status: 'rejected', code: 'credential_unavailable' })).toBe('edit');
+  });
+
+  it.each([
+    { status: 'unavailable', code: 'neon_unavailable', key: 'connectedServices.errors.accountAuthenticationUnavailable' },
+    { status: 'rejected', code: 'supabase_invalid_token', key: 'connectedServices.errors.accountAuthenticationRejected' },
+  ] as const)('keeps code-as-message $code in Details rather than primary copy', ({ status, code, key }) => {
+    const error = { status, diagnostic: { code, severity: 'error', message: code } };
+    expect(resolveConnectedServiceSettingsErrorMessage(error)).toBe(t(key));
+    expect(readConnectedServiceSettingsErrorDetailsCode(error)).toBe(code);
+    expect(resolveConnectedServiceSettingsErrorRecovery(error)).toBe(status === 'rejected' ? 'edit' : 'retry');
   });
 
   it('localizes a message-free authentication diagnostic while retaining its details and recovery', () => {
