@@ -124,7 +124,7 @@ it('updates only new font rules, without idle frames or observing its own writes
         sheet.insertRule('.unistyles_late { font-size: 18px; line-height: 24px; }');
         await act(async () => { await Promise.resolve(); });
         expect(override()).toContain('font-size: calc(18px *');
-        expect(override()).toContain('line-height: calc(24px *');
+        expect(override(), 'the line height follows the font the browser uses').toContain('line-height: 1.333334 !important');
         sheet.insertRule('.unistyles_late { font-size: 18px; line-height: 24px; }');
         await act(async () => { await Promise.resolve(); });
         expect(override().split('.unistyles_late ').length - 1, 'a re-inserted known rule is not duplicated').toBe(1);

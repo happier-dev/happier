@@ -16703,7 +16703,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
         showFullPlan: 'Mostrar el plan completo',
         generationRequested: "Generación solicitada",
         startsResume: "Empieza cuando reanudes la ejecución.",
-        generateBody: "Si es válido, sin otra revisión.",
+        generateBody: "Continúa sin volver a preguntarte.",
         acceptedPaused: "Resultado aceptado. El flujo de trabajo sigue en pausa.",
         editResult: "Editar resultado",
         generate: "Generar resultado y continuar",

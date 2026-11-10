@@ -16655,7 +16655,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         showFullPlan: 'Mostra il piano completo',
         generationRequested: "Generazione richiesta",
         startsResume: "Inizia quando riprendi l’esecuzione.",
-        generateBody: "Se valido, senza altra revisione.",
+        generateBody: "Continua senza chiederti di nuovo.",
         acceptedPaused: "Risultato accettato. Il workflow è ancora in pausa.",
         editResult: "Modifica risultato",
         generate: "Genera risultato e continua",

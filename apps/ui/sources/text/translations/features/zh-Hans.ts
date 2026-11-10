@@ -16633,7 +16633,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         showFullPlan: '显示完整计划',
         generationRequested: "已请求生成",
         startsResume: "恢复运行后开始。",
-        generateBody: "有效时不再审查。",
+        generateBody: "继续执行，不再询问你。",
         acceptedPaused: "结果已接受。工作流仍处于暂停状态。",
         editResult: "编辑结果",
         generate: "生成结果并继续",

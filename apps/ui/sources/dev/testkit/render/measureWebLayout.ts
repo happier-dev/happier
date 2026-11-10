@@ -1,5 +1,5 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 /**
@@ -20,6 +20,10 @@ import path from 'node:path';
  * `HAPPIER_TEST_CHROMIUM_CDP_URL` to reuse a kept-open browser, or `HAPPIER_TEST_CHROMIUM_PATH`, the
  * agent-browser install, or Playwright's own cache. A supplied CDP endpoint never falls back to a
  * browser launch; measurements own only their new page, not the connected browser's existing pages.
+ *
+ * `minimumFontSize` is the browser's own "Minimum font size" setting, a profile preference that
+ * enlarges text past every CSS size (the large-text reports); it launches a fresh profile, so it
+ * cannot reuse a supplied CDP browser, and it fails when the browser ignores the preference.
  *
  * Diagnosing a failure: `HAPPIER_TEST_WEB_LAYOUT_DEBUG=<css selector>` prints each match's box and
  * computed flex chain up five ancestors.
@@ -47,6 +51,9 @@ export type WebLayoutRect = Readonly<{
      * so a weight is asserted through the family, not `font-weight`.
      */
     fontFamily?: string;
+    /** The computed font size and line height in pixels, after any minimum font size. */
+    fontSize?: number;
+    lineHeight?: number;
     /** Scroll extent and offset after browser focus, for scroll-owner regressions. */
     clientWidth?: number;
     scrollWidth?: number;
@@ -153,6 +160,8 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
     edgeProbeTestIds?: readonly string[];
     /** Optional visual evidence of the same settled layout measured below. */
     screenshotPath?: string;
+    /** The browser's minimum font size preference in pixels (Chrome settings → Appearance → Customize fonts). */
+    minimumFontSize?: number;
     /**
      * Replays the browser's boxes into `onLayout` and re-renders until the markup is stable; `flush`
      * is the test's `act` around the replay. Needs {@link installWebLayoutBridge}.
@@ -161,22 +170,47 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
 }>): Promise<WebLayoutMeasurement> {
     const { chromium } = await import('playwright');
     const cdpUrl = process.env.HAPPIER_TEST_CHROMIUM_CDP_URL;
-    let browser: Awaited<ReturnType<typeof chromium.launch>>;
+    const { minimumFontSize } = options;
+    if (minimumFontSize !== undefined && cdpUrl) {
+        throw new Error('measureWebLayout: minimumFontSize needs its own browser profile, not HAPPIER_TEST_CHROMIUM_CDP_URL');
+    }
+    let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+    let profile: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
+    let profileDir: string | undefined;
     try {
-        if (cdpUrl) {
+        if (minimumFontSize !== undefined) {
+            profileDir = mkdtempSync(path.join(tmpdir(), 'happier-web-layout-'));
+            mkdirSync(path.join(profileDir, 'Default'));
+            writeFileSync(path.join(profileDir, 'Default', 'Preferences'),
+                JSON.stringify({ webkit: { webprefs: { minimum_font_size: minimumFontSize } } }));
+            const executablePath = resolveChromiumExecutable();
+            profile = await chromium.launchPersistentContext(profileDir, executablePath === undefined ? {} : { executablePath });
+        } else if (cdpUrl) {
             browser = await chromium.connectOverCDP(cdpUrl);
         } else {
             const executablePath = resolveChromiumExecutable();
             browser = await chromium.launch(executablePath === undefined ? {} : { executablePath });
         }
     } catch (error) {
+        if (profileDir !== undefined) rmSync(profileDir, { recursive: true, force: true });
         throw new Error(cdpUrl
             ? `measureWebLayout could not connect to HAPPIER_TEST_CHROMIUM_CDP_URL (${String(error)})`
             : `measureWebLayout needs a Chromium: set HAPPIER_TEST_CHROMIUM_PATH (${String(error)})`);
     }
-    let page: Awaited<ReturnType<typeof browser.newPage>> | undefined;
+    let page: Awaited<ReturnType<NonNullable<typeof browser>['newPage']>> | undefined;
     try {
-        page = await browser.newPage({ viewport: { width: options.viewport.width, height: options.viewport.height } });
+        const viewport = { width: options.viewport.width, height: options.viewport.height };
+        if (profile !== undefined) {
+            page = await profile.newPage();
+            await page.setViewportSize(viewport);
+            await page.setContent('<p style="font-size:1px">probe</p>');
+            const applied = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('p')!).fontSize));
+            if (applied < minimumFontSize!) {
+                throw new Error(`measureWebLayout: this browser ignored minimumFontSize (${applied}px); use a full Chrome via HAPPIER_TEST_CHROMIUM_PATH`);
+            }
+        } else {
+            page = await browser!.newPage({ viewport });
+        }
         const { settle } = options;
         if (settle !== undefined) {
             // Owners measure in chains (a probe sizes a field, the field then measures its content), so
@@ -252,6 +286,7 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                     } : null),
                     outlineWidth: parseFloat(computed.outlineWidth), outlineStyle: computed.outlineStyle,
                     fontFamily: computed.fontFamily,
+                    fontSize: parseFloat(computed.fontSize), lineHeight: parseFloat(computed.lineHeight),
                     clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft };
             };
             const byTestId: Array<[string, ReturnType<typeof box>]> = [];
@@ -293,7 +328,9 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
             await page?.close();
         } finally {
             // For connectOverCDP, Playwright closes only its transport, not the remote browser.
-            await browser.close();
+            await browser?.close();
+            await profile?.close();
+            if (profileDir !== undefined) rmSync(profileDir, { recursive: true, force: true });
         }
     }
 }

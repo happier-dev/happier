@@ -16676,7 +16676,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         showFullPlan: 'Mostra el pla complet',
         generationRequested: "Generació sol·licitada",
         startsResume: "Comença quan reprenguis l’execució.",
-        generateBody: "Si és vàlid, sense més revisió.",
+        generateBody: "Continua sense tornar-te a preguntar.",
         acceptedPaused: "Resultat acceptat. El flux de treball continua en pausa.",
         editResult: "Edita el resultat",
         generate: "Genera el resultat i continua",

@@ -117,12 +117,30 @@ function ensureOverrideStyleElement(document: Document): HTMLStyleElement {
     return style;
 }
 
+/**
+ * A pixel line height beside a pixel font size, as a multiple of that font size.
+ *
+ * The browser's minimum font size enlarges the font but not a `px` or `em` line
+ * height, so stacked lines overlapped; a unitless line height follows the font
+ * the browser actually uses. Rounding up at the sixth decimal keeps the exact
+ * pixel line at the specified size, where the plain quotient lands 1/64 px short.
+ */
+function relativeLineHeight(metric: UnistylesFontMetric): string | null {
+    if (!metric.fontSize || !metric.lineHeight || !isPx(metric.fontSize) || !isPx(metric.lineHeight)) return null;
+    const fontSize = parseFloat(metric.fontSize);
+    if (!(fontSize > 0)) return null;
+    return String(Math.ceil((parseFloat(metric.lineHeight) / fontSize) * 1e6) / 1e6);
+}
+
 function buildOverrideRule({ selectorText, media, metric }: UnistylesFontRule): string {
     const parts: string[] = [];
     if (metric.fontSize) {
         parts.push(`font-size: calc(${metric.fontSize} * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR})) !important;`);
     }
-    if (metric.lineHeight) {
+    const lineHeightRatio = relativeLineHeight(metric);
+    if (lineHeightRatio) {
+        parts.push(`line-height: ${lineHeightRatio} !important;`);
+    } else if (metric.lineHeight) {
         parts.push(`line-height: calc(${metric.lineHeight} * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR})) !important;`);
     }
     if (metric.letterSpacing) {

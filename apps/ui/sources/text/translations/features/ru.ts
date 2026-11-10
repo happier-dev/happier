@@ -16686,7 +16686,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         showFullPlan: 'Показать план целиком',
         generationRequested: "Создание результата запрошено",
         startsResume: "Начнётся, когда вы возобновите запуск.",
-        generateBody: "Если допустим, без новой проверки.",
+        generateBody: "Продолжит, не спрашивая тебя снова.",
         acceptedPaused: "Результат принят. Процесс остаётся на паузе.",
         editResult: "Изменить результат",
         generate: "Создать результат и продолжить",
