@@ -13,7 +13,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['oh-my-pi', 'omp'],
     cloudConnect: null,
     connectedServices: {
-      supportedServiceIds: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.service.localId),
+      supportedServiceIds: [...new Set(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.service.localId))],
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'ohMyPiSessionId' },
     sessionStorage: { direct: true, persisted: true },

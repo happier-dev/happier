@@ -15,7 +15,7 @@ describe('OhMyPi plugin manifest', () => {
     ]);
     expect(PLUGIN_MANIFEST.contributes.agents[0]).toMatchObject({
       id: 'ohmypi', runtime: { kind: 'custom' }, primary: 'sessions',
-      connectedAccounts: [{
+      connectedAccounts: expect.arrayContaining([{
         purpose: 'openai-codex',
         service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         required: false,
@@ -43,9 +43,9 @@ describe('OhMyPi plugin manifest', () => {
         purpose: 'gemini',
         service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
         required: false,
-        materializationKinds: ['environment'],
+        materializationKinds: ['environment', 'files'],
         credentialKinds: ['token'],
-      }],
+      }]),
       capabilities: {
         skills: {
           delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',

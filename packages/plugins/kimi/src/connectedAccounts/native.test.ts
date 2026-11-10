@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthenticationContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createKimiNativeConnectedAccountRuntime } from './nativeRuntime.js';
 
 const directories: string[] = [];
@@ -17,7 +17,8 @@ it('explicitly imports only the non-default Node reference without changing nati
   await writeFile(join(home, 'credentials', 'selected-b.json'), original);
   await writeFile(join(home, 'credentials', 'unrelated-a.json'), 'malformed unrelated credentials');
   const values = new Map<string, string>();
-  const mode = createKimiNativeConnectedAccountRuntime().authentication.modes['native-import'];
+  const runtime = createKimiNativeConnectedAccountRuntime();
+  const mode = runtime.authentication.modes['native-import'];
   expect(mode).toBeDefined();
   if (!mode || mode.kind !== 'manual') throw new Error('Native import mode missing');
   // OS files and persisted attempt credentials are boundaries; parser and runtime stay real.
@@ -32,6 +33,17 @@ it('explicitly imports only the non-default Node reference without changing nati
   expect(values.get('refreshToken')).toBe('fake-root-b');
   expect(values.get('apiBase')).toBe('https://api.kimi.ai/coding/v1');
   expect(values.get('deviceId')).toBe('fake-existing-install');
+  const materializationContext = { ...context,
+    credentials: { async get(key: string) { return values.get(key) ?? null; } },
+  } as unknown as Parameters<ConnectedAccountRuntime['materialize']>[1];
+  const request = { kind: 'environment' as const, keys: ['HAPPIER_KIMI_ACCESS_TOKEN', 'KIMI_CODE_BASE_URL'] };
+  const expected = { kind: 'environment', env: {
+    HAPPIER_KIMI_ACCESS_TOKEN: 'fake-b', KIMI_CODE_BASE_URL: 'https://api.kimi.ai/coding/v1',
+  } };
+  expect(await runtime.materialize(request, materializationContext)).toEqual(expected);
+  expect(await runtime.materializeNative!(request, materializationContext)).toEqual(expected);
+  await expect(runtime.materialize({ kind: 'environment', keys: ['KIMI_API_KEY'] }, materializationContext))
+    .rejects.toMatchObject({ code: 'kimi_code_api_key_unavailable' });
   expect(await readFile(join(home, 'credentials', 'selected-b.json'), 'utf8')).toBe(original);
   expect(await readFile(join(home, 'config.toml'), 'utf8')).toBe(config);
 });

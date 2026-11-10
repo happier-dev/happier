@@ -59,7 +59,7 @@ export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
     const prepared = await prepareOhMyPiQualifiedAccounts({
       launchEnvironment: { values: environment, unset: [] },
     }, { signal, services: { connectedAccounts } });
-    return { environment: prepared.request.launchEnvironment.values,
+    return { catalogConfidence: 'account_unverified' as const, environment: prepared.request.launchEnvironment.values,
       unset: prepared.request.launchEnvironment.unset, dispose: prepared.cleanup };
   },
   catalogs: Object.freeze({ kind: 'acp' as const, command: OH_MY_PI_ACP_COMMAND }),

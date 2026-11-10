@@ -1,12 +1,14 @@
+import { randomUUID } from 'node:crypto';
+import { writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentAcpModelControls, AgentProviderBindingAdapter, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
-import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './auth/services/accountPurposes.js';
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES, ohMyPiPurposeOwnedEnvironmentKeys } from './auth/services/accountPurposes.js';
 
 const PROVIDER_ID = 'happier-provider';
 const SECRET_ENV_KEY = 'HAPPIER_OH_MY_PI_PROVIDER_API_KEY';
 const EXTENSION_PATH = 'provider.mjs';
 export const OH_MY_PI_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
-  SECRET_ENV_KEY, ...OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(row => row.launchEnvironmentKey),
+  SECRET_ENV_KEY, 'OMP_PROFILE', 'PI_PROFILE', ...new Set(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(ohMyPiPurposeOwnedEnvironmentKeys)),
 ]);
 
 export const OH_MY_PI_PROVIDER_BINDING_ADAPTER = {
@@ -70,4 +72,20 @@ export function ohMyPiProviderModelControls(binding: AgentSessionProviderBinding
       return { modelId: nativeId };
     },
   };
+}
+
+/** OMP models.yml accepts JSON and resolves apiKey environment references ahead of stored login. */
+export async function writeOhMyPiNativeAccountOverrides(
+  nativeHome: string,
+  providers: Readonly<Record<string, Readonly<{ apiKey: string; baseUrl?: string }>>>,
+): Promise<void> {
+  // This is the host-prepared native home; its lifecycle remains with that owner.
+  const target = join(nativeHome, 'models.yml');
+  const temporary = join(nativeHome, `models.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, `${JSON.stringify({ providers })}\n`, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, target);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }

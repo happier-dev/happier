@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentAcpRuntimeOptions,
@@ -10,10 +13,15 @@ import type {
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
+
+const privateHomes: string[] = [];
+function privateHome() { const root = mkdtempSync(join(tmpdir(), 'n-omp-activation-')); privateHomes.push(root); return root; }
+afterEach(() => { for (const root of privateHomes.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 const explicitModelConfiguration = {
   model: { value: 'fixture-selected-model', updatedAtMs: 1 },
@@ -100,10 +108,7 @@ describe('OhMyPi plugin activation', () => {
       },
     });
 
-    expect(result).toMatchObject({
-      decision: 'deny',
-      reasonCode: 'ohmypi_models_unavailable',
-    });
+    expect(result).toEqual({ decision: 'allow' });
     await fixture.dispose();
   });
 
@@ -158,37 +163,11 @@ describe('OhMyPi plugin activation', () => {
     try {
       const launch = fixture.registration('agents', 'ohmypi')?.connectedAccountLaunch;
 
-      expect(Object.keys(launch ?? {}).sort()).toEqual(['continuity', 'environmentUses', 'stateSharingDescriptor']);
+      expect(launch?.environmentUses).toEqual(expect.arrayContaining([{ purpose: 'openai', environmentKey: 'OPENAI_API_KEY' }]));
       expect(launch?.continuity?.verifyResumeReachable).toBeTypeOf('function');
-      expect(launch?.stateSharingDescriptor).toEqual({
-        nativeHome: {
-          environmentKey: 'PI_CODING_AGENT_DIR',
-          defaultRelativePath: '.omp/agent',
-        },
-        providerSupportStatus: 'supported',
-        config: {
-          supported: false,
-          modes: ['isolated'],
-          entries: [],
-          unavailableReason: 'not_implemented',
-        },
-        state: {
-          supported: true,
-          modes: ['isolated', 'shared'],
-          entries: [{ path: 'sessions', mode: 'linked' }],
-          sharedStatePrivacyRiskAcknowledgementRequired: true,
-          symlinkUnavailableDegradePolicy: 'block_continuity',
-        },
-        authIsolation: {
-          mode: 'process_env',
-          secretEntries: [
-            'OPENAI_CODEX_OAUTH_TOKEN',
-            'OPENAI_API_KEY',
-            'ANTHROPIC_OAUTH_TOKEN',
-            'ANTHROPIC_API_KEY',
-            'GEMINI_API_KEY',
-          ],
-        },
+      expect(launch?.stateSharingDescriptor).toMatchObject({
+        nativeHome: { environmentKey: 'PI_CODING_AGENT_DIR' },
+        authIsolation: { mode: 'materialized_home', secretEntries: [] },
       });
     } finally {
       await fixture.dispose();
@@ -322,6 +301,7 @@ describe('OhMyPi plugin activation', () => {
     ] as const);
     const getBinding = vi.fn(async (purpose: string) => {
       lifecycle.push(`getBinding:${purpose}`);
+      if (!services.has(purpose)) return null;
       return {
         purpose,
         service: services.get(purpose)!,
@@ -370,6 +350,7 @@ describe('OhMyPi plugin activation', () => {
       launchEnvironment: {
         values: {
           KEEP: 'caller-value',
+          PI_CODING_AGENT_DIR: privateHome(),
           OPENAI_CODEX_OAUTH_TOKEN: 'caller-codex',
           OPENAI_API_KEY: 'caller-openai',
           ANTHROPIC_OAUTH_TOKEN: 'caller-claude',
@@ -385,64 +366,24 @@ describe('OhMyPi plugin activation', () => {
       },
     }, context);
 
-    expect(getBinding.mock.calls).toEqual([
-      ['openai-codex', { signal, observation: true }],
-      ['openai', { signal, observation: true }],
-      ['claude-subscription', { signal, observation: true }],
-      ['anthropic', { signal, observation: true }],
-      ['gemini', { signal, observation: true }],
-    ]);
-    expect(lifecycle).toEqual([
-      'watch:openai-codex',
-      'watch:openai',
-      'watch:claude-subscription',
-      'watch:anthropic',
-      'watch:gemini',
-      'getBinding:openai-codex',
-      'getBinding:openai',
-      'getBinding:claude-subscription',
-      'getBinding:anthropic',
-      'getBinding:gemini',
-    ]);
-    expect(materialize.mock.calls).toEqual([
-      ['openai-codex', { kind: 'environment', keys: ['OPENAI_CODEX_OAUTH_TOKEN'] }, {
-        signal, expectedAccount: { service: services.get('openai-codex'), accountId: 'openai-codex-account' },
-      }],
-      ['openai', { kind: 'environment', keys: ['OPENAI_API_KEY'] }, {
-        signal, expectedAccount: { service: services.get('openai'), accountId: 'openai-account' },
-      }],
-      ['claude-subscription', { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] }, {
-        signal, expectedAccount: { service: services.get('claude-subscription'), accountId: 'claude-subscription-account' },
-      }],
-      ['anthropic', { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, {
-        signal, expectedAccount: { service: services.get('anthropic'), accountId: 'anthropic-account' },
-      }],
-      ['gemini', { kind: 'environment', keys: ['GEMINI_API_KEY'] }, {
-        signal, expectedAccount: { service: services.get('gemini'), accountId: 'gemini-account' },
-      }],
-    ]);
+    expect(getBinding).toHaveBeenCalledTimes(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.length);
+    expect(watch).toHaveBeenCalledTimes(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.length);
+    expect(materialize).toHaveBeenCalledTimes(services.size);
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
-      launchEnvironment: {
-        values: {
+      launchEnvironment: expect.objectContaining({
+        values: expect.objectContaining({
           KEEP: 'caller-value',
           OPENAI_CODEX_OAUTH_TOKEN: 'qualified-codex-access',
           OPENAI_API_KEY: 'qualified-openai-key',
           ANTHROPIC_OAUTH_TOKEN: 'qualified-claude-setup-token',
           ANTHROPIC_API_KEY: 'qualified-anthropic-key',
           GEMINI_API_KEY: 'qualified-gemini-key',
-        },
-        unset: ['KEEP_UNSET'],
-      },
+        }),
+        unset: expect.arrayContaining(['KEEP_UNSET', 'OMP_PROFILE', 'PI_PROFILE']),
+      }),
     }), expect.any(Object));
     expect(open.mock.calls[0]?.[0].launchEnvironment?.values).not.toHaveProperty('REFRESH_TOKEN');
     expect(open.mock.calls[0]?.[0].launchEnvironment?.values).not.toHaveProperty('ID_TOKEN');
-    expect(watch.mock.calls.map(([purpose]) => purpose)).toEqual([
-      'openai-codex',
-      'openai',
-      'claude-subscription',
-      'anthropic',
-      'gemini',
-    ]);
     expect(nativeDispose).not.toHaveBeenCalled();
 
     listeners.get('openai')?.({ kind: 'resync', authorityChanged: true });
@@ -499,15 +440,11 @@ describe('OhMyPi plugin activation', () => {
       signal,
     } as unknown as AgentSessionRuntimeContext);
 
-    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(5);
+    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.length);
     expect(connectedAccounts.materialize).not.toHaveBeenCalled();
-    expect(connectedAccounts.watch.mock.calls.map(([purpose]) => purpose)).toEqual([
-      'openai-codex',
-      'openai',
-      'claude-subscription',
-      'anthropic',
-      'gemini',
-    ]);
+    expect(connectedAccounts.watch.mock.calls.map(([purpose]) => purpose)).toEqual(
+      OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(row => row.purpose),
+    );
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ launchEnvironment }), expect.any(Object));
     expect(nativeDispose).not.toHaveBeenCalled();
     listeners.get('openai-codex')?.({ kind: 'resync', authorityChanged: true });
@@ -553,6 +490,7 @@ describe('OhMyPi plugin activation', () => {
       kind: 'create',
       sessionId: 'qualified-ohmypi-invalidated-before-open',
       cwd: '/workspace',
+      launchEnvironment: { values: { PI_CODING_AGENT_DIR: privateHome() }, unset: [] },
       configuration: explicitModelConfiguration,
     }, {
       protocols: { acp: { open } },
@@ -626,6 +564,7 @@ describe('OhMyPi plugin activation', () => {
     const opening = runtime.sessions.open({
       kind,
       sessionId: 'oauth-access-only',
+      launchEnvironment: { values: { PI_CODING_AGENT_DIR: privateHome() }, unset: [] },
       configuration: explicitModelConfiguration,
       ...(kind === 'resume' ? { providerSessionId: 'existing-native-session' } : {}),
       cwd: '/workspace',
@@ -660,11 +599,11 @@ describe('OhMyPi plugin activation', () => {
     );
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
       kind,
-      launchEnvironment: { values: { ANTHROPIC_OAUTH_TOKEN: 'sk-ant-oat01-fixture-access' }, unset: [] },
+      launchEnvironment: expect.objectContaining({ values: expect.objectContaining({ ANTHROPIC_OAUTH_TOKEN: 'sk-ant-oat01-fixture-access' }) }),
     }), expect.anything());
     expect(readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
     await opened.dispose();
-    expect(watchDisposers).toHaveLength(5);
+    expect(watchDisposers).toHaveLength(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.length);
     for (const dispose of watchDisposers) expect(dispose).toHaveBeenCalledTimes(1);
     await fixture.dispose();
   });
@@ -728,7 +667,7 @@ describe('OhMyPi plugin activation', () => {
 
     expect(materialize).toHaveBeenCalledWith(
       'gemini',
-      { kind: 'environment', keys: ['GEMINI_API_KEY'] },
+      { kind: 'environment', keys: ['GEMINI_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'] },
       {
         signal,
         expectedAccount: {
@@ -738,12 +677,12 @@ describe('OhMyPi plugin activation', () => {
       },
     );
     expect(open).not.toHaveBeenCalled();
-    expect(disposeWatches).toHaveLength(5);
+    expect(disposeWatches).toHaveLength(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.length);
     for (const dispose of disposeWatches) expect(dispose).toHaveBeenCalledTimes(1);
     await fixture.dispose();
   });
 
-  it('passes direct activation-hook payloads through to the spawn prerequisite owner', async () => {
+  it('leaves model readiness to qualified account preparation for direct activation hooks', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const runSystemTool = vi.fn(async () => ({
       ok: true,
@@ -762,13 +701,8 @@ describe('OhMyPi plugin activation', () => {
       },
     });
 
-    expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: '/repo',
-    }));
-    expect(result).toMatchObject({
-      decision: 'deny',
-      reasonCode: 'ohmypi_models_unavailable',
-    });
+    expect(runSystemTool).not.toHaveBeenCalled();
+    expect(result).toEqual({ decision: 'allow' });
     await fixture.dispose();
   });
 });

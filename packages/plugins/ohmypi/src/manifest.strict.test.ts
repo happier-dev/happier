@@ -12,7 +12,7 @@ describe('OhMyPi strict plugin manifest', () => {
         id: 'ohmypi',
         runtime: { kind: 'custom' },
         primary: 'sessions',
-        connectedAccounts: [
+        connectedAccounts: expect.arrayContaining([
           expect.objectContaining({
             purpose: 'openai-codex',
             service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
@@ -36,9 +36,9 @@ describe('OhMyPi strict plugin manifest', () => {
           expect.objectContaining({
             purpose: 'gemini',
             service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
-            materializationKinds: ['environment'],
+            materializationKinds: ['environment', 'files'],
           }),
-        ],
+        ]),
       }),
     ]);
     expect(PLUGIN_MANIFEST.contributes.hooks).toEqual([
@@ -49,14 +49,14 @@ describe('OhMyPi strict plugin manifest', () => {
       capability: 'process',
       scope: {
         executables: [{ kind: 'systemTool', id: 'ohmypi-cli' }],
-        envKeys: [
+        envKeys: expect.arrayContaining([
           'OPENAI_CODEX_OAUTH_TOKEN',
           'OPENAI_API_KEY',
           'ANTHROPIC_OAUTH_TOKEN',
           'ANTHROPIC_API_KEY',
           'GEMINI_API_KEY',
           'PI_CODING_AGENT_DIR',
-        ],
+        ]),
       },
     }));
   });

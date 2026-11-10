@@ -8,7 +8,8 @@ import type {
   AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './accountPurposes.js';
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES, ohMyPiPurposeEnvironmentKeys, ohMyPiPurposeOwnedEnvironmentKeys } from './accountPurposes.js';
+import { writeOhMyPiNativeAccountOverrides } from '../../providerBinding.js';
 import { AGENT_DEFINITION } from '../../definition.js';
 
 type OhMyPiOpenRequest = AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
@@ -127,7 +128,7 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
     const materializedEnvironment = await Promise.all(bound.map(async ({ declaration, binding }) => {
       const materialized = await context.services.connectedAccounts.materialize(
         declaration.purpose,
-        { kind: 'environment', keys: [declaration.materializationKey] },
+        { kind: 'environment', keys: ohMyPiPurposeEnvironmentKeys(declaration) },
         { signal: context.signal, expectedAccount: binding.account },
       );
       if (materialized.kind !== 'environment') {
@@ -135,26 +136,65 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
           `Oh My Pi Connected Account purpose ${declaration.purpose} returned an invalid environment materialization.`,
         );
       }
-      const value = materialized.env[declaration.materializationKey];
-      if (typeof value !== 'string' || value.trim().length === 0) {
+      const route = declaration.nativeRoutes.find(route => materialized.env[route.materializationKey]?.trim());
+      const value = route ? materialized.env[route.materializationKey] : undefined;
+      const hasKey = typeof value === 'string' && value.trim().length > 0;
+      const hasFileCredential = !hasKey && declaration.fileCredential
+        && Boolean(request.launchEnvironment?.values[declaration.fileCredential.environmentKey])
+        && declaration.additionalEnvironmentKeys?.every(key => Boolean(materialized.env[key]));
+      if ((!hasKey && !hasFileCredential)
+        || (route?.nativeBaseEnvironmentKey && !materialized.env[route.nativeBaseEnvironmentKey]?.trim())) {
         throw new Error(
-          `Oh My Pi Connected Account purpose ${declaration.purpose} did not materialize ${declaration.materializationKey}.`,
+          `Oh My Pi Connected Account purpose ${declaration.purpose} did not materialize a supported native credential.`,
         );
       }
       return {
-        key: declaration.launchEnvironmentKey,
-        value,
+        route,
+        value: hasKey ? value : undefined,
+        declaration,
+        additionalEnvironment: Object.fromEntries([
+          ...(route?.nativeBaseEnvironmentKey ? [route.nativeBaseEnvironmentKey] : []),
+          ...(declaration.additionalEnvironmentKeys ?? []),
+        ].flatMap(key => {
+          const value = materialized.env[key];
+          return typeof value === 'string' && value.length > 0 ? [[key, value]] : [];
+        })),
       };
     }));
 
     let preparedRequest = request;
     if (materializedEnvironment.length > 0) {
       const values = { ...(request.launchEnvironment?.values ?? {}) };
-      const unset = new Set(request.launchEnvironment?.unset ?? []);
+      const unset = new Set([...(request.launchEnvironment?.unset ?? []), 'OMP_PROFILE', 'PI_PROFILE']);
+      delete values.OMP_PROFILE;
+      delete values.PI_PROFILE;
       for (const entry of materializedEnvironment) {
-        values[entry.key] = entry.value;
-        unset.delete(entry.key);
+        for (const key of ohMyPiPurposeOwnedEnvironmentKeys(entry.declaration)) {
+          if (entry.declaration.fileCredential && entry.value === undefined
+            && key === entry.declaration.fileCredential.environmentKey) {
+            unset.delete(key);
+            continue;
+          }
+          delete values[key];
+          unset.add(key);
+        }
+        if (entry.value !== undefined && entry.route) {
+          values[entry.route.launchEnvironmentKey] = entry.value;
+          unset.delete(entry.route.launchEnvironmentKey);
+        }
+        Object.assign(values, entry.additionalEnvironment);
+        for (const key of Object.keys(entry.additionalEnvironment)) unset.delete(key);
       }
+      const nativeHome = values.PI_CODING_AGENT_DIR;
+      if (!nativeHome) throw new Error('Oh My Pi selected accounts require the host-prepared native home.');
+      const providers: Record<string, { apiKey: string; baseUrl?: string }> = {};
+      for (const entry of materializedEnvironment) {
+        if (entry.value === undefined || !entry.route) continue;
+        providers[entry.route.nativeProvider] ??= { apiKey: entry.route.launchEnvironmentKey,
+          ...(entry.route.nativeBaseEnvironmentKey && entry.additionalEnvironment[entry.route.nativeBaseEnvironmentKey]
+            ? { baseUrl: entry.additionalEnvironment[entry.route.nativeBaseEnvironmentKey] } : {}) };
+      }
+      await writeOhMyPiNativeAccountOverrides(nativeHome, providers);
       preparedRequest = Object.assign({}, request, {
         launchEnvironment: {
           values,

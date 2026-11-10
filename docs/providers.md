@@ -68,11 +68,33 @@ Moonshot platform key cannot satisfy that Code-key request. The native Kimi
 access-token delivery remains separate, and neither route receives refresh
 credentials or starts another login.
 
+Code OAuth and native-import consumers can also request `KIMI_CODE_BASE_URL`
+alongside `HAPPIER_KIMI_ACCESS_TOKEN`. The stored account's `apiBase` selects
+the endpoint; the configured region supplies it when no stored base exists.
+`KIMI_API_KEY` remains restricted to Code API keys.
+
 Demanded identity and usage retain upstream observations, including every
 supplied window/reset and separate extra-usage money. Missing allowance stays
 unavailable. Request auth produces selected headers, actual expiry and scalar
 base/domain/device facts for the gateway adapter; it adds no executor or refresh
 scheduler. Manual keys retain token kind and have no OAuth expiry or refresh.
+
+### Oh My Pi native account delivery (0.3 development)
+
+Oh My Pi's connected-account purpose rows feed one preparation path for model
+listing, Sessions and finite Runs. They consume Kimi Code key/OAuth material,
+separate xAI subscription and API-key outputs, the Muse subscription bundle or
+Meta key, Gemini key or file-backed Vertex service-account material, and
+compatible GitHub Copilot tokens. Existing Claude/OpenAI routes and explicit
+Provider bindings remain available. Mode alternatives share one service purpose.
+
+The host prepares the private native home; the existing Oh My Pi serializer
+writes environment references into `models.yml` so selected material takes
+precedence over stored login. Refresh credentials stay with the service owner.
+A new Session with a selected account requires an explicit model and otherwise
+returns `model_selection_required`. Source composition tests use a fake ACP
+child; installed vendor acceptance remains release-validation evidence.
+Antigravity, Devin and Cursor delivery remain pending their native-mode proofs.
 
 ### Connected Account sign-in placement (0.3 development)
 

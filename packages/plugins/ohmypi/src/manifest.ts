@@ -5,7 +5,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
-import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES, ohMyPiPurposeEnvironmentKeys, ohMyPiPurposeOwnedEnvironmentKeys } from './agent/auth/services/accountPurposes.js';
 import { ohMyPiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/stateSharing.js';
 import { verifyResumeReachableOhMyPi } from './agent/connectedServices/reachability.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
@@ -24,7 +24,7 @@ import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './agent/sessionFileSt
 import { OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 
-const OH_MY_PI_AUTH_ENV_KEYS = OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.launchEnvironmentKey);
+const OH_MY_PI_AUTH_ENV_KEYS = [...new Set(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => row.nativeRoutes.map(route => route.launchEnvironmentKey)))];
 
 const resolveOhMyPiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveOhMyPiDaemonSpawnPrerequisites(event, context);
@@ -94,12 +94,12 @@ export const OH_MY_PI_PLUGIN = definePlugin({
           agentCliSystemTool: { toolId: OH_MY_PI_SYSTEM_TOOL_ID },
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
-        connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, service, credentialKinds }) => ({
-          purpose,
-          service,
+        connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => ({
+          purpose: row.purpose,
+          service: row.service,
           required: false,
-          materializationKinds: ['environment' as const],
-          credentialKinds: [...credentialKinds],
+          materializationKinds: ['environment' as const, ...(row.fileCredential ? ['files' as const] : [])],
+          credentialKinds: [...row.credentialKinds],
         })),
         providerRequirements: {
           acceptsProtocols: ['openai-responses'],
@@ -111,7 +111,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             } }],
           },
           authIsolation: {
-            suppressConnectedServiceIds: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(row => buildQualifiedPluginContributionKey(row.service)),
+            suppressConnectedServiceIds: [...new Set(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(row => buildQualifiedPluginContributionKey(row.service)))],
             ownedEnvKeys: [...OH_MY_PI_PROVIDER_OWNED_ENV_KEYS],
           },
           materialization: 'configFile',
@@ -174,10 +174,16 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       factory: createOhMyPiAgentRuntime,
       providerBinding: OH_MY_PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
-        environmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, materializationKey }) => ({
-          purpose,
-          environmentKey: materializationKey,
-        })),
+        fileEnvironmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => row.fileCredential
+          ? [{ purpose: row.purpose, ...row.fileCredential }] : []),
+        environmentUnsetUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => ohMyPiPurposeOwnedEnvironmentKeys(row).map(environmentKey => ({
+          purpose: row.purpose, environmentKey,
+        }))),
+        // Regional bases are consumed by native configuration preparation, not host env delivery.
+        environmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.flatMap(row => ohMyPiPurposeEnvironmentKeys(row)
+          .filter(key => !row.nativeRoutes.some(route => key === route.nativeBaseEnvironmentKey)).map(environmentKey => ({
+          purpose: row.purpose, environmentKey,
+        }))),
         stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
         continuity: {
           generationApplicationScope: 'per_session_runtime',

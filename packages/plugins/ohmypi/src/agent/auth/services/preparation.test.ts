@@ -1,9 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { AgentSessionConfigurationSnapshot, AgentSessionRuntimeContext, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionConfigurationSnapshot, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
 import { activate, PLUGIN_MANIFEST } from '../../../index.js';
 import { prepareOhMyPiQualifiedAccounts } from './preparation.js';
+
+const roots: string[] = [];
+function privateHome() { const root = mkdtempSync(join(tmpdir(), 'n-omp-test-')); roots.push(root); return root; }
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function configuration(value: string | null): AgentSessionConfigurationSnapshot {
   return { model: { value, updatedAtMs: 1 }, mode: { value: null, updatedAtMs: 1 },
@@ -41,7 +48,7 @@ describe('Oh My Pi selected account model preparation', () => {
         const boundary = accountBoundary();
         const native = { async send() { return { status: 'admitted' as const }; }, async stop() { return { status: 'requested' as const }; },
           watch: () => ({ dispose() {} }), async dispose() {} };
-        const open = vi.fn(async () => native);
+        const open = vi.fn(async (_request: { launchEnvironment?: { values: Readonly<Record<string, string>> } }) => native);
         // Connected Accounts and native ACP are public host/process boundaries.
         const context = { ...boundary.context, protocols: { acp: { open, openExecutionRunV1: open } } };
         const common = { cwd: '/workspace', ...(model === undefined ? {} : { configuration: configuration(model) }) };
@@ -71,15 +78,15 @@ describe('Oh My Pi selected account model preparation', () => {
       {},
     ]) {
       const boundary = accountBoundary();
-      const prepared = await prepareOhMyPiQualifiedAccounts({ ...request, launchEnvironment: { values: {}, unset: [] } }, boundary.context);
+      const prepared = await prepareOhMyPiQualifiedAccounts({ ...request, launchEnvironment: { values: { PI_CODING_AGENT_DIR: privateHome() }, unset: [] } }, boundary.context);
       try {
-        expect(prepared.request.launchEnvironment.values).toEqual({ OPENAI_API_KEY: 'fake-selected-key' });
+        expect(prepared.request.launchEnvironment.values).toMatchObject({ OPENAI_API_KEY: 'fake-selected-key' });
         expect(boundary.materialize).toHaveBeenCalledOnce();
       } finally { prepared.cleanup(); }
       expect(boundary.listeners.size).toBe(0);
     }
     const native = accountBoundary(false);
-    const prepared = await prepareOhMyPiQualifiedAccounts({ kind: 'create', launchEnvironment: { values: {}, unset: [] } }, native.context);
+    const prepared = await prepareOhMyPiQualifiedAccounts({ kind: 'create', launchEnvironment: { values: { PI_CODING_AGENT_DIR: privateHome() }, unset: [] } }, native.context);
     prepared.cleanup();
     expect(native.materialize).not.toHaveBeenCalled();
   });

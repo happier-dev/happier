@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 import type { AgentPreflightSessionControlsContributionV1, AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createOhMyPiAgentRuntime } from '../runtime/engine.js';
 
@@ -27,17 +31,21 @@ describe('OhMyPi preflight model parsing', () => {
         return { dispose() {} };
       },
     };
+    const home = mkdtempSync(join(tmpdir(), 'n-omp-preflight-'));
+    const environment = { EXISTING: 'preserved', PI_CODING_AGENT_DIR: home };
     const signal = new AbortController().signal;
-    const prepared = await controls.prepareLaunchEnvironment({ environment: { EXISTING: 'preserved' }, connectedAccounts, signal });
+    const prepared = await controls.prepareLaunchEnvironment({ environment, connectedAccounts, signal });
     let openedEnvironment: unknown;
     try {
-      expect(prepared.environment).toEqual({ EXISTING: 'preserved', OPENAI_API_KEY: 'fake-selected-key' });
+      expect(isProviderSourceModelCatalogConfidenceUsable(prepared.catalogConfidence)).toBe(false);
+      expect(prepared.environment).toEqual({ ...environment, OPENAI_API_KEY: 'fake-selected-key' });
+      expect(JSON.parse(readFileSync(join(home, 'models.yml'), 'utf8'))).toEqual({ providers: { openai: { apiKey: 'OPENAI_API_KEY' } } });
       const listingReads = bindingReads;
       expect(materializations).toBe(1);
       const runtime = await createOhMyPiAgentRuntime().sessions.open({ kind: 'create', sessionId: 'same-account', cwd: '/workspace',
         configuration: { model: { value: 'openai/gpt-5.4', updatedAtMs: 1 }, mode: { value: null, updatedAtMs: 1 },
           permissionIntent: { value: null, updatedAtMs: 1 }, options: {} },
-        launchEnvironment: { values: { EXISTING: 'preserved' }, unset: [] } }, {
+        launchEnvironment: { values: environment, unset: [] } }, {
         services: { connectedAccounts }, signal,
         protocols: { acp: { async open(request: AgentSessionOpenRequest) {
           openedEnvironment = request.launchEnvironment?.values;
@@ -49,7 +57,7 @@ describe('OhMyPi preflight model parsing', () => {
         expect(bindingReads).toBe(listingReads * 2);
         expect(materializations).toBe(2);
       } finally { await runtime.dispose(); }
-    } finally { await prepared.dispose(); }
+    } finally { await prepared.dispose(); rmSync(home, { recursive: true, force: true }); }
   });
 
   it('reads the native models JSON and preserves model-specific thinking eligibility', () => {
