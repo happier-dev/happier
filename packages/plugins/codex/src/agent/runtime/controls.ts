@@ -76,6 +76,7 @@ async function withControlClient<T>(
   const client = await createCodexNativeAppServerClient({
     exec: context.services.exec,
     logger: context.services.logger,
+    ...(context.session.nativeLaunch ? { nativeLaunch: context.session.nativeLaunch } : {}),
     cwd: context.session.cwd,
     processEnv,
     signal: context.signal,

@@ -1,4 +1,4 @@
-import { readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { readMachineMemberHomeRelativePathV1, readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 
 import { t } from '@/text';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
@@ -22,6 +22,11 @@ export function formatPathRelativeToHome(
 ): string {
     const memberWorkspacePath = formatMemberWorkspacePath(path);
     if (memberWorkspacePath !== null) return memberWorkspacePath;
+    // A separated member's own home is its home: it reads as home, never by its digest.
+    const memberHomePath = readMachineMemberHomeRelativePathV1(path);
+    if (memberHomePath !== null) {
+        return memberHomePath ? `~/${memberHomePath.replace(/\/+/g, '/')}` : presentation?.homeLabel ?? '~';
+    }
     // Named folder summaries can recognize literal home aliases before Machine metadata hydrates.
     const home = homeDir || (presentation?.homeLabel === undefined ? undefined : '~');
     if (!home) return path;
@@ -61,5 +66,6 @@ export function formatSessionPath(path: string, homeDir?: string): string {
 export function readSessionPathName(path: string): string | null {
     const relative = readMachineMemberWorkspaceRelativePathV1(path);
     if (relative === '') return t('workspacePresentation.memberWorkspace');
+    if (readMachineMemberHomeRelativePathV1(path) === '') return t('workspacePresentation.homeFolder');
     return path.split('/').filter(Boolean).pop() ?? null;
 }

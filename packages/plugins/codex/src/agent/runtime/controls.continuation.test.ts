@@ -12,7 +12,7 @@ describe('Codex continuation native failure evidence', () => {
       const warn = vi.fn();
       const context = {
         signal: new AbortController().signal,
-        services: { exec: fixture.exec, logger: { warn } },
+        services: { exec: fixture.exec, logger: { warn, debug: vi.fn() } },
         session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
       } as unknown as AgentSessionControlContext;
       const result = await createCodexNativeSessionControls().continuation.verify({
@@ -31,6 +31,29 @@ describe('Codex continuation native failure evidence', () => {
     });
   });
 
+  it('reads the thread through the target Session native launch identity, as its runtime does', async () => {
+    await withCodexNativeAttachFixture(async fixture => {
+      // On a separated-users Machine only the member UID can read its 0700 native home.
+      // Process creation is the system boundary; the continuation owner stays real.
+      const nativeLaunch = Object.freeze({}) as never;
+      const launches: unknown[] = [];
+      const exec = { ...fixture.exec, clients: { ...fixture.exec.clients, spawn: async (request: never, options?: { nativeLaunch?: unknown }) => {
+        launches.push(options?.nativeLaunch);
+        return await (fixture.exec.clients.spawn as (request: never, options?: unknown) => Promise<unknown>)(request, options);
+      } } };
+      const context = {
+        signal: new AbortController().signal, services: { exec, logger: { warn: vi.fn(), debug: vi.fn() } },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [],
+          launchEnvironment: fixture.launchEnvironment, nativeLaunch },
+      } as unknown as AgentSessionControlContext;
+      const result = await createCodexNativeSessionControls().continuation.verify({
+        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'fresh-thread',
+      }, context);
+      expect(result).toEqual({ status: 'reachable' });
+      expect(launches).toEqual([nativeLaunch]);
+    });
+  });
+
   it('retains a transport code without publishing upstream prose, data or credentials', async () => {
     await withCodexNativeAttachFixture(async fixture => {
       const warn = vi.fn();
@@ -41,7 +64,7 @@ describe('Codex continuation native failure evidence', () => {
         });
       } } };
       const context = {
-        signal: new AbortController().signal, services: { exec, logger: { warn } },
+        signal: new AbortController().signal, services: { exec, logger: { warn, debug: vi.fn() } },
         session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
       } as unknown as AgentSessionControlContext;
       const result = await createCodexNativeSessionControls().continuation.verify({
