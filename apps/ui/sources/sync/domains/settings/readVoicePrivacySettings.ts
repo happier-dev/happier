@@ -1,13 +1,13 @@
 import { readVoiceContentDisclosureV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 
-import { voiceSettingsParse, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { voicePrivacySettingsParse, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 
 export function readVoicePrivacySettings(settings: unknown): VoiceSettings['privacy'] {
     const rawVoice = (settings as { voice?: unknown } | null | undefined)?.voice ?? null;
-    const voiceSettings = voiceSettingsParse(rawVoice);
     const rawPrivacy = rawVoice && typeof rawVoice === 'object' && !Array.isArray(rawVoice)
         ? (rawVoice as { privacy?: unknown }).privacy
         : null;
+    const privacy = voicePrivacySettingsParse(rawPrivacy);
     const privacyRecord = rawPrivacy && typeof rawPrivacy === 'object' && !Array.isArray(rawPrivacy)
         ? rawPrivacy as Record<string, unknown>
         : null;
@@ -16,12 +16,12 @@ export function readVoicePrivacySettings(settings: unknown): VoiceSettings['priv
         && Object.prototype.hasOwnProperty.call(privacyRecord, 'currentUiContextMode');
     const rawCurrentUiContextMode = privacyRecord?.currentUiContextMode;
     const currentUiContextMode = hasCurrentUiContextMode
-        && rawCurrentUiContextMode !== voiceSettings.privacy.currentUiContextMode
+        && rawCurrentUiContextMode !== privacy.currentUiContextMode
         ? 'off'
-        : voiceSettings.privacy.currentUiContextMode;
+        : privacy.currentUiContextMode;
 
     return {
-        ...voiceSettings.privacy,
+        ...privacy,
         // The settings parser recovers malformed input for UI editing, but a
         // present value that did not survive parsing must not authorize
         // provider disclosure. Missing predecessor data retains on-demand.
@@ -36,7 +36,7 @@ export function readVoicePrivacySettings(settings: unknown): VoiceSettings['priv
         shareDeviceInventory: explicitlyShares('shareDeviceInventory'),
         // These remain hard-disabled unless the canonical parser and raw value
         // both explicitly admit sharing.
-        shareFilePaths: voiceSettings.privacy.shareFilePaths && explicitlyShares('shareFilePaths'),
-        shareToolArgs: voiceSettings.privacy.shareToolArgs && explicitlyShares('shareToolArgs'),
+        shareFilePaths: privacy.shareFilePaths && explicitlyShares('shareFilePaths'),
+        shareToolArgs: privacy.shareToolArgs && explicitlyShares('shareToolArgs'),
     };
 }

@@ -88,6 +88,48 @@ const VoicePrivacySchema = z.object({
   currentUiContextMode: z._default(z.enum(['off', 'on_demand', 'automatic']), 'on_demand'),
 });
 
+/** Reads only the canonical privacy fields, retaining tolerant stored-value recovery. */
+export function voicePrivacySettingsParse(rawValue: unknown): VoiceSettings['privacy'] {
+  const privacy = VoicePrivacySchema.parse({});
+  if (rawValue && typeof rawValue === 'object') {
+    const p = rawValue as Record<string, unknown>;
+    const parseBool = (k: keyof typeof privacy) => z.boolean().safeParse(p[k as string]);
+    const parseInt = (k: keyof typeof privacy) => z.number().check(z.int()).safeParse(p[k as string]);
+
+    const s1 = parseBool('shareSessionSummary');
+    if (s1.success) privacy.shareSessionSummary = s1.data;
+    const s2 = parseBool('shareRecentMessages');
+    if (s2.success) privacy.shareRecentMessages = s2.data;
+    const s3 = parseInt('recentMessagesCount');
+    if (s3.success) {
+      const clamped = Math.max(0, s3.data);
+      privacy.recentMessagesCount = clamped;
+    }
+    const s4 = parseBool('shareToolNames');
+    if (s4.success) privacy.shareToolNames = s4.data;
+    const s5 = parseBool('sharePermissionRequests');
+    if (s5.success) privacy.sharePermissionRequests = s5.data;
+    const s6 = parseBool('shareDeviceInventory');
+    if (s6.success) privacy.shareDeviceInventory = s6.data;
+    const s7 = parseBool('shareFilePaths');
+    if (s7.success) privacy.shareFilePaths = s7.data;
+    const s8 = parseBool('shareToolArgs');
+    if (s8.success) privacy.shareToolArgs = s8.data;
+    const currentUiContextMode = z.enum(['off', 'on_demand', 'automatic'])
+      .safeParse(p.currentUiContextMode);
+    if (currentUiContextMode.success) {
+      privacy.currentUiContextMode = currentUiContextMode.data;
+    }
+  }
+
+  // Privacy hardening: never allow sharing file paths or tool args over voice transport.
+  // This is intentionally enforced even if a persisted config attempts to enable it.
+  privacy.shareFilePaths = false;
+  privacy.shareToolArgs = false;
+
+  return privacy;
+}
+
 const VoiceUiUpdatesSchema = z.object({
   activeSession: z._default(z.enum(['none', 'activity', 'summaries', 'snippets']), 'summaries'),
   otherSessions: z._default(z.enum(['none', 'activity', 'summaries', 'snippets']), 'activity'),
@@ -714,42 +756,7 @@ function voiceSettingsParse(
     }
   }
 
-  // privacy
-  if (raw.privacy && typeof raw.privacy === 'object') {
-    const p = raw.privacy as Record<string, unknown>;
-    const parseBool = (k: keyof VoiceSettings['privacy']) => z.boolean().safeParse(p[k as string]);
-    const parseInt = (k: keyof VoiceSettings['privacy']) => z.number().check(z.int()).safeParse(p[k as string]);
-
-    const s1 = parseBool('shareSessionSummary');
-    if (s1.success) base.privacy.shareSessionSummary = s1.data;
-    const s2 = parseBool('shareRecentMessages');
-    if (s2.success) base.privacy.shareRecentMessages = s2.data;
-    const s3 = parseInt('recentMessagesCount');
-    if (s3.success) {
-      const clamped = Math.max(0, s3.data);
-      base.privacy.recentMessagesCount = clamped;
-    }
-    const s4 = parseBool('shareToolNames');
-    if (s4.success) base.privacy.shareToolNames = s4.data;
-    const s5 = parseBool('sharePermissionRequests');
-    if (s5.success) base.privacy.sharePermissionRequests = s5.data;
-    const s6 = parseBool('shareDeviceInventory');
-    if (s6.success) base.privacy.shareDeviceInventory = s6.data;
-    const s7 = parseBool('shareFilePaths');
-    if (s7.success) base.privacy.shareFilePaths = s7.data;
-    const s8 = parseBool('shareToolArgs');
-    if (s8.success) base.privacy.shareToolArgs = s8.data;
-    const currentUiContextMode = z.enum(['off', 'on_demand', 'automatic'])
-      .safeParse(p.currentUiContextMode);
-    if (currentUiContextMode.success) {
-      base.privacy.currentUiContextMode = currentUiContextMode.data;
-    }
-  }
-
-  // Privacy hardening: never allow sharing file paths or tool args over voice transport.
-  // This is intentionally enforced even if a persisted config attempts to enable it.
-  base.privacy.shareFilePaths = false;
-  base.privacy.shareToolArgs = false;
+  base.privacy = voicePrivacySettingsParse(raw.privacy);
 
   const result = preserveUnknownVoiceFields(base, raw);
   const malformedLegacyCredentials = preserveMalformedLegacyCredentialFields(raw.adapters, {
