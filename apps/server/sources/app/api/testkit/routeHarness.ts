@@ -13,6 +13,7 @@ type RouteEntry = Readonly<{ opts: RouteOpts; handler: RouteHandler }>;
 export type FakeRouteApp = {
     authenticate: ReturnType<typeof vi.fn>;
     routes: Map<string, RouteEntry>;
+    withTypeProvider: () => FakeRouteApp;
     register: (plugin: (app: FakeRouteApp) => unknown) => void;
     after: (listener: (error: Error | null) => void) => void;
     addHook: (name: string, listener: (...args: any[]) => unknown) => void;
@@ -83,6 +84,10 @@ export function createFakeRouteApp(): FakeRouteApp {
     return {
         authenticate,
         routes,
+        // Fastify's type-provider selection changes TypeScript inference only.
+        withTypeProvider() {
+            return this;
+        },
         register(plugin) {
             void plugin(this);
         },
