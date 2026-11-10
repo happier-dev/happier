@@ -665,6 +665,24 @@ function clientActionOpenSurface(
     };
 }
 
+function nestedClientHostAction(
+    binding: DispatchPluginSurfaceActionInput['hostAction'],
+    hostActionChild: boolean,
+    expectedAccountId?: string,
+): DispatchPluginSurfaceActionInput['hostAction'] {
+    if (!binding) return undefined;
+    return { ...binding, context: { ...binding.context,
+        sessionTargetsV1: undefined,
+        // Only host Action children consume the host's review. Contributed
+        // calls keep their own Plugin caller and ordinary approval path.
+        hostReviewedChild: hostActionChild ? binding.context?.hostReviewedChild : undefined,
+        ...(expectedAccountId !== undefined && binding.context?.expectedAccountId === undefined
+            ? { expectedAccountId } : {}),
+        requestContributedActionCurrentIntent: undefined,
+        contributedActionInvocation: undefined,
+    } };
+}
+
 function clientActionExecuteAction(
     input: DispatchPluginSurfaceActionInput,
     selection: ClientContributedActionSelection,
@@ -703,6 +721,9 @@ function clientActionExecuteAction(
                 ...(execute ? { execute } : {}),
             } : input.contributedAction;
             const invocation = clientActionInvocation(selection);
+            const hostAction = nestedClientHostAction(input.hostAction,
+                typeof action === 'string' && PluginInvocableActionIdSchema.safeParse(action).success,
+                sourceLifetime?.scope.accountId);
             const outcome = await dispatchPluginSurfaceAction({
                 actionRequestId: input.actionRequestId,
                 onDaemonActionOperationAdmitted: input.onDaemonActionOperationAdmitted,
@@ -717,11 +738,7 @@ function clientActionExecuteAction(
                 action,
                 ...(actionInput === undefined ? {} : { input: actionInput }),
                 ...(options?.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
-                ...(input.hostAction === undefined ? {} : { hostAction: { ...input.hostAction,
-                    context: { ...input.hostAction.context, sessionTargetsV1: undefined,
-                        ...(sourceLifetime && input.hostAction.context?.expectedAccountId === undefined
-                            ? { expectedAccountId: sourceLifetime.scope.accountId } : {}),
-                        requestContributedActionCurrentIntent: undefined, contributedActionInvocation: undefined } } }),
+                ...(hostAction === undefined ? {} : { hostAction }),
                 ...(contributedAction === undefined ? {} : { contributedAction }),
                 clientAction: selection.binding,
                 ...(input.resolveContributedAction === undefined
@@ -796,7 +813,7 @@ function createClientActionUi(
         version: () => ({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const] : []),
+            methods: ['context', 'executeAction', 'selectActionInput',
                 ...(accountLifetime ? ['openNewSession' as const] : []),
                 ...(accountLifetime ? ['readSession' as const, 'revealSessionInput' as const, 'readComposer' as const, 'applyComposer' as const, 'openAutomationEvent' as const] : []),
                 ...(selection.binding.openSurface ? ['openSurface' as const] : [])],
@@ -852,13 +869,12 @@ function createClientActionUi(
         },
         selectActionInput: async (request, options) => {
             assertCurrent();
-            if (!authority || !accountLifetime) throw new PluginError({ code: 'plugin_action_input_selection_unavailable' });
             const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(request);
             if (!parsed.success) throw new PluginError({ code: 'plugin_action_input_selection_invalid' });
             const cancellation = mergeAbortSignals([signal, options?.signal]);
             try {
                 const targeted = 'operation' in parsed.data ? await context({ signal: cancellation.signal }) : null;
-                const projection = 'operation' in parsed.data
+                const projection = 'operation' in parsed.data && authority && accountLifetime
                     ? await loadDaemonMergedProjectionCacheEntry({ machineId: authority.machineId,
                         serverId: authority.serverId, accountLifetime, signal: cancellation.signal, reuseFreshReady: false,
                         sections: ['actionsById', 'familiesById.inputTypes', 'familiesById.pluginUi',
@@ -878,8 +894,8 @@ function createClientActionUi(
                     targetedContributions: targeted?.targetedContributions,
                     ...(selectionProjection ? { resolveContributedAction: createPluginUiProjectedActionResolver(selectionProjection.actionsById) } : {}),
                     host: {
-                        machineId: authority.machineId,
-                        serverId: authority.serverId,
+                        machineId: authority?.machineId,
+                        serverId: authority?.serverId ?? accountLifetime?.scope.serverId,
                         targetPluginId: selection.action.pluginId,
                         sessionId: selection.binding.sessionId,
                         accountLifetime,
@@ -1586,6 +1602,9 @@ async function executeClientContributedAction(
                         serverId: input.contributedAction.serverId,
                     } } : {}),
                     execute: async (action, value, options) => {
+                        const hostActionChild = typeof action === 'string' && PluginInvocableActionIdSchema.safeParse(action).success;
+                        const hostAction = nestedClientHostAction(nestedHostAction, hostActionChild,
+                            options.sessionAddress === undefined ? undefined : accountLifetime.scope.accountId);
                         let nestedInput: DispatchPluginSurfaceActionInput = {
                             actionRequestId: input.actionRequestId,
                             actionAccountLifetime: accountLifetime,
@@ -1593,11 +1612,7 @@ async function executeClientContributedAction(
                             action, input: value,
                             machineAvailability: options.machineAvailability ?? input.machineAvailability,
                             ...(options.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
-                            ...(nestedHostAction ? { hostAction: { ...nestedHostAction,
-                                context: { ...nestedHostAction.context, sessionTargetsV1: undefined,
-                                    ...(options.sessionAddress !== undefined && nestedHostAction.context?.expectedAccountId === undefined
-                                        ? { expectedAccountId: accountLifetime.scope.accountId } : {}),
-                                    requestContributedActionCurrentIntent: undefined, contributedActionInvocation: undefined } } } : {}),
+                            ...(hostAction === undefined ? {} : { hostAction }),
                             ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
                             ...(input.isMachineAvailable ? { isMachineAvailable: input.isMachineAvailable } : {}),
                             // The Account Action is this invocation's caller.
@@ -1615,8 +1630,7 @@ async function executeClientContributedAction(
                             }),
                             isCurrent: () => current.isCurrent() && options.isCurrent(),
                         };
-                        const nestedIdentity = typeof action === 'string' && PluginInvocableActionIdSchema.safeParse(action).success
-                            ? null : resolveContributedActionIdentity(nestedInput);
+                        const nestedIdentity = hostActionChild ? null : resolveContributedActionIdentity(nestedInput);
                         if (nestedIdentity) {
                             const projected = resolveProjectedContributedAction(nestedInput, nestedIdentity);
                             const declaration = projected ? null : await readPluginAccountAvailability(accountLifetime.scope).ensureCurrentAccountExecution(nestedIdentity.pluginId);
@@ -1736,7 +1750,7 @@ async function executeClientContributedAction(
                             plugin: { id: current.action.pluginId, version: current.pluginVersion },
                             contribution: { id: current.action.id, qualifiedId: invocation.qualifiedId },
                             surface: invocationSurface, signal,
-                            ...(input.actionRequestId === undefined ? {} : { invocationId: input.actionRequestId }),
+                            ...(input.actionRequestId === undefined ? {} : { invocationId: input.actionRequestId, requestId: input.actionRequestId }),
                             ...(caller ? { caller } : {}),
                             accountScope: accountLifetime!.scope,
                             ...(input.hostAction?.context?.sessionTargetsV1 ? { sessionTargetsV1: input.hostAction.context.sessionTargetsV1 } : {}),

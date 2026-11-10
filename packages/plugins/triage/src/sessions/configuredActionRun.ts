@@ -11,7 +11,7 @@ import { readTriageActionPlacementV1, resolveTriageActionReferencesV1, resolveTr
 import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiHostApi, ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
-import { PluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
@@ -82,7 +82,14 @@ export async function runTriageConfiguredHandoffV1(
         finish({ kind: 'unavailable', reason: 'targetUnavailable', detail: { reason, ...(cause === undefined ? {} : { cause }) } }, options.resumeStart);
     const cancellation = { signal: options.signal };
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
-    const configured = await resolveTriageConfiguredActionForExecutionV1(host, input.configuredActionId, undefined, cancellation);
+    let configured: Awaited<ReturnType<typeof resolveTriageConfiguredActionForExecutionV1>>;
+    try {
+        configured = await resolveTriageConfiguredActionForExecutionV1(host, input.configuredActionId, undefined, cancellation);
+    } catch (error) {
+        if (!isPluginError(error)) throw error;
+        return finish({ kind: 'unavailable', reason: 'configuredActionUnavailable',
+            detail: { reason: 'action_references_unresolved', cause: error.code } }, options.resumeStart);
+    }
     if (configured.status !== 'resolved' || configured.action.target.kind !== 'agent') return unavailable('configuredActionUnavailable');
     const healthRead = input.context.kind === 'healthAlert' || input.context.kind === 'failure'
         ? await readTriageHealthAlertHandoffV1(host, input, options.signal) : undefined;
@@ -581,8 +588,8 @@ export async function runTriageConfiguredActionV1(
         } finally { owner.dispose(); }
     }
     const owner = createTriageBulkEntrySessionsController(host, options);
-    const cancel = () => owner.getSnapshot().cancel();
-    options?.signal?.addEventListener('abort', cancel, { once: true });
+    const detach = () => owner.dispose();
+    options?.signal?.addEventListener('abort', detach, { once: true });
     try {
         if (recovery?.state.kind === 'bulk') {
             if (!owner.restore(recovery.state, request.entries)) return refuse('startContinuationMismatch');
@@ -607,7 +614,7 @@ export async function runTriageConfiguredActionV1(
         if (phase.kind === 'unavailable') return refuse(phase.reason);
         return { v: 1, status: 'cancelled' };
     } finally {
-        options?.signal?.removeEventListener('abort', cancel);
+        options?.signal?.removeEventListener('abort', detach);
         owner.dispose();
     }
 }

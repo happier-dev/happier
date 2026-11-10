@@ -1,4 +1,4 @@
-import type { JsonValue, PluginCancellationOptions, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { isPluginError, type JsonValue, type PluginCancellationOptions, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { ProtocolLaunchProfilePlacementPreferenceV1Schema, ProtocolLaunchProfileCheckoutPreferenceV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageSourceWorkflowSubjectV1, TriageSessionHandoffInputV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageReadActionsResultV1Schema } from '../actions/actionsCatalogProtocol.js';
@@ -81,7 +81,11 @@ export async function resolveTriageConfiguredActionForExecutionV1(
             : planTriageOfferedActionsV1([action], workflowSubject);
         return offered.length === 0 ? { status: 'unavailable', reason: 'actionInapplicable' }
             : { status: 'resolved', action };
-    } catch { return { status: 'unavailable', reason: 'catalogUnavailable' }; }
+    } catch (error) {
+        // The handoff owner maps typed transport failures once, retaining their cause.
+        if (isPluginError(error)) throw error;
+        return { status: 'unavailable', reason: 'catalogUnavailable' };
+    }
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

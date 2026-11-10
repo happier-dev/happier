@@ -680,7 +680,7 @@ function createClientActionActivation(input: Readonly<{
     });
     const resolvedAction = resolved[0];
     if (!resolvedAction || resolved.length !== 1) {
-        throw new Error(`client Action fixture did not resolve through the production projection: ${JSON.stringify({ count: resolved.length, actions: Object.values(projectedActions).map(action => ({ id: action.id, execution: action.execution })), bundles: Object.keys(projection.reactNativeBundlesById) })}`);
+        throw new Error('client Action fixture did not resolve through the production projection');
     }
     const cache = createPluginReactNativeBundleCache();
     cache.putInstalledArtifact({
@@ -5149,6 +5149,53 @@ describe('plugin-surface action branch selection', () => {
         } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); }
     });
 
+    it('selects an Account Session through a registered Account Action without Machine authority', async () => {
+        const { Modal } = await import('@/modal');
+        const { createTriageConfiguredActionHost } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionHost');
+        const accountLifetime = clientAccountLifetime();
+        const serverId = resolveServerProfileScopeIdForIdentifier(accountLifetime.scope.serverId);
+        let methods: readonly string[] | undefined;
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime, readOnly: true,
+            accountHandler: async (_input, context) => {
+                const host = createTriageConfiguredActionHost(context);
+                methods = host.version().methods;
+                const selected = await host.selectActionInput({
+                    hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' },
+                });
+                return { methods: [...host.version().methods], selected };
+            },
+        });
+        const shown: string[] = [];
+        // Native modal presentation is the person/platform boundary; the
+        // Account activation, dispatch, configured adapter and selector are real.
+        const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+            const props = config.props as Readonly<{ sourceServerId: string; selectionOnly: boolean;
+                onResolve: (selection: Readonly<{ kind: 'existingSession'; serverId: string; sessionId: string }>) => void }>;
+            expect(props.selectionOnly).toBe(true);
+            shown.push(props.sourceServerId);
+            queueMicrotask(() => props.onResolve({ kind: 'existingSession',
+                serverId: props.sourceServerId, sessionId: 'account-selected-session' }));
+            return 'account-session-selection';
+        });
+        const hide = vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const result = await dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+            });
+            expect(methods, JSON.stringify(result)).toContain('selectActionInput');
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { methods: expect.arrayContaining(['selectActionInput']),
+                selected: { kind: 'sessionAddress', session: { serverId,
+                    sessionId: 'account-selected-session' } } } });
+            expect(shown).toEqual([serverId]);
+        } finally {
+            show.mockRestore(); hide.mockRestore();
+            await activation.composition.unload(); accountLifetime.retire();
+        }
+    });
+
     it('opens the canonical Automation Event editor through a registered client Action', async () => {
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
         const { readAutomationEventAuthoringSeed } = await import('@/sync/domains/workflows/automationEventAuthoringSeed');
@@ -5264,6 +5311,9 @@ describe('plugin-surface action branch selection', () => {
     it('reaches the canonical catalog transport from the real configured browser handler', async () => {
         const { createTriageRunConfiguredActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRun');
         const { createTriageReadActionsActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+        const { TriageReadActionsActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
+        const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
+        const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
@@ -5280,11 +5330,23 @@ describe('plugin-surface action branch selection', () => {
             context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } };
         let relayed = 0;
+        let requesterInvocation: unknown;
+        const catalog = createTestkitAccountKv({ [TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1]: { v: -1 } });
+        // Only persistent Account KV and the remote host's contribution service
+        // are boundary fixtures; the remote catalog handler and parser are real.
+        const catalogContext = { signal: new AbortController().signal, services: {
+            storage: { account: { kv: catalog.kv } },
+            targetedContributions: { observeForSelf: () => ({
+                readCurrent: async () => ({ contributions: [] }), dispose: () => {},
+            }) },
+        } } as unknown as import('../../../../../../packages/plugins/triage/src/actions/dataContext').TriageDataActionContext;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'setup-machine',
-            actionId: 'action.invoke', tokenEpoch: 1, execute: async () => {
+            actionId: 'action.invoke', tokenEpoch: 0, execute: async (value, context) => {
                 relayed++;
-                return { v: 1, availability: 'unavailable', actions: [], revision: null };
+                requesterInvocation = context.invocation;
+                const request = PluginUiExecuteActionRequestV1Schema.parse(value);
+                return await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse(request.input), catalogContext);
             } });
         const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
         getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [lifetime.scope.serverId]: [machine] },
@@ -5295,7 +5357,11 @@ describe('plugin-surface action branch selection', () => {
             accountPlacement: true, accountLifetime: lifetime, accountActionDeclaration: declaration,
             confirmationWhen: declaration.confirmationWhen,
             inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
-            artifactGraph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'triage-account-runtime', executable: { exports: ['activate'] } },
+            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+                artifactId: 'triage-account-runtime', executable: { exports: ['activate'] },
+                entry: 'react-native/triage-account-runtime/entry.cjs.bundle',
+                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: 'react-native/triage-account-runtime/entry.cjs.bundle' })),
+            }),
             accountManifest: { ...admitted.manifest, contributes: { actions: admitted.manifest.contributes.actions.filter(action =>
                 action.id === declaration.id || action.id === 'actions/read-v1') } },
             accountActivate: api => {
@@ -5309,8 +5375,11 @@ describe('plugin-surface action branch selection', () => {
             await activation.composition.reconcile([activation.activation]);
             const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
             const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id },
-                input, hostAction: { execute: scopedHomeActionExecutor(lifetime.scope), context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }, resolveContributedAction: identity => activation.projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null, clientAction: {} });
-            expect(relayed).toBe(1);
+                input, hostAction: { execute: scopedHomeActionExecutor(lifetime.scope), context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } },
+                resolveContributedAction: identity => activation.projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null, clientAction: {} });
+            expect(relayed, JSON.stringify(outcome)).toBe(1);
+            expect(requesterInvocation).toMatchObject({ caller: { kind: 'plugin', pluginId: PLUGIN_MANIFEST.id }, authority: 'account_automation' });
+            expect(requesterInvocation).not.toHaveProperty('reviewedParent');
             expect(outcome).toMatchObject({ ok: true, result: { handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' } } });
         } finally {
             accountBrowserRelay.enabled = false;
