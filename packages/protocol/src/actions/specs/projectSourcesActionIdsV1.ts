@@ -6,3 +6,7 @@ export const PROJECT_SOURCE_ACTION_IDS_V1 = [
   'projects.sources.update', 'projects.sources.delete', 'projects.sources.moveToTeam',
   'projects.deploymentDefaults.set',
 ] as const;
+
+export function isProjectSourceActionIdV1(value: unknown): value is typeof PROJECT_SOURCE_ACTION_IDS_V1[number] {
+  return typeof value === 'string' && PROJECT_SOURCE_ACTION_IDS_V1.some(actionId => actionId === value);
+}

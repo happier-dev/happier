@@ -23,6 +23,7 @@ import { ProjectDeploymentDefaultsOutputV1Schema } from '@happier-dev/protocol/p
 import { createWorkflowAutomationDetailFixture, createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { WorkflowApprovedOperationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -803,6 +804,20 @@ it.each([false, true])('settles a Source tombstone through the UI Inbox with pro
 it.each(['same-home', 'other-home', 'other-account'] as const)(
     'replays a producer-created Source move from an independent device only for the same Home and Account (%s)', async decisionScope => {
         const scenario = await openMoveScenario();
+        const triggerRead = await createDefaultActionExecutor().execute('workflow.trigger.list', { scope: 'account_all' }, {
+            surface: 'ui', authority: 'present_user', serverId: scenario.serverId,
+        });
+        if (!triggerRead.ok) throw new Error(`Expected the real Workflow inventory: ${JSON.stringify(triggerRead)}`);
+        const triggerInventory = WorkflowTriggerListResultV1Schema.parse(triggerRead.result);
+        // The agent's inventory read crosses its installed host boundary. Reuse
+        // the real Account owner's opened result beneath Home minting and crypto.
+        await answerExternalActionAccountForHome(homes, scenario.serverId, {
+            machineId: 'machine-a', actionId: 'workflow.trigger.list', tokenEpoch: 0,
+            execute: raw => {
+                expect(raw).toEqual({ scope: 'account_all' });
+                return triggerInventory;
+            },
+        });
         await homes.requireActionApproval(scenario.serverId, 'projects.sources.moveToTeam', 'agent');
         const { getServerProfileById, listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
         const { seedPersistedHomeProfilesForTests } = await import('@/dev/testkit/fixtures/persistedHomeProfiles');
@@ -821,7 +836,9 @@ it.each(['same-home', 'other-home', 'other-account'] as const)(
             expect(getServerProfileById(creatorServerId)?.serverIdentityId).toBe(receiverProfile.serverIdentityId);
             const produced = await createDefaultActionExecutor().execute('projects.sources.moveToTeam', creatorInput, {
                 surface: 'agent', authority: 'account_automation', serverId: creatorServerId,
+                actionCaller: { kind: 'host' },
                 actionRequestId: 'independent-device-source-move',
+                externalActionTarget: { kind: 'machine', machineId: 'machine-a' },
             });
             expect(produced, JSON.stringify(produced)).toMatchObject({ ok: true, result: {
                 kind: 'approval_request_created', artifactId: expect.any(String),
@@ -850,9 +867,16 @@ it.each(['same-home', 'other-home', 'other-account'] as const)(
             await seedPersistedHomeProfilesForTests({ profiles: browserProfiles, activeServerId: receiverProfile.id });
             expect(getServerProfileById(creatorServerId)).toBeNull();
             if (decisionScope === 'other-account') await homes.switchAccount(scenario.serverId, 'another-account', { currentAccount: true });
+            if (decisionScope === 'other-home') {
+                await expect(decideApprovalAsInbox(receiverProfile.id, artifactId, 'approve'))
+                    .rejects.toMatchObject({ name: 'AccountStorageCurrentnessUnavailableError', reason: 'unauthorized', code: 'action_home_signed_out' });
+                expect(scenario.effects).toEqual([]);
+                expect(scenario.source().owner).toEqual({ kind: 'account', accountId: 'account-owner' });
+                return;
+            }
             const decided = await decideApprovalAsInbox(receiverProfile.id, artifactId, 'approve');
-            if (decisionScope !== 'same-home') {
-                expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
+            if (decisionScope === 'other-account') {
+                expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
                 expect(scenario.effects).toEqual([]);
                 expect(scenario.source().owner).toEqual({ kind: 'account', accountId: 'account-owner' });
                 return;

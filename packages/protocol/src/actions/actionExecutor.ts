@@ -1,5 +1,6 @@
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
+import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
@@ -1757,15 +1758,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         || 'authentication' in origin.data.externalActionExecutionAuthorization.binding)
       && (!isSessionListActionId(actionId)
       || origin.data.sessionListAccess === undefined || origin.data.sessionListAccess === 'mounted_ui');
-    // Machine and Environment binding targets authored with the creator's local
-    // profile follow this already-verified Account replay Home. Never rewrite the
-    // stored/signed proposal, another target, or exact-daemon/external replay custody.
-    const executionInput = appOwnedReplay
-      && (actionId?.startsWith('machines.') || actionId === 'deployments.bindings.set')
+    // Home operands authored with the creator's local profile follow this
+    // already-verified Account replay Home. Never rewrite the stored/signed
+    // proposal, another target, or exact-daemon/external replay custody.
+    const replayHomeInput = <T>(replayedActionId: string | null, input: T): T => appOwnedReplay
+      && (replayedActionId?.startsWith('machines.') || replayedActionId === 'deployments.bindings.set'
+        || isProjectSourceActionIdV1(replayedActionId))
       && origin?.success && replayServerId
-      && readRecord(replayInput).serverId === origin.data.serverId
-      ? { ...readRecord(replayInput), serverId: replayServerId }
-      : replayInput;
+      && readRecord(input).serverId === origin.data.serverId
+      ? { ...input, serverId: replayServerId }
+      : input;
+    const executionInput = replayHomeInput(actionId, replayInput);
+    const reviewedChildren = readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren);
+    // Source moves compare their freshly prepared child plan with the reviewed
+    // plan. Project the same verified Home operands in that private comparison;
+    // keep every other reviewed operand and the Artifact itself unchanged.
+    const replayReviewedChildren = reviewedChildren && isProjectSourceActionIdV1(actionId)
+      ? { ...reviewedChildren, children: reviewedChildren.children.map(child => {
+          const childActionId = typeof child.action === 'string' ? child.action : null;
+          return { ...child,
+            ...(child.input === undefined ? {} : { input: replayHomeInput(childActionId, child.input) }),
+            ...(child.scopeInput === undefined ? {} : { scopeInput: replayHomeInput(childActionId, child.scopeInput) }),
+          };
+        }) }
+      : reviewedChildren;
     const reviewedSessionTargets = origin?.success ? origin.data.sessionTargetsV1 : undefined;
     // Reuse the verified Home-profile mapping above without changing the
     // reviewed Session ids or moving targets belonging to a different Home.
@@ -1920,8 +1936,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             || request.actionId === 'deployments.promote' || request.actionId === 'deployments.teardown')
             && readRecord(request.preview).deploymentReview !== undefined ? {
               deploymentReview: projectNativeJsonValueForTransport(readRecord(request.preview).deploymentReview),
-            } : {}), ...(readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren)
-            ? { hostReviewedChildren: readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren) } : {}) } } : {}),
+            } : {}), ...(replayReviewedChildren
+            ? { hostReviewedChildren: replayReviewedChildren } : {}) } } : {}),
       ...(request.actionId === 'workspace.sync.conflict.resolve'
         ? { actionRequestId: args.artifactId }
         : {}),
