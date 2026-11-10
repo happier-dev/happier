@@ -178,3 +178,36 @@ describe('Slack Web API boundary', () => {
       .resolves.toEqual({ kind: 'delivered', providerMessageIds: ['123.456'] });
   });
 });
+
+// Private downloads must preserve binary bytes and never expose bearer credentials via redirects.
+describe('Slack private files', () => {
+  it.each([200, 403, 429, 503])('downloads bytes or preserves the HTTP failure at %s', async status => {
+    const bytes = new Uint8Array([0, 255, 128, 10]);
+    const signal = new AbortController().signal;
+    const urls: string[] = [];
+    const api = createSlackApi({ credentials, http: { async request(input, options) {
+      urls.push(input.url);
+      expect(options?.signal).toBe(signal);
+      expect(input.redirect).toBe('error');
+      expect(input.headers?.Authorization).toBe('Bearer xoxb-test');
+      if (new URL(input.url).pathname === '/api/files.info') {
+        expect(new URL(input.url).searchParams.get('file')).toBe('F1');
+        return response({ ok: true, file: { id: 'F1', url_private: 'https://files.slack.com/private' } });
+      }
+      return { status, headers: { 'retry-after': '2' }, finalUrl: input.url, body: bytes };
+    } } });
+    expect(await api.downloadFile('F1', { signal })).toEqual(status === 200 ? { kind: 'downloaded', bytes }
+      : status === 429 ? { kind: 'notReady', reason: 'rateLimited', retryAfterMs: 2000 }
+      : { kind: 'notReady', reason: status === 403 ? 'permissionMissing' : 'network' });
+    expect(urls).toHaveLength(2);
+  });
+  it('does not send credentials to a foreign private URL', async () => {
+    let requests = 0;
+    const api = createSlackApi({ credentials, http: { async request() {
+      requests += 1;
+      return response({ ok: true, file: { id: 'F1', url_private: 'https://outside.example/file' } });
+    } } });
+    expect(await api.downloadFile('F1')).toMatchObject({ kind: 'notReady', reason: 'unsupported' });
+    expect(requests).toBe(1);
+  });
+});

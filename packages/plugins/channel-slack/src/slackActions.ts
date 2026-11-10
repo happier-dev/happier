@@ -2,6 +2,8 @@ import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-s
 import { QualifiedConnectedAccountRefSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProtocolStoredReadSchema, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
+  ConversationAttachmentFetchInputV1Schema, ConversationAttachmentFetchResultV1Schema,
+  encodeConversationAttachmentBytesV1, readConversationAttachmentIdV1, type ConversationAttachmentFetchResultV1,
   assertConversationChannelsCoreCallerV1, areConversationEndpointIdentitiesEqual, classifyConversationProviderMaterializationFailureV1,
   ConversationConnectionTestInputV1Schema, ConversationConnectionTestResultV1Schema,
   ConversationDeliveryInputV1Schema, ConversationDeliveryResultV1Schema,
@@ -108,7 +110,7 @@ export async function setupSlackChannels(input: unknown, context: PluginInvocati
     supportedTransports: ['socket'], recommendedTransport: 'socket', overlapSafety: 'safe', replayContinuity: 'sessionBound',
     outboundTextLimit: { maximum: SLACK_MAX_MESSAGE_CODE_POINTS, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
     setupGuidance: { externalUrl: 'https://api.slack.com/apps',
-      requiredPermissionsLabel: 'Enable Socket Mode and message events; bot: chat:write, users:read, conversation read/history scopes; app token: connections:write. Invite the bot to each conversation.',
+      requiredPermissionsLabel: 'Enable Socket Mode and message events; bot: chat:write, files:read, users:read, conversation read/history scopes; app token: connections:write. Invite the bot to each conversation.',
       steps: [
         { title: 'Create a Slack app in the workspace that will own this connection', externalUrl: 'https://api.slack.com/apps' },
         { title: 'Enable Socket Mode for the app', externalUrl: 'https://docs.slack.dev/apis/events-api/using-socket-mode/' },
@@ -117,7 +119,7 @@ export async function setupSlackChannels(input: unknown, context: PluginInvocati
           copyableValues: [{ label: 'App-level token scope', value: 'connections:write' }] },
         { title: 'Configure bot scopes and subscribe to message events', externalUrl: 'https://docs.slack.dev/reference/app-manifest/',
           copyableValues: [
-            { label: 'Bot scopes', value: 'chat:write, users:read, channels:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read, mpim:history' },
+            { label: 'Bot scopes', value: 'chat:write, files:read, users:read, channels:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read, mpim:history' },
             { label: 'Bot events', value: 'message.channels, message.groups, message.im, message.mpim' },
           ] },
         { title: 'Install the app, invite its bot to each conversation, and save the bot and app-level tokens in a Slack Bot Connected Account' },
@@ -212,4 +214,30 @@ export async function deliverSlackMessage(input: unknown, context: PluginInvocat
   catch { return { kind: 'notDelivered', retry: 'never' }; }
   if (context.signal.aborted) return { kind: 'notDelivered', retry: 'safe' };
   return ConversationDeliveryResultV1Schema.parse(await ready.api.postMessage(payload, { signal: context.signal }));
+}
+
+/** Uses the admitted connection and native file IDs; Channels owns materialization and failures. */
+export async function fetchSlackAttachments(input: unknown, context: PluginInvocationContext): Promise<ConversationAttachmentFetchResultV1> {
+  assertCore(context);
+  const request = ConversationAttachmentFetchInputV1Schema.parse(input);
+  const ready = await readyConnection(context, request);
+  if ('kind' in ready) return ready;
+  const references: { attachmentId: string; fileId: string }[] = [];
+  for (const attachmentId of request.attachmentIds) {
+    const parts = readConversationAttachmentIdV1(attachmentId, 'slack');
+    if (parts?.length !== 4 || parts[0] !== ready.identity.teamId
+      || typeof parts[1] !== 'string' || !/^[A-Z0-9]+$/.test(parts[1])
+      || parts[2] !== request.messageId || typeof parts[3] !== 'string' || !/^[A-Z0-9]+$/.test(parts[3])) {
+      return { kind: 'notReady', reason: 'unsupported', diagnostic: 'Slack attachment does not belong to this workspace and message.' };
+    }
+    references.push({ attachmentId, fileId: parts[3] });
+  }
+  const attachments: { attachmentId: string; base64: string }[] = [];
+  for (const reference of references) {
+    const result = await ready.api.downloadFile(reference.fileId, { signal: context.signal });
+    context.signal.throwIfAborted();
+    if (result.kind === 'notReady') return result;
+    attachments.push({ attachmentId: reference.attachmentId, base64: encodeConversationAttachmentBytesV1(result.bytes) });
+  }
+  return ConversationAttachmentFetchResultV1Schema.parse({ kind: 'fetched', attachments });
 }

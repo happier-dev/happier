@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { slackConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
-  setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage,
+  setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments,
   SLACK_SETUP_INPUT_PROTOCOL_SCHEMA,
 } from './slackActions.js';
 import { createSlackSocketSupervisor } from './slackSocketSupervisor.js';
@@ -43,7 +43,7 @@ function createSlackPlugin() {
     activation: { events: [], configuration: { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'channel-state' }] } },
     hostAccess: { required: [
       { id: 'slack-web-api', capability: 'network', reason: 'Verify Slack identities and conversations and send messages through the Web API.',
-        scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://slack.com' }], methods: ['GET', 'POST'] } },
+        scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://slack.com' }, { kind: 'httpsHostSuffix', hostSuffix: 'slack.com' }], methods: ['GET', 'POST'] } },
       { id: 'slack-socket-mode', capability: 'network.client', reason: 'Receive Slack conversation events over authenticated outbound Socket Mode.',
         scope: { targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'slack.com' }], transports: ['websocket'] } },
       { id: SLACK_CREDENTIAL_PURPOSE, capability: 'connectedAccounts', reason: 'Use only the exact selected Slack bot and app tokens.',
@@ -73,6 +73,12 @@ function createSlackPlugin() {
       },
     },
     actions: {
+      [SLACK_CHANNEL_ACTION_IDS.attachmentFetch]: {
+        title: 'Fetch Slack attachments', description: 'Download referenced Slack files for Session materialization.',
+        surfaces: roles.attachmentFetch.declaration.surfaces, dangerLevel: roles.attachmentFetch.declaration.dangerLevel,
+        inputSchema: roles.attachmentFetch.declaration.input.schema.jsonSchema, resultSchema: roles.attachmentFetch.declaration.resultSchema.jsonSchema,
+        hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: fetchSlackAttachments,
+      },
       [SLACK_CHANNEL_ACTION_IDS.setup]: {
         title: 'Set up Slack Channels', description: 'Verify the selected Slack bot and Socket Mode app before creating a connection.',
         surfaces: roles.setup.declaration.surfaces, dangerLevel: roles.setup.declaration.dangerLevel,
@@ -122,6 +128,7 @@ function createSlackPlugin() {
       setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), connectionTest: roles.connectionTest.bind(SLACK_CHANNEL_ACTION_IDS.connectionTest),
       endpointResolve: roles.endpointResolve.bind(SLACK_CHANNEL_ACTION_IDS.endpointResolve), principalResolve: roles.principalResolve.bind(SLACK_CHANNEL_ACTION_IDS.principalResolve),
       messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver),
+      attachmentFetch: roles.attachmentFetch.bind(SLACK_CHANNEL_ACTION_IDS.attachmentFetch),
     } }) } } },
     setup() {
       if (supervisor) throw new Error('Slack Socket Mode supervisor is already active.');

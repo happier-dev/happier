@@ -31,6 +31,7 @@ oauth_config:
   scopes:
     bot:
       - chat:write
+      - files:read
       - users:read
       - channels:read
       - channels:history
@@ -125,9 +126,9 @@ retrieved 2026-10-20.
 Socket reconnects report continuity loss through core history-gap/readiness
 Actions and preserve the existing explicit baseline-recovery journey. Socket
 receive progress is not a durable checkpoint. Edits become bodyless
-`unsupportedEdit`; deletes are ignored. Files and rich/shared attachments become
-bodyless `unsupportedContent`, so attachment text cannot become a command.
-No `attachmentFetch` role or HTTP Events API transport is declared in this unit.
+`unsupportedEdit`; deletes are ignored. Native uploaded files use the shared descriptor and attachment-fetch path.
+Rich/shared attachment blocks remain bodyless `unsupportedContent`, so their
+fallback text cannot become a command. No HTTP Events API transport is declared.
 See [message events](https://docs.slack.dev/reference/events/message/),
 [message_changed](https://docs.slack.dev/reference/events/message/message_changed/)
 and [message attachments](https://docs.slack.dev/tools/node-slack-sdk/reference/types/interfaces/MessageAttachment/),
@@ -142,3 +143,13 @@ thread replies, reconnect gaps, rate limits and credential repair before
 release. Source tests use documented HTTP/WebSocket boundary fakes and the real
 Channels composition/conformance harness. No live workspace or real Slack send
 is part of those tests.
+
+## Inbound files (unreleased development source)
+
+Native uploaded files retain their caption and native thread. Descriptors contain
+file identity and metadata, never a private download URL or token. On Session
+materialization, the provider uses `files.info` with the selected bot's
+`files:read` scope and downloads the private bytes without following redirects.
+Channels' existing attachment runtime stages and transfers the bytes; a failed
+fetch remains visibly unavailable with the admitted message retained. Legacy
+attachment blocks remain unsupported. Real Slack-tenant QA is release evidence.

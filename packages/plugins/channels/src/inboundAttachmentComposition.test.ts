@@ -8,11 +8,13 @@ import { activate as activateDiscord, PLUGIN_MANIFEST as discordManifest } from 
 import { createDiscordGatewaySession } from '../../channel-discord/src/discordGateway.js';
 import { parseDiscordMessageDispatch } from '../../channel-discord/src/discordMessage.js';
 import { mapDiscordMessageToSocketIngress } from '../../channel-discord/src/discordObservation.js';
+import { activate as activateSlack, PLUGIN_MANIFEST as slackManifest } from '../../channel-slack/src/index.js';
+import { mapSlackEventToIngress } from '../../channel-slack/src/slackObservation.js';
 import { ChannelFileValueV1Schema } from './channelAttachment.js';
 import { createChannelsJourneyFixture } from './testkit/channelsJourney.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
 
-type Provider = 'Telegram' | 'Discord';
+type Provider = 'Telegram' | 'Discord' | 'Slack';
 type Failure = 'network' | 'expired' | 'overLimit';
 const fileBytes = new TextEncoder().encode('A lead the agent can read.');
 const connectionId = 'attachment-connection';
@@ -25,13 +27,13 @@ function jsonResponse(value: unknown, finalUrl: string) {
 }
 
 async function attachmentJourney(kind: Provider, options: { failure?: Failure; text?: string; omitRegistration?: boolean } = {}) {
-  const manifest = kind === 'Telegram' ? telegramManifest : discordManifest;
+  const manifest = kind === 'Telegram' ? telegramManifest : kind === 'Slack' ? slackManifest : discordManifest;
   const text = options.text ?? 'Please inspect this lead';
   const receivedAt = Date.now();
   const placement = { serverIdentityId: 'srv_plugin_testkit', materializationRef: {
     pluginId: manifest.id, machineId, materializationId: `${kind}-attachment-fixture`,
   } };
-  const credentialRef = { service: { pluginId: manifest.id, localId: kind === 'Telegram' ? 'telegram-bot' : 'discord-bot' }, accountId: 'fixture' };
+  const credentialRef = { service: { pluginId: manifest.id, localId: kind === 'Telegram' ? 'telegram-bot' : kind === 'Slack' ? 'slack-bot' : 'discord-bot' }, accountId: 'fixture' };
   let updates: JsonValue[] = [];
   let metadataReads = 0;
   const downloads: string[] = [];
@@ -42,13 +44,21 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
     async openWebSocket() { throw new Error('This native-frame fixture does not open a live socket'); },
     async request(request) {
       const url = new URL(request.url);
-      if (url.hostname === 'cdn.discordapp.com' || url.pathname.startsWith('/file/')) {
+      if (url.hostname === 'cdn.discordapp.com' || url.pathname.startsWith('/file/') || url.hostname === 'files.slack.com') {
         downloads.push(request.url);
         expect(request.redirect).toBe('error');
+        if (kind === 'Slack') expect(request.headers?.Authorization).toBe('Bearer xoxb-fixture');
         if (kind === 'Discord') expect(request.headers?.authorization).toBeUndefined();
         if (options.failure === 'network') throw new Error('Provider HTTP connection failed');
         return { status: options.failure === 'expired' ? 403 : 200, finalUrl: request.url,
           headers: { 'content-type': 'text/plain' }, body: options.failure === 'expired' ? new Uint8Array() : fileBytes };
+      }
+      if (kind === 'Slack') {
+        if (url.pathname.endsWith('/files.info')) {
+          metadataReads += 1;
+          return jsonResponse({ ok: true, file: { id: 'F1', url_private_download: `https://files.slack.com/renewed-${metadataReads}` } }, request.url);
+        }
+        throw new Error(`Unexpected Slack HTTP path ${url.pathname}`);
       }
       if (kind === 'Telegram') {
         let result: JsonValue;
@@ -75,19 +85,19 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
   });
   // Credential materialization is the real host boundary; no stored credentials are read.
   const connectedAccounts = { async materialize() { return { kind: 'environment', env: kind === 'Telegram'
-    ? { TELEGRAM_BOT_TOKEN: '123:fixture' } : { DISCORD_BOT_TOKEN: 'fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
-  const provider = await createPluginTestkit({ manifest, module: { activate: kind === 'Telegram' ? activateTelegram : activateDiscord },
+    ? { TELEGRAM_BOT_TOKEN: '123:fixture' } : kind === 'Slack' ? { SLACK_BOT_TOKEN: 'xoxb-fixture', SLACK_APP_TOKEN: 'xapp-fixture' } : { DISCORD_BOT_TOKEN: 'fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
+  const provider = await createPluginTestkit({ manifest, module: { activate: kind === 'Telegram' ? activateTelegram : kind === 'Slack' ? activateSlack : activateDiscord },
     services: { http, connectedAccounts }, resolveCurrentPluginMaterializationRef: () => placement.materializationRef });
   const endpoint = kind === 'Telegram'
     ? { kind: 'direct', audience: 'direct', id: '456' } as const
-    : { kind: 'direct', audience: 'direct', id: 'discord:channel:channel-1' } as const;
+    : { kind: 'direct', audience: 'direct', id: kind === 'Slack' ? 'slack:T1:channel:D1' : 'discord:channel:channel-1' } as const;
   const connection = createCurrentConversationConnectionFixture({ connectionId,
-    ...(kind === 'Discord' ? { transport: { kind: 'socket' } as const, replayContinuity: 'sessionBound' as const } : {}),
-    authority: { providerPluginId: manifest.id, providerContributionSelection: { contributionId: kind === 'Telegram' ? 'telegram-provider' : 'discord-provider' },
+    ...(kind !== 'Telegram' ? { transport: { kind: 'socket' } as const, replayContinuity: 'sessionBound' as const } : {}),
+    authority: { providerPluginId: manifest.id, providerContributionSelection: { contributionId: kind === 'Telegram' ? 'telegram-provider' : kind === 'Slack' ? 'slack-provider' : 'discord-provider' },
       providerSetupInput: { credentialRef }, credentialRef, transportOrigin: placement,
-      providerConnectionKey: kind === 'Telegram' ? 'telegram-bot:123' : 'discord:application:app-1',
-      providerConfig: kind === 'Telegram' ? { botUsername: 'HappierBot', canReadAllGroupMessages: false } : { applicationId: 'app-1', botUserId: 'bot-1' },
-      integrationPrincipal: { id: kind === 'Telegram' ? '123' : 'bot-1' }, routingIdentityKey: 'a'.repeat(43), authorityEpoch: 1 } });
+      providerConnectionKey: kind === 'Telegram' ? 'telegram-bot:123' : kind === 'Slack' ? 'slack:team:T1:app:A1' : 'discord:application:app-1',
+      providerConfig: kind === 'Telegram' ? { botUsername: 'HappierBot', canReadAllGroupMessages: false } : kind === 'Slack' ? { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' } : { applicationId: 'app-1', botUserId: 'bot-1' },
+      integrationPrincipal: { id: kind === 'Telegram' ? '123' : kind === 'Slack' ? 'slack:T1:user:U1' : 'bot-1' }, routingIdentityKey: 'a'.repeat(43), authorityEpoch: 1 } });
   const admissions: Extract<SessionSendRequest, { kind: 'userText' }>[] = [];
   const transferred: { name: string; bytes: Uint8Array; stagedPath: string }[] = [];
   const summary = { id: sessionId, machineId, state: 'idle', runtimeAvailability: { status: 'available' },
@@ -110,7 +120,7 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
       endpoint, authorityEpoch: 1, enabled: true, deletionState: 'none',
       target: { kind: 'session', sessionId, policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only',
         approvals: { kind: 'off' }, newSession: { kind: 'off' } } },
-      allowedPrincipalIds: [kind === 'Telegram' ? '42' : 'discord:user:human-1'], allowBotSenders: false,
+      allowedPrincipalIds: [kind === 'Telegram' ? '42' : kind === 'Slack' ? 'slack:T1:user:U2' : 'discord:user:human-1'], allowBotSenders: false,
       inputMode: 'allAllowedMessages', inboundDebounceMs: 0, linkPreviewPolicy: 'suppress', senderFeedback: 'off',
     } };
   const journey = await createChannelsJourneyFixture({ provider, connection, binding, sessions, actions,
@@ -123,6 +133,17 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
   let sequence = 1;
   return { admissions, transferred, downloads, metadataReads: () => metadataReads,
     async receive() {
+      if (kind === 'Slack') {
+        const observation = mapSlackEventToIngress({ identity: { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' },
+          channel: { id: 'D1', isIm: true, isMpim: false, isPrivate: true, isArchived: false },
+          payload: { type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: 'Ev1', event: {
+            type: 'message', subtype: 'file_share', channel: 'D1', user: 'U2', ts: `${Math.floor(receivedAt / 1000)}.000001`, text,
+            files: [{ id: 'F1', name: 'lead.txt', mimetype: 'text/plain', size: byteLength }],
+          } } });
+        if (!observation) throw new Error('Missing Slack observation');
+        await journey.ingest({ connectionId, authorityEpoch: 1, entry: { observation, eventCandidate: null } });
+        return;
+      }
       if (kind === 'Telegram') {
         updates = [{ update_id: 2, message: { message_id: 10, date: Math.floor(receivedAt / 1000),
           chat: { id: 456, type: 'private' }, from: { id: 42, is_bot: false, first_name: 'Human' },
@@ -155,7 +176,7 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
   };
 }
 
-describe.each<Provider>(['Telegram', 'Discord'])('%s native inbound file composition', (provider) => {
+describe.each<Provider>(['Telegram', 'Discord', 'Slack'])('%s native inbound file composition', (provider) => {
   it('admits content and descriptors once, then materializes through the activated channel-file runtime', async () => {
     const fixture = await attachmentJourney(provider);
     try {
@@ -214,8 +235,8 @@ it('retains a Telegram file beyond the documented cloud download limit as explic
   } finally { await fixture.dispose(); }
 });
 
-it('keeps an expired Discord CDN response unavailable without materializing an empty file', async () => {
-  const fixture = await attachmentJourney('Discord', { failure: 'expired' });
+it.each<Provider>(['Discord', 'Slack'])('keeps a refused %s download unavailable without materializing an empty file', async provider => {
+  const fixture = await attachmentJourney(provider, { failure: 'expired' });
   try {
     await fixture.receive();
     expect(fixture.admissions).toHaveLength(1);

@@ -166,6 +166,26 @@ export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; 
       return { id, teamId: user.team_id, isBot: user.is_bot || user.is_app_user === true, deleted: user.deleted,
         label: text(profile.display_name) ?? text(profile.real_name) ?? text(user.real_name) ?? text(user.name) ?? id };
     },
+    async downloadFile(id: string, options?: RequestOptions): Promise<Readonly<{ kind: 'downloaded'; bytes: Uint8Array }> | SlackApiFailure> {
+      if (!slackId(id)) return INVALID_CONFIGURATION;
+      const result = await read('files.info', { file: id }, options);
+      options?.signal?.throwIfAborted();
+      if (!result.ok) return result.failure;
+      const file = result.body.file;
+      if (!record(file) || file.id !== id) return INVALID_CONFIGURATION;
+      const url = slackUrl(file.url_private_download ?? file.url_private, 'https:');
+      if (!url) return { kind: 'notReady', reason: 'unsupported', diagnostic: 'Slack file has no downloadable private URL.' };
+      try {
+        const response = await input.http.request({ url: url.href, method: 'GET', redirect: 'error',
+          headers: { Authorization: `Bearer ${input.credentials.botToken}` } }, options);
+        options?.signal?.throwIfAborted();
+        if (response.status < 200 || response.status >= 300) return failure({ ...response, body: null });
+        return { kind: 'downloaded', bytes: response.body };
+      } catch {
+        options?.signal?.throwIfAborted();
+        return { kind: 'notReady', reason: 'network' };
+      }
+    },
     async postMessage(payload: SlackMessagePayload, options?: RequestOptions): Promise<ConversationDeliveryResultV1> {
       if (options?.signal?.aborted) return { kind: 'notDelivered', retry: 'safe' };
       const response = await request('chat.postMessage', payload, options);

@@ -123,11 +123,11 @@ connection's machine and the integration's ability to fetch the files.
 | --- | --- | --- | --- | --- | --- | --- |
 | Email | Mailbox; existing thread links are retained | Text and files | Text and files | Text only | One Session per email thread | New email thread |
 | Discord | Channel or native thread | Text and files | Text and files | Text only | One Session per child thread | Public thread in a shared channel |
-| Slack | Channel or native thread | Text only | Text only | Text only | One Session per child thread | Unsupported |
+| Slack | Channel or native thread | Text and files | Text and files | Text only | One Session per child thread | Unsupported |
 | Telegram | Private chat, group, supergroup or topic | Text and files | Text and files | Text only | One Session per native topic | Topic in a forum supergroup |
 | GitHub | Issue or pull request | Text | Text | Text | Unsupported | Unsupported |
 
-Slack currently refuses messages containing files or attachment blocks. Telegram
+Slack retains native files and captions; legacy attachment blocks remain unsupported. Telegram
 ordinary replies outside a topic stay in the chat; they do not create a router
 Session. Email setup selects the mailbox, rather than offering individual mail
 threads. Starting through a router uses a named existing Session; it does not
@@ -222,12 +222,15 @@ rather than at the first silent failure:
   connection time. Replies post as issue comments, so the credential needs
   write access to that same collection.
 
-### Telegram and Discord inbound files (unreleased development contract)
+### Telegram, Discord and Slack inbound files (unreleased development contract)
 
 In unreleased development source, Telegram retains file descriptors for photos,
 documents, audio, voice messages, videos and animations, together with their
 captions. Discord retains native message attachments and message text; embeds
-are not input. Channels downloads the bytes when the Session materializes the
+are not input. Slack retains uploaded screenshots, logs and documents with their
+captions and native thread. Its bot needs `files:read`; downloads use the selected
+bot token and fresh private URLs from [files.info](https://docs.slack.dev/reference/methods/files.info/).
+Channels downloads the bytes when the Session materializes the
 files, through the same attachment path used by Email. Loaded-provider QA is
 still pending; this is not a released availability claim.
 

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
-import { ConversationProviderSetupResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { ConversationProviderSetupResultV1Schema, createConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
 import { PLUGIN_MANIFEST } from './manifest.js';
-import { setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage } from './slackActions.js';
+import { setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments } from './slackActions.js';
 
 const credentialRef = { service: { pluginId: 'happier.channel.slack', localId: 'slack-bot' }, accountId: 'slack-test' };
 const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' };
@@ -81,7 +81,7 @@ describe('Slack provider Actions', () => {
       { title: expect.any(String), externalUrl: expect.any(String) },
       { title: expect.any(String), externalUrl: expect.any(String), copyableValues: [{ label: expect.any(String), value: 'connections:write' }] },
       { title: expect.any(String), externalUrl: expect.any(String), copyableValues: [
-        { label: expect.any(String), value: 'chat:write, users:read, channels:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read, mpim:history' },
+        { label: expect.any(String), value: 'chat:write, files:read, users:read, channels:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read, mpim:history' },
         { label: expect.any(String), value: 'message.channels, message.groups, message.im, message.mpim' },
       ] },
       { title: expect.any(String) },
@@ -131,4 +131,15 @@ describe('Slack provider Actions', () => {
       expect(b.effects).toEqual([]);
     }
   });
+});
+
+it.each([
+  ['T2', 'C1', '1700000000.000001', 'F1'],
+  ['T1', 'C1', 'different-message', 'F1'],
+])('refuses an attachment reference outside its admitted workspace/message: %j', async (...parts) => {
+  const b = boundary();
+  const result = await fetchSlackAttachments({ ...connection, messageId: '1700000000.000001',
+    attachmentIds: [createConversationAttachmentIdV1('slack', parts)] }, b.context);
+  expect(result).toMatchObject({ kind: 'notReady', reason: 'unsupported' });
+  expect(b.request).not.toHaveBeenCalled();
 });

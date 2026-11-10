@@ -1,4 +1,4 @@
-import { ConversationNormalizedIngressV1Schema, type ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
+import { createConversationAttachmentIdV1, ConversationNormalizedIngressV1Schema, type ConversationMessageAttachmentV1, type ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
 import type { SlackChannel, SlackIdentity } from './slackApi.js';
 import { createSlackChannelEndpointId, createSlackEndpointIdentity, createSlackPrincipalId } from './slackPluginConstants.js';
 
@@ -55,12 +55,29 @@ export function mapSlackEventToIngress(input: Readonly<{ payload: unknown; ident
       providerTimestamp,
     },
   };
-  const unsupported = (Array.isArray(message.files) && message.files.length > 0)
+  const attachments: ConversationMessageAttachmentV1[] = [];
+  const files: unknown = message.files ?? [];
+  let validFiles = Array.isArray(files);
+  if (Array.isArray(files)) for (const file of files) {
+    if (!isRecord(file) || typeof file.id !== 'string' || !/^[A-Z0-9]+$/.test(file.id)
+      || typeof file.name !== 'string' || !file.name.trim()
+      || typeof file.mimetype !== 'string' || !file.mimetype.trim()
+      || (file.size !== undefined && (typeof file.size !== 'number' || !Number.isSafeInteger(file.size) || file.size < 0))) {
+      validFiles = false;
+      break;
+    }
+    attachments.push({
+      attachmentId: createConversationAttachmentIdV1('slack', [identity.teamId, channel.id, message.ts, file.id]),
+      name: file.name, mediaType: file.mimetype,
+      ...(typeof file.size === 'number' ? { byteLength: file.size } : {}),
+    });
+  }
+  const unsupported = !validFiles
     || (Array.isArray(message.attachments) && message.attachments.length > 0)
-    || typeof message.text !== 'string' || !message.text.trim();
+    || typeof message.text !== 'string' || (!message.text.trim() && attachments.length === 0);
   const parsed = ConversationNormalizedIngressV1Schema.safeParse(edited
     ? { kind: 'routableNonAdmission', shell, reason: 'unsupportedEdit' }
     : unsupported ? { kind: 'routableNonAdmission', shell, reason: 'unsupportedContent' }
-      : { kind: 'fullText', observation: { ...shell, message: { ...shell.message, text: message.text } } });
+      : { kind: 'fullText', observation: { ...shell, message: { ...shell.message, text: message.text, ...(attachments.length ? { attachments } : {}) } } });
   return parsed.success ? parsed.data : null;
 }

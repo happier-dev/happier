@@ -15,6 +15,7 @@ export const SLACK_CHANNEL_ACTION_IDS = Object.freeze({
   endpointResolve: 'slack/choose-channel',
   principalResolve: 'slack/resolve-user',
   messageDeliver: 'slack/post-message',
+  attachmentFetch: 'slack/fetch-attachments',
 });
 
 export function createSlackChannelEndpointId(teamId: string, channelId: string): string {

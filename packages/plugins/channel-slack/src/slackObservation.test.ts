@@ -65,6 +65,16 @@ describe('Slack authenticated message normalization', () => {
     expect(edit.shell.occurrenceId).not.toBe(original.observation.occurrenceId);
   });
 
+  it.each(['caption', ''])('admits native files with caption %j and keeps the thread', text => {
+    const result = mapSlackEventToIngress({ payload: payload({ text, subtype: 'file_share', thread_ts: '1699999999.000001',
+      files: [{ id: 'F1', name: 'screen.png', mimetype: 'image/png', size: 123, url_private: 'https://files.slack.com/secret' }] }), identity, channel });
+    expect(result).toMatchObject({ kind: 'fullText', observation: {
+      endpoint: { kind: 'thread', id: 'slack:T1:channel:C1:thread:1699999999.000001' },
+      message: { text, attachments: [{ name: 'screen.png', mediaType: 'image/png', byteLength: 123 }] },
+    } });
+    expect(JSON.stringify(result)).not.toContain('https://files.slack.com');
+  });
+
   it('keeps unsupported file content bodyless and never trusts mismatched channel metadata', () => {
     expect(mapSlackEventToIngress({ payload: payload({ files: [{ id: 'F1' }] }), identity, channel }))
       .toMatchObject({ kind: 'routableNonAdmission', reason: 'unsupportedContent' });
