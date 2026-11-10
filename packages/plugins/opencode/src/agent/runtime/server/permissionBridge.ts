@@ -137,6 +137,17 @@ export function buildOpenCodePermissionApprovalRequest(
       }),
     },
     allowSessionPersistence: true,
+    nativeChoices: {
+      requirementId: ask.requestId,
+      source: 'opencode',
+      choices: [
+        { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+        { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+          response: { approved: true, decision: 'approved_for_session', allowedTools: [toolName] } },
+        { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+        { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+      ],
+    },
   };
 }
 

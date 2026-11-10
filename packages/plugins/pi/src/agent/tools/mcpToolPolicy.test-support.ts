@@ -223,8 +223,16 @@ function createRuntimeServices() {
       const order = ++sequence;
       const pending = handler.handleToolCall(id, name, args, options);
       const prompted = session.state.requests?.[id] !== undefined;
-      if (prompted) await session.rpcHandlerManager.handlers.get('permission')?.({ id, approved: true,
-        ...(approvalScope === 'session' ? { decision: 'approved_for_session' } : {}) });
+      if (prompted) {
+        const offered = session.state.requests?.[id]?.nativeChoices;
+        const choice = offered?.choices.find(choice => choice.scope === approvalScope
+          && (choice.decision === 'approved' || choice.decision === 'approved_for_session'));
+        if (offered && !choice) throw new Error(`No offered ${approvalScope} Pi MCP approval`);
+        const response = await session.rpcHandlerManager.handlers.get('session.permission.respond')?.(offered && choice
+          ? { id, nativeChoice: { requirementId: offered.requirementId, choiceId: choice.id } }
+          : { id, approved: true, ...(approvalScope === 'session' ? { decision: 'approved_for_session' } : {}) });
+        if (response !== undefined) throw new Error(`Pi MCP approval failed: ${JSON.stringify(response)}`);
+      }
       const result = await pending;
       if (name.startsWith('mcp__')) {
         const server = name.slice('mcp__'.length).split('__')[0]!;

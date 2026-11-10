@@ -1,7 +1,9 @@
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 
-/** The existing external MCP category retains its catalog-consent permission path. */
+/** Claude's existing external MCP tool category. */
 export function isClaudeExternalMcpTool(toolName: string): boolean {
     return toolName.startsWith('mcp__') && !toolName.startsWith('mcp__happier__') && !toolName.startsWith('mcp__happy__');
 }
@@ -9,6 +11,7 @@ export function isClaudeExternalMcpTool(toolName: string): boolean {
 /** Claude's native permission response policy belongs to its request producer. */
 export function buildClaudePermissionChoices(input: Readonly<{
     requestId: string; toolName: string; toolInput: unknown; allowSessionPersistence?: boolean;
+    mcpTool?: ResolvedMcpToolIdentityV1 | null;
 }>): NativePermissionChoicesV1 {
     const { toolName } = input;
     const exitPlan = toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
@@ -22,6 +25,14 @@ export function buildClaudePermissionChoices(input: Readonly<{
                 response: { approved: true, decision: 'approved', mode,
                     updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] } });
         }
+    }
+    if (isClaudeExternalMcpTool(toolName) && input.mcpTool) {
+        const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool: input.mcpTool,
+            grant: { id: 'always_allow', label: 'Allow for this session', decision: 'approved', scope: 'session',
+                response: { approved: true, decision: 'approved', allowedTools: [toolName],
+                    updatedPermissions: [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName }] }] } },
+        });
+        if (catalogChoice) choices.push(catalogChoice);
     }
     const edit = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(toolName);
     if (edit && input.allowSessionPersistence !== false) choices.push({

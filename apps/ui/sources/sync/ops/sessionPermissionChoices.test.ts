@@ -10,17 +10,23 @@ import { createClaudePermissionEngine, type ClaudePermissionContext } from '../.
 describe('Session permission offered choices', () => {
     it('keeps the existing catalog consent reachable for a live external Claude MCP request', async () => {
         // The plugin's host permission service is the external SDK boundary.
-        const requestDecision = vi.fn(async (_request: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[0]) => ({ decision: 'approved' as const }));
+        const requestDecision = vi.fn(async (_request: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[0],
+            _options?: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[1]) => ({ decision: 'approved' as const }));
         const context = { sessions: { current: { permissions: { requestDecision } } } } as ClaudePermissionContext;
         await createClaudePermissionEngine(context).canCallTool('mcp__docs__mutate', { page: 'draft' }, { requestId: 'live-mcp' });
         const request = requestDecision.mock.calls[0]![0];
+        const mcpTool = { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
+            decision: { exposed: true, approval: 'ask' as const, effectClass: 'write' as const, source: 'server_default' as const } };
+        const nativeChoices = requestDecision.mock.calls[0]![1]?.buildNativeChoices?.({ mcpTool });
         const choices = resolveSessionPermissionChoices({ toolName: request.toolName, toolInput: request.input,
-            nativeChoices: request.nativeChoices, canWriteCatalog: true,
+            nativeChoices, canWriteCatalog: true,
             permissionBehavior: resolveSessionPermissionBehavior({ agentId: 'claude', metadata: { flavor: 'claude' }, accountScope: null }),
-            mcpTool: { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
-                decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } },
+            mcpTool,
         });
         expect(choices.some(choice => choice.id === 'mcp_always_allow')).toBe(true);
+        expect(choices.find(choice => choice.id === 'mcp_always_allow')?.followUp).toEqual({
+            actionId: 'mcp.servers.tools.set', input: { serverId: 'docs-id', tools: { mutate: 'allow' } },
+        });
     });
     it.each([
         { label: 'available once', allowed: true, omitOnce: false, expected: 'opaque:once' },
@@ -65,6 +71,13 @@ describe('Session permission offered choices', () => {
             ? { allowedTools: ['Bash'], updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'session' }] }
             : { decision: 'approved_for_session' });
         expect(choices.find(choice => choice.id === 'stop')?.response).toEqual({ approved: false, decision: agentId === 'claude' ? 'abort' : 'denied' });
+    });
+    it.each(['opencode', 'pi', 'gemini', 'ohMyPi'])('keeps stored %s grant and stop semantics after live descriptor policy removal', agentId => {
+        const behavior = resolveSessionPermissionBehavior({ agentId, metadata: { flavor: agentId }, accountScope: null });
+        const choices = resolveSessionPermissionChoices({ toolName: 'Bash', permissionBehavior: behavior });
+        expect(choices.find(choice => choice.id === 'allow')?.response).toEqual({ approved: true, decision: 'approved' });
+        expect(choices.find(choice => choice.id === 'always_allow')?.response).toEqual({ approved: true, decision: 'approved_for_session' });
+        expect(choices.find(choice => choice.id === 'stop')?.response).toEqual({ approved: false, decision: 'abort' });
     });
     it('submits the native selection without inventing normalized aliases', async () => {
         const respondToPermission = vi.fn(async () => {});

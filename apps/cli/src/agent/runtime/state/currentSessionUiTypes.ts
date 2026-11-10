@@ -45,6 +45,7 @@ export type HostSessionInteractionResult = InteractionTransientResultV1;
  * caller attribution; the Native Agent adapter passes it to that same owner.
  */
 export type HostSessionInteractionOptions = Readonly<{
+    buildNativeChoices?: import('@happier-dev/agents').SessionPermissionChoicesProducerV1;
     signal?: AbortSignal;
     requester?: InteractionTransientRequesterV1;
     permissionContext?: Readonly<{

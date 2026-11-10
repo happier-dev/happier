@@ -20,6 +20,11 @@ import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol
 import { InteractionTransientAuthorRequestV1Schema } from '@happier-dev/plugin-sdk/interactions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -1092,7 +1097,17 @@ describe('createPiRuntimeOperations', () => {
       title: 'happier:mcp-approval:native-b', message: '{"text":"untrusted-dialog-text"}' });
     await vi.waitFor(() => expect(capture.approvalRequests).toHaveLength(1));
     expect(capture.approvalRequests?.[0]).toMatchObject({ kind: 'approval',
-      subject: { kind: 'tool', name: 'mcp__b__echo', input: { text: 'actual-b' } } });
+      subject: { kind: 'tool', name: 'mcp__b__echo', input: { text: 'actual-b' } },
+      nativeChoices: {
+        requirementId: 'dialog-b', source: 'pi',
+        choices: [
+          { id: 'allow', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+          { id: 'allow_session', decision: 'approved_for_session', scope: 'session',
+            response: { approved: true, decision: 'approved_for_session', allowedTools: ['mcp__b__echo'] } },
+          { id: 'deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+          { id: 'stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+        ],
+      } });
     expect(capture.questionRequests).toEqual([]);
     await vi.waitFor(() => expect(capture.written).toContainEqual({ type: 'extension_ui_response', id: 'dialog-b', confirmed: true }));
     await emit(capture, { type: 'tool_execution_end', toolCallId: 'native-b', toolName: 'mcp__b__echo', result: {} });
@@ -1113,6 +1128,56 @@ describe('createPiRuntimeOperations', () => {
     const admitted = InteractionTransientAuthorRequestV1Schema.parse(capture.approvalRequests?.[1]);
     expect(admitted).toMatchObject({ kind: 'approval', subject: { name: longName, input: { text: 'long' } } });
     await runtime.dispose();
+  });
+
+  it.each([
+    ['allow', true], ['allow_session', true], ['deny', false], ['stop', false], ['mcp_always_allow', true],
+  ] as const)('applies the stored Pi %s offer through authenticated permission ingress to its native confirmation', async (choiceId, confirmed) => {
+    const rpc = new ServerBoundPermissionRpcHandlerManager('pi-offered-session');
+    const session = createMutableApiSessionClientFixture({ sessionId: 'pi-offered-session', overrides: {
+      rpcHandlerManager: rpc as unknown as ApiSessionClient['rpcHandlerManager'],
+    } });
+    const handler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Pi offered permission]', getWorkspaceWrites: () => 'allow', getMcpToolContext: () => ({
+        mcpServerIdentities: { a: { serverId: 'catalog-docs', serverTitle: 'Docs' } },
+        catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: { v: 1, bindings: [], servers: [{
+          id: 'catalog-docs', name: 'docs', transport: 'stdio', stdio: { command: 'docs-mcp', args: [] },
+          env: {}, createdAt: 1, updatedAt: 1, tools: { default: 'ask', overrides: {} },
+        }] } },
+      }) });
+    const lifetime = new AbortController();
+    const services = createNativeAgentSessionServices({ permissionHandler: handler,
+      pluginId: 'happier.agent.pi', contributionId: 'pi', runtimeId: 'pi/runtime',
+      sessionId: session.sessionId, occurrenceId: 'pi-offered-occurrence', signal: lifetime.signal, isCurrent: () => true });
+    const capture: Capture = { specs: [], written: [] };
+    const fixtureContext = createRuntimeContext(capture);
+    const context = { ...fixtureContext, services: { ...fixtureContext.services,
+      interactions: { ...fixtureContext.services.interactions, requestApproval: services.interactions.requestApproval } } };
+    const runtime = await createPiRuntimeOperations({ ...context, cwd: '/tmp/pi-workspace', env: {},
+      sessionId: 'happier-session-1', initialSessionId: 'pi-provider-session-1' });
+    try {
+      const prompt = sendPrompt(runtime, 'Use MCP');
+      await waitForWrittenCount(capture, 1);
+      await ackLastCommand(capture);
+      await prompt;
+      await emit(capture, { type: 'tool_execution_start', toolCallId: 'native-call', toolName: 'mcp__a__echo', args: { text: 'actual' } });
+      await emit(capture, { type: 'extension_ui_request', id: 'dialog/opaque', method: 'confirm', title: 'happier:mcp-approval:native-call', message: 'untrusted' });
+      await vi.waitFor(() => expect(Object.keys(session.__getAgentState().requests ?? {})).toHaveLength(1));
+      const [id, request] = Object.entries(session.__getAgentState().requests ?? {})[0]!;
+      expect(request.nativeChoices).toMatchObject({ requirementId: 'dialog/opaque', source: 'pi' });
+      if (choiceId === 'mcp_always_allow') expect(request.nativeChoices?.choices.find(choice => choice.id === choiceId)).toMatchObject({
+        scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'catalog-docs', tools: { echo: 'allow' } } },
+      });
+      const respond = rpc.handlers.get('session.permission.respond');
+      if (!respond) throw new Error('Authenticated permission response unavailable');
+      expect(await respond({ id, nativeChoice: { requirementId: 'dialog/opaque', choiceId } })).toBeUndefined();
+      await vi.waitFor(() => expect(capture.written).toContainEqual({ type: 'extension_ui_response', id: 'dialog/opaque', confirmed }));
+      expect(capture.written.filter(record => isRecord(record) && record.type === 'extension_ui_response')).toHaveLength(1);
+    } finally {
+      lifetime.abort();
+      await handler.abortPendingRequestsAndFlush('test cleanup');
+      await runtime.dispose();
+      await session.close();
+    }
   });
 
   it('preserves editor prefill as editable initial content', async () => {

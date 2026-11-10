@@ -141,7 +141,8 @@ function readPluginGenerationState(isCurrent: (() => boolean) | undefined): Plug
 }
 
 type NativePermissionPresentationContext = Readonly<{
-    permissionContext: NonNullable<HostSessionInteractionOptions['permissionContext']>;
+    permissionContext?: HostSessionInteractionOptions['permissionContext'];
+    buildNativeChoices?: HostSessionInteractionOptions['buildNativeChoices'];
 }>;
 
 function defaultRequester(
@@ -199,6 +200,7 @@ async function presentBoundPermissionRequest(
         request: InteractionTransientRequestV1;
         signal: AbortSignal;
         permissionContext?: HostSessionInteractionOptions['permissionContext'];
+        buildNativeChoices?: HostSessionInteractionOptions['buildNativeChoices'];
         applyPermissionModeIntent?: NativeAgentSessionInteractionParams['applyPermissionModeIntent'];
     }>,
 ): Promise<InteractionTransientResultV1> {
@@ -227,6 +229,8 @@ async function presentBoundPermissionRequest(
                     : {}),
                 ...(request.kind === 'approval' && request.nativeChoices !== undefined
                     ? { nativeChoices: request.nativeChoices } : {}),
+                ...(request.kind === 'approval' && params.buildNativeChoices
+                    ? { buildNativeChoices: params.buildNativeChoices } : {}),
                 ...(request.kind === 'questions' && permissionContext?.lifetime === 'occurrence'
                     ? { origin: 'host_occurrence_question' as const }
                     : permissionContext?.origin ? { origin: permissionContext.origin } : {}),
@@ -401,9 +405,12 @@ class NativeAgentCurrentSessionInteractionAdapter implements PluginCurrentSessio
         const result = await this.owner.request(request, {
             requester: options?.requester ?? this.requester,
             ...(options?.signal ? { signal: options.signal } : {}),
-            ...(options?.permissionContext === undefined
+            ...(options?.permissionContext === undefined && options?.buildNativeChoices === undefined
                 ? {}
-                : { presentationContext: Object.freeze({ permissionContext: options.permissionContext }) }),
+                : { presentationContext: Object.freeze({
+                    ...(options?.permissionContext ? { permissionContext: options.permissionContext } : {}),
+                    ...(options?.buildNativeChoices ? { buildNativeChoices: options.buildNativeChoices } : {}),
+                }) }),
         }) as InteractionResult;
         if (result.status === 'unavailable') this.params.onUnavailable?.();
         return result;
@@ -429,9 +436,12 @@ class NativeAgentCurrentExecutionRunInteractionAdapter implements PluginCurrentS
         const result = await this.owner.request(request, {
             requester: options?.requester ?? this.requester,
             ...(options?.signal ? { signal: options.signal } : {}),
-            ...(options?.permissionContext === undefined
+            ...(options?.permissionContext === undefined && options?.buildNativeChoices === undefined
                 ? {}
-                : { presentationContext: Object.freeze({ permissionContext: options.permissionContext }) }),
+                : { presentationContext: Object.freeze({
+                    ...(options?.permissionContext ? { permissionContext: options.permissionContext } : {}),
+                    ...(options?.buildNativeChoices ? { buildNativeChoices: options.buildNativeChoices } : {}),
+                }) }),
         }) as InteractionResult;
         if (result.status === 'unavailable') this.params.onUnavailable?.();
         return result;
@@ -481,6 +491,7 @@ export function createNativeAgentExecutionRunPermissions(
                     signal: combineSignals(params.signal, options?.signal),
                     permissionContext: readActiveTurnPermissionContext(params),
                     acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
+                    buildNativeChoices: options?.buildNativeChoices,
                 });
                 assertCurrent();
                 return result;

@@ -1,4 +1,6 @@
+export { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { PluginActionInputById, PluginInvocableActionId } from './actions/service.js';
+import type { SessionPermissionChoicesProducerV1 } from '@happier-dev/agents';
 import type {
     InteractionTransientApprovalAuthorRequestV1,
     InteractionTransientApprovalResultV1,
@@ -60,6 +62,11 @@ export type SessionCompanionPresentationItem = CanonicalSessionCompanionPresenta
 export type InteractionOptions = PluginCancellationOptions & Readonly<{
     /** Defaults to the active turn. Native asynchronous questions may live until their occurrence retires. */
     lifetime?: 'turn' | 'occurrence';
+}>;
+
+/** Local producer callback; only its returned choices enter the persisted request. */
+export type ApprovalInteractionOptions = InteractionOptions & Readonly<{
+    buildNativeChoices?: SessionPermissionChoicesProducerV1;
 }>;
 
 export type UiWidget = Readonly<{
@@ -144,7 +151,7 @@ export interface ApprovalQueueService {
 export interface InteractionsService {
     requestApproval(
         request: InteractionTransientApprovalAuthorRequestV1,
-        options?: InteractionOptions,
+        options?: ApprovalInteractionOptions,
     ): Promise<InteractionTransientApprovalResultV1>;
     askQuestions(
         request: InteractionTransientQuestionsAuthorRequestV1,

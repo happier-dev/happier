@@ -1,3 +1,5 @@
+export { createMcpCatalogPermissionChoiceV1 } from '../interactions.js';
+export type { ApprovalInteractionOptions } from '../interactions.js';
 export type { ApprovalQueueListItem } from '../interactions.js';
 export type { ApprovalQueueQuery } from '../interactions.js';
 export type { ApprovalQueueRequest } from '../interactions.js';

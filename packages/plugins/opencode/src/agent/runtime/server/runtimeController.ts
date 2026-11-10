@@ -1,3 +1,4 @@
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
 import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -1612,10 +1613,16 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
               ? params.ctx.abort.compose([params.ctx.abort.signal, childAttention.signal])
               : params.ctx.abort.signal),
             ...(childAttention ? { lifetime: 'occurrence' as const } : {}),
+            buildNativeChoices: ({ mcpTool }) => {
+              const nativeChoices = approvalRequest.nativeChoices!;
+              const grant = nativeChoices.choices.find(choice => choice.id === 'allow_session')!;
+              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant });
+              return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
+            },
           },
         );
         reply = mapOpenCodeApprovalResultToReply(decision,
-          approvalRequest.subject.kind === 'tool' && approvalRequest.subject.name !== ask.permission);
+          approvalRequest.subject.kind === 'tool' && approvalRequest.subject.name.startsWith('mcp__'));
         message = readOpenCodeApprovalReplyMessage(decision);
       } catch (error) {
         if (permissionDecisionSignal?.isAborted() || !permissionRequestIsStillCurrent()) return;

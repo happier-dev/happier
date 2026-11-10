@@ -18,12 +18,10 @@ import { AgentUiAccountingSourcePresentationV1Schema, AgentUiConnectedServicesV1
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
     AgentSessionComposerNonSteerableReason,
-    AgentPermissionFooterBehavior,
     AgentResumeExperiments,
     AgentTranscriptStorageMode,
     AgentUiBehavior,
 } from './registryUiBehavior';
-import type { PermissionPromptProtocol } from './registryCore';
 import { createBooleanOptionActionChip } from './agentUiBehavior/booleanOptionActionChip';
 import type { BooleanOptionActionChipDefinition } from './agentUiBehavior/booleanOptionChipPlacement';
 import {
@@ -190,14 +188,6 @@ export type PluginUiBehaviorDescriptor = Readonly<{
     }>;
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
-    }>;
-    permissions?: Readonly<{
-        /**
-         * Which permission-prompt conversation this Agent speaks. It selects the
-         * footer's action model, not only its wording.
-         */
-        promptProtocol?: PermissionPromptProtocol;
-        footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
     askUserQuestion?: Readonly<{
         dialogs?: readonly Readonly<{
@@ -1111,7 +1101,6 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
         || value.guidance != null
         || value.attachedSessionTerminal != null
         || value.pendingDelivery != null
-        || value.permissions != null
         || value.workState != null
         || value.resume != null
         || value.sessionComposer != null
@@ -1140,17 +1129,6 @@ function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentU
             : {}),
         ...(a.pendingDelivery || b.pendingDelivery
             ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
-            : {}),
-        ...(a.permissions || b.permissions
-            ? {
-                permissions: {
-                    ...(a.permissions ?? {}),
-                    ...(b.permissions ?? {}),
-                    ...(a.permissions?.footer || b.permissions?.footer
-                        ? { footer: { ...(a.permissions?.footer ?? {}), ...(b.permissions?.footer ?? {}) } }
-                        : {}),
-                },
-            }
             : {}),
         ...(b.askUserQuestion
             ? { askUserQuestion: b.askUserQuestion }
@@ -1446,38 +1424,6 @@ function createPendingDeliveryBehavior(
     return Object.keys(behavior).length > 0 ? behavior : null;
 }
 
-const PERMISSION_PROMPT_PROTOCOLS = ['claude', 'codexDecision'] as const satisfies readonly PermissionPromptProtocol[];
-
-/**
- * The declared half of permission-prompt handling.
- *
- * `promptProtocol` selects which conversation the footer runs — button set,
- * handlers and terminal-decision reading — so an unreadable value is refused
- * fail-closed and the neutral default applies, rather than an Agent silently
- * impersonating another Agent family's action model.
- */
-function createPermissionsBehavior(
-    descriptor: PluginUiBehaviorDescriptor,
-    diagnostics: UiProjectionDiagnostic[],
-): AgentUiBehavior['permissions'] | undefined {
-    const declared = descriptor.permissions;
-    if (!declared) return undefined;
-    const rawProtocol = declared.promptProtocol;
-    const promptProtocol = PERMISSION_PROMPT_PROTOCOLS.find((entry) => entry === rawProtocol) ?? null;
-    if (rawProtocol !== undefined && !promptProtocol) {
-        diagnostics.push(createUiProjectionDiagnostic(
-            'A16X1_MALFORMED_DESCRIPTOR',
-            'permissions.promptProtocol',
-            `Unsupported permission prompt protocol '${String(rawProtocol)}'.`,
-        ));
-    }
-    const { promptProtocol: _declaredProtocol, ...rest } = declared;
-    return {
-        ...rest,
-        ...(promptProtocol ? { promptProtocol } : {}),
-    };
-}
-
 /**
  * Decode the closed AskUserQuestion declaration from the transport carrier.
  * The public author grammar rejects malformed entries earlier; this boundary
@@ -1663,7 +1609,6 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         agentOptions,
         sessionExtrasDescriptor,
     );
-    const permissions = createPermissionsBehavior(descriptor, diagnostics);
     const askUserQuestion = createAskUserQuestionBehavior(descriptor, diagnostics);
     const workState = createWorkStateBehavior(descriptor, agentId, diagnostics);
     const sessionSubagents = createSessionSubagentsBehaviorFromComponents(
@@ -1729,7 +1674,6 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             : {}),
         ...(pendingDelivery ? { pendingDelivery } : {}),
         ...(descriptor.guidance ? { guidance: { ...descriptor.guidance } } : {}),
-        ...(permissions ? { permissions } : {}),
         ...(askUserQuestion ? { askUserQuestion } : {}),
         ...(workState ? { workState } : {}),
         ...(experimentSwitches.length > 0

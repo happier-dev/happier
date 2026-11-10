@@ -29,7 +29,6 @@ const SUPPORTED_DECLARATION = {
         subtitleKey: 'acme.pool.nativeWaitingDescription',
       }],
     },
-    permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
     resume: {
       experimentSwitches: [{
         id: 'acme.fastResume',
@@ -122,6 +121,11 @@ function parse(value: unknown) {
 }
 
 describe('public Agent UI authoring grammar', () => {
+  it('refuses retired permission answer policy declarations', () => {
+    expect(PluginAgentUiBehaviorContributionV2Schema.safeParse({ behavior: { permissions: {
+      promptProtocol: 'claude', footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' },
+    } } }).success).toBe(false);
+  });
   it('admits boolean runtime selection without a spawn configuration output', () => {
     expect(parse({ behavior: { payload: { sessionExtras: {
       values: ['sdk', 'terminal'], settingKey: { scope: 'account', localId: 'useTerminal' },

@@ -115,7 +115,7 @@ describe('createClaudeNativePermissionEngine', () => {
         toolCallId: 'toolu-approval',
         input: { actionId: 'session.board.item.remove' },
       },
-    }, { signal });
+    }, { signal, buildNativeChoices: expect.any(Function) });
     expect(confirm).not.toHaveBeenCalled();
   });
 

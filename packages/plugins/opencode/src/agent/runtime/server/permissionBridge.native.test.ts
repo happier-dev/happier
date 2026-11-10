@@ -42,7 +42,7 @@ describe('OpenCode native tool approval bridge', () => {
     expect(buildOpenCodePermissionApprovalRequest(ask, projection, { docs: { unlisted: 'ask', tools: { 'file.read': 'off', 'file/read': 'allow' } } }).subject)
       .toMatchObject({ name: ask.permission });
   });
-  it('builds only the public tool-approval intent and requests session persistence explicitly', () => {
+  it('offers the supported native replies with occurrence-owned canonical payloads', () => {
     expect(buildOpenCodePermissionApprovalRequest(ASK)).toEqual({
       kind: 'approval',
       title: 'Allow OpenCode to use bash?',
@@ -58,6 +58,17 @@ describe('OpenCode native tool approval bridge', () => {
         },
       },
       allowSessionPersistence: true,
+      nativeChoices: {
+        requirementId: ASK.requestId,
+        source: 'opencode',
+        choices: [
+          { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+          { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+            response: { approved: true, decision: 'approved_for_session', allowedTools: ['bash'] } },
+          { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+          { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+        ],
+      },
     } satisfies InteractionTransientApprovalAuthorRequestV1);
   });
 

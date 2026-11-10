@@ -125,6 +125,7 @@ export async function requestNativePermissionDecision(params: Readonly<{
   permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
   owner: NonNullable<NonNullable<Parameters<ProviderEnforcedPermissionHandler['handleToolCall']>[3]>['owner']>;
   request: Parameters<SessionHandle['permissions']['requestDecision']>[0];
+  buildNativeChoices?: NonNullable<Parameters<SessionHandle['permissions']['requestDecision']>[1]>['buildNativeChoices'];
   signal?: AbortSignal;
   permissionContext?: ReturnType<typeof readActiveTurnPermissionContext>;
   acknowledgeDecisionApplication?: (decision: PermissionResult) => Promise<void>;
@@ -146,6 +147,7 @@ export async function requestNativePermissionDecision(params: Readonly<{
       ...(request.source?.trim() ? { source: request.source.trim() } : {}),
       ...(request.traceSummary ? { traceSummary: request.traceSummary } : {}),
       ...(request.nativeChoices ? { nativeChoices: request.nativeChoices } : {}),
+      ...(params.buildNativeChoices ? { buildNativeChoices: params.buildNativeChoices } : {}),
       signal: params.signal,
       ...(acknowledgeDecisionApplication ? { acknowledgeDecisionApplication } : {}),
     });
@@ -287,6 +289,7 @@ export function createPluginSessionHandleCapabilitiesFactory(
           permissionContext: readActiveTurnPermissionContext(live),
           signal: operationSignal(live, options?.signal),
           acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
+          buildNativeChoices: options?.buildNativeChoices,
           applyPermissionModeIntent: live.applyPermissionModeIntent,
         });
         if (!isSameLive(live) || !isLiveCurrent(live)) {

@@ -25,6 +25,11 @@ import { normalizeOpenCodeV2Messages } from './openCodeV2Wire.js';
 import { OpenCodeSseHttpError } from './openCodeSse.js';
 import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
 import { createOpenCodeRuntimeContext, type OpenCodeRuntimeContext } from './runtimeContext.js';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
 
 const readyMcpRegistration = Promise.resolve({
   requiredHappier: { status: 'ready' as const },
@@ -2493,6 +2498,51 @@ describe('createOpenCodeServerRuntime', () => {
         fields: expect.objectContaining({ error: publishError }),
       }),
     ]));
+  });
+
+  it.each([
+    ['allow', 'once'], ['allow_session', 'always'], ['deny', 'reject'], ['stop', 'reject'], ['mcp_always_allow', 'once'],
+  ] as const)('applies the stored OpenCode %s offer through authenticated permission ingress to the native %s reply', async (choiceId, reply) => {
+    const rpc = new ServerBoundPermissionRpcHandlerManager('opencode-offered-session');
+    const session = createMutableApiSessionClientFixture({ sessionId: 'opencode-offered-session', overrides: {
+      rpcHandlerManager: rpc as unknown as ApiSessionClient['rpcHandlerManager'],
+    } });
+    const handler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[OpenCode offered permission]', getWorkspaceWrites: () => 'allow', getMcpToolContext: () => ({
+        mcpServerIdentities: { a: { serverId: 'catalog-docs', serverTitle: 'Docs' } },
+        catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: { v: 1, bindings: [], servers: [{
+          id: 'catalog-docs', name: 'docs', transport: 'stdio', stdio: { command: 'docs-mcp', args: [] },
+          env: {}, createdAt: 1, updatedAt: 1, tools: { default: 'ask', overrides: {} },
+        }] } },
+      }) });
+    const lifetime = new AbortController();
+    const services = createNativeAgentSessionServices({ permissionHandler: handler,
+      pluginId: 'happier.agent.opencode', contributionId: 'opencode', runtimeId: 'opencode/runtime',
+      sessionId: session.sessionId, occurrenceId: 'opencode-offered-occurrence', signal: lifetime.signal, isCurrent: () => true });
+    const { ctx } = createContextFixture();
+    ctx.sessions.current.permissions.requestDecision = services.interactions.requestApproval;
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client });
+    try {
+      const pending = runtime.handleProviderEvent({ payload: { type: 'permission.asked', properties: {
+        sessionID: 'ses-1', id: 'native-permission/opaque', permission: choiceId === 'mcp_always_allow' ? 'mcp__a__echo' : 'bash', patterns: ['git status'],
+      } } });
+      await vi.waitFor(() => expect(Object.keys(session.__getAgentState().requests ?? {})).toHaveLength(1));
+      const [id, request] = Object.entries(session.__getAgentState().requests ?? {})[0]!;
+      expect(request.nativeChoices).toMatchObject({ requirementId: 'native-permission/opaque', source: 'opencode' });
+      if (choiceId === 'mcp_always_allow') expect(request.nativeChoices?.choices.find(choice => choice.id === choiceId)).toMatchObject({
+        scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'catalog-docs', tools: { echo: 'allow' } } },
+      });
+      const respond = rpc.handlers.get('session.permission.respond');
+      if (!respond) throw new Error('Authenticated permission response unavailable');
+      expect(await respond({ id, nativeChoice: { requirementId: 'native-permission/opaque', choiceId } })).toBeUndefined();
+      await pending;
+      expect(client.permissionReply).toHaveBeenCalledExactlyOnceWith({ sessionId: 'ses-1', requestId: 'native-permission/opaque', reply });
+    } finally {
+      lifetime.abort();
+      await handler.abortPendingRequestsAndFlush('test cleanup');
+      await runtime.resetOrDisposeRuntime();
+      await session.close();
+    }
   });
 
   it('bridges OpenCode permission asks through the session permission service and replies once', async () => {

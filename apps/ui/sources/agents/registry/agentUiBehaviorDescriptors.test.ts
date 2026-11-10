@@ -655,14 +655,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             display: {},
             behavior: {
                 guidance: { includeInSessionGettingStartedCliExamples: true },
-                permissions: {
-                    footer: {
-                        usePermissionUpdates: true,
-                        forceReadOnlyAfterStop: false,
-                        supportsExecPolicyAmendment: true,
-                        stopHandling: 'denyOnly',
-                    },
-                },
                 resume: {
                     experimentSwitches: [
                         { id: 'directStorage', settingKey: { scope: 'account', localId: 'directTranscriptStorageMode' } },
@@ -685,7 +677,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
 
         expect(diagnostics).toEqual([]);
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
-        expect(behavior.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
             makeAgentAccountSettings({ directTranscriptStorageMode: true }),
         )).toBe(true);

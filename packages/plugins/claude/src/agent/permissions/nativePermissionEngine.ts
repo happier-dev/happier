@@ -166,18 +166,25 @@ export async function requestClaudeNativePermissionDecision(
   const toolInput = AgentRuntimeJsonValueSchema.safeParse(isRecord(input) ? input : {});
   if (!toolInput.success) return { decision: 'denied', rationale: 'Claude supplied invalid tool input' };
   const toolCallId = options.toolUseId ?? options.requestId;
-  const nativeChoices = isClaudeExternalMcpTool(toolName) ? undefined : buildClaudePermissionChoices({
-    requestId: toolCallId ?? randomUUID(), toolName, toolInput: input,
+  const requirementId = options.requestId ?? toolCallId ?? randomUUID();
+  let nativeChoices = buildClaudePermissionChoices({
+    requestId: requirementId, toolName, toolInput: input,
     allowSessionPersistence: allowsClaudeNativeSessionPersistence(toolName),
   });
   const result = await context.services.interactions.requestApproval({
-    kind: 'approval', title: 'Claude permission', ...(nativeChoices ? { nativeChoices } : {}),
+    kind: 'approval', title: 'Claude permission', nativeChoices,
     subject: { kind: 'tool', name: toolName, input: toolInput.data,
       ...(toolCallId ? { toolCallId } : {}),
     },
     // Session grants stay with the host; next-mode operations carry explicit setMode updates.
     ...(allowsClaudeNativeSessionPersistence(toolName) ? { allowSessionPersistence: true } : {}),
-  }, options.signal ? { signal: options.signal } : undefined);
+  }, { ...(options.signal ? { signal: options.signal } : {}),
+    buildNativeChoices: ({ mcpTool }) => {
+      nativeChoices = buildClaudePermissionChoices({ requestId: requirementId, toolName, toolInput: input,
+        allowSessionPersistence: allowsClaudeNativeSessionPersistence(toolName), mcpTool });
+      return nativeChoices;
+    },
+  });
   const selected = result.nativeChoice
     ? nativeChoices?.choices.find((choice) => choice.id === result.nativeChoice?.choiceId) : undefined;
   return selected

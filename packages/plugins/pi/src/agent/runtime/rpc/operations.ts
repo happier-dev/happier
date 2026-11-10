@@ -1,3 +1,4 @@
+import { createMcpCatalogPermissionChoiceV1, type InteractionTransientApprovalAuthorRequestV1 } from '@happier-dev/plugin-sdk/interactions';
 import { PI_PROVIDER_ID } from '../../providerBinding.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -1531,11 +1532,27 @@ async function createPiConversationRuntimeOperations(
           // input come from the preceding structured Pi execution event.
           const call = activeMcpCalls.get(request.title.slice(PI_MCP_APPROVAL_CALL_PREFIX.length));
           if (call) {
+            const nativeChoices: NonNullable<InteractionTransientApprovalAuthorRequestV1['nativeChoices']> = {
+              requirementId: request.id,
+              source: 'pi',
+              choices: [
+                { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+                { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+                  response: { approved: true, decision: 'approved_for_session', allowedTools: [call.toolName] } },
+                { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+                { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+              ],
+            };
             const approval = await params.services.interactions.requestApproval({
               kind: 'approval', title: 'Allow Pi to use an MCP tool?',
               subject: { kind: 'tool', name: call.toolName, input: call.input },
               allowSessionPersistence: true,
-            }, { signal: controller.signal });
+              nativeChoices,
+            }, { signal: controller.signal, buildNativeChoices: ({ mcpTool }) => {
+              const grant = nativeChoices.choices.find(choice => choice.id === 'allow_session')!;
+              const catalogChoice = createMcpCatalogPermissionChoiceV1({ mcpTool, grant });
+              return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
+            } });
             response = { type: 'extension_ui_response', id: request.id,
               confirmed: approval.status === 'approved' && activeMcpCalls.get(call.toolCallId) === call };
           } else {

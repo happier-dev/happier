@@ -11,8 +11,88 @@ import type { McpServerCatalogV1 } from '../mcp/servers/serverRowsV1.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { buildClaudePermissionChoices } from '../../../plugins/claude/src/agent/permissions/permissionChoices.js';
+import { NativePermissionChoicesV1Schema } from '../sessions/permissions/nativeChoicesV1.js';
 
 describe('MCP catalog Actions', () => {
+  it('runs the same stored follow-up after a source-scoped remote native answer', async () => {
+    const trace: string[] = [];
+    const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } };
+    const offer = { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
+      decision: 'approved' as const, scope: 'session' as const, response: { approved: true }, followUp }] };
+    let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
+      stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      sessionPermissionRemoteAction: async args => {
+        if (args.actionId === 'session.permission.remote.pending.list') {
+          expect(args.input).toMatchObject({ sessionId: 'session', sourceRef: 'source', sourceRevisionOrEpoch: 'revision' });
+          return args.input.cursor ? { requests: [{ kind: 'permission', requestId: 'request', turnId: 'turn', createdAtMs: 1,
+            allowedScopes: ['request', 'session'], agentRequestSummary: { kind: 'permission', toolLabel: 'Docs', title: 'Write', detail: 'Save a document' },
+            nativeChoices: offer }], truncated: false, nextCursor: null } : { requests: [], truncated: false, nextCursor: 'second-page' };
+        }
+        trace.push('native');
+        return { status: 'applied', settlementId: 'settlement', requestId: 'request', decision: 'allow', effect: { kind: 'allowOnce' } };
+      },
+      mcpServerAction: createMcpServerActionExecuteV1({ readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+        readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+        mutate: async mutation => { trace.push('save'); catalog = applyMcpServerCatalogMutationV1(catalog, mutation);
+          return { status: 'updated', revision: 2, cursor: 2 }; }, machine: async () => { throw new Error('No process'); } }),
+    });
+    const result = await executor.execute('session.permission.remote.respond', { sessionId: 'session', requestId: 'request', turnId: 'turn',
+      sourceRef: 'source', sourceRevisionOrEpoch: 'revision', idempotencyKey: 'remote-answer', actor: { namespace: 'chat', principalId: 'person' },
+      nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } }, { surface: 'plugin', authority: 'account_automation',
+        runtimeAccountId: 'account', serverId: 'home', actionCaller: { kind: 'plugin', pluginId: 'acme.chat', contributionLocalId: 'chat' } });
+    expect(result).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(trace).toEqual(['native', 'save']);
+    expect(catalog.servers[0]).toMatchObject({ tools: { overrides: { write: 'allow' } } });
+  });
+  it('applies an offered native answer before its catalog Action and retries only a failed catalog save', async () => {
+    let answered = 0;
+    let saves = 0;
+    let nativeApplied = true;
+    let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
+      stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
+    const nativeChoices = NativePermissionChoicesV1Schema.parse(JSON.parse(JSON.stringify(buildClaudePermissionChoices({
+      requestId: 'occurrence', toolName: 'mcp__docs__mutate', toolInput: {},
+      mcpTool: { server: 'docs', tool: 'mutate', item: { serverId: 'docs' }, serverTitle: 'Docs',
+        decision: { exposed: true, approval: 'ask', effectClass: 'unknown', source: 'server_default' } },
+    }))));
+    const followUp = nativeChoices.choices.find(choice => choice.id === 'mcp_always_allow')?.followUp;
+    if (!followUp) throw new Error('Claude must offer catalog consent');
+    const executor = createActionExecutor({
+      isActionApprovalRequired: () => false,
+      sessionStatusGet: async () => ({ pendingRequests: [{ requestId: 'native-request', kind: 'permission', tool: 'McpTool',
+        nativeChoices }] }),
+      sessionPermissionRespond: async () => { answered++; return nativeApplied ? { ok: true } : { ok: false, errorCode: 'permission_request_not_found' }; },
+      mcpServerAction: createMcpServerActionExecuteV1({
+        readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+          readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+        mutate: async change => {
+          expect(answered).toBe(1);
+          if (++saves === 1) return { status: 'conflict' };
+          catalog = applyMcpServerCatalogMutationV1(catalog, change);
+          return { status: 'updated', revision: 2, cursor: 2 };
+        },
+        machine: async () => { throw new Error('Catalog consent never starts a process'); },
+      }),
+    });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account' };
+    const failed = await executor.execute('session.permission.respond', { sessionId: 'session', requestId: 'native-request',
+      nativeChoice: { requirementId: 'occurrence', choiceId: 'mcp_always_allow' },
+      followUp: { actionId: 'session.delete', input: { sessionId: 'injected' } } }, context);
+    expect(failed).toMatchObject({ ok: false, details: { answered: true, followUp } });
+    expect(answered).toBe(1);
+    expect(catalog.servers[0]?.tools).toBeUndefined();
+    expect(await executor.execute('mcp.servers.tools.set', followUp.input, context)).toMatchObject({ ok: true });
+    expect(catalog.servers[0]).toMatchObject({ tools: { overrides: { mutate: 'allow' } } });
+    expect(answered).toBe(1);
+    nativeApplied = false;
+    expect(await executor.execute('session.permission.respond', { sessionId: 'session', requestId: 'native-request',
+      nativeChoice: { requirementId: 'occurrence', choiceId: 'mcp_always_allow' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+    expect(answered).toBe(2);
+    expect(saves).toBe(2);
+  });
   it('retains MCP policy changes across private approval, public read and approved execution', async () => {
     let stored: ApprovalRequest | null = null;
     let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',

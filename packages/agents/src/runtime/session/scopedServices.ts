@@ -26,6 +26,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { SessionStateFieldWriteValue } from '../../session/state/_types.js';
+import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 export type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
@@ -283,6 +284,11 @@ export type SessionSystemRecordReadResultV1 = Readonly<{
 
 export type SessionPermissionModeV1 = string;
 
+/** In-process producer invoked with the host-resolved facts at pending admission. */
+export type SessionPermissionChoicesProducerV1 = (
+  facts: Readonly<{ mcpTool: ResolvedMcpToolIdentityV1 | null }>,
+) => NativePermissionChoicesV1;
+
 export type SessionPermissionDecisionRequestV1 = Readonly<{
   nativeChoices?: NativePermissionChoicesV1;
   provider?: string;
@@ -383,6 +389,7 @@ export interface SessionPermissionsServiceV1 {
     request: SessionPermissionDecisionRequestV1,
     options?: Readonly<{
       signal?: AbortSignal;
+      buildNativeChoices?: SessionPermissionChoicesProducerV1;
       /**
        * Apply the accepted decision at the provider boundary before the answering RPC succeeds.
        * Throwing keeps the request pending so a client cannot persist follow-up policy for an

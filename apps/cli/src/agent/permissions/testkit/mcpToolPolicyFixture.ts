@@ -57,8 +57,14 @@ export function createMcpToolPolicyFixture(pluginId: string, contributionId: str
           void (async () => {
             const respond = this.rpcHandlerManager.handlers.get('session.permission.respond');
             if (!respond) throw new Error('Authenticated permission response is unavailable');
-            const result = await respond({ id, approved: true, decision: approvalScope === 'session' ? 'approved_for_session' : 'approved',
-              ...(approvalScope === 'session' ? { allowedTools: [request.tool] } : {}) });
+            const offered = request.nativeChoices;
+            const choice = offered?.choices.find(choice => choice.scope === approvalScope
+              && (choice.decision === 'approved' || choice.decision === 'approved_for_session'));
+            if (offered && !choice) throw new Error(`No offered ${approvalScope} MCP approval`);
+            const result = await respond(offered && choice
+              ? { id, nativeChoice: { requirementId: offered.requirementId, choiceId: choice.id } }
+              : { id, approved: true, decision: approvalScope === 'session' ? 'approved_for_session' : 'approved',
+                ...(approvalScope === 'session' ? { allowedTools: [request.tool] } : {}) });
             // Successful canonical responses return void; a typed error is not an approval.
             if (result !== undefined) throw new Error(`Authenticated permission response failed: ${JSON.stringify(result)}`);
           })().catch(error => { rpcFailure = error; rejectRpc(error); });

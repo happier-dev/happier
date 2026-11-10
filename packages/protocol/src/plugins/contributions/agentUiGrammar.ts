@@ -88,24 +88,6 @@ const AgentUiExternalSessionsSourceSchema = lazyZodSchema(() => (<T extends z.Zo
 /* behavior                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const AgentUiPermissionFooterSchema = lazyZodSchema(() => z.strictObject({
-  usePermissionUpdates: z.optional(z.boolean()),
-  forceReadOnlyAfterStop: z.optional(z.boolean()),
-  supportsExecPolicyAmendment: z.optional(z.boolean()),
-  stopHandling: z.optional(z.enum(['denyOnly', 'denyAndAbortRun'])),
-}));
-
-/**
- * Which permission-prompt conversation this Agent speaks.
- *
- * It selects the footer's whole semantic action model — button set, handlers
- * and terminal-decision reading — not just its wording, so an Agent that
- * answers Codex-style decisions cannot reach the right controls without
- * declaring it. Absent means the neutral Claude-shaped default, which is what
- * an Agent that declares nothing has always received.
- */
-const AgentUiPermissionPromptProtocolSchema = lazyZodSchema(() => z.enum(['claude', 'codexDecision']));
-
 const AgentUiEditableGoalsSchema = lazyZodSchema(() => z.strictObject({
   capabilityDriven: z.optional(z.boolean()),
   activeWhenNoPersistedMode: z.optional(z.boolean()),
@@ -300,10 +282,6 @@ export const AgentUiBehaviorDeclarationV1Schema = lazyZodSchema(() => z.strictOb
   })),
   guidance: z.optional(z.strictObject({
     includeInSessionGettingStartedCliExamples: z.optional(z.boolean()),
-  })),
-  permissions: z.optional(z.strictObject({
-    promptProtocol: z.optional(AgentUiPermissionPromptProtocolSchema),
-    footer: z.optional(AgentUiPermissionFooterSchema),
   })),
   workState: z.optional(z.strictObject({ editableGoals: z.optional(AgentUiEditableGoalsSchema) })),
   resume: z.optional(z.strictObject({

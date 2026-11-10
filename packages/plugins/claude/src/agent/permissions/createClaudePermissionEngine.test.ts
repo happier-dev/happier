@@ -31,11 +31,6 @@ function createContextFixture(decision: 'approved' | 'denied' | 'abort') {
 }
 
 describe('createClaudePermissionEngine', () => {
-    it('keeps external MCP catalog consent on its incumbent host permission path', async () => {
-        const { ctx, requestDecision } = createContextFixture('approved');
-        await createClaudePermissionEngine(ctx).canCallTool('mcp__docs__mutate', { page: 'draft' }, { requestId: 'mcp-catalog' });
-        expect(requestDecision.mock.calls[0]?.[0].nativeChoices).toBeUndefined();
-    });
     it('offers the existing aborting Claude stop outcome', async () => {
         const { ctx, requestDecision } = createContextFixture('approved');
         await createClaudePermissionEngine(ctx).canCallTool('Bash', { command: 'pwd' }, { requestId: 'stop-native' });

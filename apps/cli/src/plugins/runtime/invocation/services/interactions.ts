@@ -5,6 +5,7 @@ import type {
     ApprovalQueueService,
     CurrentSessionPresentationIntentV1,
     InteractionOptions,
+    ApprovalInteractionOptions,
     InteractionTransientApprovalAuthorRequestV1,
     InteractionTransientApprovalResultV1,
     InteractionTransientConfirmationAuthorRequestV1,
@@ -206,7 +207,7 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
             );
         }
     };
-    const operationOptions = (options?: InteractionOptions): HostSessionInteractionOptions => {
+    const operationOptions = (options?: ApprovalInteractionOptions): HostSessionInteractionOptions => {
         const signal = options?.signal;
         const activeTurnPermissionContext = readActiveTurnPermissionContext(params);
         const permissionContext = params.permissionOwner || activeTurnPermissionContext !== undefined || options?.lifetime !== undefined
@@ -228,6 +229,7 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
                 ? AbortSignal.any([params.signal, signal])
                 : params.signal,
             ...(permissionContext ? { permissionContext } : {}),
+            ...(options?.buildNativeChoices ? { buildNativeChoices: options.buildNativeChoices } : {}),
             ...(params.requester ? { requester: params.requester } : {}),
         });
     };
@@ -235,7 +237,7 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
     return Object.freeze({
         async requestApproval(
             request: InteractionTransientApprovalAuthorRequestV1,
-            interactionOptions?: InteractionOptions,
+            interactionOptions?: ApprovalInteractionOptions,
         ): Promise<InteractionTransientApprovalResultV1> {
             const fallbackRequestId = createOperationId();
             if (params.reviewedParent && request.nativeChoices === undefined) {

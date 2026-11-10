@@ -1,12 +1,10 @@
-import { getAgentBehavior, isBundledAgentId } from '@/agents/catalog/catalog';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { parseParenIdentifier } from "@happier-dev/session-core/tools";
-import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 
-/** Legacy vocabulary retained for stored requests and producers awaiting migration. */
+/** Legacy vocabulary retained only for stored requests. */
 export type SessionPermissionAnswer = 'allowOnce' | 'allowForSession' | 'deny';
 
 /**
@@ -20,21 +18,28 @@ export type SessionPermissionAnswerPolicy = Readonly<{
     usePermissionUpdates: boolean;
 }>;
 
-type SessionPermissionBehavior = ReturnType<typeof getAgentBehavior>['permissions'];
+type SessionPermissionBehavior = Readonly<{
+    promptProtocol?: 'claude' | 'codexDecision';
+    footer?: Readonly<{
+        usePermissionUpdates?: boolean;
+        forceReadOnlyAfterStop?: boolean;
+        supportsExecPolicyAmendment?: boolean;
+        stopHandling?: 'denyOnly' | 'denyAndAbortRun';
+    }>;
+}>;
 
 /**
- * Legacy request interpretation. Claude/Codex predecessors are frozen below;
- * other installed Agent descriptors remain scoped to the owning machine.
+ * Frozen predecessor interpretation for occurrences stored without native offers.
  */
 export function resolveSessionPermissionBehavior(input: Readonly<{
     agentId: string | null;
     metadata: unknown;
     accountScope: ServerAccountScope | null | undefined;
 }>): SessionPermissionBehavior | undefined {
-    // C6: old Claude/Codex occurrences did not save their policy. Freeze their
+    // C6: old occurrences did not save their policy. Freeze their
     // predecessor interpretation here so removing live declarations cannot
     // reinterpret retained requests. Native offers bypass this reader entirely.
-    if (input.agentId === 'claude') return { promptProtocol: 'claude', footer: {
+    if (input.agentId === 'claude' || input.agentId === 'muse') return { promptProtocol: 'claude', footer: {
         usePermissionUpdates: true, forceReadOnlyAfterStop: true,
         supportsExecPolicyAmendment: false, stopHandling: 'denyAndAbortRun',
     } };
@@ -42,10 +47,18 @@ export function resolveSessionPermissionBehavior(input: Readonly<{
         usePermissionUpdates: false, forceReadOnlyAfterStop: false,
         supportsExecPolicyAmendment: true, stopHandling: 'denyOnly',
     } };
-    const owningMachineId = resolveSessionMachineId(input.metadata);
-    return input.agentId && (isBundledAgentId(input.agentId) || owningMachineId !== null)
-        ? getAgentBehavior(input.agentId, owningMachineId, input.accountScope).permissions
-        : undefined;
+    // The predecessor bundled defaults are frozen here, never read from live declarations.
+    switch (input.agentId) {
+        case 'cursor': case 'opencode': case 'antigravity': case 'gemini':
+        case 'grok': case 'auggie': case 'qwen': case 'kimi': case 'kilo':
+        case 'kiro': case 'devin': case 'fx': case 'droid': case 'codebuddy':
+        case 'pi': case 'ohMyPi': case 'copilot': case 'coderabbit': case 'deepsec':
+            return { promptProtocol: 'codexDecision', footer: {
+                usePermissionUpdates: false, forceReadOnlyAfterStop: false,
+                supportsExecPolicyAmendment: false, stopHandling: 'denyAndAbortRun',
+            } };
+    }
+    return undefined;
 }
 
 export function resolveSessionPermissionAnswerPolicy(input: Readonly<{

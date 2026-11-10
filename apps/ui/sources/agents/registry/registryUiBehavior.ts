@@ -11,7 +11,7 @@ import type { AgentUiAccountingSourcePresentationV1, AgentUiConnectedServicePool
 import { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId, PermissionPromptProtocol } from './registryCore';
+import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId } from './registryCore';
 import {
     CANONICAL_AGENT_IDS,
     getAgentCore,
@@ -110,14 +110,6 @@ function mergeAgentBehaviorSettings(
 }
 
 export type AgentTranscriptStorageMode = 'persisted' | 'direct';
-export type AgentPermissionFooterStopHandling = 'denyOnly' | 'denyAndAbortRun';
-export type AgentPermissionFooterBehavior = Readonly<{
-    usePermissionUpdates: boolean;
-    forceReadOnlyAfterStop: boolean;
-    supportsExecPolicyAmendment: boolean;
-    stopHandling: AgentPermissionFooterStopHandling;
-}>;
-
 export type AgentAskUserQuestionDialogBehavior = Readonly<{
     dialogId: string;
     settingMutation?: Readonly<{
@@ -246,18 +238,6 @@ export type AgentUiBehavior = Readonly<{
     }>;
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
-    }>;
-    permissions?: Readonly<{
-        /**
-         * Which permission-prompt conversation this Agent speaks. It selects the
-         * footer's whole semantic action model — button set, handlers and
-         * terminal-decision reading — not just its wording, so it is a behavior
-         * fact rather than presentation. A bundled Agent's build-time core
-         * supplies it here; an installed Agent declares it in the same public
-         * block, so the footer has ONE owner for both.
-         */
-        promptProtocol?: PermissionPromptProtocol;
-        footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
     askUserQuestion?: AgentAskUserQuestionBehavior;
     resume?: Readonly<{
@@ -525,17 +505,6 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
             }
             : {}),
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
-        ...(a.permissions || b.permissions
-            ? {
-                permissions: {
-                    ...(a.permissions ?? {}),
-                    ...(b.permissions ?? {}),
-                    ...(a.permissions?.footer || b.permissions?.footer
-                        ? { footer: { ...(a.permissions?.footer ?? {}), ...(b.permissions?.footer ?? {}) } }
-                        : {}),
-                },
-            }
-            : {}),
         ...(b.askUserQuestion
             ? { askUserQuestion: b.askUserQuestion }
             : a.askUserQuestion
@@ -572,19 +541,8 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
     };
 }
 
-function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permissions' | 'sessionStorage'>): AgentUiBehavior {
-    const promptProtocol = core.permissions.promptProtocol;
-
+function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'sessionStorage'>): AgentUiBehavior {
     return {
-        permissions: {
-            promptProtocol,
-            footer: {
-                usePermissionUpdates: promptProtocol === 'claude',
-                forceReadOnlyAfterStop: promptProtocol !== 'codexDecision',
-                supportsExecPolicyAmendment: false,
-                stopHandling: 'denyAndAbortRun',
-            },
-        },
         newSession: {
             transcriptStorageSettingKeys: [],
             supportsTranscriptStorageMode: ({ storageMode }) => core.sessionStorage[storageMode] === true,
@@ -632,14 +590,6 @@ export const AGENTS_UI_BEHAVIOR: Readonly<Record<CanonicalAgentId, AgentUiBehavi
 });
 
 const UNKNOWN_AGENT_UI_BEHAVIOR: AgentUiBehavior = Object.freeze({
-    permissions: {
-        footer: {
-            usePermissionUpdates: false,
-            forceReadOnlyAfterStop: true,
-            supportsExecPolicyAmendment: false,
-            stopHandling: 'denyAndAbortRun' as const,
-        },
-    },
     newSession: {
         supportsTranscriptStorageMode: () => false,
     },
