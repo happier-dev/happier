@@ -568,7 +568,7 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
   optionalSessionScope?: true;
   /** The same method also serves detached Runs under exact Machine admission. */
   machineScope?: true;
-  /** A new provider operation requires the Session owner's current Machine access at RPC admission. */
+  /** New provider work or workspace mutation requires the Session owner's current Machine access at RPC admission. */
   startsAgentWork?: true;
   /** Token calls are admitted only when the canonical row declares an Action. */
   actionId?: ActionId;
@@ -668,10 +668,10 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.EXECUTION_RUN_WAIT]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1]: 'sessionOwner',
   [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
-  [SESSION_RPC_METHODS.SESSION_ROLLBACK]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_CHECKPOINT]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_RESTORE]: 'submitAgentInput',
+  [SESSION_RPC_METHODS.SESSION_ROLLBACK]: { authority: 'submitAgentInput', startsAgentWork: true },
+  [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK]: { authority: 'submitAgentInput', startsAgentWork: true },
+  [SESSION_RPC_METHODS.SESSION_CHECKPOINT]: { authority: 'submitAgentInput', startsAgentWork: true },
+  [SESSION_RPC_METHODS.SESSION_RESTORE]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START]: { authority: 'sessionOwner', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP]: 'submitAgentInput',

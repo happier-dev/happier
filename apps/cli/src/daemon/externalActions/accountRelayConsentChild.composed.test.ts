@@ -2,23 +2,79 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker, createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createAdmittedTargetedOperationExecutionHandle, createPluginInvocationActionsService, projectContributedActionExecuteResult, type InvokeContributedAction } from '@/plugins/runtime/invocation/services/actions';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { createExternalActionRuntime, publishAccountExternalActionRuntime } from './externalActionRuntime.testkit';
 
 describe('Account relay consent at a contributed child admission', () => {
+  it.each([
+    { scenario: 'matching Account', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true },
+    { scenario: 'binding belongs to another Account', bindingAccountId: 'bob', confirmationAccountId: 'alice', allowed: false },
+    { scenario: 'confirmation belongs to another Account', bindingAccountId: 'alice', confirmationAccountId: 'bob', allowed: false },
+  ])('binds carried consent to the runtime Account: $scenario', async ({ bindingAccountId, confirmationAccountId, allowed }) => {
+    let effects = 0;
+    const sourceCustody = { kind: 'account_release', pluginId: 'acme.account', version: '1.0.0',
+      archiveDigestSha256: `sha256:${'a'.repeat(64)}` } as const;
+    const runtime = createExternalActionRuntime('global', 'acme.account', () => { effects++; },
+      () => null, () => null, undefined, undefined, 'writesRemote', undefined,
+      { surfaces: ['plugin'], executionTarget: 'account', sourceCustody });
+    const published = await publishAccountExternalActionRuntime(runtime);
+    const list = createCommittedContributedActionDefinitionLister({
+      tryAcquireRuntimeRegistryLease: () => tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: published.controller }),
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
+      invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: published.acquire }),
+    });
+    const input = { action: { pluginId: 'acme.account', localId: 'inspect' }, input: {} };
+    const target = { kind: 'machine', machineId: 'machine-local' } as const;
+    const inputDigest = fingerprintPluginAccountActionConfirmation({ input, pluginId: 'acme.account',
+      pluginVersion: runtime.manifest.version, sourceCustody, declaration: runtime.manifest.contributes?.actions?.[0] });
+    if (!inputDigest) throw new Error('Expected portable Account consent fingerprint');
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'account-relay-proof', binding: {
+      serverIdentityId: 'account-home', accountId: bindingAccountId, custodianAccountId: bindingAccountId,
+      authentication: { kind: 'account', tokenEpoch: 0 }, installationId: 'account-installation',
+      machineId: target.machineId, actionId: 'action.invoke', requestId: 'account-relay-request',
+      requestEnvelopeDigest: 'A'.repeat(43), target,
+    } });
+    const installation = tweetnacl.sign.keyPair();
+    try {
+      const result = await executor.execute('action.invoke', input, {
+        surface: 'plugin', authority: 'account_automation', actionCaller: { kind: 'plugin', pluginId: 'acme.parent' },
+        runtimeAccountId: 'alice', serverId: 'account-home', serverIdentityId: 'account-home',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+          [formatQualifiedPluginActionId(input.action)]: { approvalRequiredSurfaces: ['plugin'] },
+        } }),
+        actionRequestId: 'account-relay-request', externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        signExternalActionApprovalInput: ({ actionId, input: signedInput, target: signedTarget, requesterConfirmation }) =>
+          signExternalActionApprovalInputV1({ authorizationToken: authorization.token, actionId,
+            input: signedInput, target: signedTarget, requesterConfirmation, privateKey: installation.secretKey }),
+        presentUserConfirmation: { actionId: 'action.invoke', requestId: 'account-relay-request',
+          accountId: confirmationAccountId, serverId: 'account-home', target, inputDigest },
+      });
+      expect(result).toMatchObject(allowed ? { ok: true }
+        : { ok: false, errorCode: 'plugin_action_current_intent_mismatch' });
+      expect(effects).toBe(allowed ? 1 : 0);
+    } finally { await published.dispose(); }
+  });
+
   it.each(['safe', 'writesRemote'] as const)('admits a different %s child under its own policy and consent', async dangerLevel => {
     let effects = 0;
     let approvals = 0;
