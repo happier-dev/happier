@@ -1,5 +1,5 @@
 import {
-    PluginUiMarkdown, PluginUiPrivateDiffViewer, PluginUiPrivateChangedFilesReview, CodeBlockView, ProseDiffViewer, QRCode,
+    PluginUiMarkdown, PluginUiPrivateDiffViewer, PluginUiPrivateChangedFilesReview, PluginUiPrivateMarkdownEditor, CodeBlockView, ProseDiffViewer, QRCode,
     PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript,
     PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt, SessionBotFace,
     ExecutableParticipantPickerPresentation,
@@ -11,6 +11,7 @@ import { createCollectionSpacesStripHost, PluginEntityFlatReorderList } from '@/
 import * as React from 'react';
 import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
+import { usePluginUiPeopleDirectory } from './usePluginUiPeopleDirectory';
 import type { HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
 import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
 import { PluginUiMenuPresentation } from './pluginUiMenuPresentation';
@@ -19,7 +20,7 @@ import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointe
 import { SelectionCheckGlyph, type SelectionCheckSize, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '@happier-dev/plugin-ui';
-import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
+import { PaneHeaderScrollScope, PaneHeaderShade, usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
 import { NativeFloatingFrame } from '@/components/companion/interaction/NativeFloatingFrame';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -45,6 +46,8 @@ import {
     type HappierDiffViewerRequest,
     resolveHappierChangedFilesReviewRequest,
     type HappierChangedFilesReviewRequest,
+    resolveHappierMarkdownEditorRequest,
+    type HappierMarkdownEditorRequest,
     type HappierImageSize,
     type HappierMarkdownRenderInput,
     type HappierMaterialRole,
@@ -344,6 +347,7 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
     useScmFileViewed,
+    usePeopleDirectory: usePluginUiPeopleDirectory,
     taskShareSheet: {
         open({ taskRef, title, anchor }) {
             showTaskShareSheet({ ...taskRef, title,
@@ -434,6 +438,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     renderChangedFilesReview(input: HappierChangedFilesReviewRequest) {
         return <PluginUiPrivateChangedFilesReview {...resolveHappierChangedFilesReviewRequest(input)} />;
     },
+    renderMarkdownEditor(input: HappierMarkdownEditorRequest) {
+        return <PluginUiPrivateMarkdownEditor {...resolveHappierMarkdownEditorRequest(input)} />;
+    },
     renderPopover(input: Parameters<PluginUiPresentationHost['renderPopover']>[0]) {
         if (input.menu) return <PluginUiMenuPresentation input={{ ...input, menu: input.menu }} />;
         const presentation = resolvePluginUiPopoverPresentation(input);
@@ -513,13 +520,18 @@ const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = createPluginUiPrivatePresentati
 /** A plugin surface's primary scroll area reports to the containing pane header's shade, when there is one. */
 const PLUGIN_UI_PANE_HEADER_SCROLL = Object.freeze({
     useReporter: (): ((distancePx: number) => void) | null => usePaneHeaderScrollSink()?.reportTopDistance ?? null,
+    /** A plugin's fixed band (a tab strip over its panels) pairs with the scrollers beneath it, as a pane header does. */
+    renderBandScope: (input: Readonly<{ passThrough: boolean; children: React.ReactNode }>): React.ReactNode => (
+        <PaneHeaderScrollScope passThrough={input.passThrough}>{input.children}</PaneHeaderScrollScope>
+    ),
+    renderBandShade: (): React.ReactNode => <PaneHeaderShade />,
 });
 
 export type PluginUiPrivatePresentationHost = Readonly<
     typeof PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS & {
         runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
         createScrollActivityTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
-        paneHeaderScroll: Readonly<{ useReporter(): ((distancePx: number) => void) | null }>;
+        paneHeaderScroll: typeof PLUGIN_UI_PANE_HEADER_SCROLL;
         /** The host's real type-role styles for same-realm plugin text. */
         typography: ReturnType<typeof readPluginUiHostTypography>;
         /** The host's configuration-page colour roles, when the mount supplies its theme. */

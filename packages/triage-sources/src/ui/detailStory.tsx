@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Card, Chart, Column, Columns, HappierSkeletonRows, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Card, Chart, Column, Columns, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonRows, happierFocusRingStyle, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { summarizeTriageChangesV1, type TriageChangedFileV1, type TriageChangeTotalsV1 } from './changeSummary.js';
@@ -73,13 +73,16 @@ export function TriageStoryLoadingLines({ label }: Readonly<{ label: string }>):
     geometry={STORY_LOADING_GEOMETRY} accessibilityLabel={label} />;
 }
 
-function TriageDetailChanges({ children, trailing, titleKey = 'plugins.triage.detailStory.changed' }: Readonly<{
+function TriageDetailChanges({ children, trailing, titleKey = 'plugins.triage.detailStory.changed', onOpen }: Readonly<{
   children: React.ReactNode;
   trailing?: React.ReactNode;
   titleKey?: string;
+  onOpen?: (() => void) | undefined;
 }>): React.ReactElement {
   return <Step marker={{ kind: 'number', value: 2 }} title="What changed"
-    titleKey={titleKey} trailing={trailing}><Stack gap="small">{children}</Stack></Step>;
+    titleKey={titleKey} trailing={trailing} {...(onOpen === undefined ? {} : { onPress: onOpen })}>
+    <Stack gap="small">{children}</Stack>
+  </Step>;
 }
 
 const FAILING_CHECK_TEXT_STYLE = Object.freeze({ minWidth: 0 });
@@ -108,14 +111,58 @@ function useStoryCount(): StoryCountV1 {
   }, [rules, text]);
 }
 
+/** A source's own next page of changed files, offered once the reader has every file read so far open. */
+export type TriageDetailChangesLoadMoreV1 = Readonly<{ title: string; pending: boolean; onLoadMore: () => void }>;
+
+/** One changed file: its path, then its added and removed lines as one bar and one right-aligned count. */
+function TriageChangeFileRow({ file, scale, onOpen }: Readonly<{
+  file: TriageChangedFileV1;
+  scale: number;
+  onOpen?: ((path: string) => void) | undefined;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const theme = usePluginTheme();
+  const row = file.lines === undefined
+    ? <Row gap="small" align="center">
+      <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
+      {file.note === undefined ? null : <Text variant="micro" tone="secondary" value={file.note} />}
+    </Row>
+    // The bar, then its counts in one right-aligned column, so every bar starts and ends on the same edges (lab `heat`).
+    : <Row gap="medium" align="center">
+      <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
+      <Stack style={{ width: '25%', maxWidth: 120 }}>
+        <Progress label={text('plugins.triage.detailStory.fileLines', '{path}: {additions} added, {deletions} removed', {
+          path: file.path, additions: String(file.lines.additions), deletions: String(file.lines.deletions),
+        })} segments={scale === 0 ? [] : [
+          { value: file.lines.additions / scale, tone: 'success' },
+          { value: file.lines.deletions / scale, tone: 'danger' },
+        ]} />
+      </Stack>
+      <Stack align="flex-end" style={{ minWidth: CHANGE_COUNTS_MIN_WIDTH_PX }}>
+        <Text variant="micro" tone="secondary" value={`+${String(file.lines.additions)} −${String(file.lines.deletions)}`} />
+      </Stack>
+    </Row>;
+  if (onOpen === undefined) return row;
+  // The path opens that file where the source reviews its changes; the row keeps its look and gains a press.
+  return <HappierPressable accessibilityRole="link" accessibilityLabel={file.path} onPress={() => onOpen(file.path)}
+    style={(state) => ({ opacity: state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
+      ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus }) })}>
+    {row}
+  </HappierPressable>;
+}
+
 /**
  * Step ② of a change request (lab `heat`): the whole-change totals beside the title, the
  * largest files with their added and removed lines as one bar each, and how many files are
  * left. A provider that reports no line counts gets its files listed and a sentence saying
  * so; no number is drawn that the provider did not state. `children` carries the read's own
  * state (loading, a failure) from the source that owns it.
+ *
+ * "N smaller files" opens the whole list read so far in place; a source with further pages
+ * passes its own `loadMore`. A source that can show the changes passes `onOpenChanges` (the
+ * title opens them) and `onOpenFile` (a file opens there); without them the step only reads.
  */
-export function TriageDetailChangeSummary({ rows, more, totals, titleKey, children }: Readonly<{
+export function TriageDetailChangeSummary({ rows, more, totals, titleKey, children, onOpenChanges, onOpenFile, loadMore }: Readonly<{
   rows: readonly TriageChangedFileV1[];
   /** The provider has more changed files than the pages read so far. */
   more: boolean;
@@ -123,10 +170,17 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
   totals?: TriageChangeTotalsV1 | undefined;
   titleKey?: string;
   children?: React.ReactNode;
+  onOpenChanges?: (() => void) | undefined;
+  onOpenFile?: ((path: string) => void) | undefined;
+  loadMore?: TriageDetailChangesLoadMoreV1 | undefined;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const count = useStoryCount();
+  const [expanded, setExpanded] = React.useState(false);
   const summary = summarizeTriageChangesV1({ rows, more, totals });
+  // Open, every file read so far in the same order; what is left is the files not read yet.
+  const listed = expanded ? summarizeTriageChangesV1({ rows, more, totals, shown: rows.length }) : summary;
+  const expandable = summary.restCount > 0 && (rows.length > summary.files.length || loadMore !== undefined);
   const known = rows.length > 0 || totals !== undefined;
   const files = { count: String(summary.fileCount) };
   const trailing = !known ? undefined : summary.lines === null
@@ -140,31 +194,24 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
         ? count('inFiles', summary.fileCount, { one: 'in {count} file', other: 'in {count} files' })
         : text('plugins.triage.detailStory.inFilesPartial', 'in {count}+ files', files)} />
     </Row>;
-  return <TriageDetailChanges trailing={trailing} {...(titleKey === undefined ? {} : { titleKey })}>
+  const rest = summary.sortedBySize
+    ? count('smallerFiles', summary.restCount, { one: '{count} smaller file', other: '{count} smaller files' })
+    : count('moreFiles', summary.restCount, { one: '{count} more file', other: '{count} more files' });
+  return <TriageDetailChanges trailing={trailing} {...(titleKey === undefined ? {} : { titleKey })} onOpen={onOpenChanges}>
     {children}
-    {summary.files.map((file) => file.lines === undefined
-      ? <Row key={file.path} gap="small" align="center">
-        <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
-        {file.note === undefined ? null : <Text variant="micro" tone="secondary" value={file.note} />}
-      </Row>
-      // The bar, then its counts in one right-aligned column, so every bar starts and ends on the same edges (lab `heat`).
-      : <Row key={file.path} gap="medium" align="center">
-        <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
-        <Stack style={{ width: '25%', maxWidth: 120 }}>
-          <Progress label={text('plugins.triage.detailStory.fileLines', '{path}: {additions} added, {deletions} removed', {
-            path: file.path, additions: String(file.lines.additions), deletions: String(file.lines.deletions),
-          })} segments={summary.scale === 0 ? [] : [
-            { value: file.lines.additions / summary.scale, tone: 'success' },
-            { value: file.lines.deletions / summary.scale, tone: 'danger' },
-          ]} />
-        </Stack>
-        <Stack align="flex-end" style={{ minWidth: CHANGE_COUNTS_MIN_WIDTH_PX }}>
-          <Text variant="micro" tone="secondary" value={`+${String(file.lines.additions)} −${String(file.lines.deletions)}`} />
-        </Stack>
-      </Row>)}
-    {summary.restCount === 0 ? null : <Text variant="micro" tone="secondary" value={summary.sortedBySize
-      ? count('smallerFiles', summary.restCount, { one: '{count} smaller file', other: '{count} smaller files' })
-      : count('moreFiles', summary.restCount, { one: '{count} more file', other: '{count} more files' })} />}
+    {listed.files.map((file) => <TriageChangeFileRow key={file.path} file={file} scale={listed.scale} onOpen={onOpenFile} />)}
+    {summary.restCount === 0 ? null : !expanded
+      ? expandable
+        ? <Row><Button title={rest} variant="plain" size="small" onPress={() => setExpanded(true)} /></Row>
+        : <Text variant="micro" tone="secondary" value={rest} />
+      : <Row gap="small" align="center" wrap>
+        {listed.restCount === 0 ? null
+          : <Text variant="micro" tone="secondary" value={count('moreFiles', listed.restCount, { one: '{count} more file', other: '{count} more files' })} />}
+        {listed.restCount === 0 || loadMore === undefined ? null
+          : <Button title={loadMore.title} variant="plain" size="small" busy={loadMore.pending} onPress={loadMore.onLoadMore} />}
+        <Button title="Show less" titleKey="plugins.triage.detailStory.showLess" variant="plain" size="small"
+          onPress={() => setExpanded(false)} />
+      </Row>}
     {!known || summary.lines !== null ? null
       : <Text variant="micro" tone="secondary" valueKey="plugins.triage.detailStory.noLineCounts" fallback="Line counts not reported" />}
   </TriageDetailChanges>;
@@ -265,18 +312,21 @@ export function TriageChecksRollupLine({ rollup, latestCommit = false }: Readonl
  * (`latestCommit`). An incomplete rollup keeps the failures already read and says the count is
  * incomplete.
  */
-export function TriageDetailChecks({ title, titleKey, rollup, failing, latestCommit = false, children }: Readonly<{
+export function TriageDetailChecks({ title, titleKey, rollup, failing, latestCommit = false, children, onOpenChecks }: Readonly<{
   title: string;
   titleKey: string;
   rollup: TriageDetailChecksRollupV1 | null;
   failing?: readonly TriageDetailFailingCheckV1[];
   latestCommit?: boolean;
   children?: React.ReactNode;
+  /** The source's own checks view; the step title opens it. Without it the step only reads. */
+  onOpenChecks?: (() => void) | undefined;
 }>): React.ReactElement | null {
   const sentence = useChecksRollupLine(rollup, latestCommit);
   if (sentence === null) return null;
   const listed = sentence.state === 'failed' && failing !== undefined && failing.length > 0;
   return <Step title={title} titleKey={titleKey} marker={{ kind: 'state', state: sentence.state, label: sentence.label }}
+    {...(onOpenChecks === undefined ? {} : { onPress: onOpenChecks })}
     trailing={<ChecksRollupSentence lead={sentence.lead} line={sentence.line} />}>
     {listed || children !== undefined ? <Stack gap="small">
       {/* What failed is the chapter's point: one card, each row led by its failure mark (lab `checksRight`). */}

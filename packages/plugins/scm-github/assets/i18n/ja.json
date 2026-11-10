@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "クリーンアップ",
   "plugins.github.ui.preview.review": "確認",
   "plugins.github.ui.preview.openReceipt": "レシートを開く",
-  "plugins.github.ui.preview.history": "履歴"
+  "plugins.github.ui.preview.history": "履歴",
+  "plugins.github.ui.checkRerunFailed": "失敗したジョブを再実行",
+  "plugins.github.ui.checkRerunWorkflow": "ワークフローを再実行",
+  "plugins.github.ui.checkRerunSubject": "この再実行"
 }

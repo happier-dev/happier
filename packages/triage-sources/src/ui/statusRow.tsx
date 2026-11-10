@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Item, Row, Stack, Text, type TextTone } from '@happier-dev/plugin-ui';
+import { CheckStatusGlyph, Item, Row, Stack, Text, type CheckStatusKind, type TextTone } from '@happier-dev/plugin-ui';
 
 type TriageStatusRowContent = Readonly<{
   name: string;
@@ -15,6 +15,14 @@ export type TriageStatusRowProps = TriageStatusRowContent & (
   | (Readonly<{
     presentation: 'list';
     detail?: string;
+    /**
+     * The status as the shared check mark leading the row. The mark then carries the status (its word is the
+     * mark's accessible name), so `detail` takes the row's trailing meta column and `subtitle` sits under the name.
+     */
+    glyph?: CheckStatusKind;
+    subtitle?: string;
+    /** One independent control at the row's end (a re-run), beside the row's press rather than inside it. */
+    accessory?: React.ReactNode;
     /**
      * The row opens in place (the shared row disclosure): what the source knows about this status — its summary,
      * its log excerpt, where to read the rest. The row's press toggles it.
@@ -42,10 +50,16 @@ export function TriageStatusRow(props: TriageStatusRowProps): React.ReactElement
     // As in the compact and summary forms, the state word carries the tone and the name stays ink: the
     // status is the row's trailing fact (one scannable column, rose only where a check failed) and the
     // time it was read sits under the name.
+    const marked = props.glyph !== undefined;
+    const word = marked ? undefined : props.status;
     return <Item title={props.name}
-      {...(props.status === undefined ? {} : { detail: props.status })}
-      {...(props.status === undefined || props.tone === undefined || props.tone === 'neutral' ? {} : { detailTone: props.tone })}
-      {...(props.detail === undefined ? {} : props.status === undefined ? { detail: props.detail } : { subtitle: props.detail })}
+      {...(marked ? { icon: <CheckStatusGlyph status={props.glyph!}
+        {...(props.status === undefined ? {} : { accessibilityLabel: props.status })} /> } : {})}
+      {...(word === undefined ? {} : { detail: word })}
+      {...(word === undefined || props.tone === undefined || props.tone === 'neutral' ? {} : { detailTone: props.tone })}
+      {...(props.detail === undefined ? {} : word === undefined ? { detail: props.detail } : { subtitle: props.detail })}
+      {...(marked && props.subtitle !== undefined ? { subtitle: props.subtitle } : {})}
+      {...(props.accessory === undefined ? {} : { accessory: props.accessory, accessoryOutsidePressable: true })}
       {...(props.secondaryActions === undefined
         ? { secondaryActions: undefined, onSecondaryAction: undefined }
         : { secondaryActions: props.secondaryActions, onSecondaryAction: props.onSecondaryAction })}

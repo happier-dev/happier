@@ -57,6 +57,7 @@ import {
   Form,
   Item,
   ItemGroup,
+  MarkdownEditor,
   Icon,
   IconButton,
   List,
@@ -116,6 +117,7 @@ import {
   TriageChecksRollupLine,
   TriageDetailChecks,
   type TriageDetailChecksRollupV1,
+  useTriageDetailPanelOpener,
   TriageStatusRow,
   TriageActivityTimeline,
   TriageSourceCommentComposer,
@@ -130,6 +132,7 @@ import {
   useTriagePullRequestPrimaryWriteV1,
   type TriageDetailPrimaryWriteV1,
   type TriageActivityContinuationV1,
+  type TriageActivityLeadV1,
   type TriageActivityEventV1,
   type TriageActivityKindV1,
 } from '@happier-dev/triage-sources/ui';
@@ -225,7 +228,8 @@ import {
   type GithubOverviewControllerV1,
   type GithubPagedControllerV1,
 } from './detail/panelReaders.js';
-import { githubCheckToneV1 as checkTone, githubOverviewStatusToneV1 } from './detail/story.js';
+import { githubCheckStatusKindV1, githubOverviewStatusToneV1 } from './detail/story.js';
+import { useGithubChecksRerunV1 } from './detail/checksRerun.js';
 import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubPagedStateV1, GithubReadStateV1 } from './detail/panelState.js';
 import {
@@ -1521,7 +1525,9 @@ function GithubPullRequestContentEditor({ input, overview, onObserved, capabilit
   return (
     <>
       <Form.TextField label={text('plugins.github.ui.parity.title', 'Title')} value={title} onChange={setTitle} />
-      <Form.TextField label={text('plugins.github.ui.parity.description', 'Description')} multiline value={body} onChange={setBody} />
+      <Form.Field label={text('plugins.github.ui.parity.description', 'Description')}>
+        <MarkdownEditor accessibilityLabel={text('plugins.github.ui.parity.description', 'Description')} value={body} onChange={setBody} />
+      </Form.Field>
       <ExactWrite
         localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEdit}
         payload={payload}
@@ -1956,8 +1962,10 @@ function GithubPullRequestRevertWrite({ input, onObserved, capabilities }: Reado
   const payload = buildGithubPullRequestRevertInputV1(input, { title: title.trim(), ...(body === '' ? {} : { body }), draft });
   return <GithubPropertyRow title={label}>
     <Form.TextField label={text('plugins.github.ui.parity.title', 'Title')} value={title} onChange={setTitle} disabled={write.pending} />
-    <Form.TextField label={text('plugins.github.ui.administration.revertBody', 'Body (optional)')}
-      value={body} multiline onChange={setBody} disabled={write.pending} />
+    <Form.Field label={text('plugins.github.ui.administration.revertBody', 'Body (optional)')}>
+      <MarkdownEditor accessibilityLabel={text('plugins.github.ui.administration.revertBody', 'Body (optional)')}
+        value={body} onChange={setBody} disabled={write.pending} />
+    </Form.Field>
     <Form.Toggle label={text('plugins.github.ui.administration.draft', 'Open as draft')} value={draft} onChange={setDraft} disabled={write.pending} />
     <Button title={text('plugins.github.ui.administration.revertSubmit', 'Open revert PR')} variant="secondary"
       busy={write.pending} disabled={payload === null || write.pending} onPress={async () => {
@@ -2510,6 +2518,7 @@ function OverviewPanel({
           )}
         />
         <GithubOverviewReadFailure controller={overview} />
+        {capabilities.kind === 'unavailable' ? <GithubReadFailureDetails failures={[capabilities.failure]} /> : null}
         <Text
           variant="heading"
           value={exact === null ? input.observation.snapshot.title : exact.title ?? 'Unavailable'}
@@ -2653,6 +2662,8 @@ type GithubActivityStreamV1 = Readonly<{
   unavailable: Readonly<{ title: string; titleKey: string; failure: GithubReadFailureV1 | null }> | null;
   failedReads: readonly Readonly<{ failure: GithubReadFailureV1 | null; refresh: () => unknown }>[];
   header: React.ReactNode;
+  /** The stream's own summary (who reviewed), as Activity's first entry rather than pinned above it. */
+  lead?: TriageActivityLeadV1 | undefined;
   events: readonly TriageActivityEventV1[];
   /**
    * GitHub records a remark twice — as the comment or review itself and as a
@@ -2792,9 +2803,12 @@ function GithubActivityView({
     : stream.events.filter((event) => !((event.kind === 'comment' || event.kind === 'review')
       && event.href !== undefined && event.href !== null && remarkHrefs.has(event.href)))));
 
+  const lead = answered.find((stream) => stream.lead !== undefined)?.lead;
+
   return (
     <TriageActivityTimeline
       events={events}
+      lead={lead}
       locale={locale}
       nowMs={nowMs}
       accessibilityLabel={accessibilityLabel}
@@ -2929,7 +2943,14 @@ function toReviewChangedFile(
  */
 function FilesPanel({
   input,
-}: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  focusPath,
+  onFocusPath,
+}: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  /** The detail's one "which file Files opens" fact: the reader's pick in Overview or an agent's open intent. */
+  focusPath: string | null;
+  onFocusPath: (path: string | null) => void;
+}>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useGithubChangedFiles();
   const { state } = controller;
@@ -2939,15 +2960,20 @@ function FilesPanel({
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
   // A file the reader or an agent asked to open: the shared review opens it and brings it into view.
-  // Folding stays the review's own, so an agent's close is refused rather than claimed.
-  const [focusPath, setFocusPath] = React.useState<string | null>(null);
+  // Folding stays the review's own, so an agent's close is refused rather than claimed. The request is
+  // spent once the reader leaves Files, so asking for the same file again brings it back into view.
+  const wasActive = React.useRef(active);
+  React.useEffect(() => {
+    if (wasActive.current && !active) onFocusPath(null);
+    wasActive.current = active;
+  }, [active, onFocusPath]);
   const openCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
     .filter(row => row.diffAvailable).map(row => ({ title: row.path,
       operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: true } })), [state.rows]);
   useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
     if (operation.kind !== 'setSourceItemExpanded' || !operation.expanded
       || !state.rows.some(row => row.path === operation.itemId && row.diffAvailable)) return { status: 'unavailable' };
-    setFocusPath(operation.itemId);
+    onFocusPath(operation.itemId);
     return { status: 'applied' };
   }, openCommands);
   const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.github.ui.loadMoreFiles', 'Load more files'),
@@ -3085,6 +3111,7 @@ function ChecksBody({
   pending,
   onRefresh,
   onOpenRun,
+  signal,
 }: Readonly<{
   view: GithubChecksViewV1;
   locale: string;
@@ -3093,12 +3120,15 @@ function ChecksBody({
   onRefresh: () => void;
   /** A check GitHub Actions ran opens its run in place (lab a8); others open in place as before. */
   onOpenRun: (target: GithubCheckActionsTargetV1) => void;
+  signal: AbortSignal;
 }>): React.ReactElement {
   // The page's one refresh re-reads the checks; this panel draws no refresh of its own.
   useTriagePageRefresh(pending ? undefined : onRefresh);
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
   const { spacing } = usePluginTheme();
+  const rows = React.useMemo(() => orderGithubCheckRowsV1(view.rows), [view.rows]);
+  const rerun = useGithubChecksRerunV1(rows, onRefresh, signal);
   // Which checks are open in place. Failing checks lead the list; any row opens to what GitHub said about it.
   const [openKeys, setOpenKeys] = React.useState<ReadonlySet<string>>(() => new Set());
   const toggle = React.useCallback((key: string) => {
@@ -3127,10 +3157,11 @@ function ChecksBody({
     <List
       accessibilityLabel="Checks GitHub reports for this pull request"
       accessibilityLabelKey="plugins.github.ui.checksLabel"
-      items={orderGithubCheckRowsV1(view.rows)}
+      items={rows}
       keyForItem={(row) => row.key}
       header={(
         <Stack gap="small">
+          {rerun.notice}
           {failures.length === 0
             ? null
             : (
@@ -3204,19 +3235,42 @@ function ChecksBody({
         </Stack>
       )}
       renderItem={(row) => {
-        // How long it ran, then when it finished: the two facts that tell a slow check from a stuck one.
+        // The mark says the status; how long it ran is the row's meta, and when it finished sits under its name:
+        // the two facts that tell a slow check from a stuck one.
         const ran = row.startedAtMs !== undefined && row.completedAtMs !== undefined && row.completedAtMs >= row.startedAtMs
           ? formatUsageDurationCompact(row.completedAtMs - row.startedAtMs, locale)
           : null;
         const when = row.completedAtMs === undefined ? null : formatTimestamp(locale, row.completedAtMs, 'relative', nowMs);
-        const detail = [ran, when].filter((part) => part !== null).join(' · ');
+        const offer = rerun.offer(row);
+        const quiet = quietRowActions(hostApi, text, {
+          copyValue: row.name,
+          ...(row.detailsUrl === undefined ? {} : { openUrl: row.detailsUrl }),
+        });
+        // A failed check's re-run is its next action, so it stands at the row's end; any other finished check
+        // keeps its re-run in the row's quiet overflow.
+        const rerunWorkflow = offer === 'all'
+          ? [{ id: 'rerun', label: text('plugins.github.ui.checkRerunWorkflow', 'Re-run workflow') }]
+          : [];
         return (
           <TriageStatusRow
             presentation="list"
             name={row.name}
             status={checkStatusText(text, row)}
-            tone={checkTone(row)}
-            {...(detail === '' ? {} : { detail })}
+            glyph={githubCheckStatusKindV1(row)}
+            {...(ran === null ? {} : { detail: ran })}
+            {...(when === null ? {} : { subtitle: when })}
+            {...(offer === 'failed'
+              ? {
+                accessory: (
+                  <IconButton
+                    icon={<Icon name="refresh" size="small" />}
+                    accessibilityLabel={text('plugins.github.ui.checkRerunFailed', 'Re-run failed jobs')}
+                    busy={rerun.pendingKey === row.key}
+                    onPress={() => rerun.rerun(row)}
+                  />
+                ),
+              }
+              : {})}
             {...(row.actions === undefined
               ? {
                 expanded: openKeys.has(row.key),
@@ -3224,10 +3278,8 @@ function ChecksBody({
                 expandedContent: <GithubCheckDetails row={row} />,
               }
               : { onPress: () => onOpenRun(row.actions!) })}
-            {...quietRowActions(hostApi, text, {
-              copyValue: row.name,
-              ...(row.detailsUrl === undefined ? {} : { openUrl: row.detailsUrl }),
-            })}
+            secondaryActions={[...rerunWorkflow, ...quiet.secondaryActions]}
+            onSecondaryAction={(id) => { if (id === 'rerun') rerun.rerun(row); else quiet.onSecondaryAction(id); }}
           />
         );
       }}
@@ -3323,6 +3375,7 @@ function ChecksPanel({
       pending={controller.pending}
       onRefresh={controller.refresh}
       onOpenRun={setDrill}
+      signal={signal}
     />
   );
 }
@@ -3404,6 +3457,9 @@ function GithubRemarkEditor({
   const text = usePluginTranslation();
   const { edits, input, onObserved } = context;
   const [draft, setDraft] = React.useState(body);
+  const label = target.kind === 'review'
+    ? text('plugins.github.ui.commentEdit.reviewLabel', 'Review summary')
+    : text('plugins.github.ui.commentEdit.label', 'Comment');
   const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit, parseCommentEditResult, onObserved);
   const payload = draft === body ? null : buildGithubCommentEditInputV1(input, target, draft);
   const save = async (): Promise<void> => {
@@ -3416,15 +3472,9 @@ function GithubRemarkEditor({
   };
   return (
     <Stack gap="small">
-      <Form.TextField
-        multiline
-        label={target.kind === 'review'
-          ? text('plugins.github.ui.commentEdit.reviewLabel', 'Review summary')
-          : text('plugins.github.ui.commentEdit.label', 'Comment')}
-        value={draft}
-        onChange={setDraft}
-        disabled={write.pending}
-      />
+      <Form.Field label={label}>
+        <MarkdownEditor accessibilityLabel={label} value={draft} onChange={setDraft} disabled={write.pending} />
+      </Form.Field>
       <Row gap="small">
         <Button
           title="Save"
@@ -3539,8 +3589,10 @@ function GithubPendingReviewCreateWrite({ context }: Readonly<{
   if (write.outcome?.kind === 'applied') return <WriteOutcome outcome={write.outcome} />;
   const payload = buildGithubPendingReviewCreateInputV1(context.input, summary);
   return <GithubPropertyRow title={title}>
-    <Form.TextField multiline label={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
-      value={summary} onChange={setSummary} disabled={write.pending} />
+    <Form.Field label={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}>
+      <MarkdownEditor accessibilityLabel={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
+        value={summary} onChange={setSummary} disabled={write.pending} />
+    </Form.Field>
     <Button title={text('plugins.github.ui.review.startReview', 'Start review')} variant="secondary"
       busy={write.pending} disabled={payload === null || write.pending}
       onPress={() => { if (payload !== null) return write.run(payload); }} />
@@ -3591,6 +3643,9 @@ function GithubReviewLifecycleForm({ context, reviewId, form }: Readonly<{
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [message, setMessage] = React.useState('');
+  const messageLabel = form === 'dismiss'
+    ? text('plugins.github.ui.review.dismissReason', 'Reason for dismissing')
+    : text('plugins.github.ui.review.summaryOptional', 'Summary (optional)');
   const [verdict, setVerdict] = React.useState<GithubPullRequestReviewVerdictV1 | null>(null);
   const write = useGithubWrite(form === 'dismiss'
     ? GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss
@@ -3624,15 +3679,9 @@ function GithubReviewLifecycleForm({ context, reviewId, form }: Readonly<{
           disabled={write.pending}
         />
       ) : null}
-      <Form.TextField
-        multiline
-        label={form === 'dismiss'
-          ? text('plugins.github.ui.review.dismissReason', 'Reason for dismissing')
-          : text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
-        value={message}
-        onChange={setMessage}
-        disabled={write.pending}
-      />
+      <Form.Field label={messageLabel}>
+        <MarkdownEditor accessibilityLabel={messageLabel} value={message} onChange={setMessage} disabled={write.pending} />
+      </Form.Field>
       <Row gap="small">
         <Button
           title={form === 'dismiss' ? 'Dismiss review' : 'Submit review'}
@@ -3878,27 +3927,27 @@ function reviewStateText(text: PluginTranslate, state: string): string {
 }
 
 /**
- * Who reviewed, with GitHub's state and when. Who is still awaited is said once: by the Overview's facts and the
- * rail's own request event, never as a block above the rail (lab c7).
+ * Who reviewed, with GitHub's state and when, as Activity's first entry: it scrolls away with the stream. Who is
+ * still awaited is said once: by the Overview's facts and the rail's own request event (lab c7).
  */
-function ReviewPeople({
-  people,
-  locale,
-  nowMs,
-}: Readonly<{
-  people: GithubFeedbackReviewPeopleV1;
-  locale: string;
-  nowMs: number;
-}>): React.ReactElement | null {
-  const text = usePluginTranslation();
-  if (people.reviewed.length === 0) return null;
+function githubReviewPeopleLead(
+  text: PluginTranslate,
+  people: GithubFeedbackReviewPeopleV1,
+  locale: string,
+  nowMs: number,
+): TriageActivityLeadV1 | undefined {
+  if (people.reviewed.length === 0) return undefined;
   const reviewed: readonly MetadataEntry[] = people.reviewed.map((reviewer) => ({
     label: reviewer.login,
     value: reviewer.submittedAtMs === undefined
       ? reviewStateText(text, reviewer.state)
       : `${reviewStateText(text, reviewer.state)} · ${formatTimestamp(locale, reviewer.submittedAtMs, 'relative', nowMs)}`,
   }));
-  return <Metadata title="Reviewed" titleKey="plugins.github.ui.reviewedBy" entries={reviewed} />;
+  return {
+    icon: 'review',
+    heading: <Text variant="label" valueKey="plugins.github.ui.reviewedBy" fallback="Reviewed" />,
+    body: <Metadata entries={reviewed} />,
+  };
 }
 
 const FINDING_STATE_COPY: Readonly<Record<'check' | 'conflict', Readonly<{
@@ -4309,6 +4358,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
     unavailable: cold
       ? { title: 'The feedback is unavailable', titleKey: 'plugins.github.ui.feedbackUnavailable', failure: conversation.state.failure }
       : null,
+    lead: githubReviewPeopleLead(text, view.people, locale, nowMs),
     header: (
       <Stack gap="medium">
         {reviews.state.kind === 'ready'
@@ -4327,7 +4377,6 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
             </Row>
           )
           : null}
-        <ReviewPeople people={view.people} locale={locale} nowMs={nowMs} />
         {checksKnownIncomplete
           ? (
             // The same fact the Checks plane states, in the plane that would
@@ -4569,11 +4618,15 @@ function WorkSessionsPanel({
  * ② What changed: the shared summary over the changed-file pages the Files panel's
  * reader reads, with GitHub's own whole-change totals once the overview states them.
  */
-function GithubChangeStep({ overview }: Readonly<{
+function GithubChangeStep({ overview, onOpenFile }: Readonly<{
   overview: GithubOverviewValueV1 | null;
+  /** Opens Files on one path; absent where no frame offers a Files panel. */
+  onOpenFile?: ((path: string) => void) | undefined;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const files = useGithubChangedFiles();
+  // The frame's own panel selection: the step's title opens Files, a file opens Files on that file.
+  const openFiles = useTriageDetailPanelOpener('files');
   const rows = React.useMemo(() => files.state.rows.map((row) => ({
     path: row.path, lines: { additions: row.additions, deletions: row.deletions },
   })), [files.state.rows]);
@@ -4585,7 +4638,12 @@ function GithubChangeStep({ overview }: Readonly<{
   };
   return (
     <TriageDetailChangeSummary titleKey="plugins.github.ui.story.changed" rows={rows} totals={totals}
-      more={files.state.canLoadMore || files.state.incomplete !== null}>
+      more={files.state.canLoadMore || files.state.incomplete !== null}
+      onOpenChanges={openFiles}
+      onOpenFile={openFiles === undefined ? undefined : onOpenFile}
+      loadMore={files.state.canLoadMore
+        ? { title: text('plugins.github.ui.loadMoreFiles', 'Load more files'), pending: files.state.pending, onLoadMore: files.loadMore }
+        : undefined}>
       {pullRequest?.headBranch === undefined || pullRequest.baseBranch === undefined ? null
         : <Text variant="code" tone="secondary" value={`${pullRequest.headBranch} → ${pullRequest.baseBranch}`} />}
       {files.state.kind === 'loading' || files.state.kind === 'idle'
@@ -4636,6 +4694,7 @@ function firstGithubOutputLine(output: string): string | undefined {
 function GithubChecksStep(): React.ReactElement | null {
   const text = usePluginTranslation();
   const checks = useGithubChecks();
+  const openChecks = useTriageDetailPanelOpener('checks');
   if (checks.state.kind !== 'ready') return (
     <Step title="Checks" titleKey="plugins.github.ui.story.checks"
       marker={{ kind: 'state', state: 'open', label: 'Checks' }}>
@@ -4653,6 +4712,7 @@ function GithubChecksStep(): React.ReactElement | null {
   const rollup = githubChecksRollupV1(view);
   return (
     <TriageDetailChecks title="Checks" titleKey="plugins.github.ui.story.checks" latestCommit rollup={rollup}
+      onOpenChecks={openChecks}
       failing={failed.map((row) => {
         // What GitHub said about the failure, in one line under its name: the output's first line.
         const said = row.logExcerpt === undefined ? undefined : firstGithubOutputLine(row.logExcerpt);
@@ -4704,6 +4764,8 @@ function GithubStoryOverview({
   nowMs,
   overview,
   refresh,
+  capabilitiesFailure,
+  onOpenFile,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
@@ -4711,6 +4773,8 @@ function GithubStoryOverview({
   nowMs: number;
   overview: GithubOverviewControllerV1;
   refresh: () => Promise<void>;
+  capabilitiesFailure: TriageSourceFailureV1 | null;
+  onOpenFile: (path: string) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const exact = overview.value;
@@ -4723,7 +4787,7 @@ function GithubStoryOverview({
     <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
         // Nothing to show yet (no last read, no list summary) while the first read settles: hold ①'s place.
         loading={exact === null && overview.failure === null && (ask === undefined || ask === null || ask.length === 0)}
-        changes={kindId === 'pull-request' ? <GithubChangeStep overview={exact} /> : null}
+        changes={kindId === 'pull-request' ? <GithubChangeStep overview={exact} onOpenFile={onOpenFile} /> : null}
         // Preview follows Checks in the story (DEPLOY-COMPOSE-1107 P15); the slot keeps their order.
         checks={kindId === 'pull-request' ? <><GithubChecksStep /><GithubPullRequestPreviewStep input={input} closed={exact?.state === 'closed'} /></> : null}
         trailing={byline.length === 0 ? undefined : <Text variant="micro" tone="secondary" value={byline.join(' · ')} />}
@@ -4753,6 +4817,7 @@ function GithubStoryOverview({
           ? exact === null ? null : <Text variant="micro" tone="secondary" valueKey="plugins.github.ui.story.noDescription" fallback="No description." />
           : <GithubOverviewMarkdown body={ask} />}
         {exact === null ? null : <GithubStoryFacts overview={exact} />}
+        <GithubReadFailureDetails failures={[capabilitiesFailure]} />
     </TriageDetailStory>
   );
 }
@@ -4773,6 +4838,13 @@ function GithubDetailBody({
   );
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
+  // Which file Files opens: one fact for the detail, set by the reader from Overview or by an agent in Files.
+  const [focusPath, setFocusPath] = React.useState<string | null>(null);
+  const openFiles = useTriageDetailPanelOpener('files');
+  const openFile = React.useCallback((path: string) => {
+    setFocusPath(path);
+    openFiles?.();
+  }, [openFiles]);
   const completePostMutation = useTriagePostMutationCompletion();
   const launchedMerged = isGithubMergedState(launched.observation.snapshot.state);
   const [mergeSignature, setMergeSignature] = React.useState<GithubMergeSignatureStateV1>(() => (
@@ -4880,7 +4952,7 @@ function GithubDetailBody({
       />
     ),
     timeline: <TimelinePanel locale={locale} nowMs={nowMs} />,
-    files: <FilesPanel input={input} />,
+    files: <FilesPanel input={input} focusPath={focusPath} onFocusPath={setFocusPath} />,
     checks: <ChecksPanel locale={locale} nowMs={nowMs} signal={detailActivity.activeSignal} />,
     feedback: (
       <FeedbackPanel
@@ -4913,7 +4985,8 @@ function GithubDetailBody({
             .filter((declaration) => ['overview', 'timeline', 'files', 'checks'].includes(declaration.id))
             .map((declaration) => [declaration.id === 'timeline' ? 'activity' : declaration.id, declaration.retention]))}
           panels={{
-            overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} overview={overview} refresh={primaryController.refresh} />,
+            overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} overview={overview} refresh={primaryController.refresh}
+              capabilitiesFailure={capabilities.kind === 'unavailable' ? capabilities.failure : null} onOpenFile={openFile} />,
             activity: kindId === 'pull-request'
               ? (
                 <PullRequestActivityPanel

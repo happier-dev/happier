@@ -92,6 +92,11 @@ export type TriageActivityTimelineProps = Readonly<{
   accessibilityLabelKey?: string;
   /** Above the stream: partial-read banners, a scope note. */
   header?: React.ReactNode;
+  /**
+   * What the source sums up about the stream (who reviewed and how), as the stream's first entry: it scrolls
+   * away with the events instead of staying pinned above them.
+   */
+  lead?: TriageActivityLeadV1 | undefined;
   /** Shown instead of the stream when no event was read. */
   empty: React.ReactNode;
   /** One per collection the source still has pages of; each keeps its own cursor. */
@@ -104,6 +109,9 @@ export type TriageActivityTimelineProps = Readonly<{
   /** After the stream: what was read, the comment box. */
   footer?: React.ReactNode;
 }>;
+
+/** A source's summary entry at the head of its Activity: its mark, its one-line heading and its facts. */
+export type TriageActivityLeadV1 = Readonly<{ icon: IconName; heading: React.ReactNode; body?: React.ReactNode }>;
 
 /** A source's re-read of its Activity; the label names the provider it reads ("Re-read this timeline from GitHub"). */
 export type TriageActivityRefreshV1 = Readonly<{
@@ -205,6 +213,7 @@ function activityEventContent(
 /** What the rail draws: the source's events, then the agent's card and what happens next. */
 type TriageActivityRailItemV1 =
   | Readonly<{ kind: 'event'; id: string; event: TriageActivityEventV1 }>
+  | Readonly<{ kind: 'lead'; id: string; lead: TriageActivityLeadV1 }>
   | Readonly<{ kind: 'tail' | 'next'; id: string; node: React.ReactNode }>;
 
 function MountedContinuationButton({ continuation }: Readonly<{ continuation: TriageActivityContinuationV1 }>): React.ReactElement {
@@ -266,21 +275,28 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
   const next = agent.next ?? null;
   // The agent's card and what happens next stay on the rail after the events (lab c7). With no event to follow,
   // they stand under the source's empty state instead.
+  const lead = props.lead;
   const items = React.useMemo<readonly TriageActivityRailItemV1[]>(() => events.length === 0 ? [] : [
+    ...(lead === undefined ? [] : [{ kind: 'lead' as const, id: 'triage-activity-lead', lead }]),
     ...events.map((event) => ({ kind: 'event' as const, id: event.id, event })),
     ...(tail === null ? [] : [{ kind: 'tail' as const, id: 'triage-activity-tail', node: tail }]),
     ...(next === null ? [] : [{ kind: 'next' as const, id: 'triage-activity-next', node: next }]),
-  ], [events, next, tail]);
+  ], [events, lead, next, tail]);
   // The page's one refresh re-reads this Activity: once per press, through the source's own re-read.
   useTriagePageRefresh(props.refresh === undefined ? undefined : props.refresh.onRefresh);
   const hostApi = usePluginHostApi();
   const continuations = props.continuations ?? [];
   const earlier = continuations.filter((continuation) => continuation.reads === 'earlier');
   const later = continuations.filter((continuation) => continuation.reads !== 'earlier');
-  const header = earlier.length === 0 ? props.header : (
+  // With no event to lead, the summary has nothing to scroll with and stays above the empty state.
+  const leadAbove = lead !== undefined && events.length === 0
+    ? <Stack gap="small">{lead.heading}{lead.body ?? null}</Stack>
+    : undefined;
+  const header = earlier.length === 0 && leadAbove === undefined ? props.header : (
     <Stack gap="small">
       {props.header}
-      <ContinuationButtons continuations={earlier} />
+      {leadAbove}
+      {earlier.length === 0 ? null : <ContinuationButtons continuations={earlier} />}
     </Stack>
   );
   return (
@@ -302,6 +318,11 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
         </Stack>
       )}
       renderItem={(item) => item.kind === 'event' ? activityEventContent(item.event, props.locale, props.nowMs, hostApi)
+        : item.kind === 'lead' ? {
+          glyph: <Icon name={item.lead.icon} size="small" tone="secondary" />,
+          heading: item.lead.heading,
+          ...(item.lead.body === undefined ? {} : { body: item.lead.body }),
+        }
         : item.kind === 'tail' ? {
           glyph: <Icon name={MARKER_ICON.session} size="small" tone="secondary" />,
           ...(agent.tailHeading === undefined ? {} : { heading: agent.tailHeading }),

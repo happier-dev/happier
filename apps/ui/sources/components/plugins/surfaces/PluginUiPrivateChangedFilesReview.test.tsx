@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -62,14 +63,18 @@ describe('plugin-ui ChangedFilesReview renders through the Session review owner'
         i += 1
       )
         await flushHookEffects();
+      // A detail pane is narrower than the rail: the files float in Review's file widget over the stream.
+      await act(async () => {
+        screen.findByTestId('scm-review-file-widget-area')!.props.onLayout({ nativeEvent: { layout: { width: 720, height: 600 } } });
+      });
       expect(
         screen.findByTestId('scm-review-index'),
         'the host review index, not a plugin row list',
       ).not.toBeNull();
       expect(
         screen.tree.root.findAll((node) => typeof node.props?.testIDPrefix === 'string'
-          && node.props.testIDPrefix === 'plugin-changed-files-layout').length,
-        'without a rail, the header offers the list | tree switch',
+          && node.props.testIDPrefix === 'scm-review-index-layout').length,
+        'without a rail, the file widget offers the list | tree switch',
       ).toBeGreaterThan(0);
       const review = screen.tree.root.findByType(HostChangedFilesReview);
       expect(review.props.allRepositoryChangedFiles.map((file: { fullPath: string }) => file.fullPath),

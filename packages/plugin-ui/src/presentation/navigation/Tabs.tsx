@@ -24,6 +24,7 @@ import { HAPPIER_SEGMENTED_METRICS } from '../form/SegmentedChoice.js';
 import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
+import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { listWebFocusableElements } from '../interaction/webFocusableElements.js';
@@ -581,11 +582,26 @@ export function HappierTabs(props: Readonly<{
       </View>;
   const panelHead: HappierScrollHeadInternal | null = headOffered
     ? { lead: props.lead, strip: stripNode, selection: selectedValue ?? '', claim: claimHead } : enclosingHead;
-  return (
-    <HappierTabsLeadContext.Provider value={panelLead}>
-    <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
+  // A strip drawn over bounded panels is the band their content scrolls beneath: the panels' primary scrollers shade
+  // the strip's foot, never the pane header above it (and the actions between). Elsewhere the strip scrolls with its
+  // content, or is drawn by the host, and the enclosing scope keeps the shade.
+  const bandScroll = useOptionalPluginUiPresentationHost()?.paneHeaderScroll;
+  const stripShaded = fill && !hideStrip && !headClaimed;
+  const panelGap = props.theme.spacing.medium;
+  const body = (
+    <View testID={props.testID} style={fill ? { ...fillStyle, gap: panelGap } : { gap: panelGap }}>
       {headOffered && !headClaimed ? props.lead : null}
-      {hideStrip || headClaimed ? null : stripNode}
+      {hideStrip || headClaimed ? null : (
+        <View style={STRIP_BAND_STYLE}>
+          {stripNode}
+          {stripShaded && bandScroll?.renderBandShade !== undefined ? (
+            // At the panels' top edge, where their content clips.
+            <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: '100%', marginTop: panelGap, height: 0 }}>
+              {bandScroll.renderBandShade()}
+            </View>
+          ) : null}
+        </View>
+      )}
       {/* `null`: the strip selects something its host draws elsewhere (a page's widget area), so no empty panel or gap follows it. */}
       {props.sharedPanel === null ? null : props.sharedPanel !== undefined && selected !== undefined ? (
         <HappierTabPanel
@@ -612,6 +628,13 @@ export function HappierTabs(props: Readonly<{
         </HappierTabPanel>
       ) : null))}
     </View>
+  );
+  return (
+    <HappierTabsLeadContext.Provider value={panelLead}>
+      {bandScroll?.renderBandScope === undefined ? body : bandScroll.renderBandScope({ passThrough: !stripShaded, children: body })}
     </HappierTabsLeadContext.Provider>
   );
 }
+
+/** Above the panels that follow it, so the shade it draws at their top edge paints over their content. */
+const STRIP_BAND_STYLE: ViewStyle = { position: 'relative', zIndex: 1 };

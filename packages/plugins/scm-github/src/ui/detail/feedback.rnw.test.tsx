@@ -698,6 +698,9 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.getByText('Review: Changes requested'))
       .resolves.toEqual({ content: 'Review: Changes requested' });
     await expect(detail.getByText('Reviewed')).resolves.toEqual({ content: 'Reviewed' });
+    // Who reviewed scrolls with the stream as its first entry, never as chrome pinned above it.
+    expect([...document.querySelectorAll('[role="list"]')]
+      .some((stream) => stream.textContent?.includes('Reviewed') && stream.textContent.includes('The tail is dropped.'))).toBe(true);
     await expect(detail.getByText('Needs a smaller owner.'))
       .resolves.toEqual({ content: 'Needs a smaller owner.' });
     // The reviewer row carries GitHub's own review state AND the instant that

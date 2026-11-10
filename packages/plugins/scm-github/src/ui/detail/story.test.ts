@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { githubCheckToneV1, githubOverviewStatusToneV1 } from './story.js';
+import { githubCheckStatusKindV1, githubOverviewStatusToneV1 } from './story.js';
 
-describe('the tone of one GitHub check row', () => {
-  it('keeps neutral and unreported completed outcomes distinct from failures', () => {
+describe('the mark of one GitHub check row', () => {
+  it('draws each GitHub status and conclusion as the shared check mark, never a failure as anything else', () => {
     const row = { key: 'github-check-run:1', resourceKind: 'check-run' as const, name: 'build', status: 'completed' };
-    expect(githubCheckToneV1({ ...row, conclusion: 'skipped' })).toBe('neutral');
-    expect(githubCheckToneV1({ ...row, conclusion: 'unrecognized' })).toBe('neutral');
-    expect(githubCheckToneV1(row)).toBe('neutral');
-    expect(githubCheckToneV1({ ...row, conclusion: 'failure' })).toBe('danger');
-  });
-
-  it('lets a passed or running check say nothing: only a failure is coloured', () => {
-    const row = { key: 'github-check-run:1', resourceKind: 'check-run' as const, name: 'build', status: 'completed' };
-    expect(githubCheckToneV1({ ...row, conclusion: 'success' })).toBe('neutral');
-    expect(githubCheckToneV1({ ...row, status: 'in_progress' })).toBe('neutral');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'success' })).toBe('passed');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'failure' })).toBe('failed');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'timed_out' })).toBe('failed');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'skipped' })).toBe('skipped');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'cancelled' })).toBe('cancelled');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'neutral' })).toBe('neutral');
+    expect(githubCheckStatusKindV1({ ...row, conclusion: 'unrecognized' })).toBe('unknown');
+    expect(githubCheckStatusKindV1({ ...row, status: 'queued' })).toBe('queued');
+    expect(githubCheckStatusKindV1({ ...row, status: 'waiting' })).toBe('waiting');
+    expect(githubCheckStatusKindV1({ ...row, status: 'in_progress' })).toBe('running');
   });
 });
 

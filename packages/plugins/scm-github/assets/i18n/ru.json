@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "Очистить",
   "plugins.github.ui.preview.review": "Проверить",
   "plugins.github.ui.preview.openReceipt": "Открыть квитанцию",
-  "plugins.github.ui.preview.history": "История"
+  "plugins.github.ui.preview.history": "История",
+  "plugins.github.ui.checkRerunFailed": "Перезапустить неудачные задания",
+  "plugins.github.ui.checkRerunWorkflow": "Перезапустить workflow",
+  "plugins.github.ui.checkRerunSubject": "этот перезапуск"
 }

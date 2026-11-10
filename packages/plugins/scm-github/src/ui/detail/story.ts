@@ -1,11 +1,18 @@
+import type { CheckStatusKind } from '@happier-dev/plugin-ui';
 import type { GithubProjectedCheckRowV1 } from '../../triage/detail/projection.js';
 import { readGithubCheckOutcomeV1 } from '../../triage/checkOutcome.js';
 
-/** The tone a Checks panel row draws for GitHub's own outcome of that check. */
-
-export function githubCheckToneV1(row: GithubProjectedCheckRowV1): 'danger' | 'neutral' {
-  // Healthy says nothing and running is not a caution: only a failure colours the row.
-  return readGithubCheckOutcomeV1(row) === 'failed' ? 'danger' : 'neutral';
+/**
+ * The shared check mark for GitHub's own status of one check. The outcome owner decides failed, passed and
+ * pending; the mark only says which kind of pending or settled-without-a-verdict it is.
+ */
+export function githubCheckStatusKindV1(row: Pick<GithubProjectedCheckRowV1, 'status' | 'conclusion'>): CheckStatusKind {
+  const outcome = readGithubCheckOutcomeV1(row);
+  if (outcome === 'failed' || outcome === 'passed' || outcome === 'unknown') return outcome;
+  if (outcome === 'pending') {
+    return row.status === 'in_progress' ? 'running' : row.status === 'waiting' ? 'waiting' : 'queued';
+  }
+  return row.conclusion === 'skipped' ? 'skipped' : row.conclusion === 'cancelled' ? 'cancelled' : 'neutral';
 }
 
 /** The tone of the overview's state word ("Open", "Merged", "Draft", ...). */

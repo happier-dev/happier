@@ -9,6 +9,7 @@ import type { HappierFocusable, HappierStyleProp } from '../presentation/portabl
 import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
+import type { HappierMarkdownEditorRequest } from '../presentation/content/MarkdownEditor.js';
 import type { HappierMarkdownRenderInput } from '../presentation/content/Markdown.js';
 import type { HappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
@@ -26,6 +27,7 @@ import type { DragSourceProps, DropTargetProps } from '../components/EntityDragD
 import type { EntityFlatReorderListProps } from '../components/EntityFlatReorderList.js';
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { HostTaskShareSheet } from '../hostApi/taskShareSheet.public.js';
+import type { HostPeopleDirectory, HostPeopleDirectoryRequest } from '../hostApi/peopleDirectory.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps, VoiceReadAloudPhase } from '../components/Voice.js';
@@ -213,6 +215,8 @@ export type PluginUiPresentationHost = Readonly<{
   taskShareSheet?: HostTaskShareSheet;
   /** Same-realm hook: the app retains source acquisition, Action lifetime and per-path observation. */
   useScmFileViewed?(params: ScmFileViewedRequest): ScmFileViewedSource | null;
+  /** Same-realm hook: the app's collaboration people directory (the share sheet's), read only while demanded. */
+  usePeopleDirectory?(request: HostPeopleDirectoryRequest): HostPeopleDirectory | null;
   /** Device-local collection widths, already scoped to this plugin by the host. */
   panelSizing?: Readonly<{
     useWidth(resizeKey: string): Readonly<{
@@ -230,7 +234,17 @@ export type PluginUiPresentationHost = Readonly<{
    * distance from the top through the hook's reporter; nested and horizontal scrollers never do. The hook
    * is stable for the host's life and returns null outside a header-owning pane. Presentation only.
    */
-  paneHeaderScroll?: Readonly<{ useReporter(): ((distancePx: number) => void) | null }>;
+  paneHeaderScroll?: Readonly<{
+    useReporter(): ((distancePx: number) => void) | null;
+    /**
+     * A fixed band inside the pane that bounded scrollers sit beneath (a tab strip over its panels): the primary
+     * scrollers under it report to the band's own shade instead of the pane header's. `passThrough` keeps the
+     * enclosing scope (the band is not standing over its panels now); toggling it keeps the tree.
+     */
+    renderBandScope?(input: Readonly<{ passThrough: boolean; children: ReactNode }>): ReactNode;
+    /** The scroll-linked shade beneath that band, drawn at the top edge of what scrolls under it. */
+    renderBandShade?(): ReactNode;
+  }>;
   renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
   renderVoicePresence?(input: Omit<VoicePresenceProps, 'fallback' | 'presented'>): ReactNode;
   useVoiceAttempt?(): VoiceAttemptPresentation | null;
@@ -454,6 +468,11 @@ export type PluginUiPresentationHost = Readonly<{
    * file index, tree/list modes, continuous diffs, prefetch and find. The host decides which diffs to read.
    */
   renderChangedFilesReview?(input: HappierChangedFilesReviewRequest): ReactNode;
+  /**
+   * Render editable Markdown through the product's one Markdown editor (Documents, Prompts, Skills, Board notes):
+   * its Raw/Rich modes and formatting. The host decides whether Rich is offered.
+   */
+  renderMarkdownEditor?(input: HappierMarkdownEditorRequest): ReactNode;
   renderPopover(input: Readonly<{
     open: boolean;
     anchorRef: RefObject<unknown>;
@@ -466,7 +485,10 @@ export type PluginUiPresentationHost = Readonly<{
     placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
     /** Semantic disposition selects the host's established portal sizing contract. */
     presentation?: PluginUiPopoverPresentation;
-    /** Semantic submenu rows; the host renders these through its incumbent menu rather than content. */
+    /**
+     * A menu's semantic rows (every Menu, Dropdown and ContextMenu): the host draws them through its one menu
+     * (material, rows, search, keyboard, phone panel) rather than `content`, which stays for a host without a menu.
+     */
     menu?: PluginUiMenuPresentation;
     /**
      * `anchor` (a field box's choice list) matches the trigger's width. `content` (every other trigger)

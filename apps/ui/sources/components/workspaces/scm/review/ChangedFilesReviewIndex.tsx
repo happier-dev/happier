@@ -53,8 +53,10 @@ type ChangedFilesReviewIndexProps = Readonly<{
      * (Walkthrough lab WT8), its own scroll beside the stream, with the shared list | tree switch.
      * `comparisonStream`: the same list heading a narrow comparison stream; it follows the shared
      * list | tree preference, whose switch the comparison header carries on narrow widths.
+     * `floating`: the comparison stream's file widget floating over the diffs (Codex reference,
+     * owner 2026-11-10): the rail's caption, switch and own scroll inside a bounded floating panel.
      */
-    placement?: 'stream' | 'rail' | 'comparisonStream';
+    placement?: 'stream' | 'rail' | 'comparisonStream' | 'floating';
     /** Where the files live (the tree's identity); only the tree reads it, and it reads no listing. */
     rootPath?: string | null;
 }>;
@@ -174,7 +176,7 @@ const NO_FILES: readonly ScmFileStatus[] = [];
 
 export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewIndex(props: ChangedFilesReviewIndexProps) {
     const styles = stylesheet;
-    const rail = props.placement === 'rail' || props.placement === 'comparisonStream';
+    const rail = props.placement === 'rail' || props.placement === 'comparisonStream' || props.placement === 'floating';
     if (!rail) {
         return (
             <View testID="scm-review-index" style={styles.indexHead} onLayout={props.onLayout}>
@@ -191,6 +193,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
         <ChangedFilesReviewRail
             index={props}
             inline={props.placement === 'comparisonStream'}
+            floating={props.placement === 'floating'}
         />
     );
 });
@@ -225,6 +228,8 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
     index: ChangedFilesReviewIndexProps;
     /** In the stream (narrow): rows in place, no scroll of its own, no switch in the caption. */
     inline: boolean;
+    /** In the floating file widget: the rail's own scroll and switch, without the keyboard hints. */
+    floating?: boolean;
 }>) {
     const styles = stylesheet;
     const display = useGitDisplaySettings();
@@ -255,11 +260,11 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
         );
     }
     return (
-        <View testID="scm-review-index" style={styles.rail}>
+        <View testID="scm-review-index" style={props.floating ? styles.floating : styles.rail}>
             <ScmComparisonRailCaption title={t('detailsSurface.review.changedFiles')} count={indexCount(index)} countPlacement="leading"
                 trailing={<ChangedFilesLayoutSwitch testIDPrefix="scm-review-index-layout" />} />
             {tree ?? <ChangedFilesReviewRailRows index={index} />}
-            {Platform.OS === 'web' ? (
+            {Platform.OS === 'web' && !props.floating ? (
                 // The Review commands as bound here (no hint when single-key shortcuts are off).
                 <ScmComparisonRailKeys testID="scm-review-index-keys" keys={[
                     { commands: ['review.file.next', 'review.file.previous'], label: t('scmComparison.keys.nextFile') },
@@ -369,6 +374,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
         paddingHorizontal: SCM_COMPARISON_RAIL_INSET_PX,
         paddingTop: theme.space.s12,
+    },
+    // The floating widget's panel already insets its content; its rows keep the rail's own inset.
+    floating: {
+        flex: 1,
+        minHeight: 0,
+        paddingHorizontal: SCM_COMPARISON_RAIL_INSET_PX,
     },
     railScroll: {
         flex: 1,

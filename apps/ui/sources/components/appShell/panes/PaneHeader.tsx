@@ -347,6 +347,36 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     // A band over a centred content column keeps the pane-wide paint and shade; its contents stand on the column's edges.
     const columnMaxWidthPx = !large && props.columnMaxWidthPx !== undefined && Number.isFinite(props.columnMaxWidthPx)
         ? resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) : null;
+    const lineView = (line && (line.segments.length > 0 || line.leading)) || props.lineTrailing ? (
+        <PaneHeaderLineView
+            line={line}
+            large={large}
+            testID={testID}
+            lineEnd={props.lineEnd}
+            lineTrailing={props.lineTrailing}
+        />
+    ) : null;
+    const identity = (
+        <View style={large ? styles.largeIdentityRow : styles.identity}>
+        {chipVisible ? <PaneMainRestoreChip /> : null}
+        {props.leading ? <View style={large ? styles.identityMark : styles.identityMarkCentered}>{props.leading}</View> : null}
+        <View style={styles.titleBlock}>
+            {props.overline ?? null}
+            {/* A host that already names the thing (a breadcrumb ending on it) passes no title: the live line stands alone. */}
+            {hasTitle ? <View style={styles.titleRow}>
+            {typeof props.titleControl === 'function' ? props.titleControl(titleText) : props.titleControl ?? titleText}
+            {props.onTitleNaturalWidth && !props.titleControl ? (
+                <View testID={`${testID}.titleMeasure`} aria-hidden pointerEvents="none" style={[styles.titleRow, styles.titleMeasure]}
+                    onLayout={(event) => props.onTitleNaturalWidth?.(Math.ceil(event.nativeEvent.layout.width))}>
+                    {props.leading ? <View style={styles.identityMark}>{props.leading}</View> : null}
+                    <Text numberOfLines={1} style={[large ? styles.largeTitle : styles.title, props.titleTextStyle]}>{props.title}</Text>
+                </View>
+            ) : null}
+            </View> : null}
+            {large ? null : lineView}
+        </View>
+        </View>
+    );
     const contents = (
         <>
             {props.navigation ? (
@@ -370,35 +400,11 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     onPress={props.onBack}
                 />
             ) : null}
-            {/* One identity block: the mark stands beside the text, and the overline, title and live line
-                all start on the title's own text edge (lab cshead H1). */}
-            <View style={styles.identity}>
-            {chipVisible ? <PaneMainRestoreChip /> : null}
-            {props.leading ? <View style={large ? styles.identityMark : styles.identityMarkCentered}>{props.leading}</View> : null}
-            <View style={styles.titleBlock}>
-                {props.overline ?? null}
-                {/* A host that already names the thing (a breadcrumb ending on it) passes no title: the live line stands alone. */}
-                {hasTitle ? <View style={styles.titleRow}>
-                {typeof props.titleControl === 'function' ? props.titleControl(titleText) : props.titleControl ?? titleText}
-                {props.onTitleNaturalWidth && !props.titleControl ? (
-                    <View testID={`${testID}.titleMeasure`} aria-hidden pointerEvents="none" style={[styles.titleRow, styles.titleMeasure]}
-                        onLayout={(event) => props.onTitleNaturalWidth?.(Math.ceil(event.nativeEvent.layout.width))}>
-                        {props.leading ? <View style={styles.identityMark}>{props.leading}</View> : null}
-                        <Text numberOfLines={1} style={[large ? styles.largeTitle : styles.title, props.titleTextStyle]}>{props.title}</Text>
-                    </View>
-                ) : null}
-                </View> : null}
-                {(line && (line.segments.length > 0 || line.leading)) || props.lineTrailing ? (
-                    <PaneHeaderLineView
-                        line={line}
-                        large={large}
-                        testID={testID}
-                        lineEnd={props.lineEnd}
-                        lineTrailing={props.lineTrailing}
-                    />
-                ) : null}
-            </View>
-            </View>
+            {/* One identity block. In the band the mark stands beside the text and the overline, title and live
+                line all start on the title's own text edge (lab cshead H1). A large header hangs the mark from the
+                title's line and runs the facts beneath at the identity's full width, from the mark's edge, as
+                `PageHeader`'s `hang` does: a long facts line never leaves an empty gutter under the mark. */}
+            {large ? <View style={styles.largeIdentity}>{identity}{lineView}</View> : identity}
             {props.actions ? <View style={styles.actions}>{props.actions}</View> : null}
             {props.onClose ? (
                 <IconButton
@@ -485,6 +491,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     identity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    // A large header's identity: the mark and title on one row, the facts beneath at its full width.
+    largeIdentity: { flex: 1, minWidth: 0 },
+    largeIdentityRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     titleBlock: {
         flex: 1,
         minWidth: 0,

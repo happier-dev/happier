@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "清理",
   "plugins.github.ui.preview.review": "审查",
   "plugins.github.ui.preview.openReceipt": "打开回执",
-  "plugins.github.ui.preview.history": "历史"
+  "plugins.github.ui.preview.history": "历史",
+  "plugins.github.ui.checkRerunFailed": "重新运行失败的作业",
+  "plugins.github.ui.checkRerunWorkflow": "重新运行工作流",
+  "plugins.github.ui.checkRerunSubject": "这次重新运行"
 }

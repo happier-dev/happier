@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "Bereinigen",
   "plugins.github.ui.preview.review": "Prüfen",
   "plugins.github.ui.preview.openReceipt": "Beleg öffnen",
-  "plugins.github.ui.preview.history": "Verlauf"
+  "plugins.github.ui.preview.history": "Verlauf",
+  "plugins.github.ui.checkRerunFailed": "Fehlgeschlagene Jobs erneut ausführen",
+  "plugins.github.ui.checkRerunWorkflow": "Workflow erneut ausführen",
+  "plugins.github.ui.checkRerunSubject": "diese erneute Ausführung"
 }

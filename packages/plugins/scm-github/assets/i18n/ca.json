@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "Neteja",
   "plugins.github.ui.preview.review": "Revisa",
   "plugins.github.ui.preview.openReceipt": "Obre el rebut",
-  "plugins.github.ui.preview.history": "Historial"
+  "plugins.github.ui.preview.history": "Historial",
+  "plugins.github.ui.checkRerunFailed": "Torna a executar les tasques fallides",
+  "plugins.github.ui.checkRerunWorkflow": "Torna a executar el flux de treball",
+  "plugins.github.ui.checkRerunSubject": "aquesta reexecució"
 }

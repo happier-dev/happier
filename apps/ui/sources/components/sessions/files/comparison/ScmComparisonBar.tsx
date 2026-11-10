@@ -137,6 +137,9 @@ export function ScmComparisonExplainToggle(props: Readonly<{ value: boolean; onC
 /** A comparison rail's horizontal inset (Files' changed files, Walkthrough's contents): rows sit inside it. */
 export const SCM_COMPARISON_RAIL_INSET_PX = 8;
 
+/** The rail caption's row height (its title, count and list | tree switch), for panels that size around it. */
+export const SCM_COMPARISON_RAIL_CAPTION_MIN_HEIGHT_PX = 28;
+
 /**
  * The caption heading a comparison rail ("Changed files 9" with the list | tree switch, "Contents 2 of 5
  * reviewed"). Both views draw this one row at one height, so switching Files and Walkthrough keeps the
@@ -230,7 +233,7 @@ const styles = StyleSheet.create((theme) => ({
     explainOn: { borderColor: theme.colors.accent.blue },
     explainLabel: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary,  },
     grow: { flex: 1 },
-    railCaption: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minHeight: 28, paddingLeft: theme.space.s12, paddingRight: theme.space.s4, marginBottom: theme.space.s6 },
+    railCaption: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minHeight: SCM_COMPARISON_RAIL_CAPTION_MIN_HEIGHT_PX, paddingLeft: theme.space.s12, paddingRight: theme.space.s4, marginBottom: theme.space.s6 },
     railTitle: { ...Typography.variant('meta', 'semiBold'), color: theme.colors.text.secondary,  },
     railCount: { ...Typography.variant('meta', 'medium'), color: theme.colors.text.tertiary, fontVariant: ['tabular-nums'],  },
     railKeys: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s12, rowGap: theme.space.s6, paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s12 },

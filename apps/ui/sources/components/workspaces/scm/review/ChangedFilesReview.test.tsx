@@ -600,7 +600,9 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
 }));
 
-vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', () => ({
+vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', async (importOriginal) => ({
+    // The real row geometry (the file widget sizes itself by it); only the row element is a stand-in.
+    ...(await importOriginal<typeof import('@/components/workspaces/scm/changes/ScmChangeRow')>()),
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 
@@ -1016,6 +1018,42 @@ describe('ChangedFilesReview', () => {
         // The rail's rows go through the canonical virtualized list: every file is in its data; only rows on screen mount.
         const rows = rail!.findAll((node) => node.props.testID === 'scm-review-index-rows' && Array.isArray(node.props.data))[0];
         expect(rows?.props.data.map((file: any) => file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('floats the file list over a stream comparison instead of leading the stream with it (owner 2026-11-10)', async () => {
+        diffFilesListViewSpy.mockClear();
+        const screen = await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB],
+            comparisonChrome: { indexPlacement: 'stream', renderBarLeading: () => null, renderHeader: () => null },
+        });
+        await flushReviewEffects(2);
+        // The stream is the list: no index rows lead it and no index heads it.
+        expect(diffFilesListViewSpy.mock.calls.at(-1)?.[0]?.leadingRows ?? null).toBeNull();
+        const Header = diffFilesListViewSpy.mock.calls.at(-1)?.[0]?.ListHeaderComponent;
+        const headerScreen = await renderScreen(React.createElement(Header));
+        expect(headerScreen.findByTestId('scm-review-index')).toBeNull();
+        // A bar holding only Review's own Find and display menu folds into the widget.
+        expect(screen.findByTestId('scm-comparison-bar')).toBeNull();
+        // It sizes itself to the stream it floats over.
+        await act(async () => {
+            screen.findByTestId('scm-review-file-widget-area')!.props.onLayout({ nativeEvent: { layout: { width: 800, height: 600 } } });
+        });
+
+        const widgetRows = () => screen.findByTestId('scm-review-file-widget')
+            ?.findAll((node) => node.props.testID === 'scm-review-index-rows' && Array.isArray(node.props.data))[0]
+            ?.props.data.map((file: any) => file.fullPath) ?? null;
+        expect(widgetRows()).toEqual(['src/a.ts', 'src/b.ts']);
+
+        // Its filter narrows the files it lists.
+        await act(async () => { screen.findByTestId('scm-review-file-filter')!.props.onChangeText('b.ts'); });
+        expect(widgetRows()).toEqual(['src/b.ts']);
+
+        // Collapsed, it keeps only its trigger; expanding brings the same filtered list back.
+        await act(async () => { invokeTestInstanceHandler(screen.findByTestId('scm-review-file-widget-collapse')!, 'onPress'); });
+        expect(widgetRows()).toBeNull();
+        expect(screen.findByTestId('scm-review-file-widget-expand')).not.toBeNull();
+        await act(async () => { invokeTestInstanceHandler(screen.findByTestId('scm-review-file-widget-expand')!, 'onPress'); });
+        expect(widgetRows()).toEqual(['src/b.ts']);
     });
 
     it('keeps the compact toolbar and no file list outside Details', async () => {

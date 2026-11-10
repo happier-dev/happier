@@ -66,6 +66,7 @@ import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { preserveWebScrollAnchorAfterToggle } from './preserveWebScrollAnchorAfterToggle';
 import { ChangedFilesReviewIndex, ChangedFilesReviewIndexRowsScope, useChangedFilesReviewIndexLeadingRows } from './ChangedFilesReviewIndex';
 import { buildChangedFilesReviewFileIndex, ChangedFilesReviewPhoneFileControl } from './ChangedFilesReviewPhoneFileControl';
+import { ChangedFilesReviewFileWidget } from './ChangedFilesReviewFileWidget';
 import { ReviewKeyboardBindings } from './hunkReview/ReviewKeyboardBindings';
 import { useHunkReviewController } from './hunkReview/useHunkReviewController';
 import { buildLiveReviewFiles, type LiveReviewFile } from './hunkReview/hunkReviewModel';
@@ -1182,6 +1183,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const comparisonChrome = props.comparisonChrome ?? null;
     const indexInRail = comparisonChrome?.indexPlacement === 'rail';
     const phoneFileControl = comparisonChrome?.indexPlacement === 'phone' && reviewListFiles.length > 0;
+    // A stream comparison is its own list: the files float in a widget over the diffs instead of heading them.
+    const indexFloating = comparisonChrome?.indexPlacement === 'stream' && showIndex;
     const phoneHeaderSpaceStyle = phoneFileControl ? phoneControlSpace : null;
     const renderComparisonHeader = comparisonChrome?.renderHeader ?? null;
     // The source's Viewed facts (GitHub): one count in the header, one mark per file header row.
@@ -1197,7 +1200,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     // While any of them is on screen the index is still in view; the jump menu takes over past it.
     const [indexRowsViewable, setIndexRowsViewable] = React.useState(true);
     const streamIndexRows = useChangedFilesReviewIndexLeadingRows({
-        enabled: showIndex && !indexInRail && !phoneFileControl,
+        enabled: showIndex && !indexInRail && !phoneFileControl && !indexFloating,
         renderRowAccessory: comparisonChrome?.renderIndexAccessory ?? null,
         findModel: reviewFind,
         files: indexFiles,
@@ -1214,7 +1217,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return (
             <View>
                 {phoneFileControl ? <><View onLayout={onPhoneHeaderLayout}>{streamHeader}</View><Animated.View style={phoneHeaderSpaceStyle} /></> : streamHeader}
-                {showIndex && !indexInRail && !phoneFileControl ? (
+                {showIndex && !indexInRail && !phoneFileControl && !indexFloating ? (
                     <ChangedFilesReviewIndex
                         renderRowAccessory={comparisonChrome?.renderIndexAccessory ?? null}
                         findModel={reviewFind}
@@ -1279,6 +1282,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         props.activeReviewFile?.key,
         streamHeader,
         indexInRail,
+        indexFloating,
         phoneFileControl,
         onPhoneHeaderLayout,
         phoneHeaderSpaceStyle,
@@ -1532,7 +1536,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }
     const activeIndex = activeReviewPath ? pathToRowIndex.get(activeReviewPath) ?? -1 : -1;
     // Comparison chrome has its own file control; only the Details header consumes this jump menu.
-    const showJump = navigationPaths.length > 1 && (!showIndex || (!indexInRail && (indexRowsInList ? !indexRowsViewable : scrolledPastIndex)));
+    const showJump = navigationPaths.length > 1 && (!showIndex || (!indexInRail && !indexFloating && (indexRowsInList ? !indexRowsViewable : scrolledPastIndex)));
     const jumpItems = !comparisonChrome && detailsHeader && showJump ? navigationPaths.map((path, index) => ({
         id: path,
         label: `${index + 1} / ${navigationPaths.length}  ${path.split('/').pop() ?? path}`,
@@ -1600,11 +1604,15 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             onSelect: () => { findRuntime.open(findSurfaceId); } },
         { id: 'display', title: t('settingsAppearance.display'), items: displayMenu.items, onSelect: displayMenu.select },
     ];
+    // A bar that would hold only Review's own Find and display menu folds into the floating file widget's ⋯.
+    const comparisonBarLeading = comparisonChrome && !comparisonChrome.renderBar ? comparisonChrome.renderBarLeading(coverage) : null;
+    const barFoldsIntoWidget = indexFloating && comparisonChrome !== null && !comparisonChrome.renderBar
+        && comparisonBarLeading == null && comparisonChrome.barTrailing == null;
     const detailsHeaderElement = comparisonChrome?.renderBar ? <>
         {comparisonChrome.renderBar(coverage, null, comparisonMenuSections)}
-    </> : comparisonChrome ? (
+    </> : barFoldsIntoWidget ? <></> : comparisonChrome ? (
         <ScmComparisonBar
-            leading={comparisonChrome.renderBarLeading(coverage)}
+            leading={comparisonBarLeading}
             trailing={(
                 <>
                     {comparisonChrome.barTrailing ?? null}
@@ -1709,6 +1717,24 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     scrollEventThrottle={16}
                 />
                 </ChangedFilesReviewIndexRowsScope>
+                {indexFloating ? (
+                    <ChangedFilesReviewFileWidget
+                        files={indexFiles}
+                        totalFiles={coverage.fileCount}
+                        maxWidthPx={CHANGED_FILES_REVIEW_RAIL_WIDTH_PX}
+                        findModel={reviewFind}
+                        activeReviewFileKey={props.activeReviewFile?.key ?? null}
+                        commentCountByPath={commentCountByPath}
+                        onFocusPath={onIndexFocusPath}
+                        renderCommitToggle={indexRenderCommitToggle}
+                        renderRowAccessory={comparisonChrome?.renderIndexAccessory ?? null}
+                        rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
+                        listFooter={pagingFooter}
+                        menu={barFoldsIntoWidget ? <ChangedFilesReviewMoreMenu interactiveTargetGapPx={SCM_COMPARISON_ACTIONS_GAP_PX}
+                            diffArea={diffArea} availableDiffAreas={diffConfig.availableModes} diffAreaLabels={diffAreaLabels}
+                            onDiffArea={setDiffArea} leadingSections={comparisonMenuSections.filter((section) => section.id === 'find')} /> : null}
+                    />
+                ) : null}
                 {phoneFileControl ? <Animated.View testID="scm-comparison-file-sticky" onLayout={onPhoneControlLayout}
                     style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }, phoneControlStyle]}>
                     <ChangedFilesReviewPhoneFileControl fileIndex={reviewFileIndex} activePath={activeReviewPath}

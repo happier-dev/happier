@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "Clean up",
   "plugins.github.ui.preview.review": "Review",
   "plugins.github.ui.preview.openReceipt": "Open receipt",
-  "plugins.github.ui.preview.history": "History"
+  "plugins.github.ui.preview.history": "History",
+  "plugins.github.ui.checkRerunFailed": "Re-run failed jobs",
+  "plugins.github.ui.checkRerunWorkflow": "Re-run workflow",
+  "plugins.github.ui.checkRerunSubject": "this re-run"
 }

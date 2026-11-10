@@ -1,5 +1,10 @@
 import type { ReactElement, ReactNode } from 'react';
+import { View } from 'react-native';
 
+import { HappierHeading } from '../presentation/content/Foundation.js';
+import { happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
+import { HappierPressable } from '../presentation/interaction/Pressable.js';
+import { HAPPIER_PRESS_FEEDBACK_V1 } from '../presentation/interaction/pressFeedback.js';
 import {
   HAPPIER_STEP_STATE_TONE,
   HappierStep,
@@ -21,6 +26,11 @@ export type StepProps = Readonly<{
   titleKey?: string;
   /** Quiet context beside the title: a total, an author, a time. */
   trailing?: ReactNode;
+  /**
+   * The step's title opens where its whole story is told (What changed opens the changed files, Checks opens
+   * the checks). The title becomes a link with a forward chevron; the step's body keeps its own controls.
+   */
+  onPress?: () => void;
   children?: ReactNode;
   testID?: string;
 }>;
@@ -41,6 +51,28 @@ export function Step(props: StepProps): ReactElement {
   const stateGlyph = marker.kind === 'state' && marker.state !== 'running' && marker.state !== 'open'
     ? <Icon name={marker.state === 'passed' ? 'check' : 'close'} size="small" tone={HAPPIER_STEP_STATE_TONE[marker.state]} />
     : undefined;
+  const onPress = props.onPress;
+  const titleContent = onPress === undefined ? undefined : (
+    <HappierPressable
+      accessibilityRole="link"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={(state) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+        gap: theme.spacing.xsmall,
+        opacity: state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
+        ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus }),
+      })}
+    >
+      <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <HappierHeading level={3} theme={theme}>{title}</HappierHeading>
+      </View>
+      <Icon name="forward" size="small" tone="secondary" />
+    </HappierPressable>
+  );
 
   return (
     <HappierStep
@@ -48,6 +80,7 @@ export function Step(props: StepProps): ReactElement {
       {...(markerLabel === undefined ? {} : { markerLabel })}
       {...(stateGlyph === undefined ? {} : { stateGlyph })}
       title={title}
+      {...(titleContent === undefined ? {} : { titleContent })}
       trailing={props.trailing}
       theme={theme}
       {...(props.testID === undefined ? {} : { testID: props.testID })}

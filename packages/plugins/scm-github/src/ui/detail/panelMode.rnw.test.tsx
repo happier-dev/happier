@@ -8,7 +8,7 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TriageActivityAgentProvider, TriageEvidenceDisclosureProvider, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentProvider, TriageDetailPanelNavigationProvider, TriageEvidenceDisclosureProvider, type TriageDetailPanelNavigationV1, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
 import { projectGithubRepositoryCapabilities } from '../../triage/capabilities.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
 import { activate, activateAccount } from '../../activate.js';
@@ -219,6 +219,11 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
   primaryWrites?: Array<TriageDetailPrimaryWriteV1 | null>;
   primaryValue?: TriageDetailPrimaryWriteV1 | null;
   writes?: Array<{ localId: string; input: unknown }>;
+  /** The Triage frame's panel selection, as its detail body installs it around the source. */
+  panelNavigation?: TriageDetailPanelNavigationV1;
+  /** Answers one Action before the defaults (a CI write, a changed-files page); `undefined` falls through. */
+  onAction?: (localId: string, input: unknown) => JsonValue | undefined;
+  changedFilesReview?: boolean;
 }> = {}): Promise<PluginUiTestkit> {
   let detail!: PluginUiTestkit;
   const offerPrimaryWrite = (write: TriageDetailPrimaryWriteV1 | null) => { options.primaryWrites?.push(write); };
@@ -244,16 +249,19 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
           onPress={() => { void options.primaryValue?.execute(); }} />}{content}</TriageEvidenceDisclosureProvider>;
         const activity = options.refreshGeneration === undefined ? offered : <TriageActivityAgentProvider
           value={{ events: [], tail: null, refreshGeneration: options.refreshGeneration() }}>{offered}</TriageActivityAgentProvider>;
-        return options.visible === undefined ? activity : <Tabs value={options.visible() ? 'source' : 'session'}
+        const framed = options.panelNavigation === undefined ? activity
+          : <TriageDetailPanelNavigationProvider navigation={options.panelNavigation}>{activity}</TriageDetailPanelNavigationProvider>;
+        return options.visible === undefined ? framed : <Tabs value={options.visible() ? 'source' : 'session'}
           onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
-          <Tabs.Item value="source" title="Source" retention="retain">{activity}</Tabs.Item>
+          <Tabs.Item value="source" title="Source" retention="retain">{framed}</Tabs.Item>
           <Tabs.Item value="session" title="Session" />
         </Tabs>;
       }),
       surfaceContext: createSurfaceContextFixture(options.translations === undefined ? {} : {
         locale: 'fr', translations: options.translations,
       }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      // With `changedFilesReview`, the host's review as its semantic stand-in: Files opens and reads a file as the host does.
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(options.changedFilesReview === true ? { changedFilesReview: true } : {}),
       launchInput: { ...(launchInput() as Record<string, JsonValue>), ...(options.direct ? {} : { panel: typeof panel === 'string' ? panel : panel() }) } as JsonValue,
       handlers: {
         ...(options.navigation === undefined ? {} : { setPageNavigation: ({ navigation }: { navigation: PluginUiPageNavigationV1 | null }) => { options.navigation?.push(navigation); } }),
@@ -269,6 +277,8 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
           }
           const localId = (action as { localId: string }).localId;
           options.reads?.push(localId);
+          const answered = options.onAction?.(localId, input);
+          if (answered !== undefined) return answered;
           const refusal = options.rejectRead?.(localId);
           if (refusal !== undefined) throw refusal;
           if (options.invokeRead && (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities
@@ -815,6 +825,73 @@ describe('the GitHub detail as Triage panels', () => {
       feedback: [...feedbackReads].sort(),
     }).toEqual({ overview: 1, checks: 0, files: 1, timeline: 1, feedback: ['comments', 'requests', 'reviews', 'threads'] });
     await expect(detail.getByText('build')).resolves.toBeDefined();
+  });
+
+  it('opens Files, Checks and one named file from the story through the frame\'s own panel selection', async () => {
+    let panel = 'overview';
+    const selected: string[] = [];
+    const diffReads: string[] = [];
+    const files = ['src/cart/totals.ts', 'src/cart/tax.ts', 'src/cart/discounts.ts', 'src/cart/rounding.ts', 'src/cart/index.ts', 'README.md']
+      .map((path, index) => ({ path, status: 'modified', additions: 60 - index * 10, deletions: 5, changes: 65 - index * 10, diffAvailable: true }));
+    let detail!: PluginUiTestkit;
+    const navigation: TriageDetailPanelNavigationV1 = {
+      panels: ['overview', 'activity', 'files', 'checks'],
+      select: (next) => { selected.push(next); panel = next; },
+    };
+    detail = await mountPanel(() => panel, { panelNavigation: navigation, changedFilesReview: true, onAction: (localId, input) => {
+      if (localId !== GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles) return undefined;
+      const filePath = (input as { filePath?: string }).filePath;
+      if (filePath !== undefined) diffReads.push(filePath);
+      return { kind: 'changedFiles', rows: files, omittedRowCount: 0, projectionTruncated: false } as JsonValue;
+    } });
+    const settle = async () => { await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); }); };
+
+    // The step titles open the panel that tells their whole story.
+    await act(async () => { await detail.press(await detail.getByRole('link', { name: 'What changed' })); });
+    expect(selected).toEqual(['files']);
+    panel = 'overview';
+    await settle();
+    await act(async () => { await detail.press(await detail.getByRole('link', { name: 'Checks' })); });
+    expect(selected).toEqual(['files', 'checks']);
+    panel = 'overview';
+    await settle();
+
+    // "N smaller files" lists every file read so far in place, and says how many GitHub has not listed yet.
+    await expect(detail.queryByRole('link', { name: 'README.md' })).resolves.toBeUndefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: '13 smaller files' })); });
+    await expect(detail.getByRole('link', { name: 'README.md' })).resolves.toBeDefined();
+    await expect(detail.getByText('11 more files')).resolves.toBeDefined();
+
+    // A file opens Files on that file: the review reads that file's diff.
+    await act(async () => { await detail.press(await detail.getByRole('link', { name: 'src/cart/index.ts' })); });
+    expect(selected).toEqual(['files', 'checks', 'files']);
+    await settle();
+    await vi.waitFor(() => expect(diffReads).toContain('src/cart/index.ts'));
+  });
+
+  it('marks each check with its status and re-runs a failed check\'s workflow through the shared CI write', async () => {
+    const run = { v: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'octo-org/example-app' }, runId: '77' };
+    const checks = { ...(failingChecksAnswer() as Record<string, JsonValue>), rows: [
+      { key: 'github-check-run:9003', resourceKind: 'check-run', name: 'build', status: 'completed', conclusion: 'failure',
+        actions: { selection: { kind: 'attempt', attempt: { run, attemptId: '1' } }, checkRunId: '9003', headSha: HEAD_REVISION } },
+      { key: 'github-check-run:9004', resourceKind: 'check-run', name: 'lint', status: 'completed', conclusion: 'success' },
+    ], passingCount: 1 } as JsonValue;
+    const writes: Array<{ localId: string; input: unknown }> = [];
+    const detail = await mountPanel('checks', { checks, onAction: (localId, input) => {
+      if (!localId.startsWith('github/actions/run-rerun')) return undefined;
+      writes.push({ localId, input });
+      return { kind: 'accepted', affected: { repository: run.repository, run } } as JsonValue;
+    } });
+    await expect(detail.getByRole('image', { name: 'Failed' })).resolves.toBeDefined();
+    await expect(detail.getByRole('image', { name: 'Succeeded' })).resolves.toBeDefined();
+    // A check GitHub Actions did not run has no workflow to re-run.
+    await expect(detail.queryAllByRole('button', { name: 'Re-run failed jobs' })).resolves.toHaveLength(1);
+    const before = overviewReads.length;
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Re-run failed jobs' })); });
+    expect(writes).toEqual([{ localId: 'github/actions/run-rerun-failed',
+      input: { repository: run.repository, runId: '77', attempt: '1' } }]);
+    // The accepted re-run is read back through the checks' own refresh.
+    await vi.waitFor(() => expect(overviewReads.length).toBeGreaterThan(before));
   });
 
   it('keeps the failing checks read when GitHub has more check pages than were read', async () => {

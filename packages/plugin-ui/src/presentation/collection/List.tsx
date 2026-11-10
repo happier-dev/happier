@@ -1301,6 +1301,8 @@ export function HappierListItem({
       } : undefined, collectionRow && resolvedTheme ? {
         // The pointer's fill eases in at the fast step (web); selection lands at once.
         ...(reducedMotion ? {} : COLLECTION_ROW_FILL_TRANSITION),
+        // A filled surface takes the one radius base, as the group band above the rows does (owner 2026-11-10).
+        borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
         ...(collectionItem?.insetFill === true ? CATALOG_INSET_FILL_STYLE : null),
       } : undefined]}
     >

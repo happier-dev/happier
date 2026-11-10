@@ -11,6 +11,8 @@ export type DetailsReviewTranslations = Readonly<{
     changedFiles: string;
     commitColumn: string;
     jumpA11y: string;
+    showFileList: string;
+    hideFileList: string;
     comments: (params: Count) => string;
     goesWithNext: (params: Count) => string;
     askForChanges: string;
@@ -31,6 +33,8 @@ export const detailsReviewTranslationsEnglish = { en: {
         changedFiles: 'Changed files',
         commitColumn: 'Commit',
         jumpA11y: 'Jump to a file',
+        showFileList: 'Show file list',
+        hideFileList: 'Hide file list',
         comments: ({ count }) => (count === 1 ? `1 comment` : `${count} comments`),
         goesWithNext: ({ count }): string => (count === 1 ? `goes with your next message` : `go with your next message`),
         askForChanges: 'Ask for changes',

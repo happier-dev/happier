@@ -143,11 +143,11 @@ export function PluginUiPrivateChangedFilesReview(
       renderBarLeading: () => null,
       // The file count is the review index's own caption (as in the Session review), so the header
       // adds no second one: only the source's Viewed fact, the list | tree switch and its notices.
-      // The rail draws its own switch; a detail pane is narrower than the rail, so without one the
-      // header carries it (the stream index honours the same preference).
+      // The rail and the stream's floating file widget draw their own switch; only the phone's file
+      // control has none, so there the header carries it.
       renderHeader: (_coverage, facts) => {
         const viewed = facts?.viewed ?? null;
-        const layoutSwitch = indexPlacement !== 'rail';
+        const layoutSwitch = indexPlacement === 'phone';
         const facts_row = viewed !== null || layoutSwitch ? (
           <View style={headerRowStyle}>
             {viewed}

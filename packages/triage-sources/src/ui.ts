@@ -33,6 +33,7 @@ export {
 export { TriageActivityAgentProvider, TriageActivityAgentTail, useTriagePageRefresh, type TriageActivityAgentV1 } from './ui/activityAgent.js';
 export { TriageDetailInstance, TriageDetailPageScrollProvider, TriageDetailPanel, triageDetailPanelOwnsScrollerV1, useTriageDetailRequest } from './ui/detailPanel.js';
 export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
+export { TriageSourceReadFailureDetails } from './ui/readFailure.js';
 export {
   TriageDetailStory,
   TriageDetailChangeSummary,
@@ -40,6 +41,7 @@ export {
   TriageDetailChecks,
   TriageDetailSpread,
   TriageStoryLoadingLines,
+  type TriageDetailChangesLoadMoreV1,
   type TriageDetailChecksRollupV1,
   type TriageDetailFailingCheckV1,
   type TriageDetailSpreadTileV1,
@@ -64,6 +66,7 @@ export {
   TriageActivityTimeline,
   orderTriageActivityEventsV1,
   type TriageActivityContinuationV1,
+  type TriageActivityLeadV1,
   type TriageActivityRefreshV1,
   type TriageActivityEventV1,
   type TriageActivityKindV1,

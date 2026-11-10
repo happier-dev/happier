@@ -1142,5 +1142,8 @@
   "plugins.github.ui.preview.cleanUp": "Nettoyer",
   "plugins.github.ui.preview.review": "Examiner",
   "plugins.github.ui.preview.openReceipt": "Ouvrir le reçu",
-  "plugins.github.ui.preview.history": "Historique"
+  "plugins.github.ui.preview.history": "Historique",
+  "plugins.github.ui.checkRerunFailed": "Relancer les jobs en échec",
+  "plugins.github.ui.checkRerunWorkflow": "Relancer le workflow",
+  "plugins.github.ui.checkRerunSubject": "cette relance"
 }
