@@ -52,7 +52,7 @@ test('tauri desktop-sidebar-chrome QA exposes a deterministic capture plan', asy
     assert.deepEqual(payload.plan.steps[3].selectors, [
         '[data-testid="desktop-unauth-shell-chrome"]',
         '[data-testid="desktop-window-controls-host"]',
-        '[data-testid="desktop-update-indicator-host"]',
+        '[data-testid="welcome-footer-trailing"]',
     ]);
     assert.deepEqual(payload.plan.steps[4].selectors, [
         '[data-testid="desktop-narrow-shell-chrome"]',

@@ -32,7 +32,6 @@ import { OnboardingWizardSurfacePresentation } from '@/components/onboarding/sur
 import { useOnboardingWizardController } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import type { WelcomeAuthenticationActionContext } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import { UnauthenticatedSplitShell, useApplyBrandHeroSeen } from '@/components/onboarding/unauthShell';
-import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/desktopChrome/DesktopShellUpdateIndicatorHost';
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
@@ -375,16 +374,16 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (completion) openPersonalize();
     }, [auth.isAuthenticated, openPersonalize, resolvedInitialBeatId, router]);
 
+    // Window controls stay in the top-left chrome where the platform puts them; the Updates entry is the
+    // workflow pane's bottom-right footer control (end of the welcome help row, same corner on later steps).
     const shellChrome = shellChromeHost === 'unauth-shell' ? (
-        <>
-            <DesktopShellWindowControlsHost>
-                {resolvedDesktopWindowControls}
-            </DesktopShellWindowControlsHost>
-            <DesktopShellUpdateIndicatorHost>
-                <UpdatesEntry variant="pill" testID="preauth-updates-pill" />
-            </DesktopShellUpdateIndicatorHost>
-        </>
+        <DesktopShellWindowControlsHost>
+            {resolvedDesktopWindowControls}
+        </DesktopShellWindowControlsHost>
     ) : null;
+    const workflowFooterAccessory = shellChromeHost === 'unauth-shell'
+        ? <UpdatesEntry variant="footer" testID="preauth-updates-entry" />
+        : null;
 
     const wizardSurfaceProps = {
         testID: props.testID ?? 'onboarding-wizard',
@@ -435,6 +434,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             onBack={controller.onBack ?? undefined}
             transitionDirection={controller.contentTransitionDirection}
             workflowPresentation={controller.stepId === 'scan_code' ? 'fullBleed' : 'padded'}
+            footerAccessory={workflowFooterAccessory}
             testID={shellTestID}
         >
             {children}

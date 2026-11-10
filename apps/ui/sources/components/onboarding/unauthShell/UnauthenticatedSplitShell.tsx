@@ -79,6 +79,9 @@ export type UnauthenticatedSplitShellProps = Readonly<{
      */
     workflowPresentation?: UnauthenticatedWorkflowPresentation;
 
+    /** The workflow pane's one bottom-right control (the signed-out Updates entry); see `WorkflowPanel`. */
+    footerAccessory?: React.ReactNode;
+
     testID?: string;
 }>;
 
@@ -140,6 +143,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 transitionKey={props.stepId}
                 transitionDirection={transitionDirection}
                 presentation={props.workflowPresentation ?? 'padded'}
+                footerAccessory={props.footerAccessory}
             >
                 {/*
                   * The workflow is one narrow column on every device, so its

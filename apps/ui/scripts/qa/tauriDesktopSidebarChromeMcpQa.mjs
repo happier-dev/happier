@@ -90,7 +90,8 @@ function buildDesktopSidebarChromeStepPlan() {
             selectors: [
                 '[data-testid="desktop-unauth-shell-chrome"]',
                 '[data-testid="desktop-window-controls-host"]',
-                '[data-testid="desktop-update-indicator-host"]',
+                // Signed out, Updates is the workflow pane's footer control, not part of the top-left chrome.
+                '[data-testid="welcome-footer-trailing"]',
             ],
             screenshot: '04-unauthenticated-shell.png',
             domStructure: '04-unauthenticated-shell.structure.yml',

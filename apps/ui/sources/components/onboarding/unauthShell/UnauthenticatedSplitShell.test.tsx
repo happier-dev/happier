@@ -315,6 +315,72 @@ describe('UnauthenticatedSplitShell', () => {
         expect(screenOther.findAllByTestId('welcome-footer-links')).toEqual([]);
     });
 
+    it('puts the footer accessory at the end of the welcome help row and in the same bottom-right slot on later steps, never over the content', async () => {
+        for (const layout of ['split', 'mobile-workflow'] as const) {
+            setLayoutFixture(layout);
+            const accessory = <Text testID="footer-accessory">updates</Text>;
+            const welcome = await renderScreen(
+                <UnauthenticatedSplitShell
+                    stepId="welcome"
+                    isWelcomeStep
+                    footerAccessory={accessory}
+                    onOpenRelayCustomFlow={() => {}}
+                    onBrandHeroGetStarted={() => {}}
+                >
+                    <FakeBody label="welcome" />
+                </UnauthenticatedSplitShell>,
+            );
+            const helpRow = welcome.findByTestId('welcome-footer-links');
+            expect(helpRow?.findAll((node) => node.props?.testID === 'footer-accessory').length).toBeGreaterThan(0);
+            expect(welcome.findAllByTestId('unauth-shell-footer-accessory')).toEqual([]);
+            await welcome.unmount();
+
+            const later = await renderScreen(
+                <UnauthenticatedSplitShell
+                    stepId="auth_restore"
+                    isWelcomeStep={false}
+                    footerAccessory={accessory}
+                    onOpenRelayCustomFlow={() => {}}
+                    onBrandHeroGetStarted={() => {}}
+                    onBack={() => {}}
+                >
+                    <FakeBody label="restore" />
+                </UnauthenticatedSplitShell>,
+            );
+            const slot = later.findByTestId('unauth-shell-footer-accessory');
+            expect(slot?.findAll((node) => node.props?.testID === 'footer-accessory').length).toBeGreaterThan(0);
+            // In the scroll column after the step, right-aligned: it takes its own row instead of floating over a title.
+            const slotStyle = flattenStyle(slot?.props.style);
+            expect(slotStyle.position).toBeUndefined();
+            expect(slotStyle.justifyContent).toBe('flex-end');
+            const column = later.findByTestId('unauth-shell-workflow-scroll');
+            const order = column
+                ?.findAll((node) => (
+                    node.props?.testID === 'unauth-shell-step-transition'
+                    || node.props?.testID === 'unauth-shell-footer-accessory'
+                ))
+                .map((node) => node.props.testID)
+                .filter((testID, index, all) => all.indexOf(testID) === index);
+            expect(order).toEqual(['unauth-shell-step-transition', 'unauth-shell-footer-accessory']);
+            await later.unmount();
+        }
+    });
+
+    it('renders no footer accessory slot when the host passes none', async () => {
+        setLayoutFixture('split');
+        const screen = await renderScreen(
+            <UnauthenticatedSplitShell
+                stepId="auth_restore"
+                isWelcomeStep={false}
+                onOpenRelayCustomFlow={() => {}}
+                onBrandHeroGetStarted={() => {}}
+            >
+                <FakeBody label="restore" />
+            </UnauthenticatedSplitShell>,
+        );
+        expect(screen.findAllByTestId('unauth-shell-footer-accessory')).toEqual([]);
+    });
+
     it('renders BackChevron only when onBack is provided', async () => {
         setLayoutFixture('split');
         const onBack = vi.fn();

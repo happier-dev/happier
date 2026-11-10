@@ -22,6 +22,8 @@ const LINK_HIT_REACH = { left: 5, right: 5 } as const;
 export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
     retentionDisclosure?: RelayRetentionDisclosureState | null;
+    /** The pane's footer accessory (signed-out Updates): the help row's trailing control. */
+    trailing?: React.ReactNode;
 }>;
 
 /**
@@ -105,8 +107,11 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
                                 <Text style={[styles.action, actionColor]}>{t('welcome.welcomeFooterDocsAction')}</Text>
                             </Animated.View>
                         </HappierPressable>
+                        {isMobile ? props.trailing : null}
                     </View>
                 </View>
+                {/* Desktop: the far end of the row, level with the icons rather than the label above them. */}
+                {!isMobile && props.trailing ? <View testID="welcome-footer-trailing" style={styles.trailingDesktop}>{props.trailing}</View> : null}
             </View>
         </View>
     );
@@ -161,6 +166,9 @@ const stylesheet = StyleSheet.create(() => ({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 10,
+    },
+    trailingDesktop: {
+        alignSelf: 'flex-end',
     },
     label: {
         ...Typography.variant('body'),

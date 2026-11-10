@@ -77,6 +77,12 @@ export type WorkflowPanelProps = Readonly<{
     transitionKey: string;
     transitionDirection: StepTransitionDirection;
     presentation?: WorkflowPanelPresentation;
+    /**
+     * One trailing control at the pane's bottom right (the signed-out Updates entry): the end of
+     * the welcome help row, and a row of its own under every later step, so it never floats over
+     * a step's heading.
+     */
+    footerAccessory?: React.ReactNode;
     testID?: string;
 }>;
 
@@ -265,6 +271,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <WelcomeFooterLinks
                                 variant="mobile"
                                 retentionDisclosure={props.retentionDisclosure}
+                                trailing={props.footerAccessory}
                             />
                         </>
                     ) : (
@@ -284,6 +291,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <WelcomeFooterLinks
                                 variant="desktop"
                                 retentionDisclosure={props.retentionDisclosure}
+                                trailing={props.footerAccessory}
                             />
                         </>
                     )
@@ -291,17 +299,37 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     // Non-welcome steps keep the legacy fill behaviour so step
                     // bodies that center themselves vertically (restore, scan…)
                     // continue to look right.
-                    <StepTransitionFrame
-                        testID="unauth-shell-step-transition"
-                        transitionKey={props.transitionKey}
-                        direction={props.transitionDirection}
-                        style={STEP_TRANSITION_FILL_STYLE}
-                        contentStyle={STEP_TRANSITION_FILL_STYLE}
-                    >
-                        <View style={STEP_TRANSITION_FILL_STYLE}>
-                            {props.children}
-                        </View>
-                    </StepTransitionFrame>
+                    <>
+                        <StepTransitionFrame
+                            testID="unauth-shell-step-transition"
+                            transitionKey={props.transitionKey}
+                            direction={props.transitionDirection}
+                            style={STEP_TRANSITION_FILL_STYLE}
+                            contentStyle={STEP_TRANSITION_FILL_STYLE}
+                        >
+                            <View style={STEP_TRANSITION_FILL_STYLE}>
+                                {props.children}
+                            </View>
+                        </StepTransitionFrame>
+                        {props.footerAccessory ? (
+                            <View
+                                testID="unauth-shell-footer-accessory"
+                                style={[
+                                    styles.footerAccessoryRow,
+                                    isMobile
+                                        ? isFullBleed
+                                            ? {
+                                                paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
+                                                paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
+                                            }
+                                            : null
+                                        : styles.footerAccessoryRowDesktop,
+                                ]}
+                            >
+                                {props.footerAccessory}
+                            </View>
+                        ) : null}
+                    </>
                 )}
             </ScrollView>
         </View>
@@ -342,6 +370,17 @@ const stylesheet = StyleSheet.create(() => ({
         // viewports so the column's intrinsic content+footer height exceeds
         // the viewport and the ScrollView takes over.
         minHeight: 0,
+    },
+    // The welcome footer's row height and bottom inset, so the accessory sits in the same corner on
+    // every step: desktop adds the footer's own 28px bottom padding, mobile adds none.
+    footerAccessoryRow: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        paddingTop: 20,
+    },
+    footerAccessoryRowDesktop: {
+        paddingBottom: 28,
     },
     backChevronContainer: {
         position: 'absolute',

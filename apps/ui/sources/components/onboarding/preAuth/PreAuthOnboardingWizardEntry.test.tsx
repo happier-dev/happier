@@ -657,7 +657,11 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(wizard.props.shellChrome).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
-        expect(screen.findAllByType('UpdatesEntry' as never)).toHaveLength(1);
+        // The top-left chrome keeps only the window controls; Updates lives in the workflow pane's footer slot.
+        expect(screen.findAllByType('UpdatesEntry' as never)).toHaveLength(0);
+        const shell = screen.findByType('UnauthenticatedSplitShell' as never);
+        const accessory = shell.props.footerAccessory as React.ReactElement<{ variant?: string }> | undefined;
+        expect(accessory?.props.variant).toBe('footer');
     });
 
     it('does not inject pre-auth shell chrome on non-desktop flows', async () => {
@@ -667,6 +671,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
         expect(wizard.props.shellChrome ?? null).toBeNull();
         expect(screen.findAllByType('UpdatesEntry' as never)).toHaveLength(0);
+        expect(screen.findByType('UnauthenticatedSplitShell' as never).props.footerAccessory ?? null).toBeNull();
     });
 
     it('routes the shell footer relay action to the wizard relay selection step', async () => {
