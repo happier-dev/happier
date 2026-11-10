@@ -37,6 +37,12 @@ Dependency runtime JavaScript stays outside authored emission roots, including
 ambient declarations that self-reference their package's runtime subpaths.
 The public check derives these inputs without rewriting tracked membership lists.
 
+In 0.3 development, an explicit single-source-file `--noEmit` check through
+`scripts/workspaces/runTypeScriptCli.mjs` uses the existing `runtime-build`
+admission class for one imported graph. It does not use a focused-test
+reservation: one source file can import a large graph. Package/project checks
+and multiple-source-file requests retain their existing classes.
+
 The public UI typecheck generates typed routes with the installed Expo generator and
 Metro exclusions into `apps/ui/node_modules/.cache/tsc/router.d.ts`. All finite
 partitions, including CLI's referenced UI declarations, consume this compiler-owned

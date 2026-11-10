@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
@@ -298,10 +299,10 @@ const COMMAND_RULES = [
     set: { controllerDispatcher: '1' } },
   // Source typecheck runners admit their compiler leaves directly. They do not
   // publish first-party dependency outputs or acquire publication custody.
-  { when: { command: ['node', 'nodejs'], entryRepositoryPath: [
+  ...[{ command: ['node', 'nodejs'] }, { managerNode: ['1'] }].map(when => ({ when: { ...when, entryRepositoryPath: [
     'scripts/workspaces/runTypeScriptCli.mjs',
     'apps/server/scripts/runTypeScriptCli.mjs',
-  ] }, set: { compilerLeaf: '1' } },
+  ] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native', compilerLeaf: '1' } })),
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['packages/plugin-sdk/scripts/bundleWorkspaceDeps.mjs'], declarations: ['1'], runScript: ['1'] }, set: { selfPublisher: '1' } },
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: [
     'scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs',
@@ -464,6 +465,10 @@ const FINAL_COMMAND_RULES = [
   // Evidence: admission-floor-classes-1108/c2-typecheck-*.json.
   { when: { kind: ['typecheck'], component: ['packages/agents', 'packages/brand', 'packages/connection-supervisor', 'packages/peer-mediation', 'packages/peer-transport', 'packages/support'], project: ['tsconfig.json', './tsconfig.json'], singleProject: ['1'] }, set: { heavyClass: 'package-dist' } },
   { when: { kind: ['typecheck'], mixedProjects: ['1'] }, set: { heavyClass: 'compilation' } },
+  // An explicit noEmit root checks its imported graph, not the whole workspace.
+  // Reuse the Protocol graph envelope (10,420,624 KiB measured above), rather
+  // than the focused-test envelope: a single root can import a large graph.
+  { when: { kind: ['typecheck'], singleRootNoEmit: ['1'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { heavyClass: 'runtime-build' } },
   { when: { script: ['build', 'build:finite', 'build:clean'], component: ['packages/cli-common', 'packages/protocol'] }, set: { heavyClass: 'package-dist' } },
@@ -867,6 +872,14 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
     facts = normalizeCommandArguments([...commandArgs.slice(0, entryIndex + 1), ...compilerArgs], cwd, repoRoot);
   }
   const policy = applyCommandRules(facts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
+  if (policy.compilerLeaf === '1' && !facts.project && facts.entryArguments.includes('--noEmit')) {
+    // The compiler owns option arity: an option value ending in .ts is not a
+    // source root. Load its retained parsing API only for explicit leaf checks.
+    const { parseCommandLine } = createRequire(import.meta.url)('typescript');
+    const parsed = parseCommandLine(facts.entryArguments);
+    facts.singleRootNoEmit = parsed.errors.length === 0 && parsed.options.noEmit === true
+      && !parsed.options.project && parsed.fileNames.length === 1 ? '1' : '0';
+  }
   if (facts.managerCwd && !packageDir) {
     const managerCwd = facts.managerCwd.replaceAll('\\', '/');
     facts.component = managerCwd.startsWith('/') ? managerCwd : posix.join(facts.component, managerCwd);
@@ -1565,7 +1578,7 @@ resolve_native_command_policy() {
   # Recursive argv normalization already resolved the actual payload. Reuse
   # its metadata child rather than parsing a package-manager alias twice.
   [ "$native_test_policy_resolved" = 0 ] || return 0
-  if [ "$policy_workerTool" = vitest ] && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
+  if { [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
     native_policy_request_cwd=$invoked_cwd
     if [ "\${explicit_relative_cwd_set-0}" = 1 ]; then
       case "$explicit_relative_cwd" in
@@ -1573,8 +1586,8 @@ resolve_native_command_policy() {
         *) native_policy_request_cwd=$repo_root/$explicit_relative_cwd ;;
       esac
     fi
-    native_vitest_policy=$(node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --vitest-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
-    eval "$native_vitest_policy"
+    native_payload_policy=$(node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
+    eval "$native_payload_policy"
     native_test_policy_resolved=1
   fi
 }
@@ -1611,7 +1624,7 @@ native_resolve_command_policy_arguments() {
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
   policy_nativeLoader=0
-  policy_project=; policy_projectPaths=; policy_workerRequest=0
+  policy_project=; policy_projectPaths=; policy_workerRequest=0; policy_singleRootNoEmit=0
   policy_noCheck=0
   policy_compile=0; native_compile_options=1
   policy_write=0; policy_readOnly=0; policy_report=0; policy_formatterCheck=0

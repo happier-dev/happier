@@ -185,6 +185,19 @@ native_command_policy_base() {
     policy_controllerDispatcher='1'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/runTypeScriptCli.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/server/scripts/runTypeScriptCli.mjs' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_kind='typecheck'
+    policy_workerTool='typescript-native'
+    policy_compilerLeaf='1'
+  fi
+  if { [ "$policy_managerNode" = '1' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/runTypeScriptCli.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/server/scripts/runTypeScriptCli.mjs' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_kind='typecheck'
+    policy_workerTool='typescript-native'
     policy_compilerLeaf='1'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'packages/plugin-sdk/scripts/bundleWorkspaceDeps.mjs' ]; } && { [ "$policy_declarations" = '1' ]; } && { [ "$policy_runScript" = '1' ]; }; then
@@ -491,6 +504,9 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_mixedProjects" = '1' ]; }; then
     policy_heavyClass='compilation'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_singleRootNoEmit" = '1' ]; }; then
+    policy_heavyClass='runtime-build'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_workerRequest" = '1' ]; } && { [ "$policy_entryPath" = 'apps/stack/scripts/build/remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='runtime-build'
@@ -825,7 +841,7 @@ resolve_native_command_policy() {
   # Recursive argv normalization already resolved the actual payload. Reuse
   # its metadata child rather than parsing a package-manager alias twice.
   [ "$native_test_policy_resolved" = 0 ] || return 0
-  if [ "$policy_workerTool" = vitest ] && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
+  if { [ "$policy_workerTool" = vitest ] || { [ "$policy_compilerLeaf" = 1 ] && [ -z "$policy_project" ]; }; } && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
     native_policy_request_cwd=$invoked_cwd
     if [ "${explicit_relative_cwd_set-0}" = 1 ]; then
       case "$explicit_relative_cwd" in
@@ -833,8 +849,8 @@ resolve_native_command_policy() {
         *) native_policy_request_cwd=$repo_root/$explicit_relative_cwd ;;
       esac
     fi
-    native_vitest_policy=$(node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --vitest-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
-    eval "$native_vitest_policy"
+    native_payload_policy=$(node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --package-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
+    eval "$native_payload_policy"
     native_test_policy_resolved=1
   fi
 }
@@ -871,7 +887,7 @@ native_resolve_command_policy_arguments() {
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
   policy_nativeLoader=0
-  policy_project=; policy_projectPaths=; policy_workerRequest=0
+  policy_project=; policy_projectPaths=; policy_workerRequest=0; policy_singleRootNoEmit=0
   policy_noCheck=0
   policy_compile=0; native_compile_options=1
   policy_write=0; policy_readOnly=0; policy_report=0; policy_formatterCheck=0
