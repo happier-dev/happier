@@ -1,14 +1,17 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { AgentSessionRuntimeEvent, AgentSessionSendRequest, AgentSessionSubagentObservation } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExecutionRunConversationEventV1, AgentSessionCompactRequest, AgentSessionRuntimeEvent, AgentSessionSendRequest, AgentSessionSubagentObservation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX, SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
   type SessionWorkflowRunSnapshotV1, type SessionWorkflowAgentStatusV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { MUSE_ACCOUNTING_SOURCE_ID } from './definition.js';
 
-type EventContent<T = AgentSessionRuntimeEvent> = T extends AgentSessionRuntimeEvent
-  ? Omit<T, 'sequence' | 'sessionId' | 'emittedAtMs'> : never;
+type EventContent<T = AgentExecutionRunConversationEventV1> = T extends AgentExecutionRunConversationEventV1
+  ? Omit<T, 'emittedAtMs'> : never;
+type ProjectionEvent<SessionId extends string | undefined> = SessionId extends string
+  ? AgentSessionRuntimeEvent : AgentExecutionRunConversationEventV1;
 type NativeRecord = Readonly<Record<string, JsonValue>>;
-type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; started: boolean; terminal?: boolean; continuations?: Set<string> };
+type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; started: boolean; terminal?: boolean; continuations?: Set<string>; steerCommandIds?: Set<string> };
 type NativeItem = { value: NativeRecord; revision: number; streamedText: string; committed: boolean;
+  compaction?: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'>;
   presentation?: Readonly<{ toolCallId: string; toolName: string; input: JsonValue }> };
 type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: string; workflowRunId?: string };
 type ChildObservation = AgentSessionSubagentObservation;
@@ -18,7 +21,13 @@ export function readMuseRecord(value: JsonValue | undefined): NativeRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
-export function createMuseEventProjection(options: Readonly<{ sessionId: string;
+export function readMuseNativeJson(value: JsonValue | undefined): JsonValue {
+  if (typeof value !== 'string') return value ?? null;
+  try { return JSON.parse(value); } catch { return value; }
+}
+
+export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
+  onActivity?(state: 'active' | 'idle' | 'unknown'): void;
   onChild?(observation: ChildObservation): Promise<void>;
   onWorkflow?(snapshot: SessionWorkflowRunSnapshotV1): Promise<void>;
 }>) {
@@ -26,18 +35,31 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
   let nativeSessionId: string | undefined;
   let disposed = false;
   let firstWatch = true;
-  const pending: AgentSessionRuntimeEvent[] = [];
-  const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+  const pending: ProjectionEvent<SessionId>[] = [];
+  const listeners = new Set<(event: ProjectionEvent<SessionId>) => void>();
   const commands = new Map<string, Admission>();
   const turns = new Map<string, Admission>();
   const items = new Map<string, NativeItem>();
   const workflows = new Map<string, { nativeTurnId: string; parentToolCallId: string; item?: NativeRecord; released?: boolean }>();
   const childItems = new Map<string, NativeChild>();
+  let expectedCompaction: { request: AgentSessionCompactRequest; itemId?: string } | undefined;
 
   function publish(content: EventContent) {
     if (disposed) return;
-    const event: AgentSessionRuntimeEvent = Object.freeze({ ...content, sequence: ++sequence,
-      sessionId: options.sessionId, emittedAtMs: Date.now() });
+    if (content.kind === 'runtime-ended') {
+      // Settle pending input custody before the host closes its event stream.
+      // A correlated native start already established acceptance and survives EOF.
+      for (const [commandId, admission] of commands) {
+        if (admission.accepted) continue;
+        commands.delete(commandId);
+        publish({ kind: 'input-custody-unknown', inputIds: admission.request.inputIds,
+          issue: { code: 'native_send_outcome_unknown', severity: 'error' } });
+      }
+    }
+    // The chosen scope supplies its envelope once, before watcher fanout.
+    const event = Object.freeze({ ...content, emittedAtMs: Date.now(),
+      ...(options.sessionId === undefined ? {} : { sequence: ++sequence, sessionId: options.sessionId }),
+    }) as ProjectionEvent<SessionId>;
     if (firstWatch) pending.push(event);
     for (const listener of listeners) listener(event);
   }
@@ -57,18 +79,25 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
 
   function observeSession(value: JsonValue | undefined) {
     const session = readMuseRecord(value);
+    if (typeof session.status === 'string') activity(session.status);
     if (typeof session.sessionId !== 'string' || nativeSessionId === session.sessionId) return;
     nativeSessionId = session.sessionId;
     publish({ kind: 'provider-session-id', providerSessionId: nativeSessionId,
       ...(typeof session.path === 'string' ? { nativeSessionLogPath: session.path } : {}) });
   }
 
-  function textItem(itemId: string, state: NativeItem, completed: boolean) {
+  function activity(status: JsonValue | undefined) {
+    const state = status === 'running' ? 'active' : status === 'idle' ? 'idle' : 'unknown';
+    options.onActivity?.(state);
+    publish({ kind: 'runtime-activity-snapshot', state, activeCount: state === 'active' ? 1 : 0 });
+  }
+
+  function textItem(itemId: string, state: NativeItem, completed: boolean, initialReplay = false) {
     const item = state.value;
     if (item.kind !== 'agentMessage' && item.kind !== 'reasoning' && item.kind !== 'userMessage') return;
     const role = item.kind === 'agentMessage' ? 'assistant' : item.kind === 'reasoning' ? 'reasoning' : 'user';
     const text = typeof item.text === 'string' ? item.text : state.streamedText;
-    if (role !== 'user' && text.startsWith(state.streamedText)) {
+    if (!initialReplay && role !== 'user' && text.startsWith(state.streamedText)) {
       const delta = text.slice(state.streamedText.length);
       if (delta) publish({ kind: 'message-delta', messageId: itemId, channel: role,
         text: delta, ...correlation(item.turnId) });
@@ -77,20 +106,63 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     if (!completed || state.committed) return;
     state.committed = true;
     const admission = typeof item.turnId === 'string' ? turns.get(item.turnId) : undefined;
-    if (role === 'user' && admission && item.commandId === admission.commandId) return;
+    if (role === 'user' && admission && typeof item.commandId === 'string'
+      && (item.commandId === admission.commandId || admission.steerCommandIds?.has(item.commandId))) return;
     const owner = correlation(item.turnId);
     publish({ kind: 'transcript-message-committed', messageId: itemId, role, text,
       ...(owner.turnId ? { turnId: owner.turnId } : {}) });
   }
 
-  function nativeJson(value: JsonValue | undefined): JsonValue {
-    if (typeof value !== 'string') return value ?? null;
-    try { return JSON.parse(value); } catch { return value; }
+  function compactionItem(itemId: string, state: NativeItem, previous: NativeItem | undefined) {
+    const item = state.value;
+    if (item.kind !== 'compaction') return false;
+    // MSP compaction Items have a stable itemId but no commandId. The first
+    // manual Item belongs to the outstanding host request; later revisions
+    // retain that identity instead of treating its admission ack as completion.
+    if (!state.compaction && item.trigger === 'manual' && expectedCompaction && !expectedCompaction.itemId) {
+      expectedCompaction.itemId = itemId;
+      state.compaction = expectedCompaction.request;
+    }
+    const common = state.compaction ?? { compactionId: itemId,
+      trigger: item.trigger === 'manual' ? 'manual' as const : item.trigger === 'auto' ? 'automatic' as const : 'unknown' as const };
+    if (state.committed) return true;
+    if (item.status === 'inProgress') {
+      if (previous) publish({ kind: 'context-compaction', ...common, phase: 'progress' });
+      else publish({ kind: 'context-compaction', ...common, phase: 'started',
+        ...(typeof item.tokensBefore === 'number' ? { tokenCountBefore: item.tokensBefore, tokenCountSource: 'providerReported' } : {}) });
+      return true;
+    }
+    state.committed = true;
+    if (expectedCompaction?.itemId === itemId) expectedCompaction = undefined;
+    const diagnostic = { code: 'PLUGIN_EXEC_FAILED', severity: 'error' as const,
+      details: { nativeStatus: item.status ?? null, nativeOutcome: item.outcome ?? null,
+        ...(typeof item.reason === 'string' ? { reason: item.reason } : {}) } };
+    switch (item.status) {
+      case 'completed':
+        if (item.outcome === 'compacted' || item.outcome === 'noop') {
+          publish({ kind: 'context-compaction', ...common, phase: 'completed',
+            ...(typeof item.tokensBefore === 'number' ? { tokenCountBefore: item.tokensBefore } : {}),
+            ...(typeof item.tokensAfter === 'number' ? { tokenCountAfter: item.tokensAfter } : {}),
+            ...(typeof item.tokensBefore === 'number' || typeof item.tokensAfter === 'number' ? { tokenCountSource: 'providerReported' } : {}) });
+          return true;
+        }
+        if (item.outcome === 'failed') { publish({ kind: 'context-compaction', ...common, phase: 'failed', diagnostic }); return true; }
+        if (item.outcome === 'cancelled') { publish({ kind: 'context-compaction', ...common, phase: 'cancelled' }); return true; }
+        break;
+      case 'failed': case 'rejected': case 'timedOut':
+        publish({ kind: 'context-compaction', ...common, phase: 'failed', diagnostic });
+        return true;
+      case 'cancelled':
+        publish({ kind: 'context-compaction', ...common, phase: 'cancelled' });
+        return true;
+    }
+    publish({ kind: 'context-compaction', ...common, phase: 'outcomeUnknown', diagnostic });
+    return true;
   }
 
   function workflowLaunch(item: NativeRecord, toolCallId: string) {
     if (item.tool !== 'workflow' || typeof item.visibleOutput !== 'string' || typeof item.turnId !== 'string') return;
-    const result = readMuseRecord(nativeJson(item.visibleOutput));
+    const result = readMuseRecord(readMuseNativeJson(item.visibleOutput));
     const admission = turns.get(item.turnId);
     if (result.status !== 'launched' || typeof result.workflowRunId !== 'string' || !admission || workflows.has(result.workflowRunId)) return;
     const parentTurnId = admission.request.delivery.turnId;
@@ -175,7 +247,7 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     });
   }
 
-  function childItem(state: NativeItem, previous: NativeItem | undefined): Promise<void> | undefined {
+  function childItem(state: NativeItem, previous: NativeItem | undefined, initialReplay = false): Promise<void> | undefined {
     const item = state.value;
     if (item.kind === 'subagent' && typeof item.subagentId === 'string') {
       const id = item.subagentId;
@@ -187,6 +259,15 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
       else publish({ kind: 'tool-progress', toolCallId: item.subagentId,
         progress: { toolName: 'Task', rawInput: childInput(item), status: item.status ?? 'unknown' } });
       finishChild(state, item.status);
+      if (initialReplay) return;
+      if (typeof item.childSessionId === 'string' && item.usage !== undefined && item.usage !== null
+        && (previous?.value.childSessionId !== item.childSessionId || previous.value.usage === undefined || previous.value.usage === null)) {
+        // Child usage has no counted prompt/total. Preserve the observed source
+        // once; raw input/cache counters cannot establish its token categories.
+        publish({ kind: 'usage-observed', observationId: `${item.childSessionId}:subagent:${item.itemId}`,
+          source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'session_cumulative',
+          accounting: { nativeSessionId: item.childSessionId } });
+      }
       return (async () => { await publishChild(id, child); if (child.workflowRunId) await publishWorkflow(child.workflowRunId); })();
     }
     if (item.kind === 'workflow' && typeof item.workflowRunId === 'string' && Array.isArray(item.children)) {
@@ -205,6 +286,7 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
         if (native.state) finishChild(native.state, child.status === 'terminal' ? child.terminal : child.status);
         changed.push([child.childId, native]);
       }
+      if (initialReplay) return;
       return (async () => { for (const [id, child] of changed) await publishChild(id, child); await publishWorkflow(runId); })();
     }
   }
@@ -218,7 +300,7 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     const toolName = item.kind === 'userShell' || item.tool === 'bash' ? 'Bash'
       : typeof item.tool === 'string' ? item.tool : typeof item.kind === 'string' ? item.kind : 'nativeItem';
     const input = item.kind === 'userShell' ? { command: item.commandText ?? '' }
-      : fallback ? { text: item.fallbackText ?? '' } : nativeJson(item.args);
+      : fallback ? { text: item.fallbackText ?? '' } : readMuseNativeJson(item.args);
     state.presentation = { toolCallId, toolName, input };
     const owner = correlation(item.turnId);
     if (!previous) publish({ kind: 'tool-call', toolCallId, toolName, input, ...owner });
@@ -249,16 +331,18 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     const owner = correlation(params.turnId);
     if (method === 'session/tokenUsage') {
       const usage = readMuseRecord(params.usage);
-      if (typeof params.promptTokens !== 'number' || typeof usage.outputTokens !== 'number'
-        || typeof usage.reasoningTokens !== 'number' || typeof usage.cacheReadTokens !== 'number'
-        || typeof usage.cacheWriteTokens !== 'number' || typeof params.totalTokens !== 'number') return;
+      const counted = typeof params.promptTokens === 'number' && typeof usage.outputTokens === 'number'
+        && typeof usage.reasoningTokens === 'number' && typeof usage.cacheReadTokens === 'number'
+        && typeof usage.cacheWriteTokens === 'number' && typeof params.totalTokens === 'number'
+        ? { input: params.promptTokens, output: usage.outputTokens, reasoning: usage.reasoningTokens,
+          cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens, total: params.totalTokens } : undefined;
       // Muse's promptTokens is the counted-once derivation; usage.inputTokens is provider dependent.
       publish({ kind: 'usage-observed', observationId: `${params.sessionId}:${method}:${identity}`,
         source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'turn_delta', ...(owner.turnId ? { turnId: owner.turnId } : {}),
-        accounting: { nativeSessionId: params.sessionId, inferenceId: identity, inputIncludesCache: true, outputIncludesReasoning: true },
+        accounting: { nativeSessionId: params.sessionId, inferenceId: identity,
+          ...(counted ? { inputIncludesCache: true, outputIncludesReasoning: true } : {}) },
         ...(typeof params.modelId === 'string' ? { modelId: params.modelId } : {}),
-        tokens: { input: params.promptTokens, output: usage.outputTokens, reasoning: usage.reasoningTokens,
-          cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens, total: params.totalTokens } });
+        ...(counted ? { tokens: counted } : {}) });
     } else if (typeof params.usedTokens === 'number') {
       publish({ kind: 'usage-observed', observationId: `${params.sessionId}:${method}:${identity}`,
         source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'session_cumulative', accounting: { nativeSessionId: params.sessionId },
@@ -269,9 +353,30 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     }
   }
 
+  function observeItem(itemValue: JsonValue | undefined, completed: boolean, initialReplay = false): Promise<void> | undefined {
+    const item = readMuseRecord(itemValue);
+    if (typeof item.itemId !== 'string') return;
+    const previous = items.get(item.itemId);
+    const revision = typeof item.revision === 'number' ? item.revision : 0;
+    if (previous && revision <= previous.revision) return;
+    const state: NativeItem = { value: item, revision, streamedText: previous?.streamedText ?? '', committed: previous?.committed ?? false,
+      ...(previous?.compaction ? { compaction: previous.compaction } : {}) };
+    items.set(item.itemId, state);
+    if (!initialReplay && compactionItem(item.itemId, state, previous)) return;
+    const childPublication = childItem(state, previous, initialReplay);
+    textItem(item.itemId, state, completed, initialReplay);
+    toolItem(item.itemId, state, previous, completed);
+    if (childPublication) return childPublication.then(() => workflowCompleted(item));
+    if (!initialReplay) workflowCompleted(item);
+  }
+
   function observe(message: Readonly<{ method: string; params?: JsonValue }>) {
     if (disposed) return;
     const params = readMuseRecord(message.params);
+    if (message.method === 'session/statusChanged') {
+      if (params.sessionId === nativeSessionId) activity(params.status);
+      return;
+    }
     if (message.method === 'session/tokenUsage' || message.method === 'session/contextUsage') { usageObservation(message.method, params); return; }
     if (message.method === 'session/started') { observeSession(params.session); return; }
     if (message.method === 'turn/started') {
@@ -299,9 +404,12 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
       if (params.terminal === 'interrupted' || params.terminal === 'cancelled') {
         publish({ kind: 'turn-cancelled', ...owner, cause: 'providerInterrupted' });
       } else if (params.terminal === 'failed') {
-        publish({ kind: 'turn-failed', ...owner, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error' } });
+        const error = readMuseRecord(params.error);
+        publish({ kind: 'turn-failed', ...owner, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error',
+          ...(typeof error.message === 'string' ? { message: error.message } : {}) } });
       } else if (params.terminal === 'completed') {
         publish({ kind: 'turn-complete', ...owner });
+        publish({ kind: 'turn-rollback-boundary', ...owner, providerCheckpoint: { lastTurnId: params.turnId } });
       } else return;
       admission.terminal = true;
       if (!admission.continuations?.size) turns.delete(params.turnId);
@@ -319,30 +427,60 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
     }
     if (message.method === 'item/started' || message.method === 'item/updated' || message.method === 'item/completed') {
       const item = readMuseRecord(params.item);
-      if (typeof item.itemId !== 'string') return;
-      const previous = items.get(item.itemId);
-      const revision = typeof item.revision === 'number' ? item.revision : 0;
-      if (previous && revision <= previous.revision) return;
-      const state = { value: item, revision, streamedText: previous?.streamedText ?? '', committed: previous?.committed ?? false };
-      items.set(item.itemId, state);
-      const childPublication = childItem(state, previous);
-      textItem(item.itemId, state, message.method === 'item/completed');
-      toolItem(item.itemId, state, previous, message.method === 'item/completed');
-      if (childPublication) return childPublication.then(() => workflowCompleted(item));
-      workflowCompleted(item);
+      if (item.kind === 'compaction' && params.sessionId !== nativeSessionId) return;
+      return observeItem(item, message.method === 'item/completed');
     }
   }
 
   return {
     publish,
     observeSession,
+    async replayItems(nativeItems: readonly JsonValue[]) {
+      for (const item of nativeItems) {
+        await observeItem(item, readMuseRecord(item).status !== 'inProgress', true);
+      }
+    },
+    async replayHistoryEvent(message: Readonly<{ method: string; params?: JsonValue }>) {
+      if (message.method !== 'item/started' && message.method !== 'item/updated' && message.method !== 'item/completed') return;
+      await observeItem(readMuseRecord(message.params).item, message.method === 'item/completed', true);
+    },
+    expectCompaction(request: AgentSessionCompactRequest) {
+      if (expectedCompaction) return undefined;
+      const expected: { request: AgentSessionCompactRequest; itemId?: string } = { request };
+      expectedCompaction = expected;
+      return {
+        retire() {
+          if (expectedCompaction === expected) expectedCompaction = undefined;
+          return expected.itemId !== undefined;
+        },
+      };
+    },
     admit(request: AgentSessionSendRequest, commandId: string) { commands.set(commandId, { commandId, request, accepted: false, started: false }); },
+    retireCommand(commandId: string) {
+      const admission = commands.get(commandId);
+      commands.delete(commandId);
+      return admission?.accepted;
+    },
+    readOwningTurn(hostTurnId?: string) {
+      for (const [nativeTurnId, admission] of turns) {
+        if (!admission.terminal && (hostTurnId === undefined || admission.request.delivery.turnId === hostTurnId)) {
+          return nativeTurnId;
+        }
+      }
+      return undefined;
+    },
     accept(commandId: string, result: JsonValue) {
       const admission = commands.get(commandId);
       if (!admission) return;
       const response = readMuseRecord(result);
       if (response.status === 'accepted' && typeof response.turnId === 'string') {
-        if (!admission.accepted) { turns.set(response.turnId, admission); accepted(admission); }
+        if (!admission.accepted) {
+          const owner = turns.get(response.turnId);
+          if (admission.request.delivery.kind === 'steer' && owner) {
+            (owner.steerCommandIds ??= new Set()).add(commandId);
+          } else turns.set(response.turnId, admission);
+          accepted(admission);
+        }
       }
       commands.delete(commandId);
     },
@@ -362,7 +500,7 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
       return { subagentId, ...(typeof sessionId === 'string' ? { sessionId } : {}),
         ...(child.label ? { subagentLabel: child.label } : {}) };
     },
-    watch(listener: (event: AgentSessionRuntimeEvent) => void) {
+    watch(listener: (event: ProjectionEvent<SessionId>) => void) {
       if (disposed) return { dispose() {} };
       listeners.add(listener);
       if (firstWatch) {
@@ -371,6 +509,6 @@ export function createMuseEventProjection(options: Readonly<{ sessionId: string;
       }
       return { dispose() { listeners.delete(listener); } };
     },
-    dispose() { disposed = true; listeners.clear(); commands.clear(); turns.clear(); items.clear(); workflows.clear(); childItems.clear(); pending.length = 0; },
+    dispose() { disposed = true; expectedCompaction = undefined; listeners.clear(); commands.clear(); turns.clear(); items.clear(); workflows.clear(); childItems.clear(); pending.length = 0; },
   };
 }

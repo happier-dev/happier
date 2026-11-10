@@ -546,6 +546,8 @@ export type AgentPreflightExecutableSelectorV1 =
 
 export type AgentPreflightSessionControlsCommandV1 = AgentPreflightExecutableSelectorV1 & Readonly<{
   args: readonly string[];
+  /** Static native launch values, selected through the same declared environment policy. */
+  environment?: Readonly<Record<string, string>>;
   /** Static native protocol input; the host writes UTF-8 and closes stdin. */
   stdin?: string;
   /** Host materializes prepared arguments; the declared tool and environment policy remain authoritative. */

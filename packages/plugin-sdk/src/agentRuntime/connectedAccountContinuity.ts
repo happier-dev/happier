@@ -8,6 +8,7 @@ import type {
 import type { ConnectedServiceCredentialRecordV1 } from '../connectedAccounts.js';
 import type { JsonValue } from '../identity.js';
 import type { AgentAccountUsageSnapshot } from './accountUsage.js';
+import type { AgentPreflightSessionControlsProbeContextV1 } from './registration.js';
 import type {
   AgentSessionRuntimeAuthApplyResult,
   RuntimeDescriptorV1,
@@ -311,10 +312,15 @@ export type AgentConnectedAccountResumeReachabilityInputV1 = Readonly<{
    * custody never cross this boundary.
    */
   sessionFiles: AgentConnectedAccountResumeFileLookupV1;
+  /** Protocol-only inspection in the already-prepared native launch environment.
+   * Absent for file adoption/import: native reachability never authorizes copying.
+   */
+  nativeInspection?: Pick<AgentPreflightSessionControlsProbeContextV1, 'withDeclaredJsonRpcClient'>;
 }>;
 
 export type AgentConnectedAccountResumeReachabilityResultV1 =
-  | Readonly<{ ok: true }>
+  | Readonly<{ ok: true; proof?: never }>
+  | Readonly<{ ok: true; proof: 'native_session' }>
   | Readonly<{ ok: false; reason: string }>;
 
 /** Pure native fixed-file adoption; the host retains every filesystem operation. */

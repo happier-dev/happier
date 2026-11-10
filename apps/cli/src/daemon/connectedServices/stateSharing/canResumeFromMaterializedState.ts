@@ -19,6 +19,8 @@ export type CanResumeFromMaterializedStateInput = Readonly<{
   materializationIdentity: Readonly<{ v: 1; id: string }>;
   vendorResumeId: string;
   cwd: string;
+  targetMaterializedEnv?: Readonly<Record<string, string>>;
+  signal?: AbortSignal;
   runtimeDescriptorV1?: CanResumeFromMaterializedStateCoreInput['runtimeDescriptorV1'];
   candidatePersistedSessionFile?: string | null;
   manifest?: ConnectedServiceStateSharingManifestV1 | null;
@@ -36,6 +38,7 @@ export async function canResumeFromMaterializedState(
     materializationIdentity: input.materializationIdentity,
     vendorResumeId: input.vendorResumeId,
     cwd: input.cwd,
+    ...(input.targetMaterializedEnv ? { nativeInspection: { cwd: input.cwd, environment: input.targetMaterializedEnv, signal: input.signal } } : {}),
     ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
     candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
     manifest: input.manifest,

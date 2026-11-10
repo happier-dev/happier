@@ -23,6 +23,9 @@ export type MuseCatalog = AgentSessionModelsSource & Readonly<{
   refresh(options?: { signal?: AbortSignal; sessionId?: string }): Promise<AgentSessionModelsSnapshot>;
   resolveModelSelection(id?: string): MuseModelSelection;
   applyCurrentModel(model: Readonly<{ providerId: string; modelId: string }>): void;
+  applyCurrentReasoningEffort(effort: string): void;
+  readCurrentReasoningEffort(): string | undefined;
+  observeConfiguration(message: unknown, sessionId: string): void;
 }>;
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -88,12 +91,43 @@ function parseCatalog(value: unknown): Readonly<{
 export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>): MuseCatalog {
   let snapshot: AgentSessionModelsSnapshot = { models: null };
   let nativeModels: readonly MuseNativeModel[] = [];
+  // Catalog defaults are offered choices, not evidence of a Session's standing effort.
+  let currentReasoningEffort: string | undefined;
   const listeners = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
   const publish = (next: AgentSessionModelsSnapshot) => {
     if (next === snapshot) return snapshot;
     snapshot = next;
     for (const listener of listeners) listener(snapshot);
     return snapshot;
+  };
+  const projectCurrentEffort = (offered: readonly AgentSessionModel[], currentModelId: string | null | undefined) => {
+    if (!currentModelId) return offered;
+    let changed = false;
+    const models = offered.map(model => {
+      let modelChanged = false;
+      const currentValue = model.id === currentModelId ? currentReasoningEffort ?? null : null;
+      const modelOptions = model.modelOptions?.map(option => {
+        if (option.id !== 'reasoning_effort' || option.currentValue === currentValue) return option;
+        changed = true;
+        modelChanged = true;
+        return { ...option, currentValue };
+      });
+      return modelChanged ? { ...model, modelOptions } : model;
+    });
+    return changed ? models : offered;
+  };
+  const applyCurrentModel = (model: Readonly<{ providerId: string; modelId: string }>) => {
+    const currentModelId = `${model.providerId}/${model.modelId}`;
+    if (currentModelId !== snapshot.currentModelId) {
+      currentReasoningEffort = undefined;
+      publish({ ...snapshot, currentModelId,
+        models: snapshot.models && projectCurrentEffort(snapshot.models, currentModelId) });
+    }
+  };
+  const applyCurrentReasoningEffort = (effort: string) => {
+    currentReasoningEffort = effort;
+    const models = snapshot.models && projectCurrentEffort(snapshot.models, snapshot.currentModelId);
+    if (models !== snapshot.models) publish({ ...snapshot, models });
   };
   return {
     read: () => snapshot,
@@ -106,15 +140,18 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
         options?.sessionId === undefined ? {} : { sessionId: options.sessionId },
         { signal: options?.signal }));
       nativeModels = parsed.nativeModels;
+      if (parsed.currentModelId && parsed.currentModelId !== snapshot.currentModelId) currentReasoningEffort = undefined;
+      const currentModelId = parsed.currentModelId ?? snapshot.currentModelId ?? null;
       const previous = new Map(snapshot.models?.map(model => [model.id, model]));
-      const entries = parsed.models.map(model => {
+      // Pre-Session rows retain native offered defaults. A bound Session exposes
+      // only accepted effort; neither a new model nor a refresh fabricates it.
+      const entries = projectCurrentEffort(parsed.models, currentModelId).map(model => {
         const prior = previous.get(model.id);
         return prior && JSON.stringify(prior) === JSON.stringify(model) ? prior : model;
       });
       const models = snapshot.models && entries.length === snapshot.models.length
         && entries.every((model, index) => model === snapshot.models?.[index]) ? snapshot.models : entries;
       // A catalog without an active row has no new fact about an already-open Session.
-      const currentModelId = parsed.currentModelId ?? snapshot.currentModelId ?? null;
       return publish(models === snapshot.models && currentModelId === snapshot.currentModelId
         ? snapshot : { models, currentModelId });
     },
@@ -129,24 +166,34 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
       const selected = nativeModels.find(model => model.id === id);
       return selected ? { status: 'selected', ...selected } : { status: 'unavailable', reason: 'model_unavailable' };
     },
-    applyCurrentModel(model) {
-      const currentModelId = `${model.providerId}/${model.modelId}`;
-      if (currentModelId !== snapshot.currentModelId) publish({ ...snapshot, currentModelId });
+    applyCurrentModel,
+    applyCurrentReasoningEffort,
+    readCurrentReasoningEffort: () => currentReasoningEffort,
+    observeConfiguration(value, sessionId) {
+      const message = record(value);
+      const params = record(message?.params);
+      if (params?.sessionId !== sessionId) return;
+      if (message?.method === 'session/modelChanged') {
+        const providerId = text(params.providerId);
+        const modelId = text(params.modelId);
+        if (providerId && modelId) applyCurrentModel({ providerId, modelId });
+      } else if (message?.method === 'session/reasoningEffortChanged') {
+        const effort = text(params.reasoningEffort);
+        if (effort) applyCurrentReasoningEffort(effort);
+      }
     },
   };
 }
 
-const MUSE_MODEL_COMMAND = {
+export const MUSE_MODEL_COMMAND = {
   toolId: 'muse-cli', args: MUSE_MSP_LAUNCH.args,
+  environment: MUSE_MSP_LAUNCH.env,
   environmentKeys: MUSE_LAUNCH_ENV_KEYS,
 } as const;
 
 /** The host owns the scoped process and supplies its selected native environment. */
 export const MUSE_PREFLIGHT_SESSION_CONTROLS = {
   jsonRpcCommands: [MUSE_MODEL_COMMAND],
-  async prepareLaunchEnvironment({ environment }) {
-    return { environment: { ...environment, ...MUSE_MSP_LAUNCH.env }, dispose() {} };
-  },
   probeModels: context => context.withDeclaredJsonRpcClient(MUSE_MODEL_COMMAND, async (client, signal) => {
     await initializeMuseMsp(client, { signal });
     return (await createMuseCatalog(client).refresh({ signal })).models;

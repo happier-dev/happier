@@ -37,7 +37,7 @@ import type { ManagedExecutableRef, PluginAgentCliMetadata, RuntimeDescriptorV1 
 import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
 import { probeAcpCatalogs, probeAcpSessionControls } from '@/capabilities/probes/probeAcpCatalogs';
-import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type { PreflightSessionControlsProbeAdapter, PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
 import type {
     CatalogAgentId,
@@ -803,7 +803,7 @@ function applyPreflightCommandEnvironment(
     const exclude = command.environmentExcludeKeys
         ? new Set(command.environmentExcludeKeys)
         : null;
-    const selected = Object.fromEntries(Object.entries(environment).filter(([key]) => (
+    const selected = Object.fromEntries(Object.entries({ ...environment, ...command.environment }).filter(([key]) => (
         (allow === null || allow.has(key))
         && (exclude === null || !exclude.has(key))
     )));
@@ -1066,7 +1066,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         return [base, `tool:${toolId}`].filter((part): part is string => Boolean(part)).join('|');
     };
     const createContext = async (
-        probeParams: PreflightSessionControlsProbeParams,
+        probeParams: Omit<PreflightSessionControlsProbeParams, 'timeoutMs'> & { timeoutMs?: number },
     ): Promise<AgentPreflightSessionControlsProbeContextV1> => {
         const signal = createPreflightProbeSignal(probeParams.signal, params.retirementSignal);
         const assertCurrent = (): void => {
@@ -1290,6 +1290,15 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             withDeclaredManagedService,
         });
     };
+    const withNativeInspection: NonNullable<PreflightSessionControlsProbeAdapter['withNativeInspection']> = async (probeParams, inspect) => {
+        const cleanupScope = createPreflightCatalogCleanupScope();
+        try {
+            const context = await createContext({ ...probeParams, cleanupScope });
+            return await inspect(Object.freeze({ withDeclaredJsonRpcClient: context.withDeclaredJsonRpcClient }));
+        } finally {
+            await cleanupScope.dispose();
+        }
+    };
     const withDeclaredAcpPreflight = async <T>(
         context: AgentPreflightSessionControlsProbeContextV1,
         catalogs: AcpPreflightDeclaration,
@@ -1410,6 +1419,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             }
             : {}),
         getPreflightSessionControlsProbeAdapter: async () => Object.freeze({
+            ...((contribution.jsonRpcCommands?.length ?? 0) > 0 ? { withNativeInspection } : {}),
             // JSON-RPC preflight is the existing retryable probe form; static
             // command parsing uses the incumbent one-shot/cooldown behavior.
             ...((contribution.jsonRpcCommands?.length ?? 0) > 0

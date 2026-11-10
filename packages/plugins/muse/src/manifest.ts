@@ -7,6 +7,8 @@ import { MUSE_PREFLIGHT_SESSION_CONTROLS } from './agent/catalog.js';
 import { museCliSupport, MUSE_DIRECT_AUTH_ENV_KEYS, MUSE_LAUNCH_ENV_KEYS } from './agent/cli.js';
 import { MUSE_AGENT } from './agent/definition.js';
 import { createMuseAgentRuntime } from './agent/runtime.js';
+import { museExternalSessionsContribution } from './agent/externalSessions.js';
+import { verifyMuseResumeReachable } from './agent/resumeReachability.js';
 
 /** Native execution and account operations run on the selected Machine. */
 export const MUSE_PLUGIN = definePlugin({
@@ -58,11 +60,29 @@ export const MUSE_PLUGIN = definePlugin({
         },
         connectedAccounts: [museNativeConnectedAccountPurpose],
         capabilities: projectAgentCapabilitiesV2FromDefinition(MUSE_AGENT.core, {
-          sessions: { open: ['create'], delivery: ['newTurn'], cancel: false },
+          surfaces: ['externalSessions'],
+          sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: true, configuration: true,
+            catalog: { active: ['skills'], inactive: ['skills'] },
+            executionRunContext: { versions: [1] } },
         }),
+        surfaces: {
+          externalSession: {
+            externalLinkedTakeover: { writerSafety: 'unsupported' },
+            sources: [{
+              sourceKind: 'museNative',
+              schema: { fields: [
+                { kind: 'literal', name: 'kind', value: 'museNative' },
+                { kind: 'string', name: 'museHome', min: 1, nullish: true },
+              ] },
+              key: { segments: [{ kind: 'literal', value: 'museNative' }, { kind: 'field', field: 'museHome' }] },
+              instances: [{ kind: 'default', constants: {} }],
+            }],
+          },
+        },
       },
       factory: createMuseAgentRuntime,
       connectedAccountLaunch: {
+        continuity: { verifyResumeReachable: verifyMuseResumeReachable },
         stateSharingDescriptor: museStateSharingDescriptor,
         environmentUses: MUSE_DIRECT_AUTH_ENV_KEYS.map(environmentKey => ({ purpose: MUSE_NATIVE_PURPOSE, environmentKey })),
         environmentUnsetUses: MUSE_DIRECT_AUTH_ENV_KEYS.map(environmentKey => ({ purpose: MUSE_NATIVE_PURPOSE, environmentKey })),
@@ -73,7 +93,9 @@ export const MUSE_PLUGIN = definePlugin({
         accountSettingsAgentId: MUSE_AGENT.id,
         buildSessionOptions: () => ({ ok: true, options: {} }),
       },
-      sessionRunnerFactory: { module: './agent/runtime', export: 'createMuseAgentRuntime', runtimeApiVersion: 1 },
+      sessionRunnerFactory: { module: './agent/runtime', export: 'createMuseAgentRuntime', runtimeApiVersion: 1,
+        externalSessionsExport: 'museExternalSessionsContribution' },
+      externalSessions: museExternalSessionsContribution,
     },
   },
   systemTools: { 'muse-cli': { title: 'Muse CLI', executableNames: ['muse'] } },

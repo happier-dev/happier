@@ -33,6 +33,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
   materializationIdentity?: Readonly<{ v: 1; id: string }> | null;
   vendorResumeId?: string | null;
   cwd?: string | null;
+  signal?: AbortSignal;
   runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
   candidatePersistedSessionFile?: string | null;
   warnings?: readonly string[];
@@ -89,6 +90,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
       materializationIdentity,
       vendorResumeId,
       cwd: cwd ?? '',
+      ...(input.targetMaterializedEnv && cwd ? { targetMaterializedEnv: input.targetMaterializedEnv, signal: input.signal } : {}),
       ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
       candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
     });

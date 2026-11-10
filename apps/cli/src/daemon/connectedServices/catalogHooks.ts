@@ -25,7 +25,7 @@ import type {
   VerifyResumeReachableResult,
 } from './verifyResumeReachableTypes';
 import { REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON } from './verifyResumeReachableTypes';
-import { verifyDeclaredResumeFileReachability } from './stateSharing/verifyDeclaredResumeFileReachability';
+import { verifyDeclaredResumeReachability } from './stateSharing/verifyDeclaredResumeFileReachability';
 import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/target';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 
@@ -258,16 +258,27 @@ export async function verifyResumeReachableThroughCatalog(
   return await readCurrentCatalogHook(catalogId, async (entry) => {
     if (!entry.verifyResumeReachable) return null;
     const stateSharingDescriptor = await entry.getConnectedServiceStateSharingDescriptor?.();
-    if (!stateSharingDescriptor) {
+    if (!stateSharingDescriptor && !input.nativeInspection) {
       return { ok: false, reason: REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON };
     }
-    return await verifyDeclaredResumeFileReachability({
+    const verify = (nativeInspection?: Parameters<typeof verifyDeclaredResumeReachability>[0]['nativeInspection']) => verifyDeclaredResumeReachability({
       targetMaterializedRoot: input.targetMaterializedRoot,
       candidatePersistedSessionFile: input.candidatePersistedSessionFile,
-      stateSharingDescriptor,
+      stateSharingDescriptor: stateSharingDescriptor ?? undefined,
       vendorResumeId: input.vendorResumeId,
       ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
       verifyResumeReachable: entry.verifyResumeReachable,
+      ...(nativeInspection ? { nativeInspection } : {}),
     });
+    const adapter = input.nativeInspection ? await entry.getPreflightSessionControlsProbeAdapter?.() : undefined;
+    if (!input.nativeInspection || !adapter?.withNativeInspection) return await verify();
+    try {
+      return await adapter.withNativeInspection({ cwd: input.nativeInspection.cwd,
+        env: input.nativeInspection.environment, signal: input.nativeInspection.signal,
+        ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
+      }, verify);
+    } catch {
+      return { ok: false, reason: 'resume_reachability_check_failed' };
+    }
   });
 }

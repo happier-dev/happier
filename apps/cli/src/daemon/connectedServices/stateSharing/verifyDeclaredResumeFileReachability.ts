@@ -21,7 +21,7 @@ type VerifyResumeReachable = (
   input: AgentConnectedAccountResumeReachabilityInputV1,
 ) => Promise<AgentConnectedAccountResumeReachabilityResultV1>;
 
-export type VerifyDeclaredResumeFileReachabilityResult = VerifyResumeReachableResult;
+export type VerifyDeclaredResumeFileReachabilityResult = Exclude<VerifyResumeReachableResult, { proof: 'native_session' }>;
 
 function isWithinRoot(root: string, candidate: string): boolean {
   const pathFromRoot = relative(root, candidate);
@@ -75,18 +75,34 @@ async function findDeclaredCandidateInRoot(input: Readonly<{
  * entries. The host owns roots, traversal, file reads, and the resolved path;
  * the Agent receives only relative-layout/filename/session-id facts for correlation.
  */
-export async function verifyDeclaredResumeFileReachability(input: Readonly<{
+type DeclaredResumeReachabilityInput = Readonly<{
   targetMaterializedRoot: string;
-  stateSharingDescriptor: ConnectedServiceStateSharingDescriptor;
+  stateSharingDescriptor?: ConnectedServiceStateSharingDescriptor;
   vendorResumeId: string | null;
   candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: AgentConnectedAccountResumeReachabilityInputV1['runtimeDescriptorV1'];
   verifyResumeReachable: VerifyResumeReachable;
+  nativeInspection?: AgentConnectedAccountResumeReachabilityInputV1['nativeInspection'];
+}>;
+
+/** File adoption retains its exact path proof and never supplies a native inspector. */
+export async function verifyDeclaredResumeFileReachability(input: Omit<DeclaredResumeReachabilityInput, 'nativeInspection'> & Readonly<{
+  stateSharingDescriptor: ConnectedServiceStateSharingDescriptor;
 }>): Promise<VerifyDeclaredResumeFileReachabilityResult> {
+  const result = await verifyDeclaredResumeReachability({ ...input, nativeInspection: undefined });
+  return result.ok && result.proof === 'native_session'
+    ? { ok: false, reason: RESUME_SESSION_FILE_NOT_FOUND_REASON }
+    : result;
+}
+
+/** Invoke native correlation once, with file custody remaining at this owner. */
+export async function verifyDeclaredResumeReachability(input: DeclaredResumeReachabilityInput): Promise<VerifyResumeReachableResult> {
   const targetMaterializedRoot = input.targetMaterializedRoot.trim();
-  if (!targetMaterializedRoot || !isAbsolute(targetMaterializedRoot)) {
+  const validRoot = targetMaterializedRoot.length > 0 && isAbsolute(targetMaterializedRoot);
+  if (!validRoot && !input.nativeInspection) {
     return { ok: false, reason: RESUME_SESSION_FILE_NOT_FOUND_REASON };
   }
+  const stateEntries = validRoot ? input.stateSharingDescriptor?.state.entries ?? [] : [];
   let matchedPath: string | null = null;
   const requiredPaths = new Set<string>();
   const sessionFiles = Object.freeze({
@@ -99,7 +115,7 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
         if (!isSafeConnectedServiceStateSharingEntry(required.path)) return Object.freeze({ found: false });
         const candidate = resolve(targetMaterializedRoot, ...required.path.split(/[\\/]+/));
         let found = false;
-        for (const entry of input.stateSharingDescriptor.state.entries) {
+        for (const entry of stateEntries) {
           if (!isSafeConnectedServiceStateSharingEntry(entry.path)) continue;
           const lexicalRoot = resolve(targetMaterializedRoot, ...entry.path.split(/[\\/]+/));
           if (!isWithinRoot(lexicalRoot, candidate)) continue;
@@ -127,7 +143,7 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
       const includeNativeSessionId = request.includeNativeSessionId !== false;
       const hint = input.candidatePersistedSessionFile?.trim();
       const hintedPath = hint && isAbsolute(hint) ? await realpath(hint).catch(() => null) : null;
-      for (const entry of input.stateSharingDescriptor.state.entries) {
+      for (const entry of stateEntries) {
         if (!isSafeConnectedServiceStateSharingEntry(entry.path)) continue;
         const declaredRoot = await realpath(resolve(targetMaterializedRoot, entry.path)).catch(() => null);
         if (!declaredRoot) continue;
@@ -155,8 +171,14 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
     vendorResumeId: input.vendorResumeId,
     ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
     sessionFiles,
+    ...(input.nativeInspection ? { nativeInspection: input.nativeInspection } : {}),
   })).catch(() => ({ ok: false as const, reason: 'resume_reachability_check_failed' }));
   if (!result.ok) return result;
+  if (result.proof === 'native_session') {
+    return input.nativeInspection
+      ? { ok: true, proof: 'native_session' }
+      : { ok: false, reason: RESUME_SESSION_FILE_NOT_FOUND_REASON };
+  }
   // Exact declared paths already carry Agent-owned native correlation. Keep
   // the candidate as primary when supplied, and preserve every companion for
   // the retained-state importer rather than copying only one trajectory.

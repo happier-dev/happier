@@ -28,6 +28,7 @@ import {
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 import { observeConnectedServiceMaterializationPhase, observeCurrentConnectedServiceMaterializationPhase } from './materialize/materializationPhase';
 import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { getConnectedServiceStateSharingDescriptor } from './catalogHooks';
 import type {
   ConnectedServiceResolvedSelection,
@@ -1205,9 +1206,10 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   try {
     await assertSpawnResumeReachable({
       agentId: params.agentId,
-      materializedEnv: materialized.env,
+      materializedEnv: buildScopedProcessEnv({ baseEnv: params.processEnv, explicitEnv: materialized.env, unsetEnvKeys: materialized.unsetEnvKeys }),
       vendorResumeId: params.vendorResumeId,
       cwd: params.sessionDirectory,
+      signal: params.signal,
       candidatePersistedSessionFile: params.candidatePersistedSessionFile,
       resumeReachabilityRequired: params.resumeReachabilityRequired,
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
@@ -1521,6 +1523,7 @@ async function assertSpawnResumeReachable(params: Readonly<{
   materializedEnv: Readonly<Record<string, string>>;
   vendorResumeId: string | null;
   cwd: string | null;
+  signal?: AbortSignal;
   resumeReachabilityRequired: boolean;
   candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -1540,6 +1543,8 @@ async function assertSpawnResumeReachable(params: Readonly<{
     agentId: params.agentId,
     vendorResumeId,
     materializedEnv: params.materializedEnv,
+    cwd: params.cwd,
+    signal: params.signal,
     candidatePersistedSessionFile: params.candidatePersistedSessionFile,
     ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
   });

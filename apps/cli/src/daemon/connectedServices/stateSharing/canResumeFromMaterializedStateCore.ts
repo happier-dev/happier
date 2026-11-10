@@ -23,6 +23,7 @@ export type CanResumeFromMaterializedStateCoreInput = Readonly<{
   vendorResumeId: string;
   cwd: string;
   runtimeDescriptorV1?: VerifyResumeReachableInput['runtimeDescriptorV1'];
+  nativeInspection?: VerifyResumeReachableInput['nativeInspection'];
   candidatePersistedSessionFile?: string | null;
   manifest?: ConnectedServiceStateSharingManifestV1 | null;
   verifyResumeReachable: (input: VerifyResumeReachableInput) => Promise<VerifyResumeReachableResult>;
@@ -98,8 +99,12 @@ export async function canResumeFromMaterializedStateCore(
     vendorResumeId: input.vendorResumeId,
     ...(candidatePersistedSessionFile ? { candidatePersistedSessionFile } : {}),
     ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
+    ...(input.nativeInspection ? { nativeInspection: input.nativeInspection } : {}),
   });
   if (providerReachability.ok) {
+    if (providerReachability.proof === 'native_session') {
+      return toResultOk({ source: 'provider_search', resolvedPath: null, effectiveStateMode: input.effectiveStateMode });
+    }
     const validatedManifestMapping = manifest.sessionFileMappings.some((mapping) =>
       mapping.vendorResumeId === input.vendorResumeId
       && resolveManifestCandidatePath({ root: input.targetMaterializedRoot, destinationPath: mapping.destinationPath })

@@ -509,7 +509,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
                     ? { candidatePersistedSessionFile: params.candidatePersistedSessionFile } : {}),
                   ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
                 });
-                if (!resumed?.ok) continue;
+                if (!resumed?.ok || resumed.proof === 'native_session') continue;
                 for (const resolvedPath of new Set([resumed.resolvedPath, ...(resumed.requiredPaths ?? [])])) {
                   for (const entry of stateSharingDescriptor.state.entries) {
                     const declaredRoot = await realpath(join(sourceRoot, entry.path)).catch(() => null);

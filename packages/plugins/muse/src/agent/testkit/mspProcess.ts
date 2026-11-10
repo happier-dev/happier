@@ -6,14 +6,28 @@ import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { MUSE_MSP_DECISION_PLAYBACK } from './mspDecisionPlayback.js';
 
-export type MuseMspProcessScenario = 'approval-abort' | 'approval-allow-once' | 'approval-local-persistent' | 'question-single-choice';
+export type MuseMspPlaybackStep = Readonly<{
+    requestRow: number;
+    /** Exclusive original-recording row boundary. Only native recv frames are emitted. */
+    receiveUntilRow: number;
+}>;
+
+export type MuseMspProcessScenario = 'approval-abort' | 'approval-late-child' | 'approval-allow-once' | 'approval-local-persistent' | 'question-single-choice';
 
 export async function createMuseMspProcessFixture(options?: Readonly<{
     schema?: JsonValue;
     startupEvent?: boolean;
+    /** Schema-derived busy startup; early turn requests retain the native queued disposition. */
+    readinessGuard?: boolean;
+    /** Schema-derived admission failures, optionally after the captured native turn/started frame. */
+    turnFailure?: 'refuse' | 'eof' | 'started-refuse' | 'started-eof';
     recording?: JsonValue;
     /** File input also permits complete gzip recordings above OS environment-string limits. */
     recordingPath?: string;
+    /** Exact receive windows, consumed in order per method after the common handshake. */
+    playbackSteps?: readonly MuseMspPlaybackStep[];
+    /** Harmless fixture bindings checked by the native process, never echoed in errors/audits. */
+    expectedMcpServers?: Readonly<Record<string, JsonValue>>;
     scenario?: MuseMspProcessScenario;
     auditPath?: string;
     /** Native-side notifications injected after an observed host boundary. */
@@ -23,7 +37,7 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
     cwd?: string;
 }>) {
     const recordingPath = options?.recordingPath ?? (options?.scenario
-        ? fileURLToPath(new URL(`./fixtures/${options.scenario === 'approval-allow-once' ? 'lifecycle' : 'advanced'}.json`, import.meta.url))
+        ? fileURLToPath(new URL(`./fixtures/${options.scenario === 'approval-allow-once' ? 'lifecycle' : options.scenario === 'approval-late-child' ? 'child-follow' : 'advanced'}.json`, import.meta.url))
         : undefined);
     const recording = recordingPath ? undefined : options?.recording ?? await readMuseLoginRecording();
     return {
@@ -31,8 +45,12 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
             env: { MUSE_NO_AUTO_UPDATE: '0', MUSE_TEST_SELECTED_HOME: '/selected/native/home' } },
         resolveExecutable: async () => ({ command: process.execPath, args: ['-e', MUSE_MSP_PLAYBACK_SCRIPT, '--'], env: {
             ...(recordingPath ? { MUSE_TEST_RECORDING_PATH: recordingPath } : { MUSE_TEST_RECORDING: JSON.stringify(recording) }),
+            ...(options?.playbackSteps ? { MUSE_TEST_PLAYBACK_STEPS: JSON.stringify(options.playbackSteps) } : {}),
+            ...(options?.expectedMcpServers ? { MUSE_TEST_EXPECTED_MCP: JSON.stringify(options.expectedMcpServers) } : {}),
             ...(options?.scenario ? { MUSE_TEST_SCENARIO: options.scenario } : {}),
             MUSE_TEST_SCHEMA: JSON.stringify(options?.schema ?? {}),
+            ...(options?.turnFailure ? { MUSE_TEST_TURN_FAILURE: options.turnFailure } : {}),
+            ...(options?.readinessGuard ? { MUSE_TEST_READINESS_GUARD: '1' } : {}),
             MUSE_TEST_STARTUP_EVENT: options?.startupEvent ? '1' : '0',
             ...(options?.auditPath ? { MUSE_TEST_AUDIT_PATH: options.auditPath } : {}),
             ...(options?.nativeNotificationPath ? { MUSE_TEST_NOTIFICATION_PATH: options.nativeNotificationPath } : {}),
@@ -62,8 +80,14 @@ export type MuseMspProcessAudit = Readonly<{
     initializedCount: number;
     methods: readonly string[];
     commandCount: number;
+    /** Fixture-only native inputs, never a production diagnostic/log carrier. */
+    turnInputs: readonly (readonly JsonValue[])[];
+    commandTargets: readonly Readonly<{ method: string; commandId: string; sessionId?: string; providerId?: string;
+        modelId?: string; reasoningEffort?: string; turnId?: string; expectedTurnId?: string; lastTurnId?: string }>[];
     modelSelections: readonly Readonly<{ providerId?: string | null; modelId?: string }>[];
     modelListSessionIds: readonly (string | null)[];
+    viewPages: readonly Readonly<{ sessionId: string | null; cursor: string | null }>[];
+    sessionReads: readonly Readonly<{ sessionId: string | null; excludeItems: boolean | null }>[];
     cwd: string;
     autoUpdate?: string;
     selectedHome?: string;
@@ -71,9 +95,11 @@ export type MuseMspProcessAudit = Readonly<{
     nativeResponseCount: number;
     decisionCount: number;
     released: boolean;
+    earlyTurnCount: number;
+    readinessState: 'busy' | 'ready';
 }>;
 
-/** Reads only the playback child's opt-in, content-free shutdown evidence. */
+/** Reads only the playback child's opt-in fixture evidence. */
 export async function readMuseMspProcessAudit(path: string): Promise<MuseMspProcessAudit> {
     // This test-only OS boundary is written exclusively by the playback schema below.
     return JSON.parse(await readFile(path, 'utf8')) as MuseMspProcessAudit;
@@ -116,27 +142,49 @@ const recording = recordingPath
     ? JSON.parse((recordingPath.endsWith('.gz') ? require('node:zlib').gunzipSync(recordingBytes) : recordingBytes).toString('utf8'))
     : JSON.parse(process.env.MUSE_TEST_RECORDING);
 const decisionPlayback = process.env.MUSE_TEST_SCENARIO ? createDecisionPlayback(recording, process.env.MUSE_TEST_SCENARIO) : undefined;
+const playbackSteps = process.env.MUSE_TEST_PLAYBACK_STEPS ? JSON.parse(process.env.MUSE_TEST_PLAYBACK_STEPS) : undefined;
+const remainingSteps = new Map();
+for (const step of playbackSteps || []) {
+    const method = recording.rows[step.requestRow].message.method;
+    const queue = remainingSteps.get(method) || [];
+    queue.push(step);
+    remainingSteps.set(method, queue);
+}
 const rows = recording.rows.filter(row => row.message && typeof row.message === 'object');
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 const notificationPath = process.env.MUSE_TEST_NOTIFICATION_PATH;
+let readinessState = process.env.MUSE_TEST_READINESS_GUARD === '1' ? 'busy' : 'ready';
+let earlyTurnCount = 0;
+const queuedTurns = [];
 const notificationWatcher = notificationPath ? require('node:fs').watch(require('node:path').dirname(notificationPath), (_event, filename) => {
     if (filename !== require('node:path').basename(notificationPath)) return;
     try {
         const fs = require('node:fs');
         const notification = JSON.parse(fs.readFileSync(notificationPath, 'utf8'));
         fs.unlinkSync(notificationPath);
-        decisionPlayback?.observe(notification);
-        send(notification);
+        for (const value of Array.isArray(notification) ? notification : [notification]) {
+            decisionPlayback?.observe(value);
+            if (value.method === 'session/statusChanged') readinessState = value.params.status === 'running' ? 'busy' : 'ready';
+            send(remap(value));
+            if (value.method === 'session/statusChanged' && value.params.status === 'idle') {
+                for (const queuedTurn of queuedTurns.splice(0)) emitTurnNotifications(queuedTurn);
+            }
+        }
+        writeAudit();
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }) : undefined;
 let initialized = false;
 let initializeCount = 0;
 let initializedCount = 0;
 const commands = [];
+const commandTargets = [];
+const turnInputs = [];
 const requests = [];
 const receipts = [];
 const modelSelections = [];
 const modelListSessionIds = [];
+const viewPages = [];
+const sessionReads = [];
 let initializeParams;
 const commandIds = new Map();
 let approvalRequestId;
@@ -145,7 +193,7 @@ function writeAudit() {
     const path = process.env.MUSE_TEST_AUDIT_PATH;
     const fs = require('node:fs');
     fs.writeFileSync(path + '.tmp', JSON.stringify({ initializeCount, initializedCount, methods: requests,
-        commandCount: commands.length, modelSelections, modelListSessionIds, cwd: process.cwd(),
+        commandCount: commands.length, commandTargets, turnInputs, modelSelections, modelListSessionIds, viewPages, sessionReads, earlyTurnCount, readinessState, cwd: process.cwd(),
         autoUpdate: process.env.MUSE_NO_AUTO_UPDATE, selectedHome: process.env.MUSE_TEST_SELECTED_HOME,
         nativeResponseCount: receipts.length,
         ...(decisionPlayback?.inspect() ?? { receiptCount: receipts.length, decisionCount: 0, released: false }) }));
@@ -162,6 +210,14 @@ function resultFor(method) {
     const request = rows[index]?.message;
     const response = rows.slice(index + 1).find(row => row.direction === 'recv' && row.message.id === request?.id);
     return response?.message.result;
+}
+function emitTurnNotifications(message) {
+    const start = rows.findIndex(row => row.direction === 'send' && row.message.method === 'turn/start');
+    const commandId = rows[start]?.message.params?.commandId;
+    if (commandId) commandIds.set(commandId, message.params.commandId);
+    for (const row of rows.slice(start + 1)) {
+        if (row.direction === 'recv' && row.message.method && row.message.method !== 'session/closed') send(remap(row.message));
+    }
 }
 readline.createInterface({ input: process.stdin }).on('line', line => {
     const message = JSON.parse(line);
@@ -180,7 +236,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         initializedCount++;
     } else if (message.method === 'fixture/inspect') {
         send({ jsonrpc: '2.0', id: message.id, result: { initialized, initializeCount, initializedCount, initializeParams,
-            commands, requests, receipts, modelSelections, modelListSessionIds, ...decisionPlayback?.inspect(),
+            commands, commandTargets, turnInputs, requests, receipts, modelSelections, modelListSessionIds, viewPages, sessionReads, ...decisionPlayback?.inspect(),
             args: process.argv.slice(1), autoUpdate: process.env.MUSE_NO_AUTO_UPDATE,
             selectedHome: process.env.MUSE_TEST_SELECTED_HOME } });
     } else if (message.method === 'fixture/approval') {
@@ -198,17 +254,92 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     } else if (message.method === 'fixture/park') {
         // Deliberately no reply: cancellation belongs to the existing RPC owner.
     } else {
+        if ((message.method === 'turn/start' || message.method === 'turn/steer') && Array.isArray(message.params?.input)) {
+            turnInputs.push(message.params.input);
+        }
         if (message.method === 'model/list') modelListSessionIds.push(
             typeof message.params?.sessionId === 'string' ? message.params.sessionId : null);
+        if (message.method === 'view/page') viewPages.push({
+            sessionId: typeof message.params?.sessionId === 'string' ? message.params.sessionId : null,
+            cursor: typeof message.params?.cursor === 'string' ? message.params.cursor : null,
+        });
+        if (message.method === 'session/read') sessionReads.push({
+            sessionId: typeof message.params?.sessionId === 'string' ? message.params.sessionId : null,
+            excludeItems: typeof message.params?.excludeItems === 'boolean' ? message.params.excludeItems : null,
+        });
         if (message.method === 'session/start') modelSelections.push({
             providerId: message.params?.providerId, modelId: message.params?.modelId,
         });
-        if (message.params?.commandId) {
-            const original = rows.find(row => row.direction === 'send' && row.message.method === message.method)?.message.params?.commandId;
-            if (original) commandIds.set(original, message.params.commandId);
+        if (message.method === 'session/start' && process.env.MUSE_TEST_EXPECTED_MCP) {
+            const expected = JSON.parse(process.env.MUSE_TEST_EXPECTED_MCP);
+            const received = message.params?.config?.mcpServers;
+            if (!Object.entries(expected).every(([name, value]) => require('node:util').isDeepStrictEqual(received?.[name], value))) {
+                send({ jsonrpc: '2.0', id: message.id, error: { code: -32602,
+                    message: 'Native MCP fixture binding did not match', data: { kind: 'invalidParams', fixtureSchemaDerived: true } } });
+                writeAudit();
+                return;
+            }
+        }
+        const step = playbackSteps ? remainingSteps.get(message.method)?.shift() : undefined;
+        const recordedRequest = step ? recording.rows[step.requestRow].message
+            : !playbackSteps ? rows.find(row => row.direction === 'send' && row.message.method === message.method)?.message : undefined;
+        if (recordedRequest?.params?.commandId && message.params?.commandId) {
+            commandIds.set(recordedRequest.params.commandId, message.params.commandId);
         }
         const result = resultFor(message.method);
-        if (message.params?.commandId) commands.push(message.params.commandId);
+        if (message.params?.commandId) {
+            commands.push(message.params.commandId);
+            const target = { method: message.method, commandId: message.params.commandId };
+            for (const key of ['sessionId', 'providerId', 'modelId', 'reasoningEffort', 'turnId', 'expectedTurnId']) {
+                if (typeof message.params[key] === 'string') target[key] = message.params[key];
+            }
+            if (typeof message.params.model?.modelId === 'string') target.modelId = message.params.model.modelId;
+            if (typeof message.params.model?.providerId === 'string') target.providerId = message.params.model.providerId;
+            if (typeof message.params.cutPoint?.lastTurnId === 'string') target.lastTurnId = message.params.cutPoint.lastTurnId;
+            commandTargets.push(target);
+        }
+        if (message.method === 'turn/start' && process.env.MUSE_TEST_READINESS_GUARD === '1' && readinessState === 'busy') {
+            // Schema-derived ordering of the native documented queue disposition;
+            // no claim that this startup interleaving was captured from Muse.
+            earlyTurnCount++;
+            queuedTurns.push(message);
+            send({ jsonrpc: '2.0', id: message.id, result: {
+                ...remap(result), disposition: 'queued', startedNewTurn: false,
+            } });
+            writeAudit();
+            return;
+        }
+        const turnFailure = process.env.MUSE_TEST_TURN_FAILURE;
+        if (message.method === 'turn/start' && turnFailure) {
+            if (turnFailure.startsWith('started-')) {
+                send(remap(rows.find(row => row.direction === 'recv' && row.message.method === 'turn/started').message));
+            }
+            if (turnFailure.endsWith('refuse')) {
+                // Failure grammar is native; this chosen admission interleaving
+                // is schema-derived, not a claim of vendor-observed refusal.
+                send({ jsonrpc: '2.0', id: message.id, error: { code: -32030, message: 'Synthetic native admission refusal',
+                    data: { kind: 'commandRejected', commandId: message.params.commandId, reason: 'fixtureForcedRefusal',
+                        retryable: false, details: { fixtureSchemaDerived: true } } } });
+            }
+            writeAudit();
+            if (turnFailure.endsWith('eof')) process.stdout.write('', () => process.exit(0));
+            return;
+        }
+        if (playbackSteps) {
+            if (!step) {
+                send({ jsonrpc: '2.0', id: message.id, error: { code: -32603,
+                    message: 'Playback has no remaining recorded receive window for this method',
+                    data: { kind: 'internal', fixtureUnsupportedVector: true } } });
+            } else {
+                for (const row of recording.rows.slice(step.requestRow + 1, step.receiveUntilRow)) {
+                    if (row.direction !== 'recv' || !row.message || typeof row.message !== 'object') continue;
+                    const value = remap(row.message);
+                    send(!value.method && value.id === recordedRequest.id ? { ...value, id: message.id } : value);
+                }
+            }
+            writeAudit();
+            return;
+        }
         const scenarioMessages = decisionPlayback?.handle(message);
         if (scenarioMessages !== undefined) {
             for (const value of scenarioMessages) send(value);
@@ -217,15 +348,16 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         }
         if (result !== undefined) {
             if (message.method === 'session/start') {
-                send(remap(rows.find(row => row.message.method === 'session/started').message));
-            }
-            if (message.method === 'turn/start') {
-                const start = rows.findIndex(row => row.direction === 'send' && row.message.method === 'turn/start');
-                for (const row of rows.slice(start + 1)) {
-                    if (row.direction === 'recv' && row.message.method && row.message.method !== 'session/closed') send(remap(row.message));
+                const started = remap(rows.find(row => row.message.method === 'session/started').message);
+                if (process.env.MUSE_TEST_READINESS_GUARD === '1') {
+                    started.params.session.status = 'running';
+                    result.session.status = 'running';
                 }
+                send(started);
             }
+            if (message.method === 'turn/start') emitTurnNotifications(message);
             send({ jsonrpc: '2.0', id: message.id, result: remap(result) });
+            writeAudit();
         } else send({ jsonrpc: '2.0', id: message.id, result: {} });
     }
 }).on('close', () => {

@@ -1,5 +1,5 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import type { AgentSessionInputFilesService, AgentSessionSendRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import { SkillCatalogItemV1Schema, type AgentSessionInputFilesService, type AgentSessionSendRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { HappierStructuredInputV1Schema, readStructuredInputMentionSourcesV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { MuseMsp } from './msp.js';
 import { readMuseRecord } from './events.js';
@@ -29,6 +29,14 @@ export function readMuseNativeSkills(value: JsonValue): readonly MuseNativeSkill
   });
 }
 
+export function museNativeSkillCatalogItem(skill: MuseNativeSkill) {
+  return SkillCatalogItemV1Schema.parse({ v: 1, origin: 'vendor', backendId: 'muse', agentId: 'muse',
+    name: skill.selector, projectionRef: skill.source,
+    ...(skill.displayName !== undefined ? { displayName: skill.displayName } : {}),
+    ...(skill.description !== undefined ? { description: skill.description } : {}),
+  });
+}
+
 /** Translate selected inputs only; the host remains the image/file authority. */
 export async function resolveMuseTurnInput(input: AgentSessionSendRequest['input'], context: Readonly<{
   msp: Pick<MuseMsp, 'client'>;
@@ -54,7 +62,8 @@ export async function resolveMuseTurnInput(input: AgentSessionSendRequest['input
       || (selectedSkill.backendId && selectedSkill.backendId !== 'muse')) return null;
     const skills = readMuseNativeSkills(await context.msp.client.request('skill/list',
       { sessionId: context.nativeSessionId }, { signal: context.signal }));
-    const matches = skills.filter(skill => skill.selector === selectedSkill.name);
+    const matches = skills.filter(skill => skill.selector === selectedSkill.name
+      && (selectedSkill.projectionRef === undefined || skill.source === selectedSkill.projectionRef));
     if (matches.length !== 1) return null;
     const skill = matches[0]!;
     parts.splice(0, 1, { type: 'skill', selector: skill.selector, source: skill.source, arguments: input.text });

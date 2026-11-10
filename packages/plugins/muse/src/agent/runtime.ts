@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
 import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
   AgentSessionHostServices, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -11,7 +12,8 @@ import { MUSE_AGENT } from './definition.js';
 import { createMuseEventProjection, readMuseRecord } from './events.js';
 import { openMuseMsp, type MuseMsp } from './msp.js';
 import { createMuseInteractions } from './interactions.js';
-import { resolveMuseTurnInput } from './inputs.js';
+import { museNativeSkillCatalogItem, readMuseNativeSkills, resolveMuseTurnInput } from './inputs.js';
+import { readMuseHistoryItems, replayMusePagedHistory } from './externalSessions.js';
 
 async function openMuseConversation<SessionId extends string | undefined>(
   request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
@@ -22,7 +24,11 @@ async function openMuseConversation<SessionId extends string | undefined>(
   const scopeServices = 'executionRun' in context ? context.executionRun.services : context.session.services;
   const resumeId = request.kind === 'resume'
     ? 'checkpointId' in request ? request.checkpointId : request.providerSessionId : undefined;
-  if (request.kind === 'fork') throw new PluginError({ code: 'unsupported', message: 'Native Muse fork is unavailable on this launch path.' });
+  if (request.kind === 'fork' && !('source' in request)) throw new PluginError({ code: 'unsupported', message: 'Native Muse Run fork is unavailable on this launch path.' });
+  if (request.kind === 'fork' && 'source' in request
+    && !canonicalAbsolutePathsEqual(request.cwd, request.source.cwd)) {
+    throw new PluginError({ code: 'unsupported', message: 'Native Muse fork requires the source workspace directory.' });
+  }
   if ('startupInstructions' in request && request.startupInstructions) throw new PluginError({ code: 'agent_session_startup_instructions_unsupported', retryable: false });
   if ('modelSelection' in request && request.modelSelection?.providerConnectionId !== undefined
     && request.modelSelection.providerConnectionId !== null) {
@@ -30,9 +36,25 @@ async function openMuseConversation<SessionId extends string | undefined>(
   }
   const requestedModelId = request.configuration?.model.value
     ?? ('modelSelection' in request ? request.modelSelection?.modelId : undefined);
-  if (request.skills?.items.length || Object.keys(request.mcpServers ?? {}).length) {
-    throw new PluginError({ code: 'unsupported', message: 'The selected native Muse skills or MCP input shape is unavailable on this launch path.' });
+  if (request.skills?.items.length) {
+    throw new PluginError({ code: 'unsupported', message: 'The selected native Muse skill delivery is unavailable on this launch path.' });
   }
+  const selectedMcp = Object.entries(request.mcpServers ?? {});
+  if (request.kind === 'fork' && selectedMcp.length) throw new PluginError({ code: 'unsupported',
+    message: 'Native Muse fork cannot apply the selected MCP startup configuration.' });
+  // MSP has no tool-filter or per-tool policy field. Preserve the host's
+  // selection by refusing shapes that cannot be represented before any effect.
+  if (selectedMcp.some(([, server]) => server.enabledTools !== undefined)
+    || Object.keys(request.mcpToolPolicy ?? {}).length) {
+    throw new PluginError({ code: 'unsupported', message: 'Native Muse cannot enforce the selected MCP tool filter or policy.' });
+  }
+  const nativeMcpServers = Object.fromEntries(selectedMcp.map(([name, server]) => [name, {
+    transport: 'stdio', command: server.command,
+    ...(server.args === undefined ? {} : { args: [...server.args] }),
+    ...(server.env === undefined ? {} : { env: { ...server.env } }),
+    mode: request.mcpServersStrictMode === false ? 'optional' : 'required',
+  }]));
+  const nativeMcpConfig = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
   const intent = request.configuration?.permissionIntent.value;
   if ((intent && intent !== 'default') || request.configuration?.workspaceWrites === 'deny') {
     throw new PluginError({ code: 'unsupported', message: 'The requested permission intent has no characterized native Muse mapping.' });
@@ -84,6 +106,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
     projection.publish({ kind: 'runtime-ended', cause, retryable: true });
   };
   const interactions = createMuseInteractions({ context,
+    ...('executionRun' in context ? { permissions: context.executionRun.services.permissions } : {}),
     command: (method, params, options) => msp.command(method, params, options),
     readNativeChildOrigin: projection.readNativeChildOrigin,
     onError(error, params) {
@@ -103,7 +126,8 @@ async function openMuseConversation<SessionId extends string | undefined>(
   const msp: MuseMsp = await openMuseMsp({ exec: context.services.exec,
     launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: request.cwd, env: request.launchEnvironment?.values },
     signal: context.signal, nativeLaunch: scopeServices.nativeLaunch,
-    initialize: { capabilities: { experimentalApi: true } },
+    initialize: { capabilities: { experimentalApi: true,
+      ...(selectedMcp.length ? { requestedCapabilities: ['sessionMcp'] } : {}) } },
     onRequest: interactions.onRequest,
     async onNotification(message) {
       if (!interactions.observe(message)) await projection.observe(message);
@@ -116,6 +140,10 @@ async function openMuseConversation<SessionId extends string | undefined>(
   let inputBinding: ReturnType<AgentSessionHostServices['activeInput']['bind']> | undefined;
   void msp.wait().then(() => end('processExited'), () => end('protocolError'));
   try {
+    const grantedCapabilities = readMuseRecord(msp.initializeResult).grantedCapabilities;
+    if (selectedMcp.length && (!Array.isArray(grantedCapabilities) || !grantedCapabilities.includes('sessionMcp'))) {
+      throw new PluginError({ code: 'unsupported', message: 'Native Muse did not grant session MCP configuration.' });
+    }
     modelsBinding = sessionServices?.models.bind(catalog);
     const selectedId = request.kind === 'create' ? requestedModelId : undefined;
     let selected: ReturnType<typeof catalog.resolveModelSelection> = { status: 'nativeDefault' };
@@ -125,10 +153,15 @@ async function openMuseConversation<SessionId extends string | undefined>(
       if (selected.status === 'unavailable') throw new PluginError({ code: 'model_selection_required', retryable: false,
         message: 'The selected Muse model is unavailable in the native catalog.' });
     }
-    const opened = readMuseRecord(await (request.kind === 'resume'
-      ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false }, { signal: context.signal })
+    const opened = readMuseRecord(await (request.kind === 'fork' && 'source' in request
+      ? msp.command('session/fork', { sessionId: request.source.providerSessionId,
+        ...(request.source.target ? { cutPoint: request.source.target.providerCheckpoint } : {}),
+        excludeItems: false }, { signal: context.signal })
+      : request.kind === 'resume'
+      ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false, ...nativeMcpConfig }, { signal: context.signal })
       : msp.command('session/start', { workspaceRoot: request.cwd,
         approvalMode: 'promptUnmatched', permissionProfile: ':ask-me',
+        ...nativeMcpConfig,
         ...(selected.status === 'selected' ? { providerId: selected.providerId, modelId: selected.modelId } : {}),
       }, { signal: context.signal })));
     const native = readMuseRecord(opened.session);
@@ -155,12 +188,13 @@ async function openMuseConversation<SessionId extends string | undefined>(
     if (typeof native.providerId === 'string' && typeof native.modelId === 'string') {
       catalog.applyCurrentModel({ providerId: native.providerId, modelId: native.modelId });
     }
+    if (request.kind === 'resume' || request.kind === 'fork') {
+      const items = readMuseHistoryItems(opened.history);
+      if (items) await projection.replayItems(items);
+      else await replayMusePagedHistory(msp.client, { sessionId: nativeSessionId, signal: context.signal,
+        replay: projection.replayHistoryEvent });
+    }
     if (request.kind === 'resume') {
-      const history = readMuseRecord(opened.history);
-      if (history.mode !== 'inline' || !Array.isArray(history.items)) {
-        throw new PluginError({ code: 'unsupported', message: 'Native Muse resume requires history paging unavailable on this launch path.' });
-      }
-      await projection.replayItems(history.items);
       let pending: ReturnType<typeof readMuseRecord>;
       try {
         pending = readMuseRecord(await msp.client.request('approval/listPending', { sessionId: nativeSessionId }, { signal: context.signal }));
@@ -228,7 +262,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
       if (effort !== undefined && typeof effort !== 'string') return unsupported;
       return applyModelConfiguration(configuration.model.value ?? undefined, effort, options);
     };
-    if (request.configuration?.options.reasoning_effort || (request.kind === 'resume' && requestedModelId)) {
+    if (request.configuration?.options.reasoning_effort || ((request.kind === 'resume' || request.kind === 'fork') && requestedModelId)) {
       const result = request.configuration
         ? await updateConfiguration({ ...request.configuration,
           model: { ...request.configuration.model, value: requestedModelId ?? request.configuration.model.value } },
@@ -242,14 +276,15 @@ async function openMuseConversation<SessionId extends string | undefined>(
     return {
       runtimeCapabilities: { sessionCapabilities: MUSE_AGENT.core.sessionCapabilities },
       runtimeDescriptorV1: { v: 1, agentId: MUSE_AGENT.id, agent: { providerSessionId: nativeSessionId,
-        ...(typeof native.path === 'string' ? { sessionFile: native.path } : {}) } },
+        ...(typeof native.path === 'string' ? { sessionFile: native.path } : {}),
+        ...(request.kind === 'fork' && native.forkedFrom ? { forkedFrom: native.forkedFrom } : {}) } },
       watch: projection.watch,
       updateConfiguration,
       async send(input, options) {
         let nativeInput: Awaited<ReturnType<typeof resolveMuseTurnInput>>;
         try {
           nativeInput = await resolveMuseTurnInput(input.input, { msp, nativeSessionId,
-            inputFiles: sessionServices?.inputFiles, signal: options?.signal });
+            inputFiles: scopeServices.inputFiles, signal: options?.signal });
         } catch {
           return { status: 'unavailable', retryable: true,
             diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error' } };
@@ -347,12 +382,19 @@ async function openMuseConversation<SessionId extends string | undefined>(
 export function createMuseAgentRuntime(): AgentRuntime & { sessions: NonNullable<AgentRuntime['sessions']> } {
   const catalog: AgentSessionCatalogControl = {
     async list(request, context, options) {
-      if (request.kind !== 'models') return { status: 'unsupported', diagnostic: { code: 'unsupported', severity: 'error' } };
+      if (request.kind !== 'models' && request.kind !== 'skills') return { status: 'unsupported', diagnostic: { code: 'unsupported', severity: 'error' } };
+      if (request.kind === 'skills' && !context.session.providerSessionId) return { status: 'unavailable', retryable: false,
+        diagnostic: { code: 'provider_session_unavailable', severity: 'error' } };
       const msp = await openMuseMsp({ exec: context.services.exec,
         launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: context.session.cwd,
           env: context.session.launchEnvironment?.values }, signal: options?.signal ?? context.signal,
         nativeLaunch: context.session.nativeLaunch });
       try {
+        if (request.kind === 'skills') {
+          const skills = readMuseNativeSkills(await msp.client.request('skill/list',
+            { sessionId: context.session.providerSessionId! }, { signal: options?.signal ?? context.signal }));
+          return { status: 'ok', kind: 'skills', items: skills.map(museNativeSkillCatalogItem) };
+        }
         const source = createMuseCatalog(msp.client);
         const snapshot = await source.refresh({ signal: options?.signal ?? context.signal,
           sessionId: context.session.providerSessionId });

@@ -1,0 +1,32 @@
+{
+  "evidence": {
+    "source": ".project/tmp/L-MUSE-AGENT/evidence/native-pending-controls/reader-recording.json",
+    "nativeVersion": "1.4.14",
+    "status": "OBSERVED_SELECTED_ROUNDTRIP",
+    "note": "Isolated unloaded-reader approval/listPending empty response; no model turns/credentials. Native UUID sanitized. This two-row slice is not a standalone initialization or positive pending recovery capture."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "approval/listPending",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002"
+        },
+        "id": 3
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "approvals": [],
+          "userInputs": []
+        }
+      }
+    }
+  ]
+}

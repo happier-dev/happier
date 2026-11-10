@@ -1,9 +1,9 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/sessions';
-import type { NativePermissionChoicesV1, SessionPermissionDecision, SessionPermissionDecisionResult } from '@happier-dev/plugin-sdk/sessions';
-import { readMuseRecord } from './events.js';
+import type { NativePermissionChoicesV1, SessionPermissionDecision, SessionPermissionDecisionResult, SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions';
+import { readMuseNativeJson, readMuseRecord } from './events.js';
 import type { MuseMsp, MuseMspOpenOptions } from './msp.js';
 
 type NativeRecord = ReturnType<typeof readMuseRecord>;
@@ -31,8 +31,9 @@ function mapDecision(value: JsonValue | undefined): SessionPermissionDecision | 
 }
 function toolInput(params: NativeRecord): Record<string, JsonValue> {
     if (typeof params.rawArgs === 'string') {
-        try { return { ...readMuseRecord(JSON.parse(params.rawArgs)), nativeApproval: params.subject ?? null }; }
-        catch { return { rawArgs: params.rawArgs, nativeApproval: params.subject ?? null }; }
+        const parsed = readMuseNativeJson(params.rawArgs);
+        return { ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { rawArgs: params.rawArgs }),
+            nativeApproval: params.subject ?? null };
     }
     return { nativeApproval: params.subject ?? null };
 }
@@ -95,20 +96,21 @@ function nativeAnswers(params: NativeRecord, decision: SessionPermissionDecision
 
 /** Maps native interactions into the existing host pending and application owner. */
 export function createMuseInteractions(options: Readonly<{
-    context: AgentSessionRuntimeContext;
+    context: AgentRuntimeContext;
+    permissions?: SessionPermissionsService;
     command: MuseMsp['command'];
     onError?(error: unknown, params?: NativeRecord): void;
     onNativeQuestionSettlement?(params: NativeRecord): void;
     readNativeChildOrigin?(subagentId: string): NativePermissionChoicesV1['origin'] | undefined;
 }>) {
-    const permissions = options.context.services.sessions.current?.permissions;
-    if (!permissions?.settleObservedDecision) throw new PluginError({ code: 'unsupported', message: 'Native Muse interaction settlement is unavailable.' });
     const approvals = new Map<string, Occurrence>();
     const questions = new Map<string, Occurrence>();
     let disposed = false;
     const report = (error: unknown, params?: NativeRecord) => { if (!disposed) options.onError?.(error, params); };
     function present(kind: 'approval' | 'question', params: NativeRecord) {
         if (disposed) return;
+        const permissions = options.permissions ?? options.context.services.sessions.current?.permissions;
+        if (!permissions?.settleObservedDecision) throw new PluginError({ code: 'unsupported', message: 'Native Muse interaction settlement is unavailable.' });
         const id = requiredString(params, kind === 'approval' ? 'approvalId' : 'userInputId');
         requiredString(params, 'sessionId');
         const map = kind === 'approval' ? approvals : questions;
@@ -145,6 +147,7 @@ export function createMuseInteractions(options: Readonly<{
         const map = kind === 'approval' ? approvals : questions;
         const occurrence = map.get(id);
         if (!occurrence) return;
+        const permissions = options.permissions ?? options.context.services.sessions.current?.permissions;
         if (kind === 'question' && params.outcome !== 'answered') {
             // Native settled is the durable authority boundary, including open
             // outcomes. Retire its existing host occurrence without inventing

@@ -20,6 +20,8 @@ export async function verifySpawnResumeReachability(params: Readonly<{
   agentId: CatalogAgentId;
   vendorResumeId: string;
   materializedEnv: Readonly<Record<string, string>>;
+  cwd?: string | null;
+  signal?: AbortSignal;
   candidatePersistedSessionFile?: string | null;
   runtimeDescriptorV1?: Parameters<typeof verifyResumeReachabilityByAgent>[0]['input']['runtimeDescriptorV1'];
 }>): Promise<VerifyResumeReachableResult | Readonly<{ ok: false; reason: string }>> {
@@ -35,6 +37,7 @@ export async function verifySpawnResumeReachability(params: Readonly<{
       targetMaterializedRoot,
       vendorResumeId: params.vendorResumeId,
       candidatePersistedSessionFile: params.candidatePersistedSessionFile,
+      ...(params.cwd ? { nativeInspection: { cwd: params.cwd, environment: params.materializedEnv, signal: params.signal } } : {}),
       ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
     },
   });
